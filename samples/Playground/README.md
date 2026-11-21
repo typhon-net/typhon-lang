@@ -38,7 +38,7 @@ it never reaches a server); a link opens with the program, which runs when you p
 * **References.** A browser has no assembly files, and the assemblies of a published Blazor app are of no use to
   Roslyn: they are trimmed, and wrapped in WebAssembly modules (Webcil) under fingerprinted names. So the build ships
   its own: the reference assemblies of the .NET targeting pack (`Microsoft.NETCore.App.Ref`, the public API without
-  code) for the 22 framework assemblies that Typhon programs need (every assembly `Typhon.Runtime` references, such as
+  code) for the 24 framework assemblies that Typhon programs need (every assembly `Typhon.Runtime` references, such as
   System.Runtime, System.Collections, System.Linq, System.Console, Microsoft.CSharp for `dynamic`,
   System.Runtime.Numerics and System.Text.RegularExpressions), plus `Typhon.Runtime.dll`, as static files under
   `refs/` ([PlaygroundReferences.targets](PlaygroundReferences.targets) lists them). The app fetches them in parallel
@@ -47,7 +47,7 @@ it never reaches a server); a link opens with the program, which runs when you p
   `MetadataReference.CreateFromImage(bytes)`.
 * **Trimming.** The published app is trimmed, but the trimmer never sees the code that calls the framework here:
   `Typhon.Runtime.dll` (loaded from `refs/`, not part of the app) and the programs, which compile against the full
-  public API of the reference assemblies. So the implementations of those 22 assemblies and System.Private.CoreLib
+  public API of the reference assemblies. So the implementations of those 24 assemblies and System.Private.CoreLib
   are kept whole (`TrimmerRootAssembly` in [Playground.csproj](Playground.csproj)); without that, every program
   fails with `MissingMethodException`. Exception messages are kept as .NET writes them (`UseSystemResourceKeys` off),
   so a traceback says `The given key 'b' was not present in the dictionary` rather than a resource key.
