@@ -25,6 +25,8 @@ dotnet run --project samples/WasmLife
 
 # Desktop apps written in Typhon, run on Windows: the same to-do app in Windows Forms, WPF and WinUI 3
 dotnet run --project samples/Desktop/WinForms             # or Wpf, WinUI; see samples/Desktop/README.md
+# The playground: write Typhon in a browser; the compiler, Roslyn and the program run there (Blazor WebAssembly)
+dotnet run --project samples/Playground                  # publish: static files, see samples/Playground/README.md
 
 # 3. Python-style scripting with the typhon CLI (published with ReadyToRun: compiles about twice as fast)
 dotnet publish src/Typhon.Cli -c Release -r win-x64 -o tools/typhon    # linux-x64, osx-arm64, ...

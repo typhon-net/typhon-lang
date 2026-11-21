@@ -75,6 +75,7 @@ dotnet run --project samples/BlazorApp                    # a Blazor web app: Ra
 dotnet test samples/XunitTests                            # xUnit tests written in Typhon
 dotnet run --project samples/WasmLife                     # Python in the browser on WebAssembly (localhost:5080)
 dotnet run --project samples/Desktop/Wpf                  # a WPF app in Typhon (also Windows Forms, WinUI 3)
+dotnet run --project samples/Playground                   # a playground: compile and run Typhon in the browser
 dotnet publish src/Typhon.Cli -c Release -r win-x64 -o tools/typhon
 tools/typhon/typhon run samples/scripts/tour.ty           # compile in memory and run, like `python tour.py`
 tools/typhon/typhon build samples/scripts/tour.ty --aot -o out/tour-aot   # a native executable
