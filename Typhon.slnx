@@ -15,6 +15,7 @@
     <Project Path="samples/WasmLife/WasmLife.csproj" />
     <Project Path="samples/Playground/Playground.csproj" />
     <Project Path="samples/Playground/Core/Playground.Core.csproj" />
+    <Project Path="samples/BlazorWasm/BlazorWasm.csproj" />
   </Folder>
   <!-- WinUI 3 (samples/Desktop/WinUI) is not in the solution: it needs the Windows App SDK's Windows-only build tools. -->
   <Folder Name="/samples/Desktop/">

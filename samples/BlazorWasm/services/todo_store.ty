@@ -1,0 +1,95 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+"""
+The to-do list: a service the app registers with dependency injection and the Todos page gets injected. It keeps the
+list in the browser's localStorage, through the JavaScript interop, so the list survives reloads.
+"""
+import csv
+import io
+from dataclasses import dataclass
+from typing import cast
+from Microsoft.JSInterop import IJSInProcessRuntime, IJSRuntime, JSException
+
+KEY = "typhon-todos"  # the localStorage key
+FIELDS = ["title", "urgent", "done"]
+
+
+@dataclass
+class Todo:
+    id: int
+    title: str
+    urgent: bool = False
+    done: bool = False
+
+
+class TodoStore:
+    """Registered as a singleton: one list per browser tab, read when a page first needs it, saved after each change."""
+
+    def __init__(self, js: IJSRuntime) -> None:
+        # The container passes the constructor's services (a component cannot take any: Razor's half of the class has a
+        # parameterless constructor). Under WebAssembly the app runs in the browser's own process, so its JavaScript
+        # runtime is an IJSInProcessRuntime and calls can be synchronous; on Blazor Server they would be async.
+        self.js: IJSInProcessRuntime = cast(IJSInProcessRuntime, js)
+        self.items: list[Todo] = []
+        self.next_id = 1
+        self.saved = ""  # what localStorage holds, shown by the page
+        if not self.load():
+            self.add_defaults()
+
+    def load(self) -> bool:
+        """Reads the saved list: CSV text with a header (the csv module reads typed rows; json.loads would return
+        late-bound values). False when nothing is saved yet, or when the browser blocks storage."""
+        try:
+            text: str | None = self.js.Invoke[str]("localStorage.getItem", KEY)
+        except JSException:
+            return False  # a JavaScript error (storage disabled by the browser's settings) arrives as a JSException
+        if text is None:
+            return False
+        for row in csv.DictReader(text.splitlines()):
+            self.append(row["title"], row["urgent"] == "True", row["done"] == "True")
+        self.saved = text
+        return True
+
+    def save(self) -> None:
+        """Writes the list to localStorage; called after every change (and by the page's @bind:after on a checkbox)."""
+        out = io.StringIO()
+        writer = csv.DictWriter(out, FIELDS, lineterminator="\n")
+        writer.writeheader()
+        writer.writerows({"title": t.title, "urgent": str(t.urgent), "done": str(t.done)} for t in self.items)
+        self.saved = out.getvalue()
+        try:
+            self.js.InvokeVoid("localStorage.setItem", KEY, self.saved)
+        except JSException as e:
+            self.saved = f"(not saved: {e.Message})"  # the list stays in memory
+
+    def append(self, title: str, urgent: bool, done: bool) -> Todo:
+        todo = Todo(self.next_id, title.strip(), urgent, done)
+        self.next_id += 1
+        self.items.append(todo)
+        return todo
+
+    def add(self, title: str, urgent: bool = False) -> Todo:
+        todo = self.append(title, urgent, False)
+        self.save()
+        return todo
+
+    def add_defaults(self) -> None:
+        self.add("Write a Blazor page in Typhon", urgent=True)
+        self.add("Run it in the browser")
+
+    def remove(self, todo: Todo) -> None:
+        self.items.remove(todo)
+        self.save()
+
+    def clear_done(self) -> int:
+        """Removes the finished to-dos; returns how many there were."""
+        before = len(self.items)
+        self.items = [t for t in self.items if not t.done]
+        self.save()
+        return before - len(self.items)
+
+    def reset(self) -> None:
+        """Back to the two to-dos a new browser starts with."""
+        self.items = []
+        self.add_defaults()

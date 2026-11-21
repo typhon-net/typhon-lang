@@ -1,0 +1,40 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+"""The code-behind of Home.razor: OnInitialized runs in the browser, so what it reads about the runtime is the browser's."""
+import sys
+from dataclasses import dataclass
+from datetime import datetime
+from System import OperatingSystem
+from System.Runtime.InteropServices import RuntimeInformation
+from Microsoft.AspNetCore.Components import ComponentBase
+
+
+@dataclass
+class Link:
+    href: str
+    title: str
+    text: str
+
+
+class HomeBase(ComponentBase):
+    rendered_at: str = ""
+
+    links = [
+        Link("counter", "Counter", "fields, @onclick handlers, @bind, a route parameter"),
+        Link("todos", "To-do list", "an injected service that keeps the list in the browser's localStorage"),
+        Link("mandelbrot", "Mandelbrot", "a CPU-heavy computation in Python, drawn as SVG, zoomed with clicks"),
+    ]
+
+    def OnInitialized(self) -> None:
+        self.rendered_at = datetime.now().strftime("%H:%M:%S")
+
+    @property
+    def runtime(self) -> str:
+        return sys.version  # "Typhon on .NET 11.0.0"
+
+    @property
+    def platform(self) -> str:
+        """Where the code runs, as .NET sees it: "Browser, browser-wasm" (on Blazor Server it would be the server's OS)."""
+        where = "in the browser" if OperatingSystem.IsBrowser() else "outside a browser"
+        return f"{RuntimeInformation.OSDescription}, {RuntimeInformation.RuntimeIdentifier}, {where}"

@@ -1,0 +1,72 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+"""
+The Mandelbrot set in plain Python: the Mandelbrot page computes it with these functions in the browser, and CPython
+runs this file too (it prints the set as text):
+
+    python3 samples/BlazorWasm/fractal.ty
+"""
+from dataclasses import dataclass
+
+
+@dataclass
+class View:
+    """A rectangle of the complex plane: its centre and its width (the picture's shape gives the height)."""
+    name: str
+    x: float
+    y: float
+    width: float
+
+
+VIEWS = [
+    View("The whole set", -0.75, 0.0, 3.2),
+    View("Seahorse valley", -0.7436, 0.1318, 0.006),
+    View("Elephant valley", 0.2925, 0.0168, 0.03),
+    View("A mini Mandelbrot", -1.7625, 0.0, 0.07),
+    View("A double spiral", -0.761574, -0.0847596, 0.004),
+]
+
+
+def in_main_bulbs(cr: float, ci: float) -> bool:
+    """True inside the main cardioid or the large circle left of it: those points never escape, so they are not
+    iterated (most of the set's area, the slowest points to compute)."""
+    q = (cr - 0.25) ** 2 + ci * ci
+    return q * (q + cr - 0.25) <= 0.25 * ci * ci or (cr + 1.0) ** 2 + ci * ci <= 0.0625
+
+
+def escape_times(view: View, cols: int, rows: int, max_iter: int, cell_aspect: float = 1.0) -> list[int]:
+    """
+    For each cell of a cols x rows grid over the view, row by row from the top: how many steps of z = z * z + c it
+    takes until |z| > 2, or max_iter if that does not happen (c is taken to be in the set). cell_aspect is a cell's
+    height divided by its width (2 for text, whose characters are about twice as high as wide).
+    """
+    dx = view.width / cols
+    dy = dx * cell_aspect
+    left = view.x - view.width / 2
+    top = view.y + dy * rows / 2
+    times: list[int] = []
+    for row in range(rows):
+        ci = top - (row + 0.5) * dy
+        for col in range(cols):
+            cr = left + (col + 0.5) * dx
+            if in_main_bulbs(cr, ci):
+                times.append(max_iter)
+                continue
+            zr = zi = 0.0
+            n = 0
+            while n < max_iter and zr * zr + zi * zi <= 4.0:
+                zr, zi = zr * zr - zi * zi + cr, 2.0 * zr * zi + ci
+                n += 1
+            times.append(n)
+    return times
+
+
+if __name__ == "__main__":
+    # (CPython runs this; the app's entry point is main.ty, <TyphonMainModule>main</TyphonMainModule> in the project)
+    shades = " .:-=+*#%"
+    cols, rows, max_iter = 78, 28, 100
+    times = escape_times(VIEWS[0], cols, rows, max_iter, cell_aspect=2.0)
+    for row in range(rows):
+        line = times[row * cols:(row + 1) * cols]
+        print("".join("@" if n == max_iter else shades[min(len(shades) - 1, int(n ** 0.5))] for n in line).rstrip())

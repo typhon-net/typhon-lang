@@ -1,0 +1,19 @@
+@page "/counter"
+@page "/counter/{start:long}"
+@inherits counter.CounterBase
+
+<PageTitle>Counter</PageTitle>
+
+<h1>Counter</h1>
+
+<p role="status">Current count: <strong>@count</strong> (@parity)</p>
+
+<div class="row">
+    <button class="primary" @onclick="increment">Add @step</button>
+    <button @onclick="() => add(-1)">Subtract 1</button>
+    <button @onclick="reset">Reset to @start</button>
+    <label>Step <input type="number" min="1" max="100" @bind="step" /></label>
+</div>
+
+<p class="muted">History: @trail</p>
+<p class="muted">Start somewhere else: <a href="counter/40">/counter/40</a> sets the <code>start</code> parameter.</p>

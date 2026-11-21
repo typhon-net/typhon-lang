@@ -1,0 +1,39 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+"""The code-behind of Counter.razor, which inherits CounterBase (@inherits counter.CounterBase)."""
+from typing import Annotated
+from Microsoft.AspNetCore.Components import ComponentBase, Parameter
+
+
+class CounterBase(ComponentBase):
+    # a route parameter: /counter/{start:long} sets it (a Python int is a C# long)
+    start: Annotated[int, Parameter()] = 0
+    count: int = 0
+    step: int = 1  # @bind to a number input
+    history: list[int]  # set in OnParametersSet, before the first render
+
+    def OnParametersSet(self) -> None:
+        """Called by Blazor when the parameters are set (here: from the route)."""
+        self.count = self.start
+        self.history = [self.start]
+
+    def increment(self) -> None:
+        self.add(self.step)
+
+    def add(self, amount: int) -> None:
+        self.count += amount
+        self.history.append(self.count)
+
+    def reset(self) -> None:
+        self.count = self.start
+        self.history = [self.start]
+
+    @property
+    def parity(self) -> str:
+        return "even" if self.count % 2 == 0 else "odd"
+
+    @property
+    def trail(self) -> str:
+        """The last values, newest last: computed in Python, shown as text by the markup."""
+        return " → ".join(str(n) for n in self.history[-8:])

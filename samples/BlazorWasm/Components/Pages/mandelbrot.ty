@@ -1,0 +1,159 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+"""
+The code-behind of Mandelbrot.razor: computes the Mandelbrot set in the browser (with fractal.ty) and turns it into an
+SVG picture, one <path> per colour; clicking a tile of the picture zooms into it.
+"""
+import asyncio
+import math
+import time
+from dataclasses import dataclass
+from Microsoft.AspNetCore.Components import ComponentBase
+from fractal import VIEWS, View, escape_times
+
+ZOOM = 4  # how much a click magnifies
+TILES_X, TILES_Y = 12, 8  # the clickable tiles over the picture
+INSIDE = "#000000"  # the colour of the set itself: the picture's background
+
+
+def mix(c0: int, c1: int, f: float) -> int:
+    """The colour a fraction f of the way from c0 to c1 (both 0xRRGGBB), channel by channel."""
+    result = 0
+    for shift in (16, 8, 0):
+        a, b = (c0 >> shift) & 0xFF, (c1 >> shift) & 0xFF
+        result |= round(a + (b - a) * f) << shift
+    return result
+
+
+def gradient(n: int) -> list[str]:
+    """n colours along a cycle of deep blue, sky blue, white, orange and black, as CSS hex colours."""
+    stops = [(0.0, 0x000764), (0.16, 0x206BCB), (0.42, 0xEDFFFF), (0.6425, 0xFFAA00), (0.8575, 0x000200), (1.0, 0x000764)]
+    colours: list[str] = []
+    for i in range(n):
+        t = i / n
+        j = max(k for k in range(len(stops) - 1) if stops[k][0] <= t)
+        (t0, c0), (t1, c1) = stops[j], stops[j + 1]
+        colours.append(f"#{mix(c0, c1, (t - t0) / (t1 - t0)):06x}")
+    return colours
+
+
+PALETTE = gradient(48)
+
+
+def shade(n: int, max_iter: int) -> int:
+    """The palette index of a point that escaped after n steps, -1 for a point of the set. The square root spreads the
+    colours: few steps change quickly near the set's border, many steps slowly."""
+    return -1 if n >= max_iter else int(math.sqrt(n) * 5) % len(PALETTE)
+
+
+@dataclass
+class Band:
+    """All the cells of one colour, as SVG path data: a rectangle for each run of such cells in a row."""
+    colour: str
+    path: str
+    runs: int
+
+
+@dataclass
+class Tile:
+    """A clickable rectangle over the picture (in cells)."""
+    x: int
+    y: int
+    width: int
+    height: int
+
+
+def bands_of(times: list[int], cols: int, rows: int, max_iter: int) -> list[Band]:
+    shades = [shade(n, max_iter) for n in times]
+    parts: list[list[str]] = [[] for _ in PALETTE]
+    for row in range(rows):
+        start = row * cols
+        end_of_row = start + cols
+        while start < end_of_row:
+            k = shades[start]
+            end = start + 1
+            while end < end_of_row and shades[end] == k:
+                end += 1
+            if k >= 0:
+                parts[k].append(f"M{start - row * cols} {row}h{end - start}v1h-{end - start}z")
+            start = end
+    return [Band(PALETTE[k], "".join(p), len(p)) for k, p in enumerate(parts) if p]
+
+
+class MandelbrotBase(ComponentBase):
+    preset: int = 0  # the index of the view in VIEWS: @bind to a <select>
+    view: View = VIEWS[0]
+    cols: int = 240  # the picture's width in cells: @bind to a <select>
+    max_iter: int = 250
+    bands: list[Band] = []
+    computing: bool = False
+    compute_ms: float = 0.0
+    render_ms: float = 0.0
+    __drawn_at: float = 0.0  # perf_counter() when the new picture was handed to Blazor
+
+    @property
+    def presets(self) -> list[str]:
+        return [v.name for v in VIEWS]
+
+    @property
+    def rows(self) -> int:
+        return self.cols * 2 // 3
+
+    async def OnInitializedAsync(self) -> None:
+        """Blazor renders the page (with "Computing...") at the first await, and again when the picture is ready."""
+        await self.redraw()
+
+    async def redraw(self) -> None:
+        """Computes the picture of the current view. Called after every change of the view, the size or the depth."""
+        self.computing = True
+        self.StateHasChanged()
+        # A WebAssembly app has a single thread, shared with the page: while Python computes, the browser cannot paint.
+        # A short sleep hands it back to the browser first, so that "Computing..." shows.
+        await asyncio.sleep(0.02)
+        start = time.perf_counter()
+        times = escape_times(self.view, self.cols, self.rows, self.max_iter)
+        self.compute_ms = (time.perf_counter() - start) * 1000
+        self.bands = bands_of(times, self.cols, self.rows, self.max_iter)
+        self.computing = False
+        self.__drawn_at = time.perf_counter()
+
+    def OnAfterRender(self, first_render: bool) -> None:
+        """Runs after Blazor has updated the page: the time since the picture was ready is what rendering it took (the
+        browser paints it afterwards)."""
+        if self.__drawn_at > 0.0:
+            self.render_ms = (time.perf_counter() - self.__drawn_at) * 1000
+            self.__drawn_at = 0.0
+            self.StateHasChanged()  # show the time (OnAfterRender of that render does nothing)
+
+    async def go_to_preset(self) -> None:
+        """Shows the view chosen in the <select>: @bind:after of the <select>, and the Reset button."""
+        self.view = VIEWS[self.preset]
+        await self.redraw()
+
+    async def zoom_into(self, tile: Tile) -> None:
+        """Centres the view on the tile and magnifies it ZOOM times."""
+        cell = self.view.width / self.cols
+        x = self.view.x + (tile.x + tile.width / 2 - self.cols / 2) * cell
+        y = self.view.y - (tile.y + tile.height / 2 - self.rows / 2) * cell
+        self.view = View(f"{x:.6f} {y:+.6f}i", x, y, self.view.width / ZOOM)
+        await self.redraw()
+
+    async def zoom_out(self) -> None:
+        self.view = View(self.view.name, self.view.x, self.view.y, self.view.width * ZOOM)
+        await self.redraw()
+
+    @property
+    def tiles(self) -> list[Tile]:
+        w, h = self.cols // TILES_X, self.rows // TILES_Y
+        return [Tile(i * w, j * h, w, h) for j in range(TILES_Y) for i in range(TILES_X)]
+
+    @property
+    def magnification(self) -> str:
+        return f"{VIEWS[0].width / self.view.width:,.0f}"
+
+    @property
+    def stats(self) -> str:
+        runs = sum(b.runs for b in self.bands)
+        return (f"{self.cols * self.rows:,} points of up to {self.max_iter} steps computed in {self.compute_ms:,.0f} ms; "
+                f"rendered as {len(self.bands)} SVG paths ({runs:,} rectangles) in {self.render_ms:,.0f} ms")

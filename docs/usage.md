@@ -27,6 +27,9 @@ dotnet run --project samples/WasmLife
 dotnet run --project samples/Desktop/WinForms             # or Wpf, WinUI; see samples/Desktop/README.md
 # The playground: write Typhon in a browser; the compiler, Roslyn and the program run there (Blazor WebAssembly)
 dotnet run --project samples/Playground                  # publish: static files, see samples/Playground/README.md
+# A Blazor WebAssembly app: Razor markup with Typhon code-behind, all of it running in the browser (localStorage, a
+# Mandelbrot set computed in Python)
+dotnet run --project samples/BlazorWasm                  # http://localhost:5090
 
 # 3. Python-style scripting with the typhon CLI (published with ReadyToRun: compiles about twice as fast)
 dotnet publish src/Typhon.Cli -c Release -r win-x64 -o tools/typhon    # linux-x64, osx-arm64, ...
@@ -119,6 +122,18 @@ nothing. The sample's README explains the interop.
 ```sh
 dotnet run --project samples/WasmLife          # development server: open http://localhost:5080
 dotnet publish samples/WasmLife -c Release     # static files in samples/WasmLife/bin/Release/net11.0/publish/wwwroot
+```
+
+[`samples/BlazorWasm`](../samples/BlazorWasm) is a standalone Blazor WebAssembly app with Typhon code-behind, the
+client-side counterpart of [`samples/BlazorApp`](../samples/BlazorApp): the components inherit Typhon classes as there,
+and the code runs in the browser. A service keeps a to-do list in `localStorage` through Blazor's JavaScript interop
+(synchronous under WebAssembly), and a page computes the Mandelbrot set in plain Python and draws it as SVG. `dotnet
+publish -c Release` trims it to static files (9.3 MB, 3.0 MB with Brotli); the sample's README covers the trim warnings
+Blazor hides by default and `TrimMode=full`.
+
+```sh
+dotnet run --project samples/BlazorWasm        # development server: open http://localhost:5090
+dotnet publish samples/BlazorWasm -c Release   # static files in samples/BlazorWasm/bin/Release/net11.0/publish/wwwroot
 ```
 
 ## Adding Typhon to any C# project

@@ -1,0 +1,22 @@
+@page "/"
+@inherits home.HomeBase
+
+<PageTitle>Typhon + Blazor WebAssembly</PageTitle>
+
+<h1>Blazor WebAssembly with a Typhon code-behind</h1>
+
+<p>
+    Each page is a <code>.razor</code> file for the markup and a <code>.ty</code> file for the logic: the component
+    inherits a Typhon class (<code>@@inherits counter.CounterBase</code>) and the markup uses its fields, properties
+    and methods. The browser downloaded the .NET runtime and this app's assembly once; from now on the Python code
+    runs here, on WebAssembly, and no server is involved.
+</p>
+
+<ul class="links">
+    @foreach (var link in links)
+    {
+        <li><a href="@link.href">@link.title</a>: @link.text</li>
+    }
+</ul>
+
+<p class="muted">Rendered in your browser at @rendered_at by @runtime (@platform).</p>

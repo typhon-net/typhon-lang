@@ -1,0 +1,64 @@
+@page "/mandelbrot"
+@inherits mandelbrot.MandelbrotBase
+
+<PageTitle>Mandelbrot</PageTitle>
+
+<h1>Mandelbrot</h1>
+
+<div class="row">
+    <label>
+        View
+        <select @bind="preset" @bind:after="go_to_preset" disabled="@computing">
+            @for (var i = 0; i < presets.Count; i++)
+            {
+                <option value="@i">@presets[i]</option>
+            }
+        </select>
+    </label>
+    <label>
+        Size
+        <select @bind="cols" @bind:after="redraw" disabled="@computing">
+            <option value="120">120 x 80</option>
+            <option value="180">180 x 120</option>
+            <option value="240">240 x 160</option>
+            <option value="360">360 x 240</option>
+        </select>
+    </label>
+    <label>
+        Steps
+        <select @bind="max_iter" @bind:after="redraw" disabled="@computing">
+            <option value="100">100</option>
+            <option value="250">250</option>
+            <option value="500">500</option>
+            <option value="1000">1000</option>
+        </select>
+    </label>
+    <button @onclick="zoom_out" disabled="@computing">Zoom out</button>
+    <button @onclick="go_to_preset" disabled="@computing">Reset</button>
+</div>
+
+<div class="fractal">
+    <svg viewBox="0 0 @cols @rows" shape-rendering="crispEdges" role="img" aria-label="The Mandelbrot set">
+        <rect width="@cols" height="@rows" fill="@mandelbrot.INSIDE" />
+        @foreach (var band in bands)
+        {
+            <path fill="@band.colour" d="@band.path" />
+        }
+        @foreach (var tile in tiles)
+        {
+            <rect class="tile" x="@tile.x" y="@tile.y" width="@tile.width" height="@tile.height"
+                  @onclick="() => zoom_into(tile)" />
+        }
+    </svg>
+    @if (computing)
+    {
+        <p class="computing">Computing...</p>
+    }
+</div>
+
+<p role="status">@view.name, magnified @(magnification)x</p>
+<p class="muted">@stats</p>
+<p class="muted">
+    Click the picture to zoom into that spot. Every point was computed by Python code (<code>fractal.ty</code>) running
+    in this browser tab on .NET's WebAssembly runtime.
+</p>

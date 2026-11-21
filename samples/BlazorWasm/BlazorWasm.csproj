@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk.BlazorWebAssembly">
+
+  <!--
+    A standalone Blazor WebAssembly app: the markup in *.razor files, the logic in *.ty files, all of it running in the
+    browser. The Blazor WebAssembly SDK compiles the Razor components, Typhon is added like in every sample.
+  -->
+  <PropertyGroup>
+    <TargetFramework>$(TyphonTargetFramework)</TargetFramework>
+    <TyphonTypeMode>strict</TyphonTypeMode>
+    <!-- fractal.ty has a text demo of its own for CPython: the app's entry point is the __main__ block of main.ty -->
+    <TyphonMainModule>main</TyphonMainModule>
+    <!-- index.html names the framework files with placeholders that the build fills in (fingerprints, import map) -->
+    <OverrideHtmlAssetPlaceholders>true</OverrideHtmlAssetPlaceholders>
+    <!-- the development server answers every page URL (/counter, /todos) with index.html, so reloading a page works -->
+    <StaticWebAssetSpaFallbackEnabled>true</StaticWebAssetSpaFallbackEnabled>
+    <!-- no culture data (ICU) to download: Python formats numbers and strings the same everywhere anyway -->
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" Version="11.0.0" />
+    <!-- the development server of `dotnet run` -->
+    <PackageReference Include="Microsoft.AspNetCore.Components.Gateway" Version="11.0.0" PrivateAssets="all" />
+  </ItemGroup>
+
+</Project>

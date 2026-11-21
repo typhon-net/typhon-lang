@@ -1,0 +1,66 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+"""The code-behind of Todos.razor: an injected service, a validated form model and computed views of the list."""
+from typing import Annotated
+from System.ComponentModel.DataAnnotations import Required, StringLength
+from Microsoft.AspNetCore.Components import ComponentBase, Inject
+from services.todo_store import Todo, TodoStore
+
+
+class TodoForm:
+    """The model of the <EditForm>: <DataAnnotationsValidator> checks the attributes in the annotations."""
+    title: Annotated[str, Required(ErrorMessage="Give the to-do a title."),
+                     StringLength(40, ErrorMessage="Keep it under 40 characters.")] = ""
+    urgent: bool = False
+
+
+class TodosBase(ComponentBase):
+    # [Inject]: Blazor sets the property from the app's services (main.ty registers TodoStore)
+    store: Annotated[TodoStore, Inject()]
+    form: TodoForm  # the <EditForm>'s model, a new one after each to-do added
+    search: str = ""  # @bind:event="oninput": updated on every keystroke
+    message: str = ""
+
+    def OnInitialized(self) -> None:
+        self.form = TodoForm()
+
+    def add(self) -> None:
+        """OnValidSubmit: only called when the form passed validation."""
+        todo = self.store.add(self.form.title, self.form.urgent)
+        self.message = f"Added '{todo.title}'."
+        self.form = TodoForm()
+
+    def remove(self, todo: Todo) -> None:
+        self.store.remove(todo)
+        self.message = f"Removed '{todo.title}'."
+
+    def clear_done(self) -> None:
+        n = self.store.clear_done()
+        self.message = f"Cleared {n} finished to-do{'' if n == 1 else 's'}."
+
+    def reset(self) -> None:
+        self.store.reset()
+        self.message = "Back to the starting list."
+
+    @property
+    def visible(self) -> list[Todo]:
+        """The to-dos matching the search, open ones first, urgent ones before the others."""
+        words = self.search.lower().split()
+        matching = [t for t in self.store.items if all(w in t.title.lower() for w in words)]
+        return sorted(matching, key=lambda t: (t.done, not t.urgent))
+
+    @property
+    def remaining(self) -> int:
+        return sum(1 for t in self.store.items if not t.done)
+
+    @property
+    def finished(self) -> int:
+        return len(self.store.items) - self.remaining
+
+    @property
+    def summary(self) -> str:
+        total = len(self.store.items)
+        if total == 0:
+            return "Nothing to do."
+        return f"{self.remaining} of {total} left"
