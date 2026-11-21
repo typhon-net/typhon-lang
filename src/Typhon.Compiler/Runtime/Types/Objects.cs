@@ -134,5 +134,7 @@ namespace Typhon.Runtime
     {
         public AssertionError() : base("assertion failed") { }
         public AssertionError(string message) : base(message) { }
+        /// <summary>A failed assert a == b in a test module: the values compared (assert 4 == 5), for the test report.</summary>
+        public string? Detail { get; set; }
     }
 }

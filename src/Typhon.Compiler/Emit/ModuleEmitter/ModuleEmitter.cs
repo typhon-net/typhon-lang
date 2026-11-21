@@ -329,9 +329,28 @@ namespace Typhon.Compiler.Emit
             _scopeKey = TypeInference.FuncKey(_m, null, "<main>");
             _w.Line(isAsync ? "public static async Task Main(string[] __argv)" : "public static void Main(string[] __argv)");
             scope.IsAsync = isAsync;
-            EmitFunctionBody(stmts, scope, moduleFields, locals, prologue: "global::Typhon.Stdlib.sys_.__init__(__argv);");
+            EmitFunctionBody(stmts, scope, moduleFields, locals, prologue: "global::Typhon.Stdlib.sys_.__init__(__argv);", epilogue: PytestEpilogue());
         }
 
+
+        /// <summary>
+        /// A test module (it imports pytest): after its body, `typhon test` runs its test_* functions and Test* classes, in
+        /// the order they are defined.
+        /// </summary>
+        string PytestEpilogue()
+        {
+            const string Meta = "Typhon.Stdlib.pytest";
+            if (!_staticTypes.Contains(Meta) && !_dotnetAliases.ContainsValue(Meta)) return null;
+            // (name, value): a decorated function's value (a test with marks, a fixture), null for a plain def or a Test class
+            var entries = new List<string>();
+            foreach (var s in _m.Ast.Body)
+            {
+                if (s is FunctionDef f && f.PyName != null) entries.Add($"({CsString(f.PyName)}, (object?){EmitName(new NameExpr { Id = f.PyName })})");
+                else if (s is FunctionDef pf && pf.Name.StartsWith("test")) entries.Add($"({CsString(pf.Name)}, null)");
+                else if (s is ClassDef c && c.Name.StartsWith("Test")) entries.Add($"({CsString(c.Name)}, null)");
+            }
+            return $"global::Typhon.Stdlib.pytest.__run_module(typeof({ModuleClassName(_m)}), {CsString(System.IO.Path.GetFileName(_path))}, new (string, object?)[] {{ {string.Join(", ", entries)} }});";
+        }
 
         void EmitDocComment(List<Stmt> body)
         {

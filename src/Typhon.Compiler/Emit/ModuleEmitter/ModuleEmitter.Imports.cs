@@ -131,6 +131,13 @@ namespace Typhon.Compiler.Emit
                         _dotnetAliases[l] = full;
                         continue;
                     }
+                    // an attribute by its short name, as C# writes it: from Xunit import Fact (FactAttribute) for @Fact
+                    if (!AnyArity(full, out _) && a.AsName == null && _r.TypeExists(full + "Attribute"))
+                    {
+                        _usingLines.Add($"using {modName};");
+                        if (!_usingNamespaces.Contains(modName)) _usingNamespaces.Add(modName);
+                        continue;
+                    }
                     if (!AnyArity(full, out _)) { Report(s, "TY0102", Severity.Error, $"cannot import name '{a.Name}' from '{modName}' (no such .NET type or namespace)"); continue; }
                     if (a.AsName != null && _r.TypeExists(full))
                     {

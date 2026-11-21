@@ -10,6 +10,7 @@
     <Project Path="samples/TyphonLib/TyphonLib.csproj" />
     <Project Path="samples/CSharpApp/CSharpApp.csproj" />
     <Project Path="samples/MinimalApi/MinimalApi.csproj" />
+    <Project Path="samples/XunitTests/XunitTests.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Typhon.Conformance.Tests/Typhon.Conformance.Tests.csproj" />

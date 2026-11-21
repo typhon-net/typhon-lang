@@ -1,0 +1,43 @@
+"""xUnit tests: a public class with [Fact] / [Theory] methods, as in C#."""
+from Xunit import Assert, Fact, Theory, InlineData
+from calculator import add, divide, Stack
+
+
+class CalculatorTests:
+    @Fact
+    def adds_two_numbers(self) -> None:
+        Assert.Equal(5, add(2, 3))
+
+    @Theory
+    @InlineData(1, 2, 3)
+    @InlineData(-1, 1, 0)
+    @InlineData(10, 20, 30)
+    def adds_many(self, a: int, b: int, expected: int) -> None:
+        Assert.Equal(expected, add(a, b))
+
+    @Fact
+    def divides(self) -> None:
+        Assert.Equal(2.5, divide(5.0, 2.0))
+
+    @Fact
+    def division_by_zero_raises(self) -> None:
+        try:
+            divide(1.0, 0.0)
+            Assert.Fail("no exception")
+        except ValueError as e:
+            Assert.Equal("division by zero", str(e))
+
+
+class StackTests:
+    @Fact
+    def push_and_pop(self) -> None:
+        s = Stack()
+        s.push(1)
+        s.push(2)
+        Assert.Equal(2, s.pop())
+        Assert.Equal(1, len(s))
+
+    @Fact
+    def pop_empty_raises(self) -> None:
+        s = Stack()
+        Assert.Throws[IndexError](lambda: s.pop())

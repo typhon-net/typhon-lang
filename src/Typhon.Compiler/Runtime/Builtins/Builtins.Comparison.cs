@@ -27,6 +27,7 @@ namespace Typhon.Runtime
         public static bool eq(object? a, object? b)
         {
             if (ReferenceEquals(a, b)) return true;
+            if (b is PyApprox) return b.Equals(a); // (Python tries the right operand's __eq__ when the left one has none for it)
             if (a is null || b is null) return false;
             if (IntLike(a, out var x) && IntLike(b, out var y)) return x == y;
             if (IsNumber(a) && IsNumber(b)) return Convert.ToDouble(a, Inv) == Convert.ToDouble(b, Inv);

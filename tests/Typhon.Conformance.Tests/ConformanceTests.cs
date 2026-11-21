@@ -65,6 +65,24 @@ public sealed class ConformanceTests(ITestOutputHelper output)
     }
 
     /// <summary>
+    /// typhon test runs a test module's tests like pytest: fixtures (also yield fixtures), parametrize, raises, approx,
+    /// skip and test classes pass, the failing test is reported with its assert line, the values compared and its output.
+    /// </summary>
+    [Fact]
+    public void PytestStyleTests()
+    {
+        var run = Suite.Run("dotnet", [Suite.Cli, "test", Path.Combine(Suite.RepoRoot, "tests", "pytest", "test_sample.ty")], TimeSpan.FromMinutes(2));
+        string stdout = Suite.Normalize(run.StdOut);
+        output.WriteLine(stdout);
+        Assert.True(run.ExitCode == 1, $"exit code {run.ExitCode}\n{run.StdErr}");
+        Assert.Contains("test_sample.ty ........Fs.. [100%]", stdout);
+        Assert.Contains(">   assert add(2, 2) == 5\nE   assert 4 == 5", stdout);
+        Assert.Contains("Captured stdout call", stdout);
+        Assert.Contains("FAILED test_sample.ty::test_fails - assert 4 == 5", stdout);
+        Assert.Matches(@"=+ 1 failed, 10 passed, 1 skipped in \d+\.\d\ds =+", stdout);
+    }
+
+    /// <summary>
     /// A cached build is used only while every source file is unchanged: run twice (the second from the cache), edit an
     /// imported module, and the next run must compile again and print the new result.
     /// </summary>

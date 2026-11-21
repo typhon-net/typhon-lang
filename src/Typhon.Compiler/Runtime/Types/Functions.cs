@@ -228,6 +228,8 @@ namespace Typhon.Runtime
         public abstract object? __call__(object?[] args);
         /// <summary>The parameter names, for keyword arguments (null: the function takes none by name).</summary>
         protected virtual string[]? __params__ => null;
+        /// <summary>The parameter names (for the test runner's fixtures), or null when unknown.</summary>
+        public string[]? __param_names__ => __params__;
         /// <summary>A call with keyword arguments: f(*args, **kwargs) on a function value.</summary>
         public virtual object? __call_kw__(object?[] args, IDictionary<string, object?>? kw)
         {

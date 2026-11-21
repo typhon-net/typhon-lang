@@ -498,7 +498,7 @@ namespace Typhon.Compiler.Emit
         }
 
         /// <summary>Emits "{ ... }" for a function-like body with Python scoping rules.</summary>
-        void EmitFunctionBody(List<Stmt> body, Scope scope, IEnumerable<string> excluded, LocalsResult locals = null, string prologue = null, Action extraPrologue = null)
+        void EmitFunctionBody(List<Stmt> body, Scope scope, IEnumerable<string> excluded, LocalsResult locals = null, string prologue = null, Action extraPrologue = null, string epilogue = null)
         {
             var saved = _scope;
             var savedEmpty = _emptyContainers;
@@ -556,6 +556,7 @@ namespace Typhon.Compiler.Emit
             }
             // parameters count as declared by the body's top block: rebinding one there to another type gives a new variable
             EmitBlockStatements(body, preDeclared: scope.Params);
+            if (epilogue != null) _w.Line(epilogue);
             // falling off the end returns None (C# warns about unreachable code where the end cannot be reached; that is off)
             if (scope.AsyncForm) _w.Line("return null;"); // the async form's body: falling off the end returns None
             if (scope.ReturnType != null && scope.ReturnType != "void" && !scope.IsGenerator)

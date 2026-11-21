@@ -94,6 +94,7 @@ namespace Typhon.Compiler.Emit
                 case GlobalStmt _: break;
                 case ImportStmt _: break;
                 case ImportFromStmt _: break;
+                case AssertStmt a when a.Msg == null && IsTestModule && _scope != null && AssertWithValues(a): break;
                 case AssertStmt a:
                     _w.Line($"if (!{Paren(Cond(a.Test))}) throw new global::Typhon.Runtime.AssertionError({(a.Msg != null ? "str(" + EmitExpr(a.Msg) + ")" : "\"assertion failed\"")});");
                     break;
@@ -183,6 +184,35 @@ namespace Typhon.Compiler.Emit
             if (r.Value == null) { _w.Line("return;"); return; }
             string rt = _scope?.ReturnType;
             _w.Line($"return {EmitExpr(r.Value, targetTyped: rt != null && rt != "dynamic" && rt != "void")};");
+        }
+
+        bool IsTestModule => _staticTypes.Contains("Typhon.Stdlib.pytest") || _dotnetAliases.ContainsValue("Typhon.Stdlib.pytest");
+
+        /// <summary>
+        /// assert a == b in a test module: both sides are evaluated once into temporaries, so a failure can report their
+        /// values as pytest does (assert 4 == 5). False (nothing emitted) when the operands' types are not known.
+        /// </summary>
+        bool AssertWithValues(AssertStmt a)
+        {
+            if (!(a.Test is CompareExpr ce) || ce.Ops.Count != 1) return false;
+            string lt = InferType(ce.Left), rt = InferType(ce.Comparators[0]);
+            if (lt == null || rt == null || lt == TypeInference.Pending || rt == TypeInference.Pending || lt == "void" || rt == "void") return false;
+            string l = NewTmp("left"), r = NewTmp("right");
+            _w.Open();
+            _w.Line($"{lt} {l} = {EmitExpr(ce.Left, targetTyped: true)};");
+            _w.Line($"{rt} {r} = {EmitExpr(ce.Comparators[0], targetTyped: true)};");
+            _renames[l] = l; _renames[r] = r;
+            SetType(l, lt); SetType(r, rt);
+            try
+            {
+                var cmp = new CompareExpr { Left = new NameExpr { Id = l, Line = a.Line, Col = a.Col }, Ops = ce.Ops, Comparators = { new NameExpr { Id = r, Line = a.Line, Col = a.Col } }, Line = a.Line, Col = a.Col };
+                string op = ce.Ops[0];
+                LineDirective(a); // (a failure's traceback points at the assert, not at the lines before it)
+                _w.Line($"if (!{Paren(Cond(cmp))}) throw new global::Typhon.Runtime.AssertionError(\"assertion failed\") {{ Detail = \"assert \" + repr((object?){l}) + {CsString(" " + op + " ")} + repr((object?){r}) }};");
+            }
+            finally { _renames.Remove(l); _renames.Remove(r); }
+            _w.Close();
+            return true;
         }
 
         void EmitRaise(RaiseStmt r)
