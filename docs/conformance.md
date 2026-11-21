@@ -18,7 +18,10 @@ python tests/conformance/update_expected.py                                  # r
 * CI ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)) runs the suite on Windows and Linux. The Native AOT pass
   can be started by hand.
 
-Status: 46 of 48 cases match CPython under `typhon run`, among them `threads_weakrefs` (threading, `_thread`, queue,
+Status: 50 of 52 cases match CPython under `typhon run`, among them `new_syntax` (lazy imports, PEP 701 f-strings,
+t-strings), `library_forms` (parenthesized with, type aliases, `property()`/`staticmethod()` in a class body, builtin types
+as values), `modules_as_values`, `runtime_subclasses` (classes deriving from `threading.Thread`, `UserWarning`,
+`io.RawIOBase`), `threads_weakrefs` (threading, `_thread`, queue,
 `concurrent.futures`, `contextvars`, weakref with `gc.collect()`, memoryview), `stdlib_core` and `stdlib_warnings`
 (builtin exceptions, `issubclass`/`dir`/`frozendict`, types, stat/errno, getopt, atexit, warnings, traceback),
 `stdlib_idioms` (renamed member imports, `del`, a method's first parameter under another name), `kwargs_spread`

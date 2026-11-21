@@ -146,8 +146,13 @@ deriving from .NET classes (a method overriding a .NET virtual or abstract membe
 [`samples/BlazorApp`](../samples/BlazorApp)),
 `if/elif/else`, `while`, `for` (counting loops over `range` compile to plain `for` loops; iterating a dict yields its
 keys), `for/while ... else`, `match`/`case` (PEP 634: literal, capture, sequence, mapping, class and or-patterns,
-guards), the walrus operator `:=`, `except A, B:` (PEP 758), starred unpacking (`a, *rest = xs`, `[*a, *b]`, `f(*args)`,
-`{**d1, **d2}`), slice assignment and `del xs[a:b]`, `del d[key]`/`del xs[i]`, `del obj.attr` and `del name` (see below
+guards), the walrus operator `:=`, `except A, B:` (PEP 758), `lazy import`/`lazy from ... import` (PEP 810; a compiled
+program binds its imports at start-up), f-strings with the same quotes inside replacement fields and nested fields in
+format specs (PEP 701, `f"{x:>{width}}"`), template strings (PEP 750, `t"..."` → `string.templatelib.Template`),
+`type Alias = ...` (PEP 695), parenthesized `with (a() as x, b() as y):`, `from math import log as _log`,
+starred unpacking (`a, *rest = xs`, `[*a, *b]`, `f(*args)`,
+`{**d1, **d2}`, `f(x, **opts)` / `obj.m(**opts)` / `Cls(**opts)` with a known callee: bound by parameter name at run
+time), slice assignment and `del xs[a:b]`, `del d[key]`/`del xs[i]`, `del obj.attr` and `del name` (see below
 for how they differ), `try/except/else/finally`,
 `raise`, `with` (Python's `__enter__`/`__exit__` protocol, an `__exit__` that returns true suppresses the exception; a
 .NET `IDisposable` such as a file → `using`), `contextlib` (`contextmanager`, `suppress`, `nullcontext`, `closing`),
@@ -270,8 +275,7 @@ they are 0, and `samefile` compares resolved paths). File descriptors (`os.open`
 `scandir`, `walk` (with pruning), `link`/`symlink`/`readlink`, `chmod` (only the read-only flag on Windows), `utime`,
 `umask`, `urandom`, `get_terminal_size` are there. In `io`: `BytesIO`, `StringIO`, `TextIOWrapper` (over any binary
 stream, universal newlines, `tell`/`seek` as byte offsets), `FileIO`, `BufferedReader`/`Writer`/`Random`/`RWPair`, the
-abstract bases for `isinstance` and subclassing (a subclass whose name starts with `_`, for now: a public class cannot
-derive from the runtime's internal types), `open`, `open_code`, `text_encoding`. `open(path, "w")` writes `\n` as
+abstract bases for `isinstance` and subclassing, `open`, `open_code`, `text_encoding`. `open(path, "w")` writes `\n` as
 `os.linesep`, like CPython. `sys` adds `modules` (the runtime's modules and `__main__` as module objects), `flags`,
 `version_info` (3.15, the language level), `implementation` (`name='typhon'`, `cache_tag=None`), `float_info`/`int_info`/
 `hash_info`, `byteorder`, `stdout.buffer` and the stream attributes (`encoding`, `fileno()`, `isatty()`, ...); `audit`,
@@ -310,5 +314,7 @@ module is not a value, so `getattr(builtins, name)` does not work). The builtins
 sorted; `dir()` without an argument is `[]`), `__import__` (a standard module, as the class holding its members),
 `frozendict` (CPython 3.15; `frozendict(a=1)` keyword form not yet), `sentinel`, `NotImplemented`, `Ellipsis` and
 `breakpoint` are provided; `compile`, `exec` and `eval` compile but raise `NotImplementedError` when called (there is no
-interpreter at run time). A Typhon class cannot derive from these runtime exception classes or module classes unless its
-name starts with `_` (the runtime's types are internal; a public class may not derive from them).
+interpreter at run time). A Typhon class deriving from one of the runtime's classes (`threading.Thread`, `UserWarning`,
+`io.RawIOBase`, directly or through other Typhon classes) is internal like the runtime's types, and so are the functions
+and members whose signatures use it; an override without annotations takes the base method's parameter and return
+types (`def readinto(self, b)`, `def run(self)`).
