@@ -11,7 +11,10 @@ using System.Runtime.Loader;
 
 namespace Typhon.Playground;
 
-/// <summary>How a run ended: the program's exit code (1 after an uncaught exception) and how long it ran.</summary>
+/// <summary>
+/// How a run ended: the program's exit code (1 after an uncaught exception) and how long the program itself ran (not
+/// loading it and its copy of Typhon.Runtime, nor writing the traceback of an uncaught exception).
+/// </summary>
 public sealed record RunResult(int ExitCode, TimeSpan Elapsed);
 
 /// <summary>
@@ -59,17 +62,18 @@ public sealed class PlaygroundRunner
                 stderr.WriteLine("typhon: no entry point (add top-level statements or an `if __name__ == \"__main__\":` block)");
                 return new RunResult(1, TimeSpan.Zero);
             }
-            int exitCode;
+            context.LoadRuntime(); // now, not at the program's first use of it: loading it is no part of the run time
+            Exception? uncaught = null;
             sw.Start();
             try
             {
                 var ret = entry.Invoke(null, entry.GetParameters().Length == 0 ? null : new object[] { Array.Empty<string>() });
                 if (ret is Task task) await task; // never block: in a browser the one thread is the page's
-                exitCode = Environment.ExitCode;
             }
-            catch (TargetInvocationException tie) when (tie.InnerException != null) { exitCode = Uncaught(tie.InnerException, asm, pdb, stderr); }
-            catch (Exception e) { exitCode = Uncaught(e, asm, pdb, stderr); } // from an awaited entry point
-            sw.Stop();
+            catch (TargetInvocationException tie) when (tie.InnerException != null) { uncaught = tie.InnerException; }
+            catch (Exception e) { uncaught = e; } // from an awaited entry point
+            sw.Stop(); // the traceback (reading the PDB) is written after: no part of the run time either
+            int exitCode = uncaught == null ? Environment.ExitCode : Uncaught(uncaught, asm, pdb, stderr);
             Console.Out.Flush();
             Console.Error.Flush();
             return new RunResult(exitCode, sw.Elapsed);
@@ -148,7 +152,11 @@ public sealed class PlaygroundRunner
     /// </remarks>
     sealed class RunContext(byte[] runtimeImage) : AssemblyLoadContext("typhon-run", isCollectible: false)
     {
-        protected override Assembly? Load(AssemblyName name) =>
-            name.Name == "Typhon.Runtime" ? LoadFromStream(new MemoryStream(runtimeImage)) : null;
+        Assembly? _runtime;
+
+        /// <summary>The run's copy of Typhon.Runtime, loaded once: the program binds to the same one.</summary>
+        public Assembly LoadRuntime() => _runtime ??= LoadFromStream(new MemoryStream(runtimeImage));
+
+        protected override Assembly? Load(AssemblyName name) => name.Name == "Typhon.Runtime" ? LoadRuntime() : null;
     }
 }

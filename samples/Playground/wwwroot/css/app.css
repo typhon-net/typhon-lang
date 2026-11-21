@@ -352,13 +352,16 @@ button:disabled, select:disabled { opacity: 0.6; cursor: progress; }
 
 .console .stderr { color: var(--error); }
 
-.exit, .note {
+.result, .note {
     margin: 6px 14px 0;
     font-size: 12px;
     color: var(--muted);
 }
 
-.exit.failed { color: var(--error); }
+/* compile and run times, exit code: "compiled in 286 ms (...) · ran in 6 ms · exit code 0" */
+.result { display: flex; flex-wrap: wrap; column-gap: 0.6em; }
+.result > span:not(:last-child)::after { content: "·"; margin-left: 0.6em; color: var(--muted); }
+.result .failed { color: var(--error); }
 
 .placeholder {
     padding: 4px 14px;

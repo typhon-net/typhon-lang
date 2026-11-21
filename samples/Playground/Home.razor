@@ -82,9 +82,24 @@
                             <div class="note">The output was cut off after @OutputCapture.Limit.ToString("N0") characters.</div>
                         }
                     }
-                    @if (_exitCode is int exit)
+                    @if (_compiled is { } compiled)
                     {
-                        <div class="exit @(exit == 0 ? "ok" : "failed")">exit code @exit</div>
+                        @* how long compiling and running took, and how it ended *@
+                        <div class="result">
+                            <span>@CompileTimes(compiled)</span>
+                            @if (_runTime is TimeSpan ran)
+                            {
+                                <span>ran in @Ms(ran)</span>
+                            }
+                            @if (_exitCode is int exit)
+                            {
+                                <span class="exit @(exit == 0 ? "ok" : "failed")">exit code @exit</span>
+                            }
+                            else if (!compiled.Success)
+                            {
+                                <span class="failed">@Errors(compiled)</span>
+                            }
+                        </div>
                     }
                     @if (_output == null && _diagnostics.Count == 0)
                     {
@@ -129,6 +144,10 @@
     List<PlaygroundDiagnostic> _diagnostics = new();
     OutputCapture? _output;
     int? _exitCode;
+    CompileResult? _compiled; // the last compile: its times, with the output
+    bool _warmUp; // it was the first one, which warms the compilers up
+    bool _translatedBefore, _emittedBefore;
+    TimeSpan? _runTime;
     string? _csharp;
     string[] _csharpLines = [];
     string[]? _csharpHtml; // the lines highlighted (highlight.js), once per compile
@@ -195,6 +214,8 @@
         _diagnostics.Clear();
         _output = null;
         _exitCode = null;
+        _compiled = null;
+        _runTime = null;
     }
 
     void Select(int i)
@@ -219,6 +240,8 @@
         _diagnostics = new();
         _output = null;
         _exitCode = null;
+        _compiled = null;
+        _runTime = null;
         _tab = 0;
         try
         {
@@ -227,19 +250,24 @@
 
             await ShowStatusAsync("Typhon → C#...");
             var result = compiler.Translate(_source, new PlaygroundOptions(_typeMode, _bigInts));
+            bool warmUp = !_translatedBefore;
+            _translatedBefore = true;
             await ShowCSharpAsync(result.CSharp);
             _diagnostics = result.Diagnostics.ToList();
             if (!result.HasErrors)
             {
                 await ShowStatusAsync("C# → IL (Roslyn)...");
                 compiler.Emit(result);
+                warmUp |= !_emittedBefore;
+                _emittedBefore = true;
                 _diagnostics = result.Diagnostics.ToList();
             }
-            string compiled = $"Typhon → C# {Ms(result.TranslateTime)}" + (result.EmitTime > TimeSpan.Zero ? $", C# → IL {Ms(result.EmitTime)}" : "");
+            // the times go with the output (and the diagnostics); the toolbar keeps to what is going on
+            _compiled = result;
+            _warmUp = warmUp;
             if (!result.Success)
             {
-                int errors = result.Diagnostics.Count(d => d.IsError);
-                SetStatus($"{errors} error{(errors == 1 ? "" : "s")} ({compiled})", error: true);
+                SetStatus(Errors(result) + ".", error: true);
                 return;
             }
 
@@ -248,7 +276,8 @@
             var run = await runner.RunAsync(result, capture.Out, capture.Err, _stdin);
             _output = capture;
             _exitCode = run.ExitCode;
-            SetStatus($"{compiled}, ran in {Ms(run.Elapsed)}", error: run.ExitCode != 0);
+            _runTime = run.Elapsed;
+            SetStatus(run.ExitCode == 0 ? "Done." : $"Exit code {run.ExitCode}.", error: run.ExitCode != 0);
         }
         catch (Exception e)
         {
@@ -333,7 +362,16 @@
     static string Where(PlaygroundDiagnostic d) =>
         d.Line > 0 ? $"line {d.Line}, col {d.Column}" : d.CSharpLine > 0 ? "generated C#" : PlaygroundCompiler.FileName;
 
-    static string Ms(TimeSpan t) => t.TotalMilliseconds >= 10_000 ? $"{t.TotalSeconds:0.0} s" : $"{t.TotalMilliseconds:0} ms";
+    static string Ms(TimeSpan t) => t.TotalMilliseconds >= 1000 ? $"{t.TotalSeconds:0.0} s" : $"{t.TotalMilliseconds:0} ms";
+
+    /// <summary>"compiled in 286 ms (Typhon → C# 109 ms, C# → IL 177 ms)"; the first compile includes warming up.</summary>
+    string CompileTimes(CompileResult r)
+    {
+        string steps = $"Typhon → C# {Ms(r.TranslateTime)}" + (r.EmitTime > TimeSpan.Zero ? $", C# → IL {Ms(r.EmitTime)}" : "");
+        return $"compiled in {Ms(r.TranslateTime + r.EmitTime)} ({(_warmUp ? "first compile, includes warm-up: " : "")}{steps})";
+    }
+
+    static string Errors(CompileResult r) => r.Diagnostics.Count(d => d.IsError) is var n && n == 1 ? "1 error" : $"{n} errors";
 
     // sharing: the program travels in the URL's fragment, which never reaches a server
     async Task ShareAsync()

@@ -1,6 +1,7 @@
 // Copyright (c) 2026 The Typhon contributors.
 // Licensed under the MIT License. See LICENSE file in the project root for full license information.
 
+using System.Diagnostics;
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
 using Typhon.Playground;
@@ -103,6 +104,48 @@ public sealed class PlaygroundTests(PlaygroundFixture fixture) : IClassFixture<P
                            "  File \"main.ty\", line 6, in main",
                            "  File \"main.ty\", line 2, in divide",
                            "DivideByZeroException: division by zero"), ran.Stderr);
+    }
+
+    /// <summary>Takes its time over a traceback, 50 ms a line, and notes when it began and ended.</summary>
+    sealed class SlowTracebackWriter : StringWriter
+    {
+        public long Started, Ended; // Stopwatch timestamps
+
+        public override void WriteLine(string? value)
+        {
+            if (Started == 0 && value?.StartsWith("Traceback (most recent call last):") == true) Started = Stopwatch.GetTimestamp();
+            if (Started != 0) Thread.Sleep(50);
+            base.WriteLine(value);
+            if (Started != 0) Ended = Stopwatch.GetTimestamp();
+        }
+    }
+
+    [Fact]
+    public async Task TheRunTimeLeavesOutTheTraceback()
+    {
+        // Writing the traceback (reading the PDB for its lines) comes after the program ran: the run time and the
+        // traceback's time are apart, so together they fit in the time the whole call took. The traceback is made slow
+        // (half a second): if the run time included it, they would add up to more than the whole.
+        var compiled = fixture.Compiler.Compile(Lines(
+            "def down(n: int) -> int:",
+            "    if n == 0:",
+            "        raise ValueError(\"bottom\")",
+            "    return down(n - 1)",
+            "",
+            "",
+            "print(down(5))"));
+        Assert.True(compiled.Success, string.Join("\n", compiled.Diagnostics));
+        var stderr = new SlowTracebackWriter();
+        var total = Stopwatch.StartNew();
+        var result = await fixture.Runner.RunAsync(compiled, new StringWriter(), stderr);
+        total.Stop();
+        var traceback = Stopwatch.GetElapsedTime(stderr.Started, stderr.Ended);
+        Assert.Equal(1, result.ExitCode);
+        Assert.StartsWith("Traceback (most recent call last):\n", stderr.ToString().ReplaceLineEndings("\n"));
+        Assert.EndsWith(": bottom\n", stderr.ToString().ReplaceLineEndings("\n"));
+        Assert.True(traceback >= TimeSpan.FromMilliseconds(400), $"traceback {traceback}");
+        Assert.True(result.Elapsed + traceback <= total.Elapsed + TimeSpan.FromMilliseconds(1),
+                    $"ran {result.Elapsed}, traceback {traceback}, the whole call {total.Elapsed}");
     }
 
     [Fact]

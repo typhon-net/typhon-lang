@@ -13,12 +13,13 @@ python3 -m http.server 8080 -d out/playground/wwwroot          # or any other we
 No workload is needed (no `wasm-tools`): the .NET SDK builds and publishes it as it is.
 
 The page has an editor (syntax highlighting, Tab indents, Enter keeps the indentation and indents after a colon,
-Ctrl+Enter runs), a few
-example programs (classes, generators, comprehensions, a dataclass, an f-string table, .NET interop, a traceback,
-`dynamic`, big integers, `input()`), the type mode and big-int options of the `typhon` command, an output pane with the
-diagnostics (click one to go to its line, or to its line in the generated C#), stdout, stderr and the exit code, a
-**Generated C#** tab, and the time each step took. **Copy link** puts the program into the page's URL (after `#`, so
-it never reaches a server); a link opens with the program, which runs when you press Run.
+Ctrl+Enter runs), a few example programs (classes, generators, comprehensions, a dataclass, an f-string table, .NET
+interop, a traceback, `dynamic`, big integers, `input()`), the type mode and big-int options of the `typhon` command,
+an output pane with the diagnostics (click one to go to its line, or to its line in the generated C#), stdout, stderr,
+and a line with the times and the exit code (`compiled in 286 ms (Typhon → C# 109 ms, C# → IL 177 ms) · ran in 6 ms ·
+exit code 0`; the first compile after the page loads says it includes warming up the compilers, which takes seconds),
+and a **Generated C#** tab. **Copy link** puts the program into the page's URL (after `#`, so it never reaches a
+server); a link opens with the program, which runs when you press Run.
 
 ## How it works
 
@@ -58,7 +59,9 @@ it never reaches a server); a link opens with the program, which runs when you p
   they were written (`Console.SetOut` / `SetError`), `input()` reads the stdin box (`Console.SetIn`). An uncaught
   exception prints the traceback `typhon run` prints, with the lines read from the program's portable PDB by the
   playground itself (the browser's runtime loads no symbols). `sys.exit` raises `SystemExit`, as in Python: it ends only
-  the program, with its exit code (`finally` blocks run, `except Exception` does not catch it).
+  the program, with its exit code (`finally` blocks run, `except Exception` does not catch it). The run time is the
+  program's own: the program and its runtime are loaded before the clock starts, and the traceback is written after
+  it stops.
 * **The page** (`Home.razor`) shows each step's status and lets the browser paint before the next one, since
   compiling blocks the page's only thread. It compiles and runs the first example as soon as the references are
   loaded: the first compile after loading is the slow one, and the next ones are fast.
