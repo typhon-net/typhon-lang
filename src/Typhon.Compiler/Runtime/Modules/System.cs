@@ -87,7 +87,22 @@ namespace Typhon.Stdlib
             /// <summary>posixpath.join: an absolute part restarts the path; join(d, "") ends in a separator.</summary>
             public static string join(params string[] parts)
             {
-                if (OperatingSystem.IsWindows() || parts.Length == 0) return System.IO.Path.Combine(parts);
+                if (parts.Length == 0) return System.IO.Path.Combine(parts);
+                if (OperatingSystem.IsWindows())
+                {
+                    // ntpath.join: a part with a drive or a root starts over (a rooted part keeps the drive), and an empty last
+                    // part leaves a trailing separator (join(d, "*", "") is the pattern of d's subdirectories)
+                    string w = parts[0];
+                    for (int i = 1; i < parts.Length; i++)
+                    {
+                        string b = parts[i];
+                        if (b.Length >= 2 && b[1] == ':') w = b;
+                        else if (b.StartsWith("\\") || b.StartsWith("/")) w = (w.Length >= 2 && w[1] == ':' ? w.Substring(0, 2) : "") + b;
+                        else if (w.Length == 0 || w.EndsWith("\\") || w.EndsWith("/") || w.EndsWith(":")) w += b;
+                        else w += "\\" + b;
+                    }
+                    return w;
+                }
                 string path = parts[0];
                 for (int i = 1; i < parts.Length; i++)
                 {
@@ -114,7 +129,12 @@ namespace Typhon.Stdlib
             public static string relpath(string p, string? start = null)
             {
                 if (p.Length == 0) throw new ArgumentException("no path specified");
-                if (OperatingSystem.IsWindows()) return System.IO.Path.GetRelativePath(start ?? ".", p);
+                if (OperatingSystem.IsWindows())
+                {
+                    // (ntpath.relpath normalizes: no trailing separator)
+                    string r = System.IO.Path.GetRelativePath(start ?? ".", p);
+                    return r.Length > 1 ? r.TrimEnd('\\', '/') : r;
+                }
                 var from = System.IO.Path.GetFullPath(start ?? ".").Split('/', StringSplitOptions.RemoveEmptyEntries);
                 var to = System.IO.Path.GetFullPath(p).Split('/', StringSplitOptions.RemoveEmptyEntries);
                 int common = 0;

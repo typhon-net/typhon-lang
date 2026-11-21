@@ -30,7 +30,7 @@ Yes.  Third goes here.
 StatisticsError: variance requires at least two data points
 StatisticsError: variance requires at least two data points
 ValueError: mean requires at least one data point
-StatisticsError: ('No negative inputs allowed', -2)
+StatisticsError: True
 (2.5, 1.8027756377319946) 2.5 2.138
 b'VHlwaG9uIAD//iBiaW5hcnk=' True True b'hi?>'
 b'-__-' b'\xfb\xff\xfe' b'*!8='

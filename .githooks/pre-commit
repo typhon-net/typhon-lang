@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Typhon pre-commit hook: the checks CI starts with, before the commit exists.
+#   1. the solution builds as on CI (dotnet build Typhon.slnx -c Release)
+#   2. the conformance cases this commit adds or changes print what their staged expected output says, under the
+#      CPython CI uses, and those outputs hold no absolute temp or home paths (they differ between machines and OSes)
+# The full conformance suite runs in the pre-push hook. Skip once: git commit --no-verify, or TYPHON_SKIP_HOOKS=1.
+# Enable once per clone: git config core.hooksPath .githooks
+set -uo pipefail
+[ "${TYPHON_SKIP_HOOKS:-}" = "1" ] && exit 0
+cd "$(git rev-parse --show-toplevel)" || exit 1
+. .githooks/common.sh
+
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
+[ -z "$staged" ] && exit 0
+
+if echo "$staged" | grep -qE '\.(cs|ty|csproj|props|targets|slnx)$|^src/|^tests/|^samples/'; then
+    dotnet=$(typhon_dotnet) || exit 1
+    echo "pre-commit: building Typhon.slnx (Release) ..."
+    if ! out=$("$dotnet" build Typhon.slnx -c Release -nologo -v q 2>&1); then
+        echo "$out" | grep -E ' error |error\(s\)' | sort -u | head -30
+        echo "pre-commit: the build fails; fix it or commit with --no-verify" >&2
+        exit 1
+    fi
+fi
+
+cases=$(echo "$staged" | sed -n 's#^tests/conformance/\(cases\|expected\)/\([^/]*\)\.\(ty\|out\)$#\2#p' | sort -u)
+if [ -n "$cases" ]; then
+    python=$(typhon_python)
+    echo "pre-commit: checking the expected output of: $(echo $cases)"
+    if ! "$python" .githooks/check_expected.py $cases; then
+        echo "pre-commit: regenerate with: $python tests/conformance/update_expected.py <case>" >&2
+        exit 1
+    fi
+fi
+exit 0

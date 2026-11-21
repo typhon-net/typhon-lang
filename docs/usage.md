@@ -28,6 +28,8 @@ tools/typhon/typhon test tests/pytest                     # pytest-style tests (
 
 # 4. Conformance tests: every case must print exactly what CPython prints
 dotnet test tests/Typhon.Conformance.Tests
+git config core.hooksPath .githooks          # once per clone: CI's checks before each commit (build) and push (suite)
+uv venv .venv --python 3.15 && uv pip install --python .venv/bin/python numpy   # the CPython CI compares with
 
 # 5. Benchmarks: the same files under CPython (+ NumPy) and Typhon, time and peak RAM
 python -m venv .venv; .venv\Scripts\pip install numpy     # once, for the CPython side
@@ -35,6 +37,12 @@ python -m venv .venv; .venv\Scripts\pip install numpy     # once, for the CPytho
 ```
 
 ## Tests
+
+**Before a commit and a push.** With `git config core.hooksPath .githooks`, the pre-commit hook builds the solution as
+CI does and checks the conformance cases a commit adds or changes: their expected output must be what CPython prints
+(the version CI uses: the repo's `.venv`, or `TYPHON_CPYTHON`) and must hold no absolute temp or home paths, which differ
+between machines and operating systems. The pre-push hook runs the whole conformance suite, as CI does, unless the
+pushed commits change only documentation. `--no-verify` or `TYPHON_SKIP_HOOKS=1` skips them.
 
 **pytest style.** `typhon test [file.ty | dir ...]` runs the tests of `test_*.ty` / `*_test.ty` files (below the current
 directory by default): module-level `test*` functions and the `test*` methods of `Test*` classes, in the order they are

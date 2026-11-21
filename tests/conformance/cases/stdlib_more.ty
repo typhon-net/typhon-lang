@@ -9,6 +9,7 @@ import csv
 import fnmatch
 import glob
 import os
+import re
 import shutil
 import statistics
 import tempfile
@@ -72,7 +73,8 @@ except ValueError as e:
 try:
     statistics.geometric_mean([1, -2])
 except statistics.StatisticsError as e:
-    print("StatisticsError:", e)
+    # (the message's form changed in CPython 3.15: only its subject is compared)
+    print("StatisticsError:", "negative" in str(e))
 
 
 def spread(xs: list[float]) -> tuple[float, float]:
@@ -179,8 +181,10 @@ for name in ["a.txt", "b.txt", "c.py", "data1.csv", "data2.csv", "[x].txt", ".do
 
 
 def slash(text: str) -> str:
-    """Paths printed the same on every platform: BASE for the temporary folder, / as the separator."""
-    return text.replace(repr(base)[1:-1], "BASE").replace(base, "BASE").replace("\\\\", "/").replace("\\", "/")
+    """Paths printed the same on every platform: / as the separator, BASE for the temporary folder (whatever form of it a
+    message uses: Windows names it both C:\\Users\\RUNNER~1\\... and C:\\Users\\runneradmin\\...)."""
+    text = text.replace("\\\\", "/").replace("\\", "/")
+    return re.sub(r"[A-Za-z]?:?[^' ]*/(src|dst|tree)(?=[/'])", r"BASE/\1", text)
 
 
 def rel(paths: list[str]) -> list[str]:
@@ -193,7 +197,7 @@ print(rel(glob.glob(os.path.join(src, "**", "*.txt"), recursive=True)), rel(glob
 print(rel(glob.glob(os.path.join(src, "**"), recursive=True)))
 print(rel(glob.glob(os.path.join(src, "*.txt"), include_hidden=True)), rel(glob.glob(os.path.join(src, ".*"))))
 print(rel(glob.glob(os.path.join(src, glob.escape("[x].txt")))), glob.escape("a*b?[c]"), glob.glob(os.path.join(src, "nomatch*")))
-print(sorted(glob.glob("*.csv", root_dir=src)), sorted(glob.glob("**/*.txt", root_dir=src, recursive=True)), rel(list(glob.iglob(os.path.join(src, "sub", "*")))))
+print(sorted(glob.glob("*.csv", root_dir=src)), sorted(slash(p) for p in glob.glob("**/*.txt", root_dir=src, recursive=True)), rel(list(glob.iglob(os.path.join(src, "sub", "*")))))
 print(fnmatch.fnmatch("data1.csv", "data[0-9].csv"), fnmatch.fnmatchcase("A.TXT", "*.txt"), fnmatch.filter(["a.py", "b.txt", "c.py"], "*.py"))
 
 dst = os.path.join(base, "dst")
