@@ -215,3 +215,26 @@ traceback of the `.ty` frames without CPython's `~~^^` markers; `%(lineno)d` of 
 block is the line in the `try` block that raised (a .NET stack-walk limit); keyword arguments (`exc_info=`, `extra=`)
 take at most two message arguments; `%(thread)d` is the managed thread id. Handler, Formatter and Filter cannot be
 subclassed; `logging.config`, `logging.handlers` and `LoggerAdapter` are not provided.
+
+**os, os.path, sys and io** behave as CPython's on the platform the program runs on (`os.name` `'posix'` or `'nt'`,
+`os.sep`, path rules, errors such as `[Errno 2] No such file or directory: 'x'` or `[WinError 2] ...`). `os.environ` is a
+dict over the process environment read at start-up (setting or deleting a key changes the environment; `putenv` does
+not change `os.environ`, as in CPython). `os.stat`/`lstat`/`fstat` return an `os.stat_result` with index access; inode,
+device, link count and owner come from `statx` on Linux and from the file index and volume serial on Windows (elsewhere
+they are 0, and `samefile` compares resolved paths). File descriptors (`os.open`/`read`/`write`/`lseek`/`close`/`fdopen`,
+`f.fileno()`) are numbers in a table of .NET streams, not the OS's descriptors. `os.path` is a port of `posixpath`/`ntpath`;
+`scandir`, `walk` (with pruning), `link`/`symlink`/`readlink`, `chmod` (only the read-only flag on Windows), `utime`,
+`umask`, `urandom`, `get_terminal_size` are there. In `io`: `BytesIO`, `StringIO`, `TextIOWrapper` (over any binary
+stream, universal newlines, `tell`/`seek` as byte offsets), `FileIO`, `BufferedReader`/`Writer`/`Random`/`RWPair`, the
+abstract bases for `isinstance` and subclassing (a subclass whose name starts with `_`, for now: a public class cannot
+derive from the runtime's internal types), `open`, `open_code`, `text_encoding`. `open(path, "w")` writes `\n` as
+`os.linesep`, like CPython. `sys` adds `modules` (the runtime's modules and `__main__` as module objects), `flags`,
+`version_info` (3.15, the language level), `implementation` (`name='typhon'`, `cache_tag=None`), `float_info`/`int_info`/
+`hash_info`, `byteorder`, `stdout.buffer` and the stream attributes (`encoding`, `fileno()`, `isatty()`, ...); `audit`,
+`settrace` and `setprofile` are accepted and do nothing. Approximations: `sys.exc_info()` and `sys.exception()` are the
+last exception raised on the thread (inside an `except` block that is the one being handled; outside it is not reset to
+`None`), with `None` for the traceback; `sys._getframe()` is built from the .NET stack (the `.ty` file, line and
+function name of each frame; `f_locals` is empty and `f_globals` holds only `__name__` and `__file__`); `sys.excepthook`
+can be called but Typhon's own handler reports uncaught exceptions; `io.BytesIO.getbuffer()` is a copy (a `bytearray`),
+not a view; `io.UnsupportedOperation` is an `OSError` but not a `ValueError`; `open(path, "rb")` is an
+`io.BufferedIOBase` (not specifically a `BufferedReader`).

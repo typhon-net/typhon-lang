@@ -1,0 +1,359 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+"""Conformance: os (environ, stat, file descriptors, scandir/walk, files and directories), os.path, sys and io."""
+
+import io
+import os
+import shutil
+import sys
+import tempfile
+
+base = tempfile.mkdtemp()
+
+
+def rel(p: str) -> str:
+    """A path relative to the test directory, with / separators (the same on every platform)."""
+    return os.path.relpath(p, base).replace(os.sep, "/")
+
+
+# ── os: names and constants ──
+print(os.name in ("posix", "nt"), os.sep in ("/", "\\"), os.altsep in (None, "/"), os.pathsep in (":", ";"))
+print(os.curdir, os.pardir, os.extsep, os.linesep in ("\n", "\r\n"), os.devnull in ("/dev/null", "nul"))
+print(os.SEEK_SET, os.SEEK_CUR, os.SEEK_END, os.O_RDONLY, os.O_WRONLY, os.O_RDWR, os.F_OK)
+print(os.O_CREAT != 0, os.O_EXCL != 0, os.O_TRUNC != 0, os.O_APPEND != 0)
+print(os.getpid() > 0, os.cpu_count() > 0, len(os.urandom(8)), os.strerror(2))
+print(os.getcwd() == os.fsdecode(os.getcwdb()))
+
+# ── os.environ ──
+os.environ["TYPHON_CONF_A"] = "alpha"
+print(os.environ["TYPHON_CONF_A"], "TYPHON_CONF_A" in os.environ, os.getenv("TYPHON_CONF_A"))
+print(os.environ.get("TYPHON_CONF_MISSING"), os.environ.get("TYPHON_CONF_MISSING", "fallback"), os.getenv("TYPHON_CONF_MISSING", "dflt"))
+print(os.environ.setdefault("TYPHON_CONF_B", "beta"), os.environ.setdefault("TYPHON_CONF_B", "other"))
+snapshot = os.environ.copy()
+print(snapshot["TYPHON_CONF_B"], len(snapshot) == len(os.environ), "TYPHON_CONF_A" in list(os.environ.keys()))
+print(sorted(k for k, v in os.environ.items() if k.startswith("TYPHON_CONF_")))
+del os.environ["TYPHON_CONF_A"]
+print("TYPHON_CONF_A" in os.environ, os.environ.pop("TYPHON_CONF_B"), os.environ.pop("TYPHON_CONF_B", "gone"))
+os.putenv("TYPHON_CONF_C", "c")
+print("TYPHON_CONF_C" in os.environ)
+try:
+    print(os.environ["TYPHON_CONF_MISSING"])
+except KeyError as e:
+    print("KeyError", e)
+os.environ["TYPHON_CONF_HOME"] = "/home/typhon"
+print(os.path.expandvars("$TYPHON_CONF_HOME/x"), os.path.expandvars("${TYPHON_CONF_HOME}/y"), os.path.expandvars("$TYPHON_CONF_UNSET/z"))
+print(os.path.expanduser("~") != "~", os.path.expanduser("abc"))
+
+# ── paths as arguments ──
+print(os.fspath("a/b"), os.fspath(b"a/b"), os.fsencode("hé"), os.fsdecode(b"h\xc3\xa9"), os.fsdecode("same"))
+
+# ── files: stat, utime, chmod, links ──
+data = os.path.join(base, "data.txt")
+with open(data, "w", newline="") as f:
+    f.write("hello\n")
+st = os.stat(data)
+print(st.st_size, st[6], len(st), st.st_mode & 0o170000 == 0o100000, st.st_nlink, repr(st).startswith("os.stat_result(st_mode="))
+print(os.stat(base).st_mode & 0o170000 == 0o040000, os.lstat(data).st_size, os.path.getsize(data))
+os.utime(data, (1000000000, 1100000000))
+st = os.stat(data)
+print(st.st_mtime, st.st_mtime_ns, st[8], st.st_atime, os.path.getmtime(data), os.path.getatime(data))
+os.utime(data, ns=(1200000000000000000, 1300000000500000000))
+print(os.stat(data).st_mtime_ns, os.stat(data).st_atime_ns)
+os.chmod(data, 0o444)
+print(os.stat(data).st_mode & 0o200 == 0)
+os.chmod(data, 0o666)
+print(os.stat(data).st_mode & 0o200 != 0)
+hard = os.path.join(base, "hard.txt")
+os.link(data, hard)
+print(os.stat(data).st_nlink, os.path.samefile(data, hard), os.path.samestat(os.stat(data), os.stat(hard)))
+print(os.path.samefile(data, os.path.join(base, ".", "data.txt")), os.path.samefile(data, base), os.path.islink(data))
+print(os.stat(data).st_ino == os.stat(hard).st_ino, os.stat(data).st_dev == os.stat(hard).st_dev)
+try:
+    os.stat(os.path.join(base, "missing.txt"))
+except FileNotFoundError:
+    print("FileNotFoundError from stat")
+try:
+    os.readlink(data)
+except OSError:
+    print("OSError from readlink of a file")
+
+# ── file descriptors ──
+blob = os.path.join(base, "blob.bin")
+fd = os.open(blob, os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
+print(os.write(fd, b"abcdef"), os.fstat(fd).st_size)
+os.close(fd)
+fd = os.open(blob, os.O_RDWR)
+print(os.read(fd, 2), os.lseek(fd, 0, os.SEEK_CUR), os.lseek(fd, -1, os.SEEK_END), os.read(fd, 10), os.read(fd, 10))
+os.lseek(fd, 0, os.SEEK_SET)
+os.write(fd, b"XY")
+os.close(fd)
+fd = os.open(blob, os.O_WRONLY | os.O_APPEND)
+os.write(fd, b"!")
+os.close(fd)
+with open(blob, "rb") as bf:
+    print(bf.read())
+try:
+    os.close(fd)
+except OSError:
+    print("OSError from closing a closed descriptor")
+try:
+    os.open(blob, os.O_WRONLY | os.O_CREAT | os.O_EXCL)
+except OSError:
+    print("OSError from O_EXCL on an existing file")
+try:
+    os.open(os.path.join(base, "nope.bin"), os.O_RDONLY)
+except FileNotFoundError:
+    print("FileNotFoundError from os.open")
+fd = os.open(blob, os.O_RDONLY)
+with os.fdopen(fd, "rb") as fo:
+    print(fo.read(3))
+fd = os.open(data, os.O_RDONLY)
+with os.fdopen(fd) as ft:
+    print(repr(ft.read()))
+
+# ── directories ──
+os.makedirs(os.path.join(base, "tree", "a", "deep"))
+os.makedirs(os.path.join(base, "tree", "a"), exist_ok=True)
+os.mkdir(os.path.join(base, "tree", "b"))
+os.mkdir(os.path.join(base, "tree", "skip"))
+for name in ["tree/one.txt", "tree/a/two.txt", "tree/a/deep/three.txt", "tree/b/four.txt", "tree/skip/five.txt"]:
+    with open(os.path.join(base, *name.split("/")), "w") as f:
+        f.write(name)
+try:
+    os.mkdir(os.path.join(base, "tree", "a"))
+except OSError:
+    print("OSError from mkdir of an existing directory")
+try:
+    os.makedirs(os.path.join(base, "tree"))
+except OSError:
+    print("OSError from makedirs")
+try:
+    os.mkdir(os.path.join(base, "no", "parent"))
+except FileNotFoundError:
+    print("FileNotFoundError from mkdir without a parent")
+tree = os.path.join(base, "tree")
+print(sorted(os.listdir(tree)))
+with os.scandir(tree) as entries:
+    for e in sorted(entries, key=lambda x: x.name):
+        print(e.name, rel(e.path), e.is_dir(), e.is_file(), e.is_symlink(), e.stat().st_size if e.is_file() else "-")
+walked = []
+for dirpath, dirnames, filenames in os.walk(tree):
+    if "skip" in dirnames:
+        dirnames.remove("skip")
+    walked.append((rel(dirpath), sorted(dirnames), sorted(filenames)))
+print(sorted(walked))
+print(sorted(rel(d) for d, _, _ in os.walk(tree, topdown=False)))
+bottom_up = [rel(d) for d, _, _ in os.walk(os.path.join(tree, "a"), topdown=False)]
+print(bottom_up)
+os.rename(os.path.join(tree, "one.txt"), os.path.join(tree, "uno.txt"))
+os.replace(os.path.join(tree, "uno.txt"), os.path.join(tree, "b", "four.txt"))
+with open(os.path.join(tree, "b", "four.txt")) as f:
+    print(f.read(), sorted(os.listdir(tree)))
+try:
+    os.rmdir(os.path.join(tree, "a"))
+except OSError:
+    print("OSError from rmdir of a non-empty directory")
+os.remove(os.path.join(tree, "a", "deep", "three.txt"))
+os.unlink(os.path.join(tree, "a", "two.txt"))
+os.removedirs(os.path.join(tree, "a", "deep"))
+print(sorted(os.listdir(tree)), os.path.exists(os.path.join(tree, "a")))
+try:
+    os.remove(os.path.join(tree, "a"))
+except FileNotFoundError:
+    print("FileNotFoundError from remove")
+
+# ── os.path ──
+print(os.path.join("a", "b", "c").replace(os.sep, "/"), os.path.join("a", "").replace(os.sep, "/"), os.path.split(os.path.join("a", "b")))
+print(os.path.splitext("archive.tar.gz"), os.path.splitext(".bashrc"), os.path.splitext("dir.d/file"), os.path.splitext("x."))
+print(os.path.basename(os.path.join("a", "b.txt")), os.path.dirname(os.path.join("a", "b.txt")), os.path.basename("a/"), os.path.splitdrive("a/b"))
+print(os.path.normpath("a/./b/../c//d").replace(os.sep, "/"), os.path.normpath("../x/..").replace(os.sep, "/"), os.path.normpath(""))
+print(os.path.commonpath([os.path.join("a", "b", "c"), os.path.join("a", "b", "d")]).replace(os.sep, "/"), os.path.commonprefix(["interstate", "internet"]))
+print(os.path.normcase("abc"), os.path.isabs(base), os.path.isabs("rel"), os.path.isabs(os.path.abspath("rel")))
+print(rel(os.path.join(base, "tree", "b")), os.path.relpath(base, base), os.path.exists(base), os.path.lexists(data))
+print(os.path.isfile(data), os.path.isdir(data), os.path.isdir(base), os.path.ismount(base), os.path.exists(os.path.join(base, "nope")))
+print(os.path.curdir, os.path.pardir, os.path.sep == os.sep, os.path.extsep)
+try:
+    os.path.commonpath([])
+except ValueError:
+    print("ValueError from commonpath of nothing")
+
+# ── sys ──
+print(len(sys.argv), os.path.basename(sys.argv[0]), len(sys.path) > 0)
+print(sys.platform in ("linux", "win32", "darwin"), sys.byteorder, sys.maxsize == 2**63 - 1, sys.maxunicode)
+print(sys.version_info >= (3, 12), sys.version_info > (3,), sys.version_info < (4, 0), sys.version_info[0], sys.version_info.major, len(sys.version_info))
+print(isinstance(sys.version, str), sys.hexversion > 0x030C0000, isinstance(sys.implementation.name, str))
+print(sys.flags.optimize, sys.flags.debug, sys.flags.utf8_mode, sys.flags.dev_mode, sys.flags.safe_path)
+print(sys.float_info.max, sys.float_info.epsilon, sys.float_info.mant_dig, sys.float_info.dig, sys.float_info.radix)
+print(sys.int_info.bits_per_digit, sys.hash_info.width, sys.hash_info.modulus, sys.hash_info.inf, sys.hash_info.algorithm)
+print(sys.getfilesystemencoding(), sys.getdefaultencoding(), "sys" in sys.builtin_module_names, isinstance(sys.builtin_module_names, tuple))
+print("os" in sys.modules, "sys" in sys.modules, "__main__" in sys.modules, sys.modules.get("no_such_module_here"))
+print(sys.executable != "", isinstance(sys.prefix, str), len(sys.orig_argv) > 0)
+sys.audit("typhon.conformance", 1, "two")
+sys.settrace(None)
+sys.setprofile(None)
+print(sys.gettrace(), sys.getprofile(), sys.getrecursionlimit() > 0)
+print(sys.stdout.encoding, sys.stdout.fileno(), sys.stderr.fileno(), sys.stdin.fileno(), sys.stdout.writable(), sys.stdout.readable())
+print(sys.stdout.name, sys.stderr.name, isinstance(sys.stdout, io.TextIOWrapper), isinstance(sys.stdout, io.TextIOBase))
+sys.stdout.flush()
+sys.stdout.buffer.write(b"bytes through sys.stdout.buffer\n")
+sys.stdout.buffer.flush()
+print("after the bytes", file=sys.stdout)
+
+
+def where() -> str:
+    frame = sys._getframe()
+    caller = sys._getframe(1)
+    return frame.f_code.co_name + " called from " + caller.f_code.co_name + " " + str(frame.f_lineno - caller.f_lineno > 0)
+
+
+print(where())
+try:
+    raise ValueError("handled")
+except ValueError:
+    info = sys.exc_info()
+    print(info[1], sys.exception())
+
+# ── io: bytes ──
+b = io.BytesIO(b"hello\nworld\n")
+print(b.readline(), b.tell(), b.read(3), b.readlines(), b.read(), b.getvalue())
+b.seek(0, io.SEEK_END)
+print(b.write(b"more"), b.tell(), b.seek(-4, io.SEEK_END), b.read(2), b.seek(0), b.read1(5))
+print(b.truncate(5), b.getvalue(), b.tell(), len(b.getbuffer()), bytes(b.getbuffer()))
+b.seek(8)
+b.write(b"!")
+print(b.getvalue())
+buf = bytearray(3)
+b.seek(0)
+print(b.readinto(buf), buf, b.readable(), b.writable(), b.seekable(), b.isatty())
+with io.BytesIO() as w:
+    w.write(b"in a with")
+    w.writelines([b" block", b"!"])
+    print(w.getvalue(), w.closed)
+print(w.closed)
+try:
+    w.getvalue()
+except ValueError as e:
+    print("ValueError", e)
+try:
+    io.BytesIO().fileno()
+except io.UnsupportedOperation:
+    print("UnsupportedOperation from fileno")
+print(list(io.BytesIO(b"a\nb\nc")), io.BufferedReader(io.BytesIO(b"buffered")).read(4))
+bw_target = io.BytesIO()
+bw = io.BufferedWriter(bw_target)
+bw.write(b"written")
+bw.flush()
+print(bw_target.getvalue(), bw.writable())
+print(io.DEFAULT_BUFFER_SIZE > 0, io.SEEK_SET, io.SEEK_CUR, io.SEEK_END, io.text_encoding(None), io.text_encoding("latin-1"))
+
+# ── io: text ──
+s = io.StringIO("one\ntwo\nthree")
+print(s.readline(), s.read(3), s.tell(), s.readlines(), s.getvalue().count("\n"))
+s.seek(0)
+s.write("ONE")
+print(s.getvalue(), isinstance(s, io.TextIOBase), isinstance(s, io.IOBase), isinstance(b, io.BufferedIOBase))
+t = io.TextIOWrapper(io.BytesIO(b"x\r\ny\rz\n"), encoding="utf-8")
+print(repr(t.read()), t.encoding)
+t = io.TextIOWrapper(io.BytesIO(b"x\r\ny\rz\n"), encoding="utf-8", newline="")
+print(repr(t.readline()), repr(t.readline()), repr(t.readline()))
+raw = io.BytesIO()
+t = io.TextIOWrapper(raw, encoding="utf-8", newline="\r\n")
+t.write("a\nb\n")
+t.flush()
+print(raw.getvalue())
+raw = io.BytesIO()
+t = io.TextIOWrapper(raw, encoding="latin-1", newline="\n")
+t.write("café")
+t.flush()
+print(raw.getvalue(), t.detach() is raw)
+t = io.TextIOWrapper(io.BytesIO("héllo wörld".encode("utf-8")), encoding="utf-8")
+print(t.read(2), t.tell(), t.read(), t.seek(0), t.read(1))
+
+# ── io: files ──
+text = os.path.join(base, "text.txt")
+with open(text, "w", newline="") as f:
+    print(f.write("first\nsecond\r\nthird\n"), isinstance(f, io.TextIOWrapper), f.writable(), f.readable())
+with open(text) as f:
+    print(repr(f.readline()), f.tell(), repr(f.readline()), repr(f.read()), f.closed)
+print(f.closed)
+try:
+    f.read()
+except ValueError as e:
+    print("ValueError", e)
+with open(text, newline="") as f:
+    print(f.readlines())
+with open(text, "rb") as bf:
+    print(bf.peek(1)[:1], bf.read1(3), bf.readline(), bf.tell(), isinstance(bf, io.BufferedIOBase), isinstance(bf, io.IOBase))
+    ba = bytearray(5)
+    print(bf.readinto(ba), ba, bf.seek(0, os.SEEK_END), bf.read())
+with open(text, "r+b") as bf:
+    bf.seek(0)
+    bf.write(b"FIRST")
+    bf.truncate(12)
+with open(text, "rb") as bf:
+    print(bf.read())
+with io.open(text, "rb") as raw_file:
+    print(raw_file.read(5))
+with io.open(text, encoding="utf-8") as text_file:
+    print(text_file.read(5))
+with io.open_code(text) as code_file:
+    print(code_file.read(5))
+with io.FileIO(text) as fio:
+    print(fio.read(5), fio.readable(), fio.writable())
+with io.FileIO(os.path.join(base, "fileio.bin"), "w") as fio:
+    print(fio.write(b"raw bytes"))
+with open(os.path.join(base, "fileio.bin"), "rb") as bf:
+    print(bf.read())
+with open(os.path.join(base, "crlf.txt"), "w", newline="\r\n") as f:
+    f.write("a\nb\n")
+with open(os.path.join(base, "crlf.txt"), "rb") as bf:
+    print(bf.read())
+with open(os.path.join(base, "sig.txt"), "w", encoding="utf-8-sig") as f:
+    f.write("bom")
+with open(os.path.join(base, "sig.txt"), "rb") as bf:
+    print(bf.read())
+with open(os.path.join(base, "sig.txt"), encoding="utf-8-sig") as f:
+    print(f.read())
+
+
+# ── subclasses of the io classes and os.PathLike ──
+class _Upper(io.StringIO):
+    def write(self, s: str) -> int:
+        return super().write(s.upper())
+
+
+class _Where(os.PathLike):
+    def __fspath__(self) -> str:
+        return "some/where"
+
+
+class _Collect(io.TextIOBase):
+    def __init__(self) -> None:
+        super().__init__()
+        self.parts: list[str] = []
+
+    def writable(self) -> bool:
+        return True
+
+    def write(self, s: str) -> int:
+        self.parts.append(s)
+        return len(s)
+
+
+u = _Upper()
+u.write("shout ")
+u.write("quiet\n")
+print(repr(u.getvalue()), isinstance(u, io.StringIO), isinstance(u, io.TextIOBase))
+where_to = _Where()
+print(os.fspath(where_to), isinstance(where_to, os.PathLike), os.path.join(os.fspath(where_to), "x").replace(os.sep, "/"))
+collected = _Collect()
+collected.write("a")
+collected.writelines(["b", "c"])
+print(collected.parts, collected.writable(), collected.readable(), collected.closed)
+with _Collect() as c2:
+    c2.write("in with")
+print(c2.parts, c2.closed)
+
+shutil.rmtree(base)
+print(os.path.exists(base))

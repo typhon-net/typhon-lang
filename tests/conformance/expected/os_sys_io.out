@@ -1,0 +1,122 @@
+True True True True
+. .. . True True
+0 1 2 0 1 2 0
+True True True True
+True True 8 No such file or directory
+True
+alpha True alpha
+None fallback dflt
+beta beta
+beta True True
+['TYPHON_CONF_A', 'TYPHON_CONF_B']
+False beta gone
+False
+KeyError 'TYPHON_CONF_MISSING'
+/home/typhon/x /home/typhon/y $TYPHON_CONF_UNSET/z
+True abc
+a/b b'a/b' b'h\xc3\xa9' hé same
+6 6 10 True 1 True
+True 6 6
+1100000000.0 1100000000000000000 1100000000 1000000000.0 1100000000.0 1000000000.0
+1300000000500000000 1200000000000000000
+True
+True
+2 True True
+True False False
+True True
+FileNotFoundError from stat
+OSError from readlink of a file
+6 6
+b'ab' 2 5 b'f' b''
+b'XYcdef!'
+OSError from closing a closed descriptor
+OSError from O_EXCL on an existing file
+FileNotFoundError from os.open
+b'XYc'
+'hello\n'
+OSError from mkdir of an existing directory
+OSError from makedirs
+FileNotFoundError from mkdir without a parent
+['a', 'b', 'one.txt', 'skip']
+a tree/a True False False -
+b tree/b True False False -
+one.txt tree/one.txt False True False 12
+skip tree/skip True False False -
+[('tree', ['a', 'b'], ['one.txt']), ('tree/a', ['deep'], ['two.txt']), ('tree/a/deep', [], ['three.txt']), ('tree/b', [], ['four.txt'])]
+['tree', 'tree/a', 'tree/a/deep', 'tree/b', 'tree/skip']
+['tree/a/deep', 'tree/a']
+tree/one.txt ['a', 'b', 'skip']
+OSError from rmdir of a non-empty directory
+['b', 'skip'] False
+FileNotFoundError from remove
+a/b/c a/ ('a', 'b')
+('archive.tar', '.gz') ('.bashrc', '') ('dir.d/file', '') ('x', '.')
+b.txt a  ('', 'a/b')
+a/c/d .. .
+a/b inter
+abc True False True
+tree/b . True True
+True False True False False
+. .. True .
+ValueError from commonpath of nothing
+1 os_sys_io.ty True
+True little True 1114111
+True True True 3 3 5
+True True True
+0 0 1 False False
+1.7976931348623157e+308 2.220446049250313e-16 53 15 2
+30 64 2305843009213693951 314159 siphash13
+utf-8 utf-8 True True
+True True True None
+True True True
+None None True
+utf-8 1 2 0 True False
+<stdout> <stderr> True True
+bytes through sys.stdout.buffer
+after the bytes
+where called from <module> False
+handled handled
+b'hello\n' 6 b'wor' [b'ld\n'] b'' b'hello\nworld\n'
+4 16 12 b'mo' 0 b'hello'
+5 b'hello' 5 5 b'hello'
+b'hello\x00\x00\x00!'
+3 bytearray(b'hel') True True True False
+b'in a with block!' False
+True
+ValueError I/O operation on closed file.
+UnsupportedOperation from fileno
+[b'a\n', b'b\n', b'c'] b'buff'
+b'written' True
+True 0 1 2 utf-8 latin-1
+one
+ two 7 ['\n', 'three'] 2
+ONE
+two
+three True True True
+'x\ny\nz\n' utf-8
+'x\r\n' 'y\r' 'z\n'
+b'a\r\nb\r\n'
+b'caf\xe9' True
+hé 3 llo wörld 0 h
+20 True True False
+'first\n' 6 'second\n' 'third\n' False
+True
+ValueError I/O operation on closed file.
+['first\n', 'second\r\n', 'third\n']
+b'f' b'fir' b'st\n' 6 True True
+5 bytearray(b'secon') 20 b''
+b'FIRST\nsecond'
+b'FIRST'
+FIRST
+b'FIRST'
+b'FIRST' True False
+9
+b'raw bytes'
+b'a\r\nb\r\n'
+b'\xef\xbb\xbfbom'
+bom
+'SHOUT QUIET\n' True True
+some/where True some/where/x
+['a', 'b', 'c'] True False False
+['in with'] True
+False
