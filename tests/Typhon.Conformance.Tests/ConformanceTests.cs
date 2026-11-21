@@ -84,6 +84,37 @@ public sealed class ConformanceTests(ITestOutputHelper output)
     }
 
     /// <summary>
+    /// #:pylib: modules Typhon's runtime lacks (graphlib, colorsys) are compiled from CPython's standard library source, with
+    /// the program, and print what CPython prints.
+    /// </summary>
+    [Fact]
+    public void PyLibDirective()
+    {
+        string? python = Suite.FindPython(out string why);
+        if (python == null) { Console.WriteLine($"PyLibDirective skipped: {why}"); return; }
+        var lib = Suite.Run(python, ["-c", "import sysconfig; print(sysconfig.get_path('stdlib'))"], TimeSpan.FromSeconds(30)).StdOut.Trim();
+        Assert.True(Directory.Exists(Path.Combine(lib)), $"no stdlib folder: {lib}");
+        string dir = Directory.CreateTempSubdirectory("typhon-pylib-").FullName;
+        string script = Path.Combine(dir, "uses_lib.ty");
+        File.WriteAllText(script,
+            $"#:pylib {lib}\n" +
+            "import graphlib\nimport colorsys\n\n" +
+            "ts = graphlib.TopologicalSorter({\"b\": {\"a\"}, \"c\": {\"b\"}})\n" +
+            "print(list(ts.static_order()))\n" +
+            "h, s, v = colorsys.rgb_to_hsv(0.2, 0.4, 0.4)\n" +
+            "print(round(h, 3), round(s, 3), round(v, 3))\n" +
+            "print(colorsys.hls_to_rgb(0.5, 0.5, 0.5))\n");
+        try
+        {
+            var run = Suite.Run("dotnet", [Suite.Cli, "run", script], TimeSpan.FromMinutes(3));
+            Assert.True(run.ExitCode == 0, $"exit code {run.ExitCode}\n{run.StdErr}");
+            var expected = Suite.Run(python, [script], TimeSpan.FromMinutes(1));
+            Assert.Equal(Suite.Normalize(expected.StdOut), Suite.Normalize(run.StdOut));
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    /// <summary>
     /// typhon test runs a test module's tests like pytest: fixtures (also yield fixtures), parametrize, raises, approx,
     /// skip and test classes pass, the failing test is reported with its assert line, the values compared and its output.
     /// </summary>

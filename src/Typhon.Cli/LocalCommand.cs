@@ -20,6 +20,14 @@ internal static class LocalCommand
         if (command == "emit")
         {
             Console.WriteLine(output.EntryCode);
+            // the modules the program imports (its own, and #:pylib's from the standard library), after it
+            foreach (var tree in output.Trees)
+            {
+                string text = tree.GetText().ToString();
+                if (text == output.EntryCode) continue;
+                Console.WriteLine($"// ---- {tree.FilePath} ----");
+                Console.WriteLine(text);
+            }
             foreach (var m in output.Messages) Console.Error.WriteLine(m);
             return output.Success ? 0 : 1;
         }

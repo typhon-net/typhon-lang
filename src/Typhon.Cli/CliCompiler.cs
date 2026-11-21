@@ -117,6 +117,8 @@ internal static class CliCompiler
         pending.Enqueue((entryPath, "__main__"));
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { entryPath };
         string? aspNetReason = null;
+        // #:pylib: modules neither the folder nor the runtime has come from CPython's standard library source
+        string? pylib = null;
         while (pending.Count > 0)
         {
             var (path, name) = pending.Dequeue();
@@ -124,6 +126,11 @@ internal static class CliCompiler
             if (aspNetReason == null && SharedFrameworks.HasWebSdkDirective(source)) aspNetReason = $"{Path.GetFileName(path)} has #:sdk Microsoft.NET.Sdk.Web";
             foreach (var package in Packages.Directives(source))
                 if (!output.Packages.Any(x => string.Equals(x.Id, package.Id, StringComparison.OrdinalIgnoreCase))) output.Packages.Add(package);
+            if (name == "__main__" && PyLib.Requested(source, dir, out var givenLib))
+            {
+                pylib = PyLib.Resolve(givenLib);
+                if (pylib == null) output.Messages.Add($"{path}: warning TY0102: #:pylib: no CPython standard library found (give #:pylib DIR or set TYPHON_PYLIB)");
+            }
             var m = TyphonCompiler.Parse(path, source, name, "");
             project.Modules[name] = m;
             modules.Add(m);
@@ -133,7 +140,12 @@ internal static class CliCompiler
                 string candidate = Path.GetFullPath(Path.Combine(dir, imported.Replace('.', Path.DirectorySeparatorChar) + TyphonCompiler.FileExtension));
                 if (!seen.Add(candidate)) continue;
                 if (File.Exists(candidate)) pending.Enqueue((candidate, imported));
-                else output.Probes.Add(new SourceProbe(candidate, null));
+                else
+                {
+                    output.Probes.Add(new SourceProbe(candidate, null));
+                    if (pylib != null && !PyLib.ProvidedByTyphon(imported) && PyLib.SourceOf(pylib, imported) is string libSource && seen.Add(libSource))
+                        pending.Enqueue((libSource, imported));
+                }
             }
         }
 
@@ -177,7 +189,9 @@ internal static class CliCompiler
             output.Trees.Add(CSharpSyntaxTree.ParseText(code, ParseOptions, path: m.Path + ".g.cs", encoding: Encoding.UTF8));
         }
         output.FrontMs = sw.ElapsedMilliseconds;
-        foreach (var d in diagnostics) output.Messages.Add(d.ToString());
+        // (warnings in the standard library's own source are its business: implicit dynamic code is expected there)
+        foreach (var d in diagnostics)
+            if (!(pylib != null && d.Severity != Severity.Error && d.Path != null && d.Path.StartsWith(pylib, StringComparison.Ordinal))) output.Messages.Add(d.ToString());
         bool hasErrors = diagnostics.Any(d => d.Severity == Severity.Error);
         if (csharpOnly) { output.Success = !hasErrors; return output; }
 
@@ -197,6 +211,7 @@ internal static class CliCompiler
         {
             var span = d.Location.GetMappedLineSpan();
             string where = string.IsNullOrEmpty(span.Path) ? "typhon" : $"{span.Path}({span.StartLinePosition.Line + 1})";
+            if (pylib != null && d.Severity == DiagnosticSeverity.Warning && span.Path.StartsWith(pylib, StringComparison.Ordinal)) continue;
             output.Messages.Add($"{where}: {d.Severity.ToString().ToLowerInvariant()} {d.Id}: {d.GetMessage()}");
             hasErrors |= d.Severity == DiagnosticSeverity.Error;
         }

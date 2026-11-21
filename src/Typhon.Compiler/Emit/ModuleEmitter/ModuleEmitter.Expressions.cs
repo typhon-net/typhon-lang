@@ -348,9 +348,27 @@ namespace Typhon.Compiler.Emit
                 {
                     if (n is AttributeExpr x) set.Add(x.Target);
                     else if (n is CallExpr c) set.Add(c.Func);
+                    // (places, not values: assignment, augmented assignment and del targets)
+                    else if (n is AssignStmt a) foreach (var t in a.Targets) AstWalker.VisitAll(t, tn => { if (tn is AttributeExpr || tn is SubscriptExpr) set.Add((Expr)tn); });
+                    else if (n is AugAssignStmt au) set.Add(au.Target);
+                    else if (n is AnnAssignStmt an) set.Add(an.Target);
+                    else if (n is DelStmt d) foreach (var t in d.Targets) set.Add(t);
                 });
             return set;
         }
+
+        /// <summary>A type that may be late-bound in C#: unknown, dynamic, or not settled by the inference (⊥ inside).</summary>
+        static bool UnsureType(string t) => t == null || t == "dynamic" || t.Contains(TypeInference.Pending) || t.Contains("<dynamic>");
+
+        /// <summary>Names that are methods of Python's builtin types or protocol methods (not attributes such as __name__ or __dict__).</summary>
+        static bool IsMethodName(string n) =>
+            n.StartsWith("__") && n.EndsWith("__") ? !NonMethodDunders.Contains(n) : RuntimeExtensionMethods.Contains(n);
+
+        static readonly HashSet<string> NonMethodDunders = new HashSet<string>
+        {
+            "__name__", "__qualname__", "__module__", "__doc__", "__dict__", "__class__", "__wrapped__", "__self__", "__func__",
+            "__annotations__", "__slots__", "__file__", "__all__", "__version__", "__mro__", "__bases__", "__defaults__", "__code__",
+        };
 
         /// <summary>The builtin types as values: the C# type each one's values have.</summary>
         static readonly Dictionary<string, string> BuiltinTypeValues = new Dictionary<string, string>
@@ -507,6 +525,12 @@ namespace Typhon.Compiler.Emit
                 if (nt == null || nt == "dynamic" || nt == "object" || nt == "object?" || nt == "global::System.Type" || nt == "System.Type")
                     return $"{Rt("__name_of")}((object?){Paren(EmitExpr(a.Target))})";
             }
+            // it.__next__ / xs.append as a value (not called here) on a late-bound value: a bound method (C#'s dynamic binder reads
+            // properties only); found at run time, like getattr
+            if (!Receivers.Contains(a) && IsMethodName(a.Name) &&
+                (UnsureType(InferType(a.Target)) || IsDynamicallyDispatched(a.Target) || a.Target is CallExpr bmc && bmc.Args.Any(x => UnsureType(InferType(x.Value)))) &&
+                !(a.Target is NameExpr bmn && (bmn.Id == "self" || bmn.Id == "cls" || ModuleRef(bmn.Id) != null || _dotnetAliases.ContainsKey(bmn.Id) || TryResolveType(bmn.Id, 0, out _, out _))))
+                return $"{Rt("getattr")}((object?){Paren(EmitExpr(a.Target))}, {CsString(a.Name)})";
             // self.x that neither the class nor its bases define (a mixin using an attribute of the classes it is mixed
             // into): late-bound, found on the object's own class at run time, as Python does
             if (a.Target is NameExpr sx && sx.Id == "self" && _cls != null && !_cls.IsInterface && HasSelfInScope() && SelfMemberUnknown(a.Name))

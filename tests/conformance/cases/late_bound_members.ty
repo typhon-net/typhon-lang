@@ -1,0 +1,46 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+"""Conformance: what graphlib (compiled from CPython's source) needs: a list method on an attribute of a value whose type
+is not known, and bound methods of late-bound values taken as values (it.__next__)."""
+
+from typing import Any
+
+
+class _NodeInfo:
+    __slots__ = "node", "npredecessors", "successors"
+
+    def __init__(self, node):
+        self.node = node
+        self.npredecessors = 0
+        self.successors = []
+
+
+class Sorter:
+    def __init__(self):
+        self._node2info = {}
+
+    def _get_nodeinfo(self, node):
+        if (result := self._node2info.get(node)) is None:
+            self._node2info[node] = result = _NodeInfo(node)
+        return result
+
+    def add(self, node, *predecessors):
+        for pred in predecessors:
+            pred_info = self._get_nodeinfo(pred)
+            pred_info.successors.append(node)
+
+
+s = Sorter()
+s.add("b", "a")
+print(s._get_nodeinfo("a").successors)
+
+
+def drain(items: Any):
+    stack = []
+    stack.append(iter(items).__next__)
+    nxt = stack[0]
+    return [nxt(), nxt()]
+
+
+print(drain(["x", "y", "z"]))

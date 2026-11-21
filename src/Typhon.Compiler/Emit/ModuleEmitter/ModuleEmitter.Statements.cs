@@ -124,7 +124,11 @@ namespace Typhon.Compiler.Emit
         {
             // d.sort() / d.append(x) on a late-bound value as a statement: the method may return nothing (void), so an if
             // statement, not a conditional expression, chooses between the runtime's method and the object's own
-            if (e.Value is CallExpr dc && dc.Func is AttributeExpr dm && InferType(dm.Target) == "dynamic" && !dc.Args.Any(a => a.Star || a.DoubleStar) && IsRuntimeMethod(dm.Name, dc.Args))
+            // (also on an attribute of a value whose type is not known: late-bound in C# then too, pred_info.successors.append(x))
+            if (e.Value is CallExpr dc && dc.Func is AttributeExpr dm &&
+                (InferType(dm.Target) == "dynamic" || InferType(dm.Target) == null && dm.Target is AttributeExpr dmt && InferType(dmt.Target) == null && !(dmt.Target is NameExpr dts && dts.Id == "self")) &&
+                !(dm.Target is NameExpr dmn && (ModuleRef(dmn.Id) != null || _dotnetAliases.ContainsKey(dmn.Id) || TryResolveType(dmn.Id, 0, out _, out _))) &&
+                !(dm.Target is CallExpr dsc && dsc.Func is NameExpr dsn && dsn.Id == "super") && !dc.Args.Any(a => a.Star || a.DoubleStar) && IsRuntimeMethod(dm.Name, dc.Args))
             {
                 if (Obs != null) RecordCall(CallTarget(dc, out _), dc.Args);
                 string r = NewTmp("r");

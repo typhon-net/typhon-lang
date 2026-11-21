@@ -91,6 +91,28 @@ resolves their dependencies; `@*` or no version takes the latest, re-resolved da
 with their implementation assemblies; `typhon build` copies those next to the program, and `--aot` adds them as package
 references. Restoring needs the .NET SDK and, the first time, access to the package feed.
 
+## Standard library modules from CPython's source (`#:pylib`, experimental)
+
+Typhon's runtime implements the standard library modules programs use most, in C#. With a `#:pylib` line, a module it
+does not have is compiled from CPython's own source instead, `Lib/<name>.py`, together with the program:
+
+```python
+#:pylib
+import graphlib    # not in Typhon's runtime: compiled from CPython's Lib/graphlib.py
+import colorsys
+
+ts = graphlib.TopologicalSorter({"b": {"a"}, "c": {"b"}})
+print(list(ts.static_order()), colorsys.rgb_to_hsv(0.2, 0.4, 0.4))
+```
+
+The module is compiled like a module of the program: its functions get typed versions for the program's calls, and the
+compile cache keeps the result until a source changes. Typhon's own modules always come first; `Lib/` only supplies
+the rest, single-file modules for now (not packages such as `json/`). Which modules compile is tracked by compiling
+each of CPython's modules alone (`docs/conformance.md`); a module that does not compile reports its errors with
+`Lib/<name>.py` lines, and tracebacks show its frames. The `Lib` folder is `#:pylib DIR`, else the `TYPHON_PYLIB`
+environment variable, else the standard library of the `python3` (`python` on Windows) on the PATH. The plan is to
+ship a pinned copy of CPython's `Lib/` (PSF license) with Typhon instead.
+
 ## Frameworks the typhon command can use
 
 `typhon run`, `typhon check` and `typhon build` compile against the .NET runtime the CLI runs on

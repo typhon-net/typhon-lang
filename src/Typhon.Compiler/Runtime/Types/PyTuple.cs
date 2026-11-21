@@ -42,6 +42,9 @@ namespace Typhon.Runtime
         public void Dispose() { }
         public IEnumerator<T> GetEnumerator() => this;
         IEnumerator IEnumerable.GetEnumerator() => this;
+        /// <summary>it.__next__() / the bound method it.__next__ as a value: the next item, StopIteration at the end.</summary>
+        public T __next__() => _e.MoveNext() ? _e.Current : throw new StopIteration();
+        public PyIterator<T> __iter__() => this;
     }
 
     /// <summary>A Python tuple of any length (implemented by PyTuple&lt;T&gt;), seen without its element type.</summary>
