@@ -27,6 +27,16 @@ internal static class SharedFrameworks
 
     public static bool HasWebSdkDirective(string source) => WebSdkDirective.IsMatch(source);
 
+    /// <summary>The dotnet command of the installation the CLI runs on (for dotnet restore), else the one on PATH.</summary>
+    public static string DotnetExecutable
+    {
+        get
+        {
+            string exe = Path.Combine(DotnetRoot, OperatingSystem.IsWindows() ? "dotnet.exe" : "dotnet");
+            return File.Exists(exe) ? exe : "dotnet";
+        }
+    }
+
     /// <summary>The dotnet installation the CLI runs on (the folder that holds shared/).</summary>
     static string DotnetRoot => Path.GetFullPath(Path.Combine(RuntimeDirectory, "..", "..", ".."));
 
@@ -75,6 +85,26 @@ internal static class SharedFrameworks
     public static string NotInstalled(string name, string reason) =>
         $"typhon: this program uses {(name == AspNetCore ? "ASP.NET Core" : name)} ({reason}), but the {name} " +
         $"{Environment.Version.Major}.{Environment.Version.Minor} shared framework is not installed in {Path.Combine(DotnetRoot, "shared")}";
+
+    static readonly Dictionary<string, string> _packageAssemblies = new(StringComparer.OrdinalIgnoreCase);
+    static bool _packagesHooked;
+
+    /// <summary>Lets a program run in this process load the assemblies of its #:package packages.</summary>
+    public static void EnablePackages(IEnumerable<string> runtimeAssemblies)
+    {
+        lock (_packageAssemblies)
+        {
+            foreach (var path in runtimeAssemblies) _packageAssemblies[Path.GetFileNameWithoutExtension(path)] = path;
+            if (_packagesHooked || _packageAssemblies.Count == 0) return;
+            _packagesHooked = true;
+        }
+        AssemblyLoadContext.Default.Resolving += (context, assemblyName) =>
+        {
+            string? path;
+            lock (_packageAssemblies) _packageAssemblies.TryGetValue(assemblyName.Name ?? "", out path);
+            return path != null && File.Exists(path) ? context.LoadFromAssemblyPath(path) : null;
+        };
+    }
 
     static readonly HashSet<string> _enabled = new();
 

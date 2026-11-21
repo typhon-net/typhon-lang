@@ -57,8 +57,15 @@ namespace Typhon.Compiler.Emit
         void Unsupported(Node at, string what) => Report(at, "TY0003", Severity.Error, what + " is not supported in Typhon yet");
 
         /// <summary>Every implicit fallback to 'dynamic' goes through here (TypeScript-style noImplicitAny).</summary>
+        /// <summary>
+        /// Emitting code that exists only for calls the compiler cannot see (a method's late-bound version beside its typed
+        /// overloads): its dynamic parameters and locals are expected, not something to report.
+        /// </summary>
+        bool _quietDynamic;
+
         string ImplicitDynamic(Node at, string what)
         {
+            if (_quietDynamic) return "dynamic";
             if (_p.TypeMode == TypeMode.Strict)
                 Report(at, "TY1001", Severity.Error, $"cannot infer the type of {what}; add a type annotation (or annotate it as 'Any' to opt into dynamic typing)");
             else if (_p.TypeMode == TypeMode.Warn)
@@ -329,7 +336,10 @@ namespace Typhon.Compiler.Emit
             _scopeKey = TypeInference.FuncKey(_m, null, "<main>");
             _w.Line(isAsync ? "public static async Task Main(string[] __argv)" : "public static void Main(string[] __argv)");
             scope.IsAsync = isAsync;
-            EmitFunctionBody(stmts, scope, moduleFields, locals, prologue: "global::Typhon.Stdlib.sys_.__init__(__argv);", epilogue: PytestEpilogue());
+            // an uncaught SystemExit (sys.exit) ends the program with its code, without a traceback
+            string tests = PytestEpilogue();
+            EmitFunctionBody(stmts, scope, moduleFields, locals, prologue: "global::Typhon.Stdlib.sys_.__init__(__argv);\ntry\n{",
+                             epilogue: (tests != null ? tests + "\n" : "") + "}\ncatch (global::Typhon.Runtime.SystemExit __exit) { __exit.Exit(); }");
         }
 
 

@@ -57,6 +57,26 @@ module only runs its body, as `python test_x.py` would.
 class), so a test project of `.ty` files runs with `dotnet test` like a C# one; failures point at the `.ty` line. See
 [`samples/XunitTests`](../samples/XunitTests).
 
+## NuGet packages without a project
+
+A script names the packages it needs with `#:package` lines, the directive of .NET's file-based apps (to Python they are
+comments, so the file stays valid Python):
+
+```python
+#:package Humanizer.Core@2.14.1
+#:package Newtonsoft.Json@13.0.3
+from Humanizer import NumberToWordsExtension
+from Newtonsoft.Json import JsonConvert
+
+print(NumberToWordsExtension.ToWords(1234), JsonConvert.SerializeObject([1, 2, 3]))
+```
+
+`typhon run`, `check` and `build` restore them the first time (with `dotnet restore` of a generated project, so NuGet
+resolves their dependencies; `@*` or no version takes the latest, re-resolved daily) into the cache folder
+(`~/.cache/typhon/packages`, `%LOCALAPPDATA%\Typhon\cache\packages`), compile against their reference assemblies and run
+with their implementation assemblies; `typhon build` copies those next to the program, and `--aot` adds them as package
+references. Restoring needs the .NET SDK and, the first time, access to the package feed.
+
 ## Frameworks the typhon command can use
 
 `typhon run`, `typhon check` and `typhon build` compile against the .NET runtime the CLI runs on

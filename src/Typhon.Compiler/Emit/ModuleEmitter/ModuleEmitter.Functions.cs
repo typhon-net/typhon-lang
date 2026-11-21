@@ -278,7 +278,9 @@ namespace Typhon.Compiler.Emit
                 }
                 else decl = $"{type} {Esc(p.Name)}";
                 // an inferred overload keeps a default only if the default has the overload's parameter type
-                bool keepDefault = p.Default != null && (paramTypes == null || p.Annotation != null || InferType(p.Default) == type);
+                // (a method's late-bound version beside typed overloads takes no defaults: a call leaving a parameter out
+                // binds to the typed overload, C# would find the two ambiguous)
+                bool keepDefault = p.Default != null && (paramTypes == null || p.Annotation != null || InferType(p.Default) == type) && !_quietDynamic;
                 string defaultCode = null;
                 // a parameter the body rebinds to values of another type (in a nested block): the body uses a wider local
                 string wider = p.Kind == ParamKind.Normal ? ConflictType(p.Name) : null;

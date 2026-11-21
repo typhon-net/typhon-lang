@@ -28,8 +28,45 @@ namespace Typhon.Runtime
         public StopIteration(object? value = null) : base("StopIteration") { this.value = value; }
     }
 
+    /// <summary>
+    /// The exceptions Python derives from BaseException but not Exception (SystemExit, KeyboardInterrupt, GeneratorExit):
+    /// `except Exception` does not catch them, a bare `except:` and `except BaseException` do.
+    /// </summary>
+    internal interface IPyBaseException { }
+
     /// <summary>GeneratorExit: raised inside a generator at its yield when close() is called.</summary>
-    internal sealed class GeneratorExit : Exception { public GeneratorExit() : base("GeneratorExit") { } }
+    internal sealed class GeneratorExit : Exception, IPyBaseException { public GeneratorExit() : base("GeneratorExit") { } }
+
+    /// <summary>
+    /// SystemExit(code): what sys.exit raises. finally blocks run while it propagates; uncaught, it ends the program with
+    /// its code (None: 0, an int: that int, anything else: printed to stderr, 1).
+    /// </summary>
+    internal sealed class SystemExit : Exception, IPyBaseException
+    {
+        public readonly object? code;
+        public SystemExit(object? code = null) : base(code == null ? "" : Builtins.str(code)) { this.code = code; }
+        public int ExitCode => code switch
+        {
+            null => 0,
+            bool b => b ? 1 : 0,
+            long l => unchecked((int)l),
+            int i => i,
+            System.Numerics.BigInteger bi => (int)(bi & 0xFF),
+            _ => 1,
+        };
+
+        /// <summary>The end of a program that SystemExit left: the message (for a non-int code) and the exit code.</summary>
+        public void Exit()
+        {
+            if (code != null && !(code is long || code is int || code is bool || code is System.Numerics.BigInteger))
+                Console.Error.WriteLine(Builtins.str(code));
+            try { Console.Out.Flush(); } catch (Exception) { }
+            Environment.ExitCode = ExitCode;
+        }
+    }
+
+    /// <summary>KeyboardInterrupt (Ctrl+C), a BaseException that `except Exception` does not catch.</summary>
+    internal sealed class KeyboardInterrupt : Exception, IPyBaseException { public KeyboardInterrupt() : base("") { } }
 
     /// <summary>
     /// A generator that receives values: x = yield v takes what send() passes in. The function's body is an iterator that

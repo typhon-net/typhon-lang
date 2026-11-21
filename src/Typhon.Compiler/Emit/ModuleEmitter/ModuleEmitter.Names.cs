@@ -48,6 +48,8 @@ namespace Typhon.Compiler.Emit
             ["PermissionError"] = "global::System.UnauthorizedAccessException",
             ["StopIteration"] = "global::Typhon.Runtime.StopIteration",
             ["GeneratorExit"] = "global::Typhon.Runtime.GeneratorExit",
+            ["SystemExit"] = "global::Typhon.Runtime.SystemExit",
+            ["KeyboardInterrupt"] = "global::Typhon.Runtime.KeyboardInterrupt",
             ["AssertionError"] = "global::Typhon.Runtime.AssertionError",
         };
         static readonly Dictionary<string, string> ExceptionMetaMap = ExceptionMap.ToDictionary(kv => kv.Key, kv => kv.Value.Replace("global::", ""));

@@ -151,9 +151,38 @@ namespace Typhon.Compiler.Emit
             {
                 mod = mref; name = a.Name;
             }
+            else if (call.Func is AttributeExpr ma && MethodTarget(ma) is InferenceTarget mt) return mt;
             if (mod == null) return null;
             if (mod.Classes.TryGetValue(name, out var cls)) { isConstructor = true; return InitTarget(mod, cls); }
             return mod.Functions.Contains(name) ? TargetOf(mod, null, name) : null;
+        }
+
+        /// <summary>
+        /// obj.m / self.m where obj's Typhon class (or a base class) defines m and m's parameters are inferred: its target
+        /// (null for anything else, a class name as the receiver included: Cls.m(obj, ...) passes self explicitly).
+        /// </summary>
+        InferenceTarget MethodTarget(AttributeExpr a)
+        {
+            if (Ti == null) return null;
+            ClassDef cd;
+            if (a.Target is NameExpr sn && sn.Id == "self" && _cls != null && HasSelfInScope()) cd = _cls.Def;
+            else
+            {
+                if (a.Target is NameExpr tn && !IsLocal(tn.Id) && TryResolveType(tn.Id, 0, out _, out _)) return null;
+                string t = InferType(a.Target);
+                cd = t != null && t != TypeInference.Pending && ClassKeyOfType(t, out _) is string key ? ClassDefOfKey(key) : null;
+            }
+            for (int depth = 0; cd != null && depth < 20; depth++)
+            {
+                if (cd.Body.OfType<FunctionDef>().FirstOrDefault(f => f.Name == a.Name) is FunctionDef def)
+                {
+                    var owner = _p.Modules.Values.FirstOrDefault(m => m.Classes.TryGetValue(cd.Name, out var mc) && mc == cd);
+                    var target = owner != null ? TargetOf(owner, cd, def.Name) : null;
+                    return target != null && target.InferParams && target.Def == def && !HasDecorator(def.Decorators, "staticmethod") ? target : null;
+                }
+                cd = cd.Bases.Count > 0 && ResolveBase(cd.Bases[0], out var bpy, out _) ? bpy : null;
+            }
+            return null;
         }
 
         /// <summary>Argument types of a call, one per parameter (defaults fill omitted ones); null if the shape is unknown.</summary>

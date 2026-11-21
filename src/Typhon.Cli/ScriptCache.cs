@@ -35,7 +35,7 @@ internal static class ScriptCache
     const string Header = "typhon-cache 2";
     static readonly TimeSpan MaxUnused = TimeSpan.FromDays(30);
 
-    public sealed record Entry(byte[] Pe, byte[]? Pdb, List<string> Messages, List<string> Frameworks);
+    public sealed record Entry(byte[] Pe, byte[]? Pdb, List<string> Messages, List<string> Frameworks, List<string> PackageAssemblies);
 
     public static bool Enabled => Environment.GetEnvironmentVariable("TYPHON_CACHE") != "0";
 
@@ -69,8 +69,17 @@ internal static class ScriptCache
             if (lines.Length < 2 || lines[0] != Header || lines[1] != "build " + BuildStamp.Value) return null;
             var messages = new List<string>();
             var frameworks = new List<string>();
+            var packages = new List<string>();
             foreach (var line in lines.Skip(2))
             {
+                // "package <path>": an assembly of a #:package package (gone from NuGet's cache: compile and restore again)
+                if (line.StartsWith("package "))
+                {
+                    string path = line[8..];
+                    if (!File.Exists(path)) return null;
+                    packages.Add(path);
+                    continue;
+                }
                 // "framework <name> <folder>": built against that framework folder; another one (an update) recompiles
                 if (line.StartsWith("framework "))
                 {
@@ -91,7 +100,7 @@ internal static class ScriptCache
                 else if (line.StartsWith("message ")) messages.Add(Encoding.UTF8.GetString(Convert.FromBase64String(line[8..])));
             }
             string pdb = Path.Combine(dir, "program.pdb");
-            var entry = new Entry(File.ReadAllBytes(Path.Combine(dir, "program.dll")), File.Exists(pdb) ? File.ReadAllBytes(pdb) : null, messages, frameworks);
+            var entry = new Entry(File.ReadAllBytes(Path.Combine(dir, "program.dll")), File.Exists(pdb) ? File.ReadAllBytes(pdb) : null, messages, frameworks, packages);
             File.SetLastWriteTimeUtc(manifest, DateTime.UtcNow); // last use, for pruning
             return entry;
         }
@@ -102,7 +111,7 @@ internal static class ScriptCache
 
     /// <summary>Stores a successful build, replacing whatever this script's slot held before. Best effort: errors are ignored.</summary>
     public static void Store(string entryPath, string mode, byte[] pe, byte[]? pdb, IEnumerable<SourceProbe> probes, IEnumerable<string> messages,
-                             IEnumerable<string> frameworks)
+                             IEnumerable<string> frameworks, IEnumerable<string>? packageAssemblies = null)
     {
         string dir = SlotDir(entryPath, mode);
         string tmp = dir + ".tmp-" + Guid.NewGuid().ToString("N")[..8];
@@ -114,6 +123,7 @@ internal static class ScriptCache
             var sb = new StringBuilder().AppendLine(Header).AppendLine("build " + BuildStamp.Value);
             foreach (var p in probes) sb.Append("file ").Append(p.Sha256 ?? "-").Append(' ').AppendLine(p.Path);
             foreach (var f in frameworks) sb.Append("framework ").Append(f).Append(' ').AppendLine(SharedFrameworks.Directory(f));
+            foreach (var a in packageAssemblies ?? Enumerable.Empty<string>()) sb.Append("package ").AppendLine(a);
             foreach (var m in messages) sb.Append("message ").AppendLine(Convert.ToBase64String(Encoding.UTF8.GetBytes(m)));
             File.WriteAllText(Path.Combine(tmp, "manifest.txt"), sb.ToString());
             if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); // the stale version of this script

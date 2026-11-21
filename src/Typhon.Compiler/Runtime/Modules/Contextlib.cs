@@ -63,7 +63,8 @@ namespace Typhon.Runtime
         readonly Type[] _types;
         public PySuppress(Type[] types) { _types = types; }
         public object? __enter__() => null;
-        public bool __exit__(object? type, object? exc, object? tb) => exc != null && _types.Any(t => t.IsInstanceOfType(exc));
+        public bool __exit__(object? type, object? exc, object? tb) =>
+            exc != null && _types.Any(t => t.IsInstanceOfType(exc) && !(exc is IPyBaseException && t == typeof(Exception)));
     }
 
     /// <summary>contextlib.nullcontext(value): a context manager that does nothing; as gives the value.</summary>

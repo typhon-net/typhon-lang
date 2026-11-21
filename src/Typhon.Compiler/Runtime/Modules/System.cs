@@ -49,7 +49,8 @@ namespace Typhon.Stdlib
             argv = new List<string> { AppContext.GetData("Typhon.Argv0") as string ?? Environment.GetCommandLineArgs().FirstOrDefault() ?? "" };
             argv.AddRange(args);
         }
-        public static void exit(long code = 0) => Environment.Exit(checked((int)code));
+        /// <summary>sys.exit(code): raises SystemExit (catchable; finally blocks run; uncaught, the program ends with the code).</summary>
+        public static void exit(object? arg = null) => throw new SystemExit(arg);
         // CPython limits: digits of int→str conversions, recursion depth (the .NET stack decides here)
         public static void set_int_max_str_digits(long maxdigits) { }
         public static long get_int_max_str_digits() => 0;
@@ -59,6 +60,8 @@ namespace Typhon.Stdlib
 
     internal static class os_
     {
+        /// <summary>os._exit(n): ends the process at once (no finally blocks, no flushing), like CPython's.</summary>
+        public static void _exit(long n) => Environment.Exit(checked((int)n));
         public static string getcwd() => Environment.CurrentDirectory;
         public static string? getenv(string name, string? @default = null) => Environment.GetEnvironmentVariable(name) ?? @default;
         public static List<string> listdir(string path = ".") => System.IO.Directory.EnumerateFileSystemEntries(path).Select(System.IO.Path.GetFileName).Select(x => x!).ToList();

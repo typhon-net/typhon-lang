@@ -65,6 +65,25 @@ public sealed class ConformanceTests(ITestOutputHelper output)
     }
 
     /// <summary>
+    /// #:package Name@Version: the package is restored (once, into the cache), referenced when compiling and loaded when
+    /// the program runs.
+    /// </summary>
+    [Fact]
+    public void PackageDirective()
+    {
+        string dir = Directory.CreateTempSubdirectory("typhon-package-").FullName;
+        string script = Path.Combine(dir, "uses_package.ty");
+        File.WriteAllText(script, "#:package Newtonsoft.Json@13.0.3\nfrom Newtonsoft.Json import JsonConvert\n\nprint(JsonConvert.SerializeObject([1, 2, 3]))\n");
+        try
+        {
+            var run = Suite.Run("dotnet", [Suite.Cli, "run", script], TimeSpan.FromMinutes(3));
+            Assert.True(run.ExitCode == 0, $"exit code {run.ExitCode}\n{run.StdErr}");
+            Assert.Equal("[1,2,3]\n", Suite.Normalize(run.StdOut));
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    /// <summary>
     /// typhon test runs a test module's tests like pytest: fixtures (also yield fixtures), parametrize, raises, approx,
     /// skip and test classes pass, the failing test is reported with its assert line, the values compared and its output.
     /// </summary>

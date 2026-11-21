@@ -72,6 +72,8 @@ namespace Typhon.Compiler.Emit
                     if (m != null) { implicitParams = HasDecorator(m.Decorators, "classmethod") ? 1 : 0; return m; }
                     return null;
                 }
+                // obj.m(...) with obj of a Typhon class whose method's parameters are inferred
+                else if (MethodTarget(a) is InferenceTarget mt) { implicitParams = 1; return mt.Def; }
             }
             if (mod == null) return null;
             if (mod.Classes.TryGetValue(name, out var cls))

@@ -336,7 +336,15 @@ namespace Typhon.Compiler.Emit
                 else
                 {
                     var types = CatchTypes(h.Type, h);
-                    if (types.Count == 1 && !types[0].StartsWith("(")) _w.Line(name == null ? $"catch ({types[0]})" : $"catch ({types[0]} {Esc(csName)})");
+                    // except Exception: not SystemExit, KeyboardInterrupt or GeneratorExit (they derive from BaseException only)
+                    bool exceptException = (h.Type is TupleExpr ht ? ht.Elts : new List<Expr> { h.Type }).Any(x => x is NameExpr xn && xn.Id == "Exception" && !IsShadowed("Exception"));
+                    if (exceptException)
+                    {
+                        string v = csName ?? NewTmp("e");
+                        var others = types.Where(x => x != "Exception" && x != "global::System.Exception" && x != "System.Exception").Select(x => $"{Esc(v)} is {x}");
+                        _w.Line($"catch (Exception {Esc(v)}) when ({Esc(v)} is not global::Typhon.Runtime.IPyBaseException{string.Concat(others.Select(o => " || " + o))})");
+                    }
+                    else if (types.Count == 1 && !types[0].StartsWith("(")) _w.Line(name == null ? $"catch ({types[0]})" : $"catch ({types[0]} {Esc(csName)})");
                     else
                     {
                         string v = csName ?? NewTmp("e");

@@ -333,7 +333,14 @@ namespace Typhon.Compiler.Emit
                 string param; string deconstruct = null;
                 var bound = new HashSet<string>();
                 AstWalker.VisitAll(g.Target, n => { if (n is NameExpr ne) bound.Add(ne.Id); });
+                string elemType = IterElementType(InferType(g.Iter));
                 if (g.Target is NameExpr tn) param = Esc(tn.Id);
+                else if (g.Target is TupleExpr lt && lt.Elts.All(x => x is NameExpr) && (elemType == null || elemType == "dynamic" || elemType == "object"))
+                {
+                    // late-bound items (C# cannot deconstruct dynamic): each one's values by position, checked for the count
+                    param = NewTmp("c");
+                    deconstruct = string.Join(" ", lt.Elts.Select((x, k) => $"var {Esc(((NameExpr)x).Id)} = {Rt("__unpack")}((object){param}, {k}, {lt.Elts.Count});"));
+                }
                 else { param = NewTmp("c"); deconstruct = $"var {DeconstructionPattern(g.Target)} = {param};"; }
                 _lambdaParams.Push(bound);
                 string Lambda(string body) => deconstruct == null ? $"{param} => {body}" : $"{param} => {{ {deconstruct} return {body}; }}";

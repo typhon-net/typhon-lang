@@ -38,11 +38,11 @@ internal static class LocalCommand
                                     "build without --aot (a framework-dependent app), or publish a project with PublishAot");
             return 1;
         }
-        if (command == "build" && aot) return NativeAotBuilder.Build(output.Compilation!, output.Trees, entryPath, outDir);
+        if (command == "build" && aot) return NativeAotBuilder.Build(output.Compilation!, output.Trees, entryPath, outDir, output.Packages);
         if (command == "build") return WriteBuild(output, entryPath, outDir);
 
-        if (useCache) ScriptCache.Store(entryPath, modeName, output.Pe!, output.Pdb, output.Probes, output.Messages, output.Frameworks);
-        return ProgramRunner.Run(output.Pe!, output.Pdb, programArgs, timing, output.Frameworks);
+        if (useCache) ScriptCache.Store(entryPath, modeName, output.Pe!, output.Pdb, output.Probes, output.Messages, output.Frameworks, output.PackageAssemblies);
+        return ProgramRunner.Run(output.Pe!, output.Pdb, programArgs, timing, output.Frameworks, output.PackageAssemblies);
     }
 
     /// <summary>A framework-dependent app: name.dll + .pdb + .runtimeconfig.json + the Typhon libraries it may use.</summary>
@@ -69,6 +69,8 @@ internal static class LocalCommand
             }
             """);
         foreach (var lib in LibrariesToShip()) File.Copy(lib, Path.Combine(outDir, Path.GetFileName(lib)), overwrite: true);
+        // the #:package packages' assemblies beside the program (without a .deps.json the host loads what is in its folder)
+        foreach (var asm in output.PackageAssemblies) File.Copy(asm, Path.Combine(outDir, Path.GetFileName(asm)), overwrite: true);
         Console.Error.WriteLine($"[typhon] built {dllPath} — run it with: dotnet \"{dllPath}\"");
         return 0;
     }

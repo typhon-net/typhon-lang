@@ -19,7 +19,7 @@ namespace Typhon.Cli;
 internal static class CompileServer
 {
     const int Magic = 0x54595048; // "TYPH"
-    const int ProtocolVersion = 3;
+    const int ProtocolVersion = 4;
     const byte KindCompile = 1, KindPing = 2, KindStop = 3;
 
     public static bool Enabled => Environment.GetEnvironmentVariable("TYPHON_SERVER") != "0";
@@ -37,6 +37,7 @@ internal static class CompileServer
         public byte[]? Pe, Pdb;
         public List<SourceProbe> Probes = new();
         public List<string> Frameworks = new();
+        public List<string> PackageAssemblies = new();
         public long CompileMs;
     }
 
@@ -59,6 +60,7 @@ internal static class CompileServer
             int pdbLen = r.ReadInt32(); if (pdbLen > 0) reply.Pdb = r.ReadBytes(pdbLen);
             for (int i = r.ReadInt32(); i > 0; i--) { string path = r.ReadString(); string sha = r.ReadString(); reply.Probes.Add(new SourceProbe(path, sha.Length == 0 ? null : sha)); }
             for (int i = r.ReadInt32(); i > 0; i--) reply.Frameworks.Add(r.ReadString());
+            for (int i = r.ReadInt32(); i > 0; i--) reply.PackageAssemblies.Add(r.ReadString());
             reply.CompileMs = r.ReadInt64();
             return reply;
         }
@@ -308,6 +310,8 @@ internal static class CompileServer
                 foreach (var p in output.Probes) { w.Write(p.Path); w.Write(p.Sha256 ?? ""); }
                 w.Write(output.Frameworks.Count);
                 foreach (var f in output.Frameworks) w.Write(f);
+                w.Write(output.PackageAssemblies.Count);
+                foreach (var a in output.PackageAssemblies) w.Write(a);
                 w.Write(sw.ElapsedMilliseconds);
                 break;
             }

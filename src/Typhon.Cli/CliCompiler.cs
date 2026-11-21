@@ -34,6 +34,9 @@ internal sealed class CompileOutput
     public readonly List<SyntaxTree> Trees = new();
     /// <summary>Shared frameworks besides Microsoft.NETCore.App the program references (Microsoft.AspNetCore.App).</summary>
     public readonly List<string> Frameworks = new();
+    /// <summary>The #:package directives, and the implementation assemblies of the restored packages (loaded when it runs).</summary>
+    public readonly List<PackageRef> Packages = new();
+    public readonly List<string> PackageAssemblies = new();
     public long ReferencesMs, FrontMs, RoslynMs;
 }
 
@@ -119,6 +122,8 @@ internal static class CliCompiler
             var (path, name) = pending.Dequeue();
             string source = ReadSource(path, output.Probes);
             if (aspNetReason == null && SharedFrameworks.HasWebSdkDirective(source)) aspNetReason = $"{Path.GetFileName(path)} has #:sdk Microsoft.NET.Sdk.Web";
+            foreach (var package in Packages.Directives(source))
+                if (!output.Packages.Any(x => string.Equals(x.Id, package.Id, StringComparison.OrdinalIgnoreCase))) output.Packages.Add(package);
             var m = TyphonCompiler.Parse(path, source, name, "");
             project.Modules[name] = m;
             modules.Add(m);
@@ -142,13 +147,23 @@ internal static class CliCompiler
             }
             output.Frameworks.Add(SharedFrameworks.AspNetCore);
         }
+        // the #:package packages (restored once; their reference assemblies join the compilation's references)
+        var references = refs.For(target, output.Frameworks);
+        if (output.Packages.Count > 0)
+        {
+            var restored = Packages.Restore(output.Packages, out var restoreError);
+            if (restored == null) { output.Messages.Add(restoreError!); return output; }
+            references = new List<MetadataReference>(references);
+            references.AddRange(restored.Compile.Select(PackageReference));
+            output.PackageAssemblies.AddRange(restored.Runtime);
+        }
         var trees = new List<SyntaxTree>();
         if (target == CompileTarget.Build)
             trees.Add(CSharpSyntaxTree.ParseText(TyphonCompiler.RuntimeSource, ParseOptions, path: "Typhon.Runtime.g.cs", encoding: Encoding.UTF8));
         var compilation = CSharpCompilation.Create(
             target == CompileTarget.Script ? ScriptAssemblyName : "typhon_" + Path.GetFileNameWithoutExtension(entryPath),
             trees,
-            refs.For(target, output.Frameworks),
+            references,
             new CSharpCompilationOptions(OutputKind.ConsoleApplication, optimizationLevel: OptimizationLevel.Release, allowUnsafe: true,
                 nullableContextOptions: NullableContextOptions.Disable));
         project.Resolver = new RoslynTypeResolver(compilation);
@@ -173,16 +188,30 @@ internal static class CliCompiler
         using var pdb = new MemoryStream();
         var result = compilation.Emit(pe, pdb, options: new EmitOptions(debugInformationFormat: DebugInformationFormat.PortablePdb));
         output.RoslynMs = sw.ElapsedMilliseconds;
+        // errors, and warnings in the program's own lines (not the generated C#, not referenced assemblies: no source path)
         foreach (var d in result.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error ||
-                                                         (d.Severity == DiagnosticSeverity.Warning && !d.Location.GetMappedLineSpan().Path.EndsWith(".g.cs"))))
+                                                         (d.Severity == DiagnosticSeverity.Warning && d.Location.GetMappedLineSpan().Path is string wp && wp.Length > 0 && !wp.EndsWith(".g.cs"))))
         {
             var span = d.Location.GetMappedLineSpan();
-            output.Messages.Add($"{span.Path}({span.StartLinePosition.Line + 1}): {d.Severity.ToString().ToLowerInvariant()} {d.Id}: {d.GetMessage()}");
+            string where = string.IsNullOrEmpty(span.Path) ? "typhon" : $"{span.Path}({span.StartLinePosition.Line + 1})";
+            output.Messages.Add($"{where}: {d.Severity.ToString().ToLowerInvariant()} {d.Id}: {d.GetMessage()}");
             hasErrors |= d.Severity == DiagnosticSeverity.Error;
         }
         output.Success = result.Success && !hasErrors;
         if (output.Success) { output.Pe = pe.ToArray(); output.Pdb = pdb.ToArray(); }
         return output;
+    }
+
+    static readonly Dictionary<string, MetadataReference> _packageReferences = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>A package assembly as a reference (kept, so a compile server reuses it and Roslyn its symbols).</summary>
+    static MetadataReference PackageReference(string path)
+    {
+        lock (_packageReferences)
+        {
+            if (!_packageReferences.TryGetValue(path, out var r)) _packageReferences[path] = r = MetadataReference.CreateFromFile(path);
+            return r;
+        }
     }
 
     static string ReadSource(string path, List<SourceProbe> probes)

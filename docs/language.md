@@ -27,7 +27,10 @@ The untyped (`dynamic`) version of a function stays only where it can actually r
 unknown type. A function passed as a value (`map(f, xs)`) is called through a lambda and keeps it too. The inference
 runs the emitter until the signatures stop changing; if they do not settle, the code is emitted as written.
 [`tests/conformance/cases/untyped.ty`](../tests/conformance/cases/untyped.ty) has no annotations at all and compiles
-with `--strict`. Not inferred yet: parameters of methods other than `__init__`. Note that a public function called only
+with `--strict`. Methods are inferred the same way from calls whose receiver's class is known (`obj.m(x)`, `self.m(x)`):
+an overload per signature, beside the late-bound version that calls through untyped receivers, bound methods and
+`getattr` reach; not for methods that a subclass overrides or that override, decorated methods, methods of generic
+classes and methods a `Protocol` declares (return types only there). Note that a public function called only
 with ints inside the project gets an `int` signature for C# callers too.
 
 Where the compiler still cannot determine a type — an empty `[]`, a value from a dynamic API, a function that is only
@@ -123,7 +126,8 @@ decorators written in Python on functions (module-level and nested: `@trace`, `@
 `@functools.wraps(f)`; `f = d(f)` is applied where the def runs, so a memoizing decorator also sees recursive calls), on
 methods (also below `@staticmethod`; the wrapper gets `self` first and the arguments as written, and C# callers still
 see a method) and on classes (run where the class is defined, with the class: registries; the result must be the class
-itself), `@functools.total_ordering`, `*args` as a tuple, `getattr`/`setattr`/`hasattr`/`delattr` (properties,
+itself), `@functools.total_ordering`, `*args` as a tuple, `sys.exit` raising `SystemExit` (finally blocks run, `except
+Exception` does not catch it, uncaught it ends the program with its code; `os._exit` ends it at once), `getattr`/`setattr`/`hasattr`/`delattr` (properties,
 class variables, methods as bound methods, attributes added at run time, Python methods of built-in values),
 function values called with `*args`, `**kwargs` and keyword arguments, attributes set on functions (`wrapper.calls = 0`),
 `functools.partial`, a decorator that names no Python callable → .NET attribute (`@Obsolete("...")`, `@Fact`),
@@ -164,8 +168,7 @@ float past 2**53 (they compare as floats), `doctest` examples (`testmod()` runs 
 **argparse** is CPython 3.14's (parsing, subcommands, groups, help and usage layout, colors on a terminal, messages).
 `parse_args()` returns a late-bound `Namespace` (`args.verbose`; an `argparse.Namespace` annotation keeps it late-bound);
 list values are typed lists (`list[int]` for `type=int`). An error, `-h` and `--version` print what CPython prints and
-exit with its status, but Typhon has no `SystemExit` to catch (use `exit_on_error=False` and `except
-argparse.ArgumentError`). `set_defaults(func=...)` (subcommand handlers) and `Namespace(a=1)`
+raise `SystemExit` with its status, as in CPython (`except SystemExit` catches it). `set_defaults(func=...)` (subcommand handlers) and `Namespace(a=1)`
 work. Not supported: custom `Action` or `HelpFormatter` subclasses. (Functions and fields annotated with a standard module's type, such as
 `argparse.ArgumentParser`, `logging.Logger` or `re.Pattern`, are internal to the program, like the runtime's types.)
 

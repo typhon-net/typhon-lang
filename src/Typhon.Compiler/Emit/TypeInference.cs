@@ -18,6 +18,8 @@ namespace Typhon.Compiler.Emit
         public int FirstParam;          // 1 when the first parameter is self
         /// <summary>Unannotated parameters are specialised per call signature (one overload per argument-type tuple).</summary>
         public bool InferParams;
+        /// <summary>A method: its late-bound version is always emitted (calls through untyped receivers), so its body's calls count.</summary>
+        public bool AlwaysFallback;
         public List<Param> Params => Def.Params.Skip(FirstParam).ToList();
     }
 
@@ -319,7 +321,29 @@ namespace Typhon.Compiler.Emit
             if (distinct.Count == 1) return none && IsValueType(distinct[0]) && !distinct[0].EndsWith("?") ? distinct[0] + "?" : distinct[0];
             if (distinct.All(x => x == "long" || x == "double")) return "double";
             if (distinct.All(x => x == "long" || x == BigInt)) return BigInt; // big-int mode: machine ints and Python ints
+            // tuples of one length: unified position by position ((Sphere, Plain) and (Plane, Checker): (dynamic, dynamic)),
+            // so they stay tuples that unpack
+            var tuples = distinct.Select(TupleParts).ToList();
+            if (tuples.All(t => t != null) && tuples.Select(t => t.Count).Distinct().Count() == 1 && tuples[0].Count >= 2)
+                return "(" + string.Join(", ", Enumerable.Range(0, tuples[0].Count).Select(i => UnifyElements(tuples.Select(t => t[i]).ToList()) ?? "dynamic")) + ")";
             return "dynamic";
+        }
+
+        /// <summary>The item types of a C# tuple type "(A, B<C, D>)" (null for other types).</summary>
+        static List<string> TupleParts(string t)
+        {
+            if (t == null || t.Length < 2 || t[0] != '(' || t[t.Length - 1] != ')') return null;
+            var parts = new List<string>();
+            int depth = 0, start = 1;
+            for (int i = 1; i < t.Length - 1; i++)
+            {
+                char c = t[i];
+                if (c == '<' || c == '(' || c == '[') depth++;
+                else if (c == '>' || c == ')' || c == ']') depth--;
+                else if (c == ',' && depth == 0) { parts.Add(t.Substring(start, i - start).Trim()); start = i + 1; }
+            }
+            parts.Add(t.Substring(start, t.Length - 1 - start).Trim());
+            return parts.Any(x => x.Length == 0 || x.Contains(' ') && !x.Contains('<') && !x.Contains('(')) ? null : parts;
         }
 
         // ───────────────────────────── targets ─────────────────────────────
@@ -327,6 +351,10 @@ namespace Typhon.Compiler.Emit
         void CollectTargets(ProjectContext p)
         {
             var usedAsValue = NamesUsedAsValues(p);
+            // methods a Protocol declares: an implementation needs the interface's one signature, not overloads per call
+            var protocolMethods = new HashSet<string>(p.Modules.Values.Where(m => m.Ast != null).SelectMany(m => m.Classes.Values)
+                .Where(c => c.Bases.Any(b => ((b is SubscriptExpr s ? s.Target : b) is NameExpr n ? n.Id : (b as AttributeExpr)?.Name) == "Protocol"))
+                .SelectMany(c => c.Body.OfType<FunctionDef>().Select(f => f.Name)));
             foreach (var m in p.Modules.Values)
             {
                 if (m.ParseDiagnostics.Count > 0) continue;
@@ -339,9 +367,11 @@ namespace Typhon.Compiler.Emit
                     foreach (var f in c.Body.OfType<FunctionDef>())
                     {
                         if (f.Name == "__init__") { Add(m, c, f, allowParams: true); continue; }
-                        // other methods: return types only, and only when no other Typhon class overrides or is overridden by them
-                        if (f.Name.StartsWith("__") || f.Decorators.Count > 0 || IsOverridden(p, c, f.Name)) continue;
-                        Add(m, c, f, allowParams: false);
+                        // other methods, when no other Typhon class overrides or is overridden by them: parameters inferred from
+                        // the calls like a function's (an overload per signature, beside the late-bound version), except in a
+                        // generic class and for methods a Protocol declares (return types only there)
+                        if (f.Name.StartsWith("__") || f.Decorators.Count > 0 || m.Ast.MethodDecorators.ContainsKey(f) || IsOverridden(p, c, f.Name)) continue;
+                        Add(m, c, f, allowParams: c.TypeParams.Count == 0 && !protocolMethods.Contains(f.Name));
                     }
                 }
             }
@@ -358,7 +388,8 @@ namespace Typhon.Compiler.Emit
             bool inferParams = allowParams && unannotated;
             if (!inferParams && !inferReturn) return;
             var key = FuncKey(m, c, f.Name);
-            Targets[key] = new InferenceTarget { Key = key, Module = m, Class = c, Def = f, FirstParam = first, InferParams = inferParams };
+            Targets[key] = new InferenceTarget { Key = key, Module = m, Class = c, Def = f, FirstParam = first, InferParams = inferParams,
+                                                 AlwaysFallback = inferParams && c != null && f.Name != "__init__" };
         }
 
         /// <summary>list / dict / set / tuple without type arguments: the element types come from the call sites.</summary>
@@ -457,7 +488,7 @@ namespace Typhon.Compiler.Emit
                 }
                 foreach (var kv in sigs.ToList())
                     if (kv.Value.Count > MaxOverloads) { sigs.Remove(kv.Key); unknownCall.Add(kv.Key); }
-                var newLive = new HashSet<string>(Targets.Values.Where(t => t.InferParams && (unknownCall.Contains(t.Key) || !sigs.ContainsKey(t.Key))).Select(t => t.Key));
+                var newLive = new HashSet<string>(Targets.Values.Where(t => t.InferParams && (t.AlwaysFallback || unknownCall.Contains(t.Key) || !sigs.ContainsKey(t.Key))).Select(t => t.Key));
                 if (newLive.SetEquals(live)) break;
                 live = newLive;
             }

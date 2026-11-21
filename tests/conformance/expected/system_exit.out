@@ -1,0 +1,7 @@
+cleanup 5
+caught exit 5
+outer got bye
+exception: v
+argparse exit 2
+cleanup 1
+1

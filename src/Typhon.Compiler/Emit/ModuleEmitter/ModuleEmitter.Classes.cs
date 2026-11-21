@@ -518,6 +518,23 @@ namespace Typhon.Compiler.Emit
         void EmitMethodCore(FunctionDef f, ClassContext ctx, List<Expr> bases, bool isStaticDecl, bool isClassMethod)
         {
             var target = TargetOf(_m, ctx.Def, f.Name);
+            // parameters inferred from the calls: an overload per signature, and always the late-bound version too (calls the
+            // compiler cannot see: late-bound receivers, bound methods passed around, getattr)
+            if (target != null && target.Class == ctx.Def && target.InferParams && !isStaticDecl && !isClassMethod)
+            {
+                Ti.Signatures.TryGetValue(target.Key, out var sigs);
+                if (sigs != null)
+                    foreach (var types in sigs)
+                    {
+                        EmitMethodVariant(f, ctx, bases, types, TypeInference.ReturnKey(target.Key, TypeInference.SigKey(types)), null);
+                        _w.Line();
+                    }
+                var savedQuiet = _quietDynamic;
+                _quietDynamic = sigs != null && sigs.Count > 0; // (typed overloads exist: the late-bound one is the extra)
+                try { EmitMethodVariant(f, ctx, bases, null, null, target.Key); }
+                finally { _quietDynamic = savedQuiet; }
+                return;
+            }
             string retKey = target != null && target.Class == ctx.Def && !target.InferParams && !BaseHasMember(bases, f.Name, requireOverridable: false)
                 ? TypeInference.ReturnKey(target.Key, "") : null;
             var savedRet = _retKey; _retKey = retKey;
@@ -526,9 +543,24 @@ namespace Typhon.Compiler.Emit
             finally { _retKey = savedRet; _scopeKey = savedScopeKey; }
         }
 
-        void EmitMethodTyped(FunctionDef f, ClassContext ctx, List<Expr> bases, bool isStaticDecl, bool isClassMethod, string retKey)
+        /// <summary>One C# overload of a method whose parameters are inferred: typed by a signature, or late-bound (fallback).</summary>
+        void EmitMethodVariant(FunctionDef f, ClassContext ctx, List<Expr> bases, string[] paramTypes, string retKey, string fallbackKey)
         {
-            var sig = BuildSignature(f, dropFirst: !isStaticDecl, retKey: retKey);
+            var savedRet = _retKey; var savedCtx = _ctxFallbackKey; var savedScopeKey = _scopeKey;
+            _retKey = retKey; _ctxFallbackKey = fallbackKey;
+            if (Obs != null) Obs.InFallbackBody = fallbackKey != null;
+            _scopeKey = TypeInference.FuncKey(_m, ctx.Def, f.Name) + "#" + TypeInference.SigKey(paramTypes);
+            try { EmitMethodTyped(f, ctx, bases, false, false, retKey, paramTypes); }
+            finally
+            {
+                _retKey = savedRet; _ctxFallbackKey = savedCtx; _scopeKey = savedScopeKey;
+                if (Obs != null) Obs.InFallbackBody = savedCtx != null;
+            }
+        }
+
+        void EmitMethodTyped(FunctionDef f, ClassContext ctx, List<Expr> bases, bool isStaticDecl, bool isClassMethod, string retKey, string[] paramTypes = null)
+        {
+            var sig = BuildSignature(f, dropFirst: !isStaticDecl, paramTypes: paramTypes, retKey: retKey);
             string mods = MethodModifiers(f, ctx, bases, out bool isStatic, out bool isAbstract);
             if (!isStatic) { sig.Scope.HasSelf = true; sig.Scope.Params.Remove(f.Params[0].Name); }
             if (isClassMethod) { sig.Scope.ClsName = ctx.CsSelfType; sig.Scope.Params.Remove(f.Params[0].Name); }

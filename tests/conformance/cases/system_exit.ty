@@ -1,0 +1,44 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+"""Conformance: sys.exit raises SystemExit (finally blocks run, except Exception does not catch it), argparse exits too."""
+
+import sys
+import argparse
+
+
+def risky(n: int) -> int:
+    try:
+        if n > 2:
+            sys.exit(n)
+        return n
+    finally:
+        print("cleanup", n)
+
+
+try:
+    risky(5)
+except SystemExit as e:
+    print("caught exit", e.code)
+
+try:
+    try:
+        sys.exit("bye")
+    except Exception:
+        print("not here")
+except SystemExit as e:
+    print("outer got", e.code)
+
+try:
+    raise ValueError("v")
+except Exception as e:
+    print("exception:", e)
+
+parser = argparse.ArgumentParser(prog="tool")
+parser.add_argument("--n", type=int)
+try:
+    parser.parse_args(["--n", "x"])
+except SystemExit as e:
+    print("argparse exit", e.code)
+
+print(risky(1))

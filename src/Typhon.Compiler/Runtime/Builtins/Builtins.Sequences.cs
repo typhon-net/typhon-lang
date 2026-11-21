@@ -380,7 +380,9 @@ namespace Typhon.Runtime
         /// <summary>Element i of a sequence passed as f(*xs) to n fixed parameters (Python checks the count).</summary>
         public static T __unpack<T>(IList<T> xs, int i, int n) =>
             xs.Count == n ? xs[i] : throw new InvalidCastException($"expected {n} positional arguments from *args, got {xs.Count}");
-        public static dynamic __unpack(object xs, int i, int n) => __unpack(((IEnumerable)xs).Cast<object?>().ToList(), i, n)!;
+        public static dynamic __unpack(object xs, int i, int n) => xs is ITuple t && !(xs is IEnumerable)
+            ? (t.Length == n ? t[i]! : throw new InvalidCastException($"expected {n} positional arguments from *args, got {t.Length}")) // a tuple of fixed shape
+            : __unpack(((IEnumerable)xs).Cast<object?>().ToList(), i, n)!;
 
         public static OrderedDictionary<K, V> __dict_merge<K, V>(params IEnumerable<KeyValuePair<K, V>>[] parts) where K : notnull
         {

@@ -10,8 +10,9 @@ namespace Typhon.Cli;
 /// <summary>Runs a compiled Typhon program in this process and prints Python-style tracebacks (no Roslyn needed).</summary>
 internal static class ProgramRunner
 {
-    public static int Run(byte[] pe, byte[]? pdb, string[] programArgs, bool timing, IReadOnlyCollection<string> frameworks)
+    public static int Run(byte[] pe, byte[]? pdb, string[] programArgs, bool timing, IReadOnlyCollection<string> frameworks, IReadOnlyCollection<string>? packageAssemblies = null)
     {
+        if (packageAssemblies != null) SharedFrameworks.EnablePackages(packageAssemblies);
         // ASP.NET Core and the like are not on this process's list of platform assemblies: they load from their folder
         try { SharedFrameworks.EnableAtRunTime(frameworks); }
         catch (InvalidOperationException e) { Console.Error.WriteLine(e.Message); return 1; }
@@ -26,6 +27,14 @@ internal static class ProgramRunner
         }
         catch (TargetInvocationException tie) when (tie.InnerException != null)
         {
+            // sys.exit while a module initializes (outside Main's own handler): the program ends with its code
+            var inner = tie.InnerException;
+            while (inner is TypeInitializationException && inner.InnerException != null) inner = inner.InnerException;
+            if (inner.GetType().FullName == "Typhon.Runtime.SystemExit" && inner.GetType().GetMethod("Exit") is MethodInfo exit)
+            {
+                exit.Invoke(inner, null);
+                return Environment.ExitCode;
+            }
             PrintTraceback(tie.InnerException);
             return 1;
         }

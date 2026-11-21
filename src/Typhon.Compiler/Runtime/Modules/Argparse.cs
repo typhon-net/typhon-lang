@@ -168,11 +168,11 @@ namespace Typhon.Runtime
             }
         }
 
-        /// <summary>Exits the process like sys.exit(status) (Typhon's sys.exit ends the process; it does not raise SystemExit).</summary>
+        /// <summary>Exits like sys.exit(status): raises SystemExit (except SystemExit catches it, as in Python).</summary>
         public static void Exit(int status)
         {
             try { Console.Out.Flush(); Console.Error.Flush(); } catch (Exception) { }
-            Environment.Exit(status);
+            throw new SystemExit((long)status);
         }
 
         /// <summary>The name a Python callable would show as __name__ (the builtin or function a type= delegate calls).</summary>
