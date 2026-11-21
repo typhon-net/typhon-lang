@@ -35,7 +35,7 @@ namespace Typhon.Compiler.Emit
             return string.Join(".", parts);
         }
 
-        static readonly HashSet<string> IgnoredModules = new HashSet<string> { "typing", "abc", "dataclasses", "enum", "__future__", "collections.abc", "typing_extensions", "clr" };
+        static readonly HashSet<string> IgnoredModules = new HashSet<string> { "typing", "abc", "enum", "__future__", "collections.abc", "typing_extensions", "clr" };
 
         void ProcessImport(ImportStmt s)
         {

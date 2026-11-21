@@ -116,23 +116,31 @@ reference equality unless `__eq__` is defined) and **Python semantics where it i
 Modules & packages (folders → namespaces), `import`/`from ... import` of Typhon modules, .NET namespaces/types and the
 Typhon stdlib, functions with defaults/`*args`/keyword arguments, PEP 695 generics (`def f[T]`, `class Box[T]`, bounds),
 classes with inheritance, `super()`, properties (+setters), `@staticmethod`/`@classmethod`, `@abstractmethod`/`ABC`,
-`@override`, `@final`, `@dataclass`, `Enum`, `Protocol` (→ interface, implemented structurally *or* explicitly),
-operator overloading, any other decorator → .NET attribute (`@Obsolete("...")`, `@Fact`), docstrings → XML docs,
+`@override`, `@final`, `@dataclass` (with `field(default=..., default_factory=..., init=, repr=, compare=)`,
+`__post_init__`, `asdict`, `astuple`, `fields`, `replace`), `Enum` and `IntEnum` (with `auto()`), `Protocol` (→ interface,
+implemented structurally *or* explicitly), operator overloading, docstrings → XML docs,
+decorators written in Python on functions (module-level and nested: `@trace`, `@repeat(3)`, stacked decorators,
+`@functools.wraps(f)`; `f = d(f)` is applied where the def runs, so a memoizing decorator also sees recursive calls),
+function values called with `*args`, `**kwargs` and keyword arguments, attributes set on functions (`wrapper.calls = 0`),
+`functools.partial`, a decorator that names no Python callable → .NET attribute (`@Obsolete("...")`, `@Fact`),
 `if/elif/else`, `while`, `for` (counting loops over `range` compile to plain `for` loops; iterating a dict yields its
 keys), `for/while ... else`, `match`/`case` (PEP 634: literal, capture, sequence, mapping, class and or-patterns,
 guards), the walrus operator `:=`, `except A, B:` (PEP 758), starred unpacking (`a, *rest = xs`, `[*a, *b]`, `f(*args)`,
 `{**d1, **d2}`), slice assignment and `del xs[a:b]`, `del d[key]`/`del xs[i]`, `try/except/else/finally`,
-`raise`, `with` (→ `using`), `async def`/`await`/`async for`/`async with` (→ `Task`), generators (`yield`, `yield from`;
-a generator that receives values, `x = yield v`, or returns one supports `send`, `throw`, `close` and `StopIteration.value`),
-`bytes`/`bytearray` with `struct` and `hashlib`, `obj.__dict__` and `vars(obj)` as live views of an object's attributes,
+`raise`, `with` (Python's `__enter__`/`__exit__` protocol, an `__exit__` that returns true suppresses the exception; a
+.NET `IDisposable` such as a file → `using`), `contextlib` (`contextmanager`, `suppress`, `nullcontext`, `closing`),
+`async def`/`await`/`async for`/`async with` (→ `Task`), generators (`yield`, `yield from`, `yield` in `try`/`except`/
+`finally` and inside expressions such as `x = 2 * (yield x)`; a generator that receives values, `x = yield v`, or returns
+one supports `send`, `throw`, `close` and `StopIteration.value`), `bytes`/`bytearray` (all of `bytes`' methods on both)
+with `struct` and `hashlib`, `obj.__dict__` and `vars(obj)` as live views of an object's attributes,
 lambdas, closures, `global`/`nonlocal`, list/dict/set comprehensions and generator expressions (→ LINQ), f-strings with
 the Python format-spec mini-language and `f"{expr = }"`, tuple unpacking, `if __name__ == "__main__":` (or a `__main__.ty` file) as the
 entry point, `asyncio.run(...)` to call async code from synchronous code.
 
 ## Not supported yet / known gaps
 
-`del` of names/attributes, complex, metaclasses, `decimal`, `yield` inside a `try` block that has an `except` clause
-(a C# iterator limit), `yield` inside a larger expression (`print((yield))`), `eval`/`exec`/`setattr` and other runtime
+`del` of names/attributes, complex, metaclasses, `decimal`, decorators written in Python on methods and classes (planned),
+enums with non-int values, `eval`/`exec`/`setattr` and other runtime
 reflection on Python objects, multiple inheritance of classes, static methods
 on generic classes need explicit type arguments (`Stack[int].of(...)`), .NET `out`/`ref` parameters (planned: tuple
 returns like IronPython), ints beyond 64 bits outside big-int mode (`OverflowError`), exact comparison of an int with a

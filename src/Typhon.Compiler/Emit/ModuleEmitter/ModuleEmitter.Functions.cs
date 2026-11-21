@@ -39,6 +39,7 @@ namespace Typhon.Compiler.Emit
             {
                 string name = DecoratorName(d);
                 if (name == null) { Unsupported(d, "this decorator form"); continue; }
+                if (_m.Ast.UnappliedDecorators.Contains(d)) { Unsupported(d, "a decorator written in Python on a method or class"); continue; }
                 if (KnownDecorators.Contains(name) || name.EndsWith(".setter") || name.EndsWith(".getter") || (isHandled != null && isHandled(name))) continue;
                 // any other decorator is treated as a .NET attribute: @Obsolete("x") → [Obsolete("x")]
                 if (d is CallExpr c)
@@ -600,6 +601,7 @@ namespace Typhon.Compiler.Emit
             var sig = BuildSignature(f, dropFirst: false);
             sig.Scope.HasSelf = false;
             if (!f.IsAsync && !sig.IsGenerator) _funcReturnTypes[f.Name] = sig.ReturnType;
+            _localFunctionSigs[f.Name] = (f, sig);
             string asyncKw = f.IsAsync ? "async " : "";
             _w.Line($"{asyncKw}{sig.ReturnType} {Esc(f.Name)}{TypeParamList(f.TypeParams)}({sig.Params}){TypeParamConstraints(f.TypeParams, f)}");
             EmitSignatureBody(f.Body, sig);

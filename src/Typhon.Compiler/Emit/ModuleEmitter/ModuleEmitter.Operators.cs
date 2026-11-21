@@ -124,6 +124,12 @@ namespace Typhon.Compiler.Emit
                 return IntConstant(folded);
             string l = Operand(b.Left, b.Right), r = Operand(b.Right, b.Left);
             string lType = InferType(b.Left), rType = InferType(b.Right);
+            // an IntEnum member is an int in arithmetic (Level.LOW + 1 == 2)
+            if (ArithmeticOps.Contains(b.Op))
+            {
+                if (IsIntEnumType(lType)) { l = $"((long){Paren(l)})"; lType = "long"; }
+                if (IsIntEnumType(rType)) { r = $"((long){Paren(r)})"; rType = "long"; }
+            }
             if (_big && ArithmeticOps.Contains(b.Op))
             {
                 const string Big = TypeInference.BigInt;

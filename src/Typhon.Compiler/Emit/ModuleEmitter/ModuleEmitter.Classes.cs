@@ -128,19 +128,63 @@ namespace Typhon.Compiler.Emit
         {
             EmitDocComment(c.Body);
             LineDirective(c);
-            _w.Line($"{Visibility(c.Name, true)} enum {Esc(c.Name)}");
+            // an IntEnum is long-based: the runtime prints its members as ints (str(Level.HIGH) == "2"), arithmetic treats them as ints
+            bool intEnum = IsIntEnum(c);
+            _w.Line($"{Visibility(c.Name, true)} enum {Esc(c.Name)}{(intEnum ? " : long" : "")}");
             _w.Open();
+            string previous = null;
             foreach (var s in c.Body)
             {
                 if (s is AssignStmt a && a.Targets[0] is NameExpr n)
                 {
+                    // auto(): the previous member's value + 1, starting at 1 (Python's default _generate_next_value_)
                     bool auto = a.Value is CallExpr call && DottedName(call.Func)?.EndsWith("auto") == true;
-                    _w.Line(auto ? Esc(n.Id) + "," : $"{Esc(n.Id)} = {EmitExpr(a.Value)},");
+                    _w.Line(auto ? $"{Esc(n.Id)} = {(previous == null ? "1" : Esc(previous) + " + 1")}," : $"{Esc(n.Id)} = {EmitExpr(a.Value)},");
+                    previous = n.Id;
                 }
                 else if (!(s is PassStmt) && !(s is ExprStmt)) Unsupported(s, "methods or annotations inside an Enum");
             }
             _w.Close();
         }
+
+        sealed class FieldSpec { public Expr Default, Factory; public bool? Init, Repr, Compare; }
+
+        /// <summary>A dataclass field's dataclasses.field(...) options, or null when its value is not a field() call.</summary>
+        FieldSpec DataclassField(AnnAssignStmt a)
+        {
+            if (!(a.Value is CallExpr fc) || !(DottedName(fc.Func) is "field" or "dataclasses.field")) return null;
+            var spec = new FieldSpec();
+            bool? Flag(Expr e) => e is ConstExpr b && b.Kind == ConstKind.Bool ? b.Raw == "True" : null;
+            foreach (var arg in fc.Args)
+                switch (arg.Name)
+                {
+                    case "default": spec.Default = arg.Value; break;
+                    case "default_factory": spec.Factory = arg.Value; break;
+                    case "init": spec.Init = Flag(arg.Value); break;
+                    case "repr": spec.Repr = Flag(arg.Value); break;
+                    case "compare": spec.Compare = Flag(arg.Value); break;
+                }
+            return spec;
+        }
+
+        /// <summary>A default_factory's call for a field of the given type: list/dict/set make an empty container of that type.</summary>
+        string FactoryCall(Expr factory, string type)
+        {
+            if (factory is NameExpr fn && !IsShadowed(fn.Id) && type != "dynamic" && type != "object")
+            {
+                if (fn.Id is "list" or "dict" or "set") return $"new {type.TrimEnd('?')}()";
+                if (fn.Id == "int") return "0L";
+                if (fn.Id == "float") return "0.0";
+                if (fn.Id == "str") return "\"\"";
+            }
+            if (factory is LambdaExpr lf && lf.Params.Count == 0) return Checked(EmitExpr(lf.Body, targetTyped: true));
+            return Checked(EmitExpr(new CallExpr { Func = factory, Line = factory.Line, Col = factory.Col }, targetTyped: true));
+        }
+
+        static bool IsIntEnum(ClassDef c) => c.Bases.Any(b => DottedName(b) is "IntEnum" or "enum.IntEnum");
+
+        /// <summary>Is the C# type a Typhon IntEnum (whose members are ints in arithmetic)?</summary>
+        bool IsIntEnumType(string t) => t != null && ClassKeyOfType(t, out _) is string key && ClassDefOfKey(key) is ClassDef cd && IsIntEnum(cd);
 
         void EmitInterfaceBody(ClassDef c)
         {
@@ -264,7 +308,10 @@ namespace Typhon.Compiler.Emit
                         ctx.Members.Add(n.Id);
                         ctx.FieldTypes[n.Id] = type;
                         LineDirective(s);
-                        string init = a.Value != null ? " = " + Checked(EmitExpr(a.Value, targetTyped: true)) + ";" : "";
+                        var fieldSpec = isDataclass && !isClassVar ? DataclassField(a) : null;
+                        string init = fieldSpec != null ? (fieldSpec.Default != null ? " = " + Checked(EmitExpr(fieldSpec.Default, targetTyped: true)) + ";"
+                                                           : fieldSpec.Factory != null ? " = " + FactoryCall(fieldSpec.Factory, type) + ";" : "")
+                            : a.Value != null ? " = " + Checked(EmitExpr(a.Value, targetTyped: true)) + ";" : "";
                         if (isClassVar) _w.Line($"{Visibility(n.Id, false)} static {type} {Esc(n.Id)}{(init.Length > 0 ? init : ";")}");
                         else
                         {
@@ -370,22 +417,41 @@ namespace Typhon.Compiler.Emit
                 Obs.Fields[TypeInference.ClassKey(_m, c.Name)] = new Dictionary<string, string>(ctx.FieldTypes);
 
             // 3. dataclass constructor / repr / equality
+            if (isDataclass)
+                _w.Line($"public static readonly string[] __dataclass_fields__ = {{ {string.Join(", ", dataFields.Select(a => CsString(((NameExpr)a.Target).Id)))} }};");
             if (isDataclass && !methods.Any(m => m.Name == "__init__"))
             {
-                var ps = dataFields.Select(a => $"{ctx.FieldTypes[((NameExpr)a.Target).Id]} {Esc(((NameExpr)a.Target).Id)}" + (a.Value != null ? " = " + EmitExpr(a.Value, targetTyped: true) : ""));
+                string FieldName(AnnAssignStmt a) => ((NameExpr)a.Target).Id;
+                var initFields = dataFields.Where(a => DataclassField(a)?.Init != false).ToList();
+                var ps = initFields.Select(a =>
+                {
+                    string n = FieldName(a), t = ctx.FieldTypes[n];
+                    var spec = DataclassField(a);
+                    // a default_factory: the parameter is optional (null), the factory makes each instance its own value
+                    if (spec?.Factory != null) return $"{NullableOf(t)} {Esc(n)} = null";
+                    var dv = spec != null ? spec.Default : a.Value;
+                    return $"{t} {Esc(n)}" + (dv != null ? " = " + EmitExpr(dv, targetTyped: true) : "");
+                });
                 _w.Line($"public {Esc(c.Name)}({string.Join(", ", ps)})");
                 _w.Open();
-                foreach (var a in dataFields) { var n = Esc(((NameExpr)a.Target).Id); _w.Line($"this.{n} = {n};"); }
+                foreach (var a in initFields)
+                {
+                    var n = Esc(FieldName(a));
+                    var spec = DataclassField(a);
+                    _w.Line(spec?.Factory != null ? $"this.{n} = {n} ?? {FactoryCall(spec.Factory, ctx.FieldTypes[FieldName(a)])};" : $"this.{n} = {n};");
+                }
+                if (methods.Any(m => m.Name == "__post_init__")) _w.Line("this.__post_init__();");
                 _w.Close();
-                if (dataFields.Count > 0) _w.Line($"public {Esc(c.Name)}() {{ }}");
+                if (initFields.Count > 0) _w.Line($"public {Esc(c.Name)}() {{ }}");
                 if (!methods.Any(m => m.Name == "__repr__" || m.Name == "__str__"))
                 {
-                    var parts = dataFields.Select(a => { var n = ((NameExpr)a.Target).Id; return $"{n}={{repr(this.{Esc(n)})}}"; });
+                    var parts = dataFields.Where(a => DataclassField(a)?.Repr != false).Select(a => { var n = FieldName(a); return $"{n}={{repr(this.{Esc(n)})}}"; });
                     _w.Line($"public override string ToString() => $\"{c.Name}({string.Join(", ", parts)})\";");
                 }
                 if (!methods.Any(m => m.Name == "__eq__"))
                 {
-                    var cmp = dataFields.Count == 0 ? "true" : string.Join(" && ", dataFields.Select(a => { var n = Esc(((NameExpr)a.Target).Id); return $"Equals(this.{n}, __o.{n})"; }));
+                    var compared = dataFields.Where(a => DataclassField(a)?.Compare != false).ToList();
+                    var cmp = compared.Count == 0 ? "true" : string.Join(" && ", compared.Select(a => { var n = Esc(FieldName(a)); return $"{Rt("eq")}((object?)this.{n}, (object?)__o.{n})"; }));
                     _w.Line($"public override bool Equals(object? obj) => obj is {ctx.CsSelfType} __o && {cmp};");
                     _w.Line($"public static bool operator ==({ctx.CsSelfType}? a, {ctx.CsSelfType}? b) => a is null ? b is null : a.Equals(b);");
                     _w.Line($"public static bool operator !=({ctx.CsSelfType}? a, {ctx.CsSelfType}? b) => !(a == b);");

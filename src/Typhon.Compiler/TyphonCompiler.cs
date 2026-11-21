@@ -136,6 +136,7 @@ namespace Typhon.Compiler
                 info.ParseDiagnostics.Add(new TyDiagnostic { Id = "TY0001", Severity = Severity.Error, Message = e.Message, Path = path, Line = e.Line, Col = e.Col });
                 info.Ast = new ModuleAst { Path = path };
             }
+            Decorators.Apply(info.Ast);
             foreach (var s in info.Ast.Body)
             {
                 if (s is AssignStmt alias && alias.Targets.Count == 1 && alias.Targets[0] is NameExpr an0 && IsTypeAliasValue(alias.Value))

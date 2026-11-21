@@ -1,0 +1,145 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+"""Conformance: decorators written in Python, the with protocol, contextlib, functools.wraps/partial, enum.auto/IntEnum, dataclasses.field/asdict/replace."""
+
+import functools
+from contextlib import contextmanager, suppress, nullcontext
+
+def memo(f):
+    cache = {}
+    def inner(n):
+        if n not in cache:
+            cache[n] = f(n)
+        return cache[n]
+    return inner
+
+@memo
+def fib(n):
+    return n if n < 2 else fib(n - 1) + fib(n - 2)
+
+def counted(f):
+    @functools.wraps(f)
+    def wrapper(*args, **kwargs):
+        wrapper.calls += 1
+        return f(*args, **kwargs)
+    wrapper.calls = 0
+    return wrapper
+
+@counted
+def greet(name, punct="!"):
+    """Say hello."""
+    return f"hello {name}{punct}"
+
+REGISTRY = []
+def register(f):
+    REGISTRY.append(f.__name__)
+    return f
+
+@register
+def plain(x):
+    return x * 2
+
+@register
+@counted
+def both(x, y=1):
+    return x + y
+
+def power(base, exp):
+    return base ** exp
+
+@contextmanager
+def guard(label):
+    print("start", label)
+    try:
+        yield label
+    except ValueError as e:
+        print("handled", e)
+    finally:
+        print("end", label)
+
+print(fib(60), plain(21))
+print(greet("ann"), greet("bob", punct="?"), greet(name="cy"), greet.calls, greet.__name__, greet.__doc__)
+print(both(1), both(2, y=5), both.calls, REGISTRY)
+square = functools.partial(power, exp=2)
+cube = functools.partial(power, exp=3)
+twos = functools.partial(power, 2)
+print(square(7), cube(2), twos(10), square.keywords)
+with guard("a") as g:
+    print("in", g)
+with guard("b"):
+    raise ValueError("bad")
+print("after b")
+try:
+    with guard("c"):
+        raise KeyError("k")
+except KeyError as e:
+    print("outer", e)
+with suppress(ZeroDivisionError, KeyError):
+    print(1 // 0)
+with nullcontext(5) as v:
+    print("null", v)
+
+def outer():
+    def helper(a, b=10):
+        return a * b
+    return helper
+h = outer()
+print(h(3), h(3, 4), h(a=2, b=2))
+
+# the with protocol on a class
+class Timer:
+    def __init__(self, name: str):
+        self.name = name
+    def __enter__(self):
+        print("enter", self.name)
+        return self
+    def __exit__(self, exc_type, exc, tb):
+        print("exit", self.name, exc_type is None, exc)
+        return exc_type is KeyError
+
+with Timer("a") as t:
+    print("body", t.name)
+
+with Timer("b"), Timer("c") as c:
+    print("two", c.name)
+
+with Timer("d"):
+    {}["x"]
+print("suppressed")
+
+def f() -> int:
+    with Timer("e"):
+        return 5
+print(f())
+
+try:
+    with Timer("g"):
+        raise ValueError("boom")
+except ValueError as e:
+    print("caught", e)
+
+
+# enum and dataclasses
+from enum import Enum, IntEnum, auto
+from dataclasses import dataclass, field, asdict, replace
+
+class Color(Enum):
+    RED = auto()
+    GREEN = auto()
+
+class Level(IntEnum):
+    LOW = 1
+    HIGH = 2
+
+@dataclass
+class Item:
+    name: str
+    tags: list = field(default_factory=list)
+    qty: int = 1
+
+print(Color.RED, Color.GREEN.value, Level.HIGH > Level.LOW, Level.LOW + 1)
+it = Item("a")
+it.tags.append("x")
+print(it, asdict(it), replace(it, qty=5))
+print(square(7))

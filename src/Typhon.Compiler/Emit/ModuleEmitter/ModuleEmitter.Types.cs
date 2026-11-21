@@ -278,6 +278,7 @@ namespace Typhon.Compiler.Emit
                 return InferType(new CallExpr { Func = aliasTarget, Args = call.Args, Line = call.Line, Col = call.Col });
             if (CallableObjectCall(call) is CallExpr objectCall) return InferType(objectCall);
             if (FunctionValueCallType(call) is string fnCallType) return fnCallType;
+            if (IsDataclassReplace(call)) { string rt0 = InferType(call.Args[0].Value); return rt0 == TypeInference.Pending ? rt0 : rt0 ?? "dynamic"; }
             if (call.Func is NameExpr gtn && gtn.Id == "globals" && call.Args.Count == 0 && !IsShadowed("globals")) return "OrderedDictionary<string, object?>";
             if (call.Func is NameExpr dfn && IsLocal(dfn.Id) && KnownType(dfn.Id) is string dft && dft.StartsWith("global::System.Func<") && dft.EndsWith(">"))
             {
@@ -432,6 +433,7 @@ namespace Typhon.Compiler.Emit
         string BinOpType(BinOpExpr b)
         {
             string l = InferType(b.Left), r = InferType(b.Right);
+            if (ArithmeticOps.Contains(b.Op)) { if (IsIntEnumType(l)) l = "long"; if (IsIntEnumType(r)) r = "long"; }
             // a recursive call whose type is still being inferred contributes no information (optimistic inference)
             if (l == TypeInference.Pending || r == TypeInference.Pending)
             {

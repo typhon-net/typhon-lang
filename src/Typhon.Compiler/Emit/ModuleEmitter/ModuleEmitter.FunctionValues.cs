@@ -99,10 +99,79 @@ namespace Typhon.Compiler.Emit
             return FunctionValueType(owner, def.Name) + ".Instance";
         }
 
+        /// <summary>The nested functions emitted so far: their definitions and C# signatures (for their values).</summary>
+        readonly Dictionary<string, (FunctionDef Def, Signature Sig)> _localFunctionSigs = new Dictionary<string, (FunctionDef, Signature)>();
+
+        /// <summary>Does the name denote a nested function of an enclosing scope (not a variable or parameter)?</summary>
+        bool IsLocalFunctionName(string name)
+        {
+            if (_renames.ContainsKey(name)) return false;
+            foreach (var set in _lambdaParams) if (set.Contains(name)) return false;
+            for (var s = _scope; s != null; s = s.Parent)
+            {
+                if (s.Params.Contains(name)) return false;
+                if (s.Locals == null) continue;
+                if (s.Locals.LocalFunctions.Contains(name)) return !s.Locals.AllLocals.Contains(name);
+                if (s.Locals.AllLocals.Contains(name)) return false;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// A nested function as a value (a decorator's wrapper returned, a closure stored or passed where its type is not
+        /// kept): a PyClosure that calls it with any arguments, keyword arguments by name. Null if the name is not one.
+        /// </summary>
+        string LocalFunctionValue(NameExpr n)
+        {
+            if (!_localFunctionSigs.TryGetValue(n.Id, out var lf) || !IsLocalFunctionName(n.Id) || lf.Def.TypeParams.Count > 0) return null;
+            var (f, sig) = lf;
+            string name = CsString(f.PyName ?? f.Name);
+            var normal = f.Params.Where(p => p.Kind == ParamKind.Normal).ToList();
+            bool varargs = f.Params.Any(p => p.Kind == ParamKind.VarArgs), kwargs = f.Params.Any(p => p.Kind == ParamKind.KwArgs);
+            int required = normal.Count(p => p.Default == null);
+            string names = $"new string[] {{ {string.Join(", ", normal.Select(p => CsString(p.Name)))} }}";
+            string Conv(Param p, string x)
+            {
+                string t = sig.Scope.Types.TryGetValue(p.Name, out var pt) ? pt : "dynamic";
+                return t == "dynamic" || t == "object" || t == "object?" ? x : $"({t})(dynamic?){x}";
+            }
+            string Call(int count)
+            {
+                var args = normal.Take(count).Select((p, i) => Conv(p, $"__p[{i}]")).ToList();
+                if (varargs)
+                {
+                    var vp = f.Params.First(p => p.Kind == ParamKind.VarArgs);
+                    string vt = sig.Scope.Types.TryGetValue(vp.Name, out var t) && t.EndsWith("[]") ? t.Substring(0, t.Length - 2) : "object";
+                    args.Add(vt == "object" || vt == "dynamic" ? $"__p[{normal.Count}..]" : $"global::System.Linq.Enumerable.ToArray(global::System.Linq.Enumerable.Select(__p[{normal.Count}..], __x => ({vt})(dynamic?)__x))");
+                }
+                if (kwargs) args.Add($"global::Typhon.Runtime.PyClosure.Kw(__kw, {names})");
+                string call = $"{Esc(f.Name)}({string.Join(", ", args)})";
+                return sig.ReturnType == "void" ? $"{{ {call}; return null; }}" : $"return {call};";
+            }
+            var body = new StringBuilder();
+            body.Append($"var __p = global::Typhon.Runtime.PyClosure.Args({name}, {names}, __a, __kw, {(kwargs ? "true" : "false")}); ");
+            if (varargs) body.Append($"if (__p.Length >= {normal.Count}) {Call(normal.Count)} ");
+            else for (int k = required; k <= normal.Count; k++) body.Append($"if (__p.Length == {k}) {Call(k)} ");
+            body.Append($"throw global::Typhon.Runtime.PyClosure.ArgCountError({name}, {required}, {(varargs ? "int.MaxValue" : normal.Count.ToString())}, __p.Length);");
+            return $"new global::Typhon.Runtime.PyClosure({name}, (__a, __kw) => {{ {body} }})";
+        }
+
+        /// <summary>A value passed where its static type is lost (a late-bound call's argument): functions become callable objects.</summary>
+        string EmitLooseValue(Expr e)
+        {
+            if (e is NameExpr n)
+            {
+                if (LocalFunctionValue(n) is string closure) return closure;
+                if (FunctionValue(n, typed: false) is string fv) return fv;
+            }
+            return EmitValue(e);
+        }
+
         /// <summary>A call through a value of a function type: a direct call of the function (null if the callee is not one).</summary>
         string EmitFunctionValueCall(CallExpr c)
         {
             if (c.Func is NameExpr fn && !IsLocal(fn.Id) && !_moduleFieldTypes.ContainsKey(fn.Id)) return null; // a plain call by name
+            if (c.Args.Any(a => a.Star || a.DoubleStar)) return null; // f(*args, **kwargs): made at run time (PythonCall)
             if (!FunctionOfType(InferType(c.Func), out var owner, out var def)) return null;
             var target = TargetOf(owner, null, def.Name);
             if (Obs != null && target != null) RecordCall(target, c.Args);
@@ -126,6 +195,7 @@ namespace Typhon.Compiler.Emit
         string FunctionValueCallType(CallExpr c)
         {
             if (c.Func is NameExpr fn && !IsLocal(fn.Id) && !_moduleFieldTypes.ContainsKey(fn.Id)) return null;
+            if (c.Args.Any(a => a.Star || a.DoubleStar)) return null;
             if (!FunctionOfType(InferType(c.Func), out var owner, out var def)) return null;
             if (TargetOf(owner, null, def.Name) is InferenceTarget t && InferredCallType(t, c.Args) is string inferred) return inferred;
             if (def.Returns != null && !TypeInference.IsBareContainer(def.Returns))
@@ -148,7 +218,11 @@ namespace Typhon.Compiler.Emit
             _w.Line($"internal sealed class {cls} : global::Typhon.Runtime.PyFunction");
             _w.Open();
             _w.Line($"public static readonly {cls} Instance = new {cls}();");
-            _w.Line($"{cls}() : base({CsString(f.Name)}) {{ }}");
+            string doc = f.Body.Count > 0 && f.Body[0] is ExprStmt ds && ds.Value is ConstExpr dc && dc.Kind == ConstKind.Str ? CsString(dc.Str) : null;
+            _w.Line($"{cls}() : base({CsString(f.PyName ?? f.Name)}) {{ {(doc != null ? $"__doc__ = {doc}; " : "")}}}");
+            // parameter names: keyword arguments of a late-bound call (f(*args, **kwargs) in a decorator's wrapper) by name
+            if (ps.Count > 0 && ps.All(x => x.Kind == ParamKind.Normal))
+                _w.Line($"protected override string[] __params__ => new[] {{ {string.Join(", ", ps.Select(x => CsString(x.Name)))} }};");
             _w.Line("public override object? __call__(object?[] a)");
             _w.Open();
             for (int n = required; n <= ps.Count; n++)

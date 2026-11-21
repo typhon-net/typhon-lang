@@ -344,6 +344,12 @@ namespace Typhon.Compiler.Emit
 
         void EmitWith(WithStmt w)
         {
+            // context managers with Python's protocol (__enter__ / __exit__): one nested protocol block per item
+            if (!w.IsAsync && w.Items.Any(i => UsesEnterProtocol(i.Context)))
+            {
+                EmitWithProtocol(w, 0);
+                return;
+            }
             string kw = w.IsAsync ? "await using" : "using";
             foreach (var item in w.Items)
             {
@@ -357,6 +363,74 @@ namespace Typhon.Compiler.Emit
                 else Unsupported(item.Var, "this 'with ... as' target");
             }
             EmitBlock(w.Body);
+        }
+
+        /// <summary>
+        /// A context manager that has __enter__ / __exit__ (a Typhon class, a runtime type such as contextlib's) or whose type
+        /// is not known: Python's protocol. A typed .NET IDisposable (an open() file) keeps C#'s using.
+        /// </summary>
+        bool UsesEnterProtocol(Expr ctx)
+        {
+            string t = InferType(ctx);
+            if (t == null || t == "dynamic" || t == "object" || t == "object?") return true;
+            if (ClassKeyOfType(t, out _) is string key && ClassDefOfKey(key) is ClassDef cd) return DefinesInHierarchy(cd, "__enter__");
+            if (_cls != null && t == _cls.CsSelfType) return DefinesInHierarchy(_cls.Def, "__enter__");
+            return DotNetMeta(t) is string meta && _r.GetMembers(meta, "__enter__").Count > 0;
+        }
+
+        /// <summary>
+        /// with cm as x: body — x = cm.__enter__(); the body runs; an exception calls cm.__exit__(type, exc, None) and is
+        /// raised again unless that returns a true value; otherwise cm.__exit__(None, None, None) runs (also after return,
+        /// break and continue). Late-bound managers go through the runtime (which also accepts any IDisposable).
+        /// </summary>
+        void EmitWithProtocol(WithStmt w, int index)
+        {
+            if (index == w.Items.Count) { EmitBlockStatements(w.Body); return; }
+            var item = w.Items[index];
+            string t = InferType(item.Context);
+            bool typed = t != null && t != "dynamic" && !t.StartsWith("object") && UsesEnterProtocol(item.Context) && !(DotNetMeta(t) is null && ClassKeyOfType(t, out _) == null && !(_cls != null && t == _cls.CsSelfType));
+            bool protocol = UsesEnterProtocol(item.Context);
+            string cm = NewTmp("cm"), raised = NewTmp("raised"), e = NewTmp("e");
+            _w.Open();
+            if (!protocol)
+            {
+                // this item is a plain IDisposable: a using block around the rest
+                if (item.Var is NameExpr un && IsInline(w, un.Id)) { _w.Line($"using (var {Esc(un.Id)} = {EmitExpr(item.Context)})"); SetType(un.Id, t); }
+                else if (item.Var is NameExpr un2) _w.Line($"using ({EmitName(un2)} = {EmitExpr(item.Context)})");
+                else _w.Line($"using ({EmitExpr(item.Context)})");
+                _w.Open();
+                EmitWithProtocol(w, index + 1);
+                _w.Close();
+                _w.Close();
+                return;
+            }
+            _w.Line($"var {cm} = {EmitExpr(item.Context)};");
+            string enter = typed ? $"{cm}.__enter__()" : $"{Rt("__enter")}((object?){cm})";
+            string enterType = typed ? (MemberType(t, "__enter__", method: true) ?? "dynamic") : "dynamic";
+            if (item.Var is NameExpr vn)
+            {
+                if (IsInline(w, vn.Id)) { _w.Line($"var {Esc(vn.Id)} = {enter};"); SetType(vn.Id, enterType); }
+                else _w.Line($"{EmitName(vn)} = {enter};");
+            }
+            else if (item.Var == null) _w.Line($"{(typed ? "_ = " : "")}{enter};");
+            else Unsupported(item.Var, "this 'with ... as' target");
+            string exitNone = typed ? $"{cm}.__exit__(null, null, null)" : $"{Rt("__exit")}((object?){cm}, null)";
+            string exitExc = typed ? $"{cm}.__exit__((object){e}.GetType(), {e}, null)" : $"{Rt("__exit")}((object?){cm}, {e})";
+            _w.Line($"bool {raised} = false;");
+            _w.Line("try");
+            _w.Open();
+            EmitWithProtocol(w, index + 1);
+            _w.Close();
+            _w.Line($"catch (global::System.Exception {e})");
+            _w.Open();
+            _w.Line($"{raised} = true;");
+            _w.Line($"if (!{Rt("truthy")}((object?)({exitExc}))) throw;");
+            _w.Close();
+            _w.Line("finally");
+            _w.Open();
+            _w.Line($"if (!{raised}) {exitNone};");
+            _w.Close();
+            _w.Close();
         }
     }
 }

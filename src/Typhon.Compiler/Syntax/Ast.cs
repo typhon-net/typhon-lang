@@ -209,6 +209,8 @@ namespace Typhon.Compiler.Syntax
         public List<Stmt> Body = new List<Stmt>();
         public List<Expr> Decorators = new List<Expr>();
         public bool IsAsync;
+        /// <summary>The name Python sees (its __name__) when Name was changed: a decorated function's undecorated body.</summary>
+        public string PyName;
     }
 
     public sealed class ClassDef : Stmt
@@ -226,5 +228,7 @@ namespace Typhon.Compiler.Syntax
     {
         public string Path;
         public List<Stmt> Body = new List<Stmt>();
+        /// <summary>Decorators that name Python callables but stand where Typhon does not apply them (methods, classes).</summary>
+        public HashSet<Expr> UnappliedDecorators = new HashSet<Expr>();
     }
 }

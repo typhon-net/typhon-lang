@@ -70,10 +70,15 @@ namespace Typhon.Compiler.Emit
                 case ConstExpr c: return EmitConst(c);
                 case NameExpr n when _narrowed.Contains(n.Id) && KnownTypeCore(n.Id) is string ot && ot.EndsWith("?"): return EmitName(n) + ".Value";
                 case NameExpr fv when FunctionValue(fv, typed: _fnTypedUse) is string fvalue: return fvalue;
+                // a nested function as a value where no delegate type is expected (returned as dynamic, stored, a decorator's result)
+                case NameExpr lfv when !targetTyped && LocalFunctionValue(lfv) is string closure: return closure;
                 // a Typhon class as a value ((C, (), state), a dict of classes): its type object
                 case NameExpr cv when !IsLocal(cv.Id) && !_moduleFieldTypes.ContainsKey(cv.Id) && !_renames.ContainsKey(cv.Id) &&
                                       TryResolveType(cv.Id, 0, out var cvMeta, out var cvClass) && cvClass != null && cvClass.TypeParams.Count == 0:
                     return $"typeof({EmitName(cv)})";
+                // an exception class as a value (exc_type is KeyError, a tuple of exception classes): its type object
+                case NameExpr ev when ExceptionMap.TryGetValue(ev.Id, out var evType) && !IsShadowed(ev.Id) && !IsLocal(ev.Id) && !_renames.ContainsKey(ev.Id):
+                    return $"typeof({evType})";
                 case NameExpr n: return EmitName(n);
                 case FStringExpr f: return EmitFString(f);
                 case AttributeExpr a: return EmitAttribute(a);

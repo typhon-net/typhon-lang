@@ -1,0 +1,36 @@
+1548008755920 42
+hello ann! hello bob? hello cy! 3 greet Say hello.
+2 7 2 ['plain', 'both']
+49 8 1024 {'exp': 2}
+start a
+in a
+end a
+start b
+handled bad
+end b
+after b
+start c
+end c
+outer 'k'
+null 5
+30 12 4
+enter a
+body a
+exit a True None
+enter b
+enter c
+two c
+exit c True None
+exit b True None
+enter d
+exit d False 'x'
+suppressed
+enter e
+exit e True None
+5
+enter g
+exit g False boom
+caught boom
+Color.RED 2 True 2
+Item(name='a', tags=['x'], qty=1) {'name': 'a', 'tags': ['x'], 'qty': 1} Item(name='a', tags=['x'], qty=5)
+49

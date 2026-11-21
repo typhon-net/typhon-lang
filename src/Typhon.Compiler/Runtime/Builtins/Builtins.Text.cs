@@ -25,6 +25,23 @@ namespace Typhon.Runtime
     {
         public static string str() => "";
         public static string str(string? s) => s ?? "None";
+        /// <summary>
+        /// str() of an exception: its message; a KeyError raised by a typed dict's indexer (.NET's "The given key 'k' was not
+        /// present in the dictionary.") shows its key the way Python does, as the key's repr ('k' for a str, 5 for an int).
+        /// </summary>
+        internal static string ExceptionText(Exception e)
+        {
+            const string Head = "The given key '", Tail = "' was not present in the dictionary.";
+            string m = e.Message;
+            if (e is KeyNotFoundException && m.StartsWith(Head, StringComparison.Ordinal) && m.EndsWith(Tail, StringComparison.Ordinal))
+            {
+                string key = m.Substring(Head.Length, m.Length - Head.Length - Tail.Length);
+                bool literal = long.TryParse(key, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out _) || key == "True" || key == "False" || key.StartsWith("(");
+                return literal ? key : repr(key);
+            }
+            return m;
+        }
+
         public static string str(object? o)
         {
             switch (o)
@@ -35,8 +52,10 @@ namespace Typhon.Runtime
                 case double d: return FormatFloat(d);
                 case float f: return FormatFloat(f);
                 case char c: return c.ToString();
+                // an IntEnum (long-based) prints as its int value, like Python 3.11+
+                case Enum en when Enum.GetUnderlyingType(en.GetType()) == typeof(long): return Convert.ToInt64(en, Inv).ToString(Inv);
                 case Enum en: return en.GetType().Name + "." + en.ToString();
-                case Exception e: return e.Message;
+                case Exception e: return ExceptionText(e);
                 case IPyRepr own: return own.ToString() ?? own.__repr__(); // str(): Fraction → 1/2, Path → /tmp/x
                 case IFormattable fmt when o is int || o is long || o is short || o is byte || o is sbyte || o is uint || o is ulong || o is ushort || o is decimal || o is BigInteger:
                     return fmt.ToString(null, Inv);

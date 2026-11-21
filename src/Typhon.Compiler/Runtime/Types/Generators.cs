@@ -41,8 +41,12 @@ namespace Typhon.Runtime
     /// in an except or finally block, inside an expression), an async method that awaits <see cref="Yield"/>: the await
     /// suspends it, and MoveNext/send resume it on the caller's thread (a coroutine without threads or a scheduler).
     /// </remarks>
-    internal sealed class PyGenerator<T> : IEnumerable<T>, IEnumerator<T>
+    /// <summary>A generator that can receive exceptions (contextlib.contextmanager throws the with block's exception into it).</summary>
+    internal interface IPyGenerator { object? ThrowIn(Exception e); void close(); }
+
+    internal sealed class PyGenerator<T> : IEnumerable<T>, IEnumerator<T>, IPyGenerator
     {
+        object? IPyGenerator.ThrowIn(Exception e) => @throw(e);
         IEnumerator<T>? _body;
         bool _started, _done;
         public object? __sent;

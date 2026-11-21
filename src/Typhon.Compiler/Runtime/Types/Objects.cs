@@ -21,6 +21,39 @@ namespace Typhon.Runtime
     using System.Text;
     using System.Threading.Tasks;
 
+    internal static partial class Builtins
+    {
+        /// <summary>with cm: on a late-bound manager: its __enter__ (an IDisposable without one is its own value).</summary>
+        public static dynamic? __enter(object? cm)
+        {
+            if (cm == null) throw new InvalidCastException("'NoneType' object does not support the context manager protocol");
+            var m = cm.GetType().GetMethod("__enter__", Type.EmptyTypes);
+            if (m != null) return Unwrapped(() => m.Invoke(cm, null));
+            if (cm is IDisposable) return cm;
+            throw new InvalidCastException($"'{cm.GetType().Name}' object does not support the context manager protocol");
+        }
+
+        /// <summary>A reflection call that raises what the method raised (not TargetInvocationException).</summary>
+        static object? Unwrapped(Func<object?> call)
+        {
+            try { return call(); }
+            catch (System.Reflection.TargetInvocationException tie) when (tie.InnerException != null)
+            {
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
+                throw;
+            }
+        }
+
+        /// <summary>The end of with cm: on a late-bound manager: __exit__(type, exc, None); true when it suppresses the exception.</summary>
+        public static bool __exit(object? cm, Exception? e)
+        {
+            var m = cm!.GetType().GetMethods().FirstOrDefault(x => x.Name == "__exit__" && x.GetParameters().Length == 3);
+            if (m != null) return truthy(Unwrapped(() => m.Invoke(cm, new object?[] { e?.GetType(), e, null })));
+            if (cm is IDisposable d) d.Dispose();
+            return false;
+        }
+    }
+
     /// <summary>Equality of dict keys and set items of any type, like Python's: == and a hash consistent with it.</summary>
     internal sealed class PyKeyComparer : IEqualityComparer<object?>
     {

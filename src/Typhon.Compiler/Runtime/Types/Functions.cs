@@ -100,6 +100,31 @@ namespace Typhon.Runtime
         /// f(*args) on a late-bound callable: a Typhon function value, a bound method, a .NET delegate, or an object with
         /// __call__ (the arguments are known only as a sequence, so the call is made at run time).
         /// </summary>
+        /// <summary>f(*args, **kwargs) / f(x, key=v) on a late-bound callable: keyword arguments by name.</summary>
+        public static dynamic? __invoke_kw(object? f, object?[] args, IDictionary<string, object?>? kw)
+        {
+            if (kw == null || kw.Count == 0) return __invoke(f, args);
+            if (f is PyFunction pf) return pf.__call_kw__(args, kw);
+            throw new ArgumentException($"keyword arguments to a {f?.GetType().Name ?? "None"} value are not supported");
+        }
+
+        /// <summary>The keyword arguments of a late-bound call: name=value pairs and **mappings, in order.</summary>
+        public static Dictionary<string, object?> __kwdict(object?[] spreads, (string, object?)[] named)
+        {
+            var d = new Dictionary<string, object?>();
+            foreach (var s in spreads)
+            {
+                if (s is IDictionary nd) { foreach (DictionaryEntry e in nd) d[(string)e.Key] = e.Value; }
+                else if (s != null) throw new InvalidCastException($"argument after ** must be a mapping, not {s.GetType().Name}");
+            }
+            foreach (var (k, v) in named)
+            {
+                if (d.ContainsKey(k)) throw new ArgumentException($"got multiple values for keyword argument '{k}'");
+                d[k] = v;
+            }
+            return d;
+        }
+
         public static dynamic? __invoke(object? f, object?[] args) => f switch
         {
             PyFunction pf => pf.__call__(args),
@@ -127,18 +152,121 @@ namespace Typhon.Runtime
     /// </summary>
     internal abstract class PyFunction : System.Dynamic.DynamicObject
     {
-        public readonly string __name__;
+        public string __name__;
+        public object? __doc__;
+        /// <summary>The function a decorator's wrapper wraps (set by functools.wraps).</summary>
+        public object? __wrapped__;
+        public string __module__ = "__main__";
+        public string __qualname__ { get => __name__; set => __name__ = value; }
+        Dictionary<string, object?>? _attrs;
         protected PyFunction(string name) { __name__ = name; }
         /// <summary>Calls the function with arguments of any type (dynamic overload resolution).</summary>
         public abstract object? __call__(object?[] args);
+        /// <summary>The parameter names, for keyword arguments (null: the function takes none by name).</summary>
+        protected virtual string[]? __params__ => null;
+        /// <summary>A call with keyword arguments: f(*args, **kwargs) on a function value.</summary>
+        public virtual object? __call_kw__(object?[] args, IDictionary<string, object?>? kw)
+        {
+            if (kw == null || kw.Count == 0) return __call__(args);
+            var names = __params__ ?? throw new ArgumentException($"{__name__}() got an unexpected keyword argument '{kw.Keys.First()}'");
+            return __call__(PyClosure.Args(__name__, names, args, kw, false));
+        }
         public override bool TryInvoke(System.Dynamic.InvokeBinder binder, object?[]? args, out object? result)
         {
-            result = __call__(args ?? Array.Empty<object?>());
+            args ??= Array.Empty<object?>();
+            var names = binder.CallInfo.ArgumentNames;
+            if (names.Count == 0) { result = __call__(args); return true; }
+            // f(x, key=1) through a late-bound value: the named arguments come last
+            int positional = args.Length - names.Count;
+            var kw = new Dictionary<string, object?>();
+            for (int i = 0; i < names.Count; i++) kw[names[i]] = args[positional + i];
+            result = __call_kw__(args.Take(positional).ToArray(), kw);
             return true;
         }
+        // attributes set on a function (wrapper.calls = 0), as Python allows
+        public override bool TryGetMember(System.Dynamic.GetMemberBinder binder, out object? result)
+        {
+            if (_attrs != null && _attrs.TryGetValue(binder.Name, out result)) return true;
+            throw new MissingMemberException($"'function' object has no attribute '{binder.Name}'");
+        }
+        public override bool TrySetMember(System.Dynamic.SetMemberBinder binder, object? value) { (_attrs ??= new Dictionary<string, object?>())[binder.Name] = value; return true; }
         protected static Exception ArgCount(string name, int min, int max, int given) => new ArgumentException(
             $"{name}() takes {(min == max ? min.ToString() : $"from {min} to {max}")} positional argument{(max == 1 ? "" : "s")} but {given} {(given == 1 ? "was" : "were")} given");
         public override string ToString() => $"<function {__name__} at 0x{RuntimeHelpers.GetHashCode(this):x12}>";
+    }
+
+    /// <summary>
+    /// A function made at run time as a value: a nested function (a decorator's wrapper, a returned closure), a
+    /// functools.partial, a decorator's result. It is called with positional arguments and keyword arguments by name.
+    /// </summary>
+    internal class PyClosure : PyFunction
+    {
+        readonly Func<object?[], IDictionary<string, object?>?, object?> _call;
+        public PyClosure(string name, Func<object?[], IDictionary<string, object?>?, object?> call) : base(name) { _call = call; }
+        public override object? __call__(object?[] args) => _call(args, null);
+        public override object? __call_kw__(object?[] args, IDictionary<string, object?>? kw) => _call(args, kw);
+
+        /// <summary>
+        /// The positional arguments with the keyword arguments for named parameters put in their places. A keyword that
+        /// names no parameter is an error unless the function takes **kwargs (<paramref name="extraKeywords"/>).
+        /// </summary>
+        public static object?[] Args(string fn, string[] names, object?[] args, IDictionary<string, object?>? kw, bool extraKeywords)
+        {
+            if (kw == null || kw.Count == 0) return args;
+            int n = args.Length;
+            foreach (var k in kw.Keys)
+            {
+                int i = Array.IndexOf(names, k);
+                if (i < 0) { if (extraKeywords) continue; throw new ArgumentException($"{fn}() got an unexpected keyword argument '{k}'"); }
+                if (i < args.Length) throw new ArgumentException($"{fn}() got multiple values for argument '{k}'");
+                n = Math.Max(n, i + 1);
+            }
+            var a = new object?[n];
+            Array.Copy(args, a, args.Length);
+            for (int i = args.Length; i < n; i++)
+                if (!kw.TryGetValue(names[i], out a[i]))
+                    throw new ArgumentException($"{fn}() missing required argument: '{names[i]}'");
+            return a;
+        }
+
+        /// <summary>The keyword arguments that name no parameter: a function's **kwargs dict.</summary>
+        public static OrderedDictionary<string, object> Kw(IDictionary<string, object?>? kw, string[] names)
+        {
+            var d = new OrderedDictionary<string, object>();
+            if (kw != null) foreach (var kv in kw) if (Array.IndexOf(names, kv.Key) < 0) d[kv.Key] = kv.Value!;
+            return d;
+        }
+
+        public static Exception ArgCountError(string name, int min, int max, int given) => ArgCount(name, min, max, given);
+    }
+
+    /// <summary>functools.partial(func, *args, **keywords): func with some arguments given in advance.</summary>
+    internal sealed class PyPartial : PyClosure, IPyRepr
+    {
+        public readonly object? func;
+        public readonly PyTuple<object?> args;
+        public readonly OrderedDictionary<string, object> keywords;
+        public PyPartial(object? func, object?[] args, IDictionary<string, object?>? keywords) : this(func, args, Copy(keywords)) { }
+        PyPartial(object? func, object?[] args, OrderedDictionary<string, object> keywords)
+            : base((func as PyFunction)?.__name__ ?? "partial", (a, kw) =>
+            {
+                var all = new Dictionary<string, object?>();
+                foreach (var kv in keywords) all[kv.Key] = kv.Value;
+                if (kw != null) foreach (var kv in kw) all[kv.Key] = kv.Value;
+                return Builtins.__invoke_kw(func, args.Concat(a).ToArray(), all);
+            })
+        {
+            this.func = func; this.args = new PyTuple<object?>(args); this.keywords = keywords;
+        }
+        static OrderedDictionary<string, object> Copy(IDictionary<string, object?>? kw)
+        {
+            var d = new OrderedDictionary<string, object>();
+            if (kw != null) foreach (var kv in kw) d[kv.Key] = kv.Value!;
+            return d;
+        }
+        public string __repr__() => "functools.partial(" + string.Join(", ",
+            new[] { Builtins.repr(func) }.Concat(args.Select(Builtins.repr)).Concat(keywords.Select(kv => kv.Key + "=" + Builtins.repr(kv.Value)))) + ")";
+        public override string ToString() => __repr__();
     }
 
     internal static partial class Builtins

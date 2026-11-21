@@ -496,6 +496,20 @@ namespace Typhon.Stdlib
     /// <summary>functools (reduce, cmp_to_key; @cache / @lru_cache are lowered by the compiler).</summary>
     internal static class functools
     {
+        /// <summary>@functools.wraps(f) on a decorator's wrapper: the wrapper takes f's name and docstring, and keeps f as __wrapped__.</summary>
+        public static dynamic wraps(object? wrapped) => new PyClosure("wraps", (a, kw) => update_wrapper(a[0], wrapped));
+        public static dynamic? update_wrapper(object? wrapper, object? wrapped)
+        {
+            if (wrapper is PyFunction w)
+            {
+                if (wrapped is PyFunction src) { w.__name__ = src.__name__; w.__doc__ = src.__doc__; w.__module__ = src.__module__; }
+                w.__wrapped__ = wrapped;
+            }
+            return wrapper;
+        }
+        /// <summary>functools.partial(f, *args, **keywords) (a call with keywords goes to __partial_kw).</summary>
+        public static dynamic partial(object? func, params object?[] args) => new PyPartial(func, args, null);
+        public static dynamic __partial_kw(object? func, object?[] args, IDictionary<string, object?> keywords) => new PyPartial(func, args, keywords);
         public static T reduce<T>(Func<T, T, T> function, IEnumerable<T> iterable)
         {
             using var e = iterable.GetEnumerator();

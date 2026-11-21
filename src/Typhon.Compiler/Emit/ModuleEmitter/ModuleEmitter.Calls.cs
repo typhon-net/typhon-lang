@@ -575,6 +575,39 @@ namespace Typhon.Compiler.Emit
             return null;
         }
 
+        /// <summary>The keyword arguments of a late-bound call as a dict: name=value pairs and **mappings.</summary>
+        string KeywordArgs(List<Arg> args)
+        {
+            var spreads = args.Where(a => a.DoubleStar).Select(a => $"(object?){Paren(EmitExpr(a.Value))}");
+            var named = args.Where(a => a.Name != null).Select(a => $"({CsString(a.Name)}, (object?){Paren(EmitLooseValue(a.Value))})");
+            return $"{Rt("__kwdict")}([{string.Join(", ", spreads)}], [{string.Join(", ", named)}])";
+        }
+
+        bool IsDataclassReplace(CallExpr c) =>
+            c.Args.Count >= 1 && c.Args[0].Name == null && !c.Args[0].Star &&
+            (c.Func is AttributeExpr ra && ra.Name == "replace" && DottedName(ra.Target) == "dataclasses" && !IsShadowed("dataclasses") ||
+             c.Func is NameExpr rn && rn.Id == "replace" && !IsLocal("replace") && StdlibOwner("replace") == "Typhon.Stdlib.dataclasses");
+
+        /// <summary>dataclasses.replace(obj, field=value, ...): a copy with those fields changed, of obj's type.</summary>
+        string DataclassReplaceCall(CallExpr c)
+        {
+            if (!IsDataclassReplace(c)) return null;
+            string t = InferType(c.Args[0].Value);
+            string call = $"global::Typhon.Stdlib.dataclasses.__replace((object){Paren(EmitExpr(c.Args[0].Value))}, {KeywordArgs(c.Args)})";
+            return t != null && t != "dynamic" && t != TypeInference.Pending ? $"(({t}){call})" : call;
+        }
+
+        /// <summary>functools.partial(f, *args, **keywords) with keywords: the keywords go in a dict.</summary>
+        string PartialCall(CallExpr c)
+        {
+            bool isPartial = c.Func is AttributeExpr pa && pa.Name == "partial" && DottedName(pa.Target) == "functools" && !IsShadowed("functools") ||
+                             c.Func is NameExpr pn && pn.Id == "partial" && !IsLocal("partial") && StdlibOwner("partial") == "Typhon.Stdlib.functools";
+            if (!isPartial || c.Args.Count == 0 || c.Args[0].Name != null || c.Args[0].Star) return null;
+            var positional = c.Args.Skip(1).Where(a => a.Name == null && !a.DoubleStar)
+                .Select(a => a.Star ? $".. {Rt("__iter_dyn")}((object){Paren(EmitExpr(a.Value))})" : $"(object?){Paren(EmitLooseValue(a.Value))}");
+            return $"global::Typhon.Stdlib.functools.__partial_kw((object?){Paren(EmitLooseValue(c.Args[0].Value))}, [{string.Join(", ", positional)}], {KeywordArgs(c.Args)})";
+        }
+
         /// <summary>
         /// Python calls that need their own C#: fixed-size conversions, **kwargs, late-bound callables and receivers, containers
         /// started empty, methods called through a built-in type, str.format, generic calls, builtins consuming iterables, and
@@ -594,16 +627,31 @@ namespace Typhon.Compiler.Emit
                 if (TryTypeExpr(c.Func, out var kwType)) return $"new {kwType}({kwArgs})";
                 return $"{(c.Func is NameExpr kfn ? EmitName(kfn) : EmitExpr(c.Func))}({kwArgs})";
             }
+            if (PartialCall(c) is string partialCall) return partialCall;
+            if (DataclassReplaceCall(c) is string replaceCall) return replaceCall;
             if (ExpandStarArgs(c) is string expanded) return expanded;
             // table[name](x, *rest) / cls(n, n) with cls a late-bound parameter: the callable is known only at run time (a
             // function value, a bound method, a delegate or a class), so the call is made there
-            if (!c.Args.Any(a => a.Name != null || a.DoubleStar) && !(c.Func is AttributeExpr) && !(c.Func is LambdaExpr) &&
-                (c.Args.Any(a => a.Star) || c.Func is NameExpr || c.Func is SubscriptExpr || c.Func is CallExpr) &&
-                (InferType(c.Func) == "dynamic" || c.Func is NameExpr fnl && IsLocal(fnl.Id) && InferType(c.Func) == null ||
-                 c.Func is CallExpr && InferType(c.Func) == null && MaybeLateBound(c.Func)))
+            // (also f(*args, **kwargs) / f(x, key=v) on such a callable, and f(*args) on a value of a function type: a
+            // decorator's wrapper forwarding its arguments to the function it wraps)
+            bool keywords = c.Args.Any(a => a.Name != null || a.DoubleStar);
+            ModuleInfo starOwner = null; FunctionDef starDef = null;
+            bool fnTypeStar = c.Args.Any(a => a.Star || a.DoubleStar) && FunctionOfType(InferType(c.Func), out starOwner, out starDef);
+            if (!(c.Func is AttributeExpr) && !(c.Func is LambdaExpr) &&
+                (c.Args.Any(a => a.Star || a.DoubleStar) || c.Func is NameExpr || c.Func is SubscriptExpr || c.Func is CallExpr) &&
+                (InferType(c.Func) == "dynamic" || c.Func is NameExpr fnl && IsLocal(fnl.Id) && InferType(c.Func) == null && !IsLocalFunctionName(fnl.Id) ||
+                 c.Func is CallExpr && InferType(c.Func) == null && MaybeLateBound(c.Func) || fnTypeStar) &&
+                (!keywords || !(c.Func is NameExpr kfn0 && TyphonCallee(c, out _) != null && !IsLocal(kfn0.Id))))
             {
-                var spreadArgs = c.Args.Select(a => a.Star ? $".. {Rt("__iter_dyn")}((object){Paren(EmitExpr(a.Value))})" : $"(object?){Paren(EmitValue(a.Value))}");
-                return $"{Rt("__invoke")}((object?){Paren(EmitExpr(c.Func))}, [{string.Join(", ", spreadArgs)}])";
+                // the function's own (dynamic) version is what the call reaches
+                if (fnTypeStar && Obs != null && TargetOf(starOwner, null, starDef.Name) is InferenceTarget st && st.InferParams)
+                    Obs.Calls.Add(new Observations.Call { Callee = st.Key, Types = null, Context = _ctxFallbackKey });
+                var spreadArgs = c.Args.Where(a => a.Name == null && !a.DoubleStar)
+                    .Select(a => a.Star ? $".. {Rt("__iter_dyn")}((object){Paren(EmitExpr(a.Value))})" : $"(object?){Paren(EmitLooseValue(a.Value))}");
+                string positional = $"[{string.Join(", ", spreadArgs)}]";
+                string callee = $"(object?){Paren(EmitExpr(c.Func))}";
+                if (!keywords) return $"{Rt("__invoke")}({callee}, {positional})";
+                return $"{Rt("__invoke_kw")}({callee}, {positional}, {KeywordArgs(c.Args)})";
             }
             // obj.m(x, *rest) on a late-bound obj: the method chosen at run time by the number of arguments
             if (c.Func is AttributeExpr sd && InferType(sd.Target) == "dynamic" && c.Args.Any(a => a.Star) && !c.Args.Any(a => a.Name != null || a.DoubleStar))
