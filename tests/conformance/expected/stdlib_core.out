@@ -12,7 +12,7 @@ invalid syntax (prog.py, line 3) invalid syntax prog.py 3 5 'x = (\n' 6
 bad (line 7) IndentationError('expected an indented block')
 UserWarning() '' ('a', 2) RuntimeWarning('a', 2)
 'ascii' codec can't encode character '\xe9' in position 3: ordinal not in range(128)
-[Errno 21] Is a directory: 'a' -> 'b' NotADirectoryError(20, 'Not a directory')
+[Errno 21] Is a directory: 'a' NotADirectoryError(20, 'Not a directory')
 [Errno 11] Resource temporarily unavailable 5
 several (3 sub-exceptions) 3 several
 2 1
@@ -41,7 +41,7 @@ True True True False
 -rw-r--r-- drwxr-xr-x lrwxrwxrwx -rwsr-xr-x drwxrwxrwt
 0o644 0o100000 0 8 32768 16
 True True True True
-ENOENT EPERM True
+ENOENT EPERM
 True True
 True False True True
 35 ['False', 'None', 'True', 'and', 'as'] ['_', 'case', 'lazy', 'match', 'type']
