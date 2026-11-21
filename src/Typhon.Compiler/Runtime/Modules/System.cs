@@ -83,7 +83,20 @@ namespace Typhon.Stdlib
 
         public static class path
         {
-            public static string join(params string[] parts) => System.IO.Path.Combine(parts);
+            /// <summary>posixpath.join: an absolute part restarts the path; join(d, "") ends in a separator.</summary>
+            public static string join(params string[] parts)
+            {
+                if (OperatingSystem.IsWindows() || parts.Length == 0) return System.IO.Path.Combine(parts);
+                string path = parts[0];
+                for (int i = 1; i < parts.Length; i++)
+                {
+                    string b = parts[i];
+                    if (b.StartsWith("/")) path = b;
+                    else if (path.Length == 0 || path.EndsWith("/")) path += b;
+                    else path += "/" + b;
+                }
+                return path;
+            }
             public static bool exists(string p) => System.IO.File.Exists(p) || System.IO.Directory.Exists(p);
             public static bool isfile(string p) => System.IO.File.Exists(p);
             public static bool isdir(string p) => System.IO.Directory.Exists(p);
@@ -96,7 +109,18 @@ namespace Typhon.Stdlib
             public static (string, string) split(string p) => (System.IO.Path.GetDirectoryName(p) ?? "", System.IO.Path.GetFileName(p));
             public static long getsize(string p) => new System.IO.FileInfo(p).Length;
             public static string expanduser(string p) => p.StartsWith("~") ? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile) + p.Substring(1) : p;
-            public static string relpath(string p, string? start = null) => System.IO.Path.GetRelativePath(start ?? ".", p);
+            /// <summary>posixpath.relpath: from the normalized absolute paths (no trailing separator; "." for the same path).</summary>
+            public static string relpath(string p, string? start = null)
+            {
+                if (p.Length == 0) throw new ArgumentException("no path specified");
+                if (OperatingSystem.IsWindows()) return System.IO.Path.GetRelativePath(start ?? ".", p);
+                var from = System.IO.Path.GetFullPath(start ?? ".").Split('/', StringSplitOptions.RemoveEmptyEntries);
+                var to = System.IO.Path.GetFullPath(p).Split('/', StringSplitOptions.RemoveEmptyEntries);
+                int common = 0;
+                while (common < from.Length && common < to.Length && from[common] == to[common]) common++;
+                var rel = Enumerable.Repeat("..", from.Length - common).Concat(to.Skip(common)).ToList();
+                return rel.Count == 0 ? "." : string.Join("/", rel);
+            }
             public static bool isabs(string p) => System.IO.Path.IsPathRooted(p);
         }
     }

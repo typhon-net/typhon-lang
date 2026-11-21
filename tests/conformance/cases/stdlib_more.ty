@@ -1,0 +1,248 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+"""Conformance: textwrap, statistics (exact fractions, ints kept ints), base64/binascii, csv, glob/fnmatch, shutil, uuid."""
+
+import base64
+import binascii
+import csv
+import fnmatch
+import glob
+import os
+import shutil
+import statistics
+import tempfile
+import textwrap
+import uuid
+from csv import DictReader, DictWriter
+from io import StringIO
+from statistics import StatisticsError
+from textwrap import TextWrapper, dedent
+from uuid import UUID
+
+# textwrap
+text = "The quick brown fox jumps over the lazy dog. Hello there -- you goof-ball, use the -b option! Supercalifragilisticexpialidocious."
+print(textwrap.wrap(text, width=30))
+print(textwrap.fill(text, 40, initial_indent="* ", subsequent_indent="  "))
+print(textwrap.wrap(text, width=12, break_long_words=False))
+print(textwrap.wrap(text, width=12, break_on_hyphens=False))
+print(textwrap.wrap("tab\there\nnew line   spaces", width=8), textwrap.wrap("", 10), textwrap.wrap("   ", 10))
+print(textwrap.shorten("Hello  world!", width=12), "|", textwrap.shorten("Hello  world!", width=11), "|", textwrap.shorten(text, 50, placeholder="..."))
+print(textwrap.wrap(text, width=20, max_lines=3), textwrap.wrap("x" * 25, width=10), textwrap.wrap("ab---cd--ef", 4))
+print(repr(dedent("""\
+    def f():
+        return 1
+
+      odd
+    """)), repr(dedent("  hello\n\t  world\n")), repr(dedent("\n   \n  a\n  b\n")))
+print(repr(textwrap.indent("one\ntwo\n\nthree\n", "> ")), repr(textwrap.indent("one\n  \ntwo", "+ ", lambda line: True)))
+wrapper = TextWrapper(width=15, initial_indent="- ", fix_sentence_endings=True)
+print(wrapper.wrap("First sentence. Second one? Yes."))
+wrapper.width = 30
+print(wrapper.fill("First sentence. Second one? Yes. Third goes here."))
+
+# statistics: exact sums, ints stay ints where CPython keeps them
+empty: list[int] = []
+ints = [2, 4, 4, 4, 5, 5, 7, 9]
+floats = [2.5, 3.25, 5.5, 11.25, 0.1, 0.2, 0.7]
+print(statistics.mean(ints), statistics.mean([1, 2]), statistics.mean(floats), statistics.mean([0.1, 0.2, 0.3]), statistics.mean([1e16, 1.0, -1e16]))
+print(statistics.fmean(ints), statistics.fmean([0.1] * 10), statistics.fmean([3.5, 4.0, 5.25], weights=[1, 2, 3]))
+print(statistics.median(ints), statistics.median([1, 3, 5]), statistics.median([1, 4]), statistics.median(floats), statistics.median(range(10)))
+print(statistics.median_low(ints), statistics.median_high(ints), statistics.median_low(["b", "a", "d", "c"]), statistics.median_grouped([1, 3, 3, 5, 7], interval=2))
+print(statistics.mode([1, 1, 2, 3, 3, 3]), statistics.mode(["red", "blue", "blue", "red"]), statistics.mode("aabbbc"))
+print(statistics.multimode("aabbbbccddddeeffffgg"), statistics.multimode([1, 2, 2, 3, 3]), statistics.multimode(empty))
+print(statistics.variance(ints), statistics.variance([1, 3, 5]), statistics.pvariance(ints), statistics.pvariance([1, 2, 3, 4]))
+print(statistics.variance(floats), statistics.pvariance(floats), statistics.variance([0.1, 0.2, 0.3, 0.4]), statistics.variance([1, 2, 3, 4, 5], 3))
+print(statistics.stdev(ints), statistics.pstdev(ints), statistics.stdev(floats), statistics.pstdev([0.1, 0.2, 0.3]), statistics.stdev(range(10)))
+print(statistics.geometric_mean([54, 24, 36]), statistics.geometric_mean([1.5, 2.5, 4.0]), statistics.geometric_mean([2, 0]))
+print(statistics.harmonic_mean([40, 60]), statistics.harmonic_mean([2.5, 3.0, 10.0]), statistics.harmonic_mean([40, 60], weights=[5, 30]))
+print(statistics.harmonic_mean([7]), statistics.harmonic_mean([1, 0, 2]), statistics.harmonic_mean([1.0, 0.0]))
+data = [105, 129, 87, 86, 111, 111, 89, 81, 108, 92, 110, 100, 75, 105, 103, 109, 76, 119, 99, 91, 103, 129, 106, 101, 84, 111, 74, 87, 86, 103]
+print(statistics.quantiles(data, n=10), statistics.quantiles(data), statistics.quantiles(data, method="inclusive"))
+print(statistics.quantiles([1.5, 2.25, 9.75, 4.0, 3.3], n=5), statistics.quantiles([0.1, 0.7, 0.3], method="inclusive"))
+for bad in [empty, [1]]:
+    try:
+        print(statistics.variance(bad))
+    except StatisticsError as e:
+        print("StatisticsError:", e)
+try:
+    statistics.mean(empty)
+except ValueError as e:
+    print("ValueError:", e)
+try:
+    statistics.geometric_mean([1, -2])
+except statistics.StatisticsError as e:
+    print("StatisticsError:", e)
+
+
+def spread(xs: list[float]) -> tuple[float, float]:
+    return statistics.mean(xs), statistics.stdev(xs)
+
+
+print(spread([1.0, 2.0, 4.5]), round(statistics.mean([1, 2, 3, 4]), 2), f"{statistics.stdev(ints):.3f}")
+
+# base64 and binascii
+raw = b"Typhon \x00\xff\xfe binary"
+enc = base64.b64encode(raw)
+print(enc, base64.b64decode(enc) == raw, base64.b64decode(enc.decode("ascii")) == raw, base64.standard_b64decode("aGk/Pg=="))
+print(base64.urlsafe_b64encode(b"\xfb\xff\xfe"), base64.urlsafe_b64decode("-__-"), base64.b64encode(b"\xfb\xff", altchars=b"*!"))
+print(base64.b32encode(b"hello"), base64.b32encode(b"ab"), base64.b32decode("MFRGG==="), base64.b32decode("mfrgg===", casefold=True))
+print(base64.b32hexencode(b"hello"), base64.b16encode(b"\x01\xab\xff"), base64.b16decode("01ABFF"), base64.b16decode(b"01abff", casefold=True))
+print(base64.encodebytes(b"x" * 60), base64.decodebytes(b"eHh4\neHh4\n"), base64.b64encode(b""), base64.b64decode(b"YW Jj\nZA=="))
+for bad64 in ["abc", "abcde", "=abc", "ab==cd", "ab=c", "abc$", "YQ==="]:
+    for strict in [False, True]:
+        try:
+            print(repr(bad64), strict, base64.b64decode(bad64, validate=strict))
+        except binascii.Error as e:
+            print(repr(bad64), strict, "Error:", e)
+try:
+    base64.b16decode("abc")
+except ValueError as e:
+    print("ValueError:", e)
+print(binascii.hexlify(b"\x01\x02\x03\x04\x05", "-", 2), binascii.unhexlify("0aff"), binascii.crc32(b"hello world"), binascii.b2a_base64(b"abc"))
+token = base64.urlsafe_b64encode("ünïcödé".encode("utf-8")).decode("ascii")
+print(token, base64.urlsafe_b64decode(token).decode("utf-8"))
+
+# csv
+buf = StringIO()
+w = csv.writer(buf)
+w.writerow(["name", "age", "note"])
+w.writerow(["Alice", 30, 'says "hi"'])
+w.writerow(["Bob, Jr.", 4.5, "line1\nline2"])
+w.writerow([None, True, ""])
+w.writerow([""])
+w.writerows([[1, 2], ("a", "b")])
+print(repr(buf.getvalue()))
+buf2 = StringIO()
+csv.writer(buf2, delimiter=";", quoting=csv.QUOTE_ALL, lineterminator="\n").writerow(["x", 1, 2.5, None])
+csv.writer(buf2, quoting=csv.QUOTE_NONNUMERIC).writerow(["x", 1, 2.5, None, True])
+csv.writer(buf2, quoting=csv.QUOTE_NONE, escapechar="\\").writerow(["a,b", 'q"t', "plain"])
+print(repr(buf2.getvalue()), csv.QUOTE_MINIMAL, csv.QUOTE_ALL, csv.QUOTE_NONNUMERIC, csv.QUOTE_NONE)
+try:
+    csv.writer(StringIO(), quoting=csv.QUOTE_NONE).writerow(["a,b"])
+except csv.Error as e:
+    print("csv.Error:", e)
+r = csv.reader(StringIO('name,age,note\r\nAlice,30,"says ""hi"""\r\n"Bob, Jr.",4.5,"line1\nline2"\r\n\r\n,True,\r\n'))
+header = next(r)
+print(header, r.line_num)
+for row in r:
+    print(row, r.line_num, len(row))
+print(list(csv.reader(["a;b;'c;d'", "1;2;3"], delimiter=";", quotechar="'")), list(csv.reader(["a, b,  c"], skipinitialspace=True)))
+print(list(csv.reader(["a\\,b,c"], escapechar="\\")), list(csv.reader(['"a"b,c'])), list(csv.reader(["a\tb"], dialect="excel-tab")))
+try:
+    list(csv.reader(['"a"b,c'], strict=True))
+except csv.Error as e:
+    print("csv.Error:", e)
+try:
+    csv.writer(StringIO(), delimiter=",", quotechar=",")
+except ValueError as e:
+    print("ValueError:", e)
+
+# files: csv.DictWriter/DictReader, glob, shutil (in a temporary directory; only relative names are printed)
+base = tempfile.mkdtemp()
+people = os.path.join(base, "people.csv")
+with open(people, "w", newline="") as f:
+    dw = DictWriter(f, fieldnames=["name", "city", "score"])
+    dw.writeheader()
+    dw.writerow({"name": "Ann", "city": "Oslo", "score": 9.5})
+    dw.writerow({"name": "Bo", "score": 7})
+    dw.writerows([{"name": "Cy", "city": "Rome, IT", "score": 8}])
+with open(people, newline="") as f:
+    print(repr(f.read()))
+with open(people, newline="") as f:
+    reader = DictReader(f)
+    print(reader.fieldnames)
+    for rec in reader:
+        print(rec, rec["name"], reader.line_num)
+
+
+def scores(path: str) -> list[float]:
+    out = []
+    with open(path, newline="") as f:
+        for rec in csv.DictReader(f):
+            out.append(float(rec["score"]))
+    return out
+
+
+print(scores(people), statistics.mean(scores(people)))
+try:
+    DictWriter(StringIO(), fieldnames=["a"]).writerow({"a": 1, "b": 2})
+except ValueError as e:
+    print("ValueError:", e)
+
+src = os.path.join(base, "src")
+os.makedirs(os.path.join(src, "sub", "deep"))
+os.makedirs(os.path.join(src, ".hidden"))
+for name in ["a.txt", "b.txt", "c.py", "data1.csv", "data2.csv", "[x].txt", ".dot.txt", "sub/n.txt", "sub/deep/m.txt", ".hidden/h.txt"]:
+    with open(os.path.join(src, name), "w") as f:
+        f.write(name * 3)
+
+
+def rel(paths: list[str]) -> list[str]:
+    return sorted(os.path.relpath(p, base) for p in paths)
+
+
+print(rel(glob.glob(os.path.join(src, "*.txt"))), rel(glob.glob(os.path.join(src, "data?.csv"))))
+print(rel(glob.glob(os.path.join(src, "[ab].*"))), rel(glob.glob(os.path.join(src, "[!ab]*"))), rel(glob.glob(os.path.join(src, "*", ""))))
+print(rel(glob.glob(os.path.join(src, "**", "*.txt"), recursive=True)), rel(glob.glob(os.path.join(src, "**", "*.txt"))))
+print(rel(glob.glob(os.path.join(src, "**"), recursive=True)))
+print(rel(glob.glob(os.path.join(src, "*.txt"), include_hidden=True)), rel(glob.glob(os.path.join(src, ".*"))))
+print(rel(glob.glob(os.path.join(src, glob.escape("[x].txt")))), glob.escape("a*b?[c]"), glob.glob(os.path.join(src, "nomatch*")))
+print(sorted(glob.glob("*.csv", root_dir=src)), sorted(glob.glob("**/*.txt", root_dir=src, recursive=True)), rel(list(glob.iglob(os.path.join(src, "sub", "*")))))
+print(fnmatch.fnmatch("data1.csv", "data[0-9].csv"), fnmatch.fnmatchcase("A.TXT", "*.txt"), fnmatch.filter(["a.py", "b.txt", "c.py"], "*.py"))
+
+dst = os.path.join(base, "dst")
+os.mkdir(dst)
+print(os.path.relpath(shutil.copyfile(os.path.join(src, "a.txt"), os.path.join(dst, "a2.txt")), base))
+print(os.path.relpath(shutil.copy(os.path.join(src, "b.txt"), dst), base), os.path.relpath(shutil.copy2(os.path.join(src, "c.py"), os.path.join(dst, "c2.py")), base))
+with open(os.path.join(dst, "a2.txt")) as f:
+    print(sorted(os.listdir(dst)), f.read())
+tree = os.path.join(base, "tree")
+print(os.path.relpath(shutil.copytree(src, tree, ignore=shutil.ignore_patterns("*.csv", ".hidden")), base))
+print(rel(glob.glob(os.path.join(tree, "**"), recursive=True)))
+shutil.copytree(src, tree, dirs_exist_ok=True)
+print(len(glob.glob(os.path.join(tree, "*.csv"))))
+try:
+    shutil.copytree(src, tree)
+except OSError as e:
+    print("OSError:", str(e).replace(base, "BASE"))
+moved = shutil.move(os.path.join(dst, "a2.txt"), os.path.join(dst, "moved.txt"))
+print(os.path.relpath(moved, base), os.path.exists(os.path.join(dst, "a2.txt")))
+print(os.path.relpath(shutil.move(os.path.join(tree, "sub"), dst), base), sorted(os.listdir(dst)))
+try:
+    shutil.copyfile(os.path.join(src, "missing.txt"), os.path.join(dst, "x"))
+except FileNotFoundError as e:
+    print("FileNotFoundError:", str(e).replace(base, "BASE"))
+try:
+    shutil.copyfile(os.path.join(src, "a.txt"), os.path.join(src, "a.txt"))
+except shutil.SameFileError as e:
+    print("SameFileError:", str(e).replace(base, "BASE"))
+try:
+    shutil.move(os.path.join(src, "b.txt"), dst)
+except shutil.Error as e:
+    print("shutil.Error:", str(e).replace(base, "BASE"))
+shutil.rmtree(tree)
+shutil.rmtree(tree, ignore_errors=True)
+print(os.path.exists(tree))
+sh = shutil.which("sh")
+print(sh is not None and os.path.basename(sh) == "sh", shutil.which("no-such-command-for-typhon"))
+usage = shutil.disk_usage(base)
+print(usage.total >= usage.used, usage.free > 0, str(usage).startswith("usage(total="), shutil.get_terminal_size().columns > 0)
+shutil.rmtree(base)
+print(os.path.exists(base))
+
+# uuid
+u = UUID("12345678-1234-5678-1234-567812345678")
+print(u, repr(u), u.hex, u.int, u.version, u.variant, u.urn)
+print(u.fields, u.time_low, u.node, u.clock_seq, u.bytes, u.bytes_le)
+print(UUID("{12345678123456781234567812345678}") == u, UUID(bytes=u.bytes) == u, UUID(int=u.int) == u, UUID(fields=u.fields) == u)
+print(uuid.uuid3(uuid.NAMESPACE_DNS, "python.org"), uuid.uuid5(uuid.NAMESPACE_DNS, "python.org"), uuid.uuid5(uuid.NAMESPACE_URL, "https://example.com"))
+print(uuid.NAMESPACE_OID, uuid.NAMESPACE_X500, uuid.NIL, uuid.MAX, uuid.NIL.version, uuid.MAX.variant)
+r4 = uuid.uuid4()
+print(r4.version, r4.variant, len(str(r4)), str(r4).count("-"), r4 == UUID(str(r4)), str(r4)[14], uuid.uuid1().version, uuid.uuid7().version)
+print(uuid.uuid8(1, 2, 3), UUID(hex="12345678123456781234567812345678", version=4))
+print(sorted([uuid.uuid5(uuid.NAMESPACE_DNS, n) for n in ["c", "a", "b"]]), uuid.NIL < uuid.MAX)
+try:
+    UUID("not-a-uuid")
+except ValueError as e:
+    print("ValueError:", e)

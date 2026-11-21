@@ -18,7 +18,8 @@ python tests/conformance/update_expected.py                                  # r
 * CI ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)) runs the suite on Windows and Linux. The Native AOT pass
   can be started by hand.
 
-Status: 31 of 33 cases match CPython under `typhon run`, among them `datetime_module` (date, time, datetime, timedelta,
+Status: 32 of 34 cases match CPython under `typhon run`, among them `stdlib_more` (textwrap, statistics, base64, csv,
+glob, shutil, uuid), `datetime_module` (date, time, datetime, timedelta,
 timezone: arithmetic, reprs, `strftime`, `fromisoformat`, `strptime`), `runtime_attributes` (getattr, setattr, hasattr,
 delattr), `decorators_and_context` (decorators written in
 Python on functions, methods and classes, `total_ordering`, `functools.wraps`/`partial`, the `with` protocol, `contextlib`, `enum.auto`/`IntEnum`, `dataclasses.field`/

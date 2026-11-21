@@ -36,6 +36,8 @@
   `datetime`, `timedelta`, `timezone` with CPython's normalization, reprs, `strftime` and `strptime`), `heapq` (CPython's algorithm,
   so heaps print the same), `bisect`, `copy`, `json` (CPython's output format), `re` (on .NET's regex engine, with
   Python's syntax, group numbering and `sub`/`split`/`findall` rules), `io.StringIO`, `array`, `struct`, `hashlib`,
+  `statistics` (exact fractions like CPython, so results match digit for digit), `textwrap`, `base64`/`binascii`, `csv`
+  (ports of CPython's reader state machine and writer quoting), `glob`/`fnmatch`, `shutil`, `uuid`,
   `tempfile`, `timeit` and `doctest` (`testmod()` runs no examples), plus `bytes`, `bytearray` and binary files, compiled
   *into* every Typhon assembly as internal types — no runtime dependency. Scripts compiled in memory by `typhon run`
   reference a precompiled copy instead (`src/Typhon.Runtime`), which saves recompiling it on every run.

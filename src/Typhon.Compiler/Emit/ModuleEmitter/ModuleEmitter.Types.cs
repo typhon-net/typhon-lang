@@ -44,6 +44,9 @@ namespace Typhon.Compiler.Emit
                 if (t.StartsWith(g) && t.EndsWith(">")) return GenericArg(t);
             if (DictTypes(t) is List<string> kv0) return kv0[0];
             if (t.StartsWith("global::Typhon.Runtime.deque<") && t.EndsWith(">")) return GenericArg(t);
+            // the rows of csv.reader / csv.DictReader
+            if (t == "global::Typhon.Runtime.CsvReader") return "List<string>";
+            if (t == "global::Typhon.Runtime.CsvDictReader") return "OrderedDictionary<string, string>";
             return null;
         }
 

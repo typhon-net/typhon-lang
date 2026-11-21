@@ -1,0 +1,108 @@
+['The quick brown fox jumps over', 'the lazy dog. Hello there --', 'you goof-ball, use the -b', 'option! Supercalifragilisticex', 'pialidocious.']
+* The quick brown fox jumps over the
+  lazy dog. Hello there -- you goof-
+  ball, use the -b option!
+  Supercalifragilisticexpialidocious.
+['The quick', 'brown fox', 'jumps over', 'the lazy', 'dog. Hello', 'there -- you', 'goof-ball,', 'use the -b', 'option!', 'Supercalifragilisticexpialidocious.']
+['The quick', 'brown fox', 'jumps over', 'the lazy', 'dog. Hello', 'there -- you', 'goof-ball,', 'use the -b', 'option! Supe', 'rcalifragili', 'sticexpialid', 'ocious.']
+['tab', 'here new', 'line', 'spaces'] [] []
+Hello world! | Hello [...] | The quick brown fox jumps over the lazy dog....
+['The quick brown fox', 'jumps over the lazy', 'dog. Hello [...]'] ['xxxxxxxxxx', 'xxxxxxxxxx', 'xxxxx'] ['ab', '---', 'cd--', 'ef']
+'def f():\n    return 1\n\n  odd\n' '  hello\n\t  world\n' '\n\na\nb\n'
+'> one\n> two\n\n> three\n' '+ one\n+   \n+ two'
+['- First', 'sentence.', 'Second one?', 'Yes.']
+- First sentence.  Second one?
+Yes.  Third goes here.
+5 1.5 3.357142857142857 0.2 0.3333333333333333
+5.0 0.1 4.541666666666667
+4.5 3 2.5 2.5 4.5
+4 5 b 3.5
+3 red b
+['b', 'd', 'f'] [2, 3] []
+4.571428571428571 4 4 1.25
+15.878690476190476 13.61030612244898 0.016666666666666666 2.5
+2.138089935299395 2.0 3.9848074578567125 0.0816496580927726 3.0276503540974917
+36.000000000000014 2.4662120743304703 0.0
+48.0 3.6 56.0
+7 0 0
+[76.5, 86.0, 87.6, 94.8, 102.0, 104.2, 107.4, 110.8, 118.2] [86.75, 102.0, 109.25] [87.0, 102.0, 108.75]
+[1.65, 2.67, 3.72, 8.6] [0.2, 0.3, 0.5]
+StatisticsError: variance requires at least two data points
+StatisticsError: variance requires at least two data points
+ValueError: mean requires at least one data point
+StatisticsError: ('No negative inputs allowed', -2)
+(2.5, 1.8027756377319946) 2.5 2.138
+b'VHlwaG9uIAD//iBiaW5hcnk=' True True b'hi?>'
+b'-__-' b'\xfb\xff\xfe' b'*!8='
+b'NBSWY3DP' b'MFRA====' b'abc' b'abc'
+b'D1IMOR3F' b'01ABFF' b'\x01\xab\xff' b'\x01\xab\xff'
+b'eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4\neHh4\n' b'xxxxxx' b'' b'abcd'
+'abc' False Error: Incorrect padding
+'abc' True Error: Incorrect padding
+'abcde' False Error: Invalid base64-encoded string: number of data characters (5) cannot be 1 more than a multiple of 4
+'abcde' True Error: Invalid base64-encoded string: number of data characters (5) cannot be 1 more than a multiple of 4
+'=abc' False Error: Incorrect padding
+'=abc' True Error: Leading padding not allowed
+'ab==cd' False b'i\xb7\x1d'
+'ab==cd' True Error: Excess data after padding
+'ab=c' False Error: Incorrect padding
+'ab=c' True Error: Discontinuous padding not allowed
+'abc$' False Error: Incorrect padding
+'abc$' True Error: Only base64 data is allowed
+'YQ===' False b'a'
+'YQ===' True Error: Excess padding not allowed
+ValueError: Non-base16 digit found
+b'01-0203-0405' b'\n\xff' 222957957 b'YWJj\n'
+w7xuw69jw7Zkw6k= ünïcödé
+'name,age,note\r\nAlice,30,"says ""hi"""\r\n"Bob, Jr.",4.5,"line1\nline2"\r\n,True,\r\n""\r\n1,2\r\na,b\r\n'
+'"x";"1";"2.5";""\n"x",1,2.5,"",True\r\na\\,b,q\\"t,plain\r\n' 0 1 2 3
+csv.Error: need to escape, but no escapechar set
+['name', 'age', 'note'] 1
+['Alice', '30', 'says "hi"'] 2 3
+['Bob, Jr.', '4.5', 'line1\nline2'] 4 3
+[] 5 0
+['', 'True', ''] 6 3
+[['a', 'b', 'c;d'], ['1', '2', '3']] [['a', 'b', 'c']]
+[['a,b', 'c']] [['ab', 'c']] [['a', 'b']]
+csv.Error: ',' expected after '"'
+ValueError: bad delimiter or quotechar value
+'name,city,score\r\nAnn,Oslo,9.5\r\nBo,,7\r\nCy,"Rome, IT",8\r\n'
+['name', 'city', 'score']
+{'name': 'Ann', 'city': 'Oslo', 'score': '9.5'} Ann 2
+{'name': 'Bo', 'city': '', 'score': '7'} Bo 3
+{'name': 'Cy', 'city': 'Rome, IT', 'score': '8'} Cy 4
+[9.5, 7.0, 8.0] 8.166666666666666
+ValueError: dict contains fields not in fieldnames: 'b'
+['src/[x].txt', 'src/a.txt', 'src/b.txt'] ['src/data1.csv', 'src/data2.csv']
+['src/a.txt', 'src/b.txt'] ['src/[x].txt', 'src/c.py', 'src/data1.csv', 'src/data2.csv', 'src/sub'] ['src/sub']
+['src/[x].txt', 'src/a.txt', 'src/b.txt', 'src/sub/deep/m.txt', 'src/sub/n.txt'] ['src/sub/n.txt']
+['src', 'src/[x].txt', 'src/a.txt', 'src/b.txt', 'src/c.py', 'src/data1.csv', 'src/data2.csv', 'src/sub', 'src/sub/deep', 'src/sub/deep/m.txt', 'src/sub/n.txt']
+['src/.dot.txt', 'src/[x].txt', 'src/a.txt', 'src/b.txt'] ['src/.dot.txt', 'src/.hidden']
+['src/[x].txt'] a[*]b[?][[]c] []
+['data1.csv', 'data2.csv'] ['[x].txt', 'a.txt', 'b.txt', 'sub/deep/m.txt', 'sub/n.txt'] ['src/sub/deep', 'src/sub/n.txt']
+True False ['a.py', 'c.py']
+dst/a2.txt
+dst/b.txt dst/c2.py
+['a2.txt', 'b.txt', 'c2.py'] a.txta.txta.txt
+tree
+['tree', 'tree/[x].txt', 'tree/a.txt', 'tree/b.txt', 'tree/c.py', 'tree/sub', 'tree/sub/deep', 'tree/sub/deep/m.txt', 'tree/sub/n.txt']
+2
+OSError: [Errno 17] File exists: 'BASE/tree'
+dst/moved.txt False
+dst/sub ['b.txt', 'c2.py', 'moved.txt', 'sub']
+FileNotFoundError: [Errno 2] No such file or directory: 'BASE/src/missing.txt'
+SameFileError: 'BASE/src/a.txt' and 'BASE/src/a.txt' are the same file
+shutil.Error: Destination path 'BASE/dst/b.txt' already exists
+False
+True None
+True True True True
+False
+12345678-1234-5678-1234-567812345678 UUID('12345678-1234-5678-1234-567812345678') 12345678123456781234567812345678 24197857161011715162171839636988778104 None reserved for NCS compatibility urn:uuid:12345678-1234-5678-1234-567812345678
+(305419896, 4660, 22136, 18, 52, 95073701484152) 305419896 95073701484152 4660 b'\x124Vx\x124Vx\x124Vx\x124Vx' b'xV4\x124\x12xV\x124Vx\x124Vx'
+True True True True
+6fa459ea-ee8a-3ca4-894e-db77e160355e 886313e1-3b8a-5372-9b90-0c9aee199e5d 4fd35a71-71ef-5a55-a9d9-aa75c889a6d0
+6ba7b812-9dad-11d1-80b4-00c04fd430c8 6ba7b814-9dad-11d1-80b4-00c04fd430c8 00000000-0000-0000-0000-000000000000 ffffffff-ffff-ffff-ffff-ffffffffffff None reserved for future definition
+4 specified in RFC 4122 36 4 True 4 1 7
+00000000-0001-8002-8000-000000000003 12345678-1234-4678-9234-567812345678
+[UUID('3f10dbe8-4cbd-5e31-9b1f-af0cb9dda9cf'), UUID('4f3f2898-69e3-5a0d-820a-c4e87987dbce'), UUID('b72f1bcd-e229-57e2-bb24-d01077785f16')] True
+ValueError: badly formed hexadecimal UUID string
