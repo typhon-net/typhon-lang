@@ -44,8 +44,12 @@ public sealed class OutputCapture
         _segments[^1].Text.Append(text);
     }
 
-    sealed class Writer(OutputCapture owner, bool isError) : TextWriter
+    sealed class Writer : TextWriter
     {
+        readonly OutputCapture owner;
+        readonly bool isError;
+        // "\n" on every platform: the output is shown in a web page (WriteLine would write "\r\n" on Windows)
+        public Writer(OutputCapture owner, bool isError) { this.owner = owner; this.isError = isError; NewLine = "\n"; }
         public override Encoding Encoding => Encoding.UTF8;
         public override void Write(char value) => owner.Append(isError, [value]);
         public override void Write(string? value) => owner.Append(isError, value);
