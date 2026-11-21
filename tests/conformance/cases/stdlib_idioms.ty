@@ -1,0 +1,40 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+"""Conformance: constructs CPython's own standard library uses (renamed imports of module members, del of names and
+attributes, a method's first parameter under another name, __class_getitem__)."""
+
+from math import log as _log, pi as _pi, sqrt as _sqrt, floor as _floor
+from collections import Counter as _Counter
+
+
+class Meta:
+    count = 0
+
+    def bump(cls, n: int) -> int:
+        cls.count += n
+        return cls.count
+
+    __class_getitem__ = classmethod(lambda c, item: c)
+
+
+class Holder:
+    def __init__(self):
+        self.target = "t"
+        self.args = (1, 2)
+
+    def clear(self):
+        del self.target, self.args
+        return self
+
+
+helper = 3
+print(_log(1.0), round(_pi, 3), _sqrt(16.0), _floor(2.7), _Counter("aab")["a"])
+m = Meta()
+print(m.bump(2), m.bump(3))
+h = Holder().clear()
+print(type(h).__name__)
+del helper
+x = [1, 2, 3]
+del x[0]
+print(x)

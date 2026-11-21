@@ -117,7 +117,14 @@ namespace Typhon.Compiler.Emit
                             _usingLines.Add($"using {Esc(a.AsName)} = global::{csName}.{a.Name};");
                             _importedTypes[a.AsName] = meta + "+" + a.Name; // a class: calling it constructs one
                         }
-                        else Unsupported(s, $"renaming the member '{a.Name}' on import");
+                        else
+                        {
+                            // from math import log as _log, pi as _pi: the name stands for module.member (calls and values)
+                            string hidden = "__std_" + meta.Split('.', '+').Last();
+                            if (!_dotnetAliases.ContainsKey(hidden)) { _dotnetAliases[hidden] = meta; _usingLines.Add($"using {hidden} = global::{csName};"); }
+                            var target = new AttributeExpr { Target = new NameExpr { Id = hidden, Line = s.Line, Col = s.Col }, Name = a.Name, Line = s.Line, Col = s.Col };
+                            _importAliases[a.AsName] = target;
+                        }
                     }
                 return;
             }

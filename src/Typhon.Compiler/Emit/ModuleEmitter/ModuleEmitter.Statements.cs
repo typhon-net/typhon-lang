@@ -300,7 +300,7 @@ namespace Typhon.Compiler.Emit
         static bool EndsWithJump(List<Stmt> body) =>
             body.Count > 0 && (body[body.Count - 1] is ReturnStmt || body[body.Count - 1] is RaiseStmt || body[body.Count - 1] is BreakStmt || body[body.Count - 1] is ContinueStmt);
 
-        /// <summary>del d[key] / del xs[i]: item deletion. Deleting names or attributes has no CLR equivalent.</summary>
+        /// <summary>del d[key] / del xs[i] / del xs[a:b] / del name / del obj.attr.</summary>
         void EmitDel(DelStmt d)
         {
             foreach (var t in d.Targets)
@@ -308,7 +308,20 @@ namespace Typhon.Compiler.Emit
                 if (t is SubscriptExpr s && !(s.Index is SliceExpr)) _w.Line($"{Rt("delitem")}({EmitExpr(s.Target)}, {EmitExpr(s.Index)});");
                 else if (t is SubscriptExpr ss && ss.Index is SliceExpr sl)
                     _w.Line($"{Rt("delslice")}({EmitExpr(ss.Target)}, {(sl.Lower != null ? SliceBound(sl.Lower) : "null")}, {(sl.Upper != null ? SliceBound(sl.Upper) : "null")}, {(sl.Step != null ? SliceBound(sl.Step) : "1")});");
-                else Unsupported(t, "'del' of a name, attribute or slice");
+                // del name: Python unbinds it (a module's clean-up of helper names, a local no longer needed); the CLR
+                // cannot unbind a variable, and reading it later is an error in Python anyway: nothing to do
+                else if (t is NameExpr) continue;
+                // del obj.attr: an attribute the class declares goes back to its default value; one added at run time is removed
+                else if (t is AttributeExpr da)
+                {
+                    string ot = da.Target is NameExpr dsn && dsn.Id == "self" && _cls != null && HasSelfInScope() ? _cls.CsSelfType : InferType(da.Target);
+                    bool declared = ot != null && ot != "dynamic" && (ClassKeyOfType(ot, out _) != null || _cls != null && ot == _cls.CsSelfType) &&
+                                    (MemberType(ot, da.Name, method: false) != null || _cls != null && ot == _cls.CsSelfType && _cls.FieldTypes.ContainsKey(da.Name));
+                    if (declared) _w.Line($"{EmitExpr(da)} = default!;");
+                    else _w.Line($"{Rt("delattr")}((object?){Paren(EmitExpr(da.Target))}, {CsString(da.Name)});");
+                }
+                else if (t is TupleExpr || t is ListExpr) EmitDel(new DelStmt { Targets = (t is TupleExpr te ? te.Elts : ((ListExpr)t).Elts), Line = d.Line, Col = d.Col });
+                else Unsupported(t, "this 'del' target");
             }
         }
 

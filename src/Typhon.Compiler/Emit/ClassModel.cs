@@ -31,7 +31,7 @@ namespace Typhon.Compiler.Emit
             foreach (var m in p.Modules.Values)
             {
                 if (m.Ast == null || m.ParseDiagnostics.Count > 0) continue;
-                foreach (var c in m.Classes.Values) { AddMethodAliases(c); NormalizeSuper(c); }
+                foreach (var c in m.Classes.Values) { DropTypingOnlyMembers(c); NormalizeSelfNames(c); AddMethodAliases(c); NormalizeSuper(c); }
             }
             AddBaseStubs(p);
         }
@@ -197,6 +197,37 @@ namespace Typhon.Compiler.Emit
                 });
             }
             foreach (var nested in c.Body.OfType<ClassDef>()) NormalizeSuper(nested);
+        }
+
+        /// <summary>__class_getitem__ = classmethod(GenericAlias): generic aliases for typing (list[int]-style), nothing at run time here.</summary>
+        static void DropTypingOnlyMembers(ClassDef c)
+        {
+            c.Body.RemoveAll(s => s is AssignStmt a && a.Targets.Count == 1 && a.Targets[0] is NameExpr n && n.Id == "__class_getitem__");
+            foreach (var nested in c.Body.OfType<ClassDef>()) DropTypingOnlyMembers(nested);
+        }
+
+        /// <summary>
+        /// A method's first parameter is the instance whatever it is called (cls in a metaclass's methods, mcs, klass); a
+        /// classmethod's is the class. The rest of the compiler knows them as self and cls: such a parameter is renamed,
+        /// with its uses (unless the method uses the other name for something else).
+        /// </summary>
+        static void NormalizeSelfNames(ClassDef c)
+        {
+            foreach (var f in c.Body.OfType<FunctionDef>())
+            {
+                if (f.Params.Count == 0 || f.Params[0].Kind != ParamKind.Normal) continue;
+                bool isStatic = f.Decorators.Any(d => d is NameExpr dn && dn.Id == "staticmethod");
+                bool isClass = f.Decorators.Any(d => d is NameExpr dn && dn.Id == "classmethod") || f.Name is "__new__" or "__init_subclass__" or "__class_getitem__";
+                if (isStatic) continue;
+                string want = isClass ? "cls" : "self", have = f.Params[0].Name;
+                if (have == want || f.Name == "__new__") continue;
+                bool clash = f.Params.Skip(1).Any(p => p.Name == want);
+                AstWalker.VisitAll(f.Body, n => { if (n is NameExpr ne && ne.Id == want) clash = true; });
+                if (clash) continue;
+                f.Params[0].Name = want;
+                AstWalker.VisitAll(f.Body, n => { if (n is NameExpr ne && ne.Id == have) ne.Id = want; });
+            }
+            foreach (var nested in c.Body.OfType<ClassDef>()) NormalizeSelfNames(nested);
         }
 
         /// <summary>__rmul__ = __mul__ in a class body: a method of the new name with the same parameters and body.</summary>

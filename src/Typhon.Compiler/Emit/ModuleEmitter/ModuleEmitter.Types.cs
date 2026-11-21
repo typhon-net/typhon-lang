@@ -91,6 +91,7 @@ namespace Typhon.Compiler.Emit
                 case NamedExpr ne: return InferType(ne.Value);
                 case ComprehensionExpr comp: return ComprehensionType(comp);
                 case NameExpr n when n.Id == "__file__" && !IsShadowed(n.Id): return "string";
+                case NameExpr ian when ImportAlias(ian) is Expr importTarget: return InferType(importTarget);
                 case NameExpr n:
                 {
                     var t = KnownType(n.Id);

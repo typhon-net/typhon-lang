@@ -69,6 +69,7 @@ namespace Typhon.Compiler.Emit
                 case null: return "default";
                 case ConstExpr c: return EmitConst(c);
                 case NameExpr n when _narrowed.Contains(n.Id) && KnownTypeCore(n.Id) is string ot && ot.EndsWith("?"): return EmitName(n) + ".Value";
+                case NameExpr ia when ImportAlias(ia) is Expr importTarget: return EmitExpr(importTarget, targetTyped);
                 case NameExpr fv when FunctionValue(fv, typed: _fnTypedUse) is string fvalue: return fvalue;
                 // a nested function as a value where no delegate type is expected (returned as dynamic, stored, a decorator's result)
                 case NameExpr lfv when !targetTyped && LocalFunctionValue(lfv) is string closure: return closure;

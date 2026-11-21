@@ -183,6 +183,9 @@ internal static class CliCompiler
 
         sw.Restart();
         compilation = compilation.AddSyntaxTrees(output.Trees);
+        // a module with no code of its own to run (only definitions: a library module) has no Main: compile it as a library
+        if (!output.Trees.Any(t => t.GetText().ToString().Contains(" Main(string[] __argv)")))
+            compilation = compilation.WithOptions(compilation.Options.WithOutputKind(OutputKind.DynamicallyLinkedLibrary));
         output.Compilation = compilation;
         using var pe = new MemoryStream();
         using var pdb = new MemoryStream();

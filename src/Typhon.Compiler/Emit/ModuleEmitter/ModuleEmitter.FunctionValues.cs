@@ -271,6 +271,10 @@ namespace Typhon.Compiler.Emit
 
         /// <summary>Module names bound once to a function (icount = itertools.count) and only ever called: calls go to it.</summary>
         readonly Dictionary<string, Expr> _functionAliases = new Dictionary<string, Expr>();
+        /// <summary>Names a renaming import binds to a standard module's member (from math import pi as _pi): values too.</summary>
+        readonly Dictionary<string, Expr> _importAliases = new Dictionary<string, Expr>();
+
+        Expr ImportAlias(NameExpr n) => !IsLocal(n.Id) && !_moduleFieldTypes.ContainsKey(n.Id) && _importAliases.TryGetValue(n.Id, out var t) ? t : null;
 
         /// <summary>Is the expression a reference to a function: a standard-library or .NET static method, or a module function?</summary>
         bool IsFunctionReference(Expr e)
@@ -371,7 +375,7 @@ namespace Typhon.Compiler.Emit
                 if (sc.Aliases.TryGetValue(n.Id, out var t)) return t;
                 if (sc.Params.Contains(n.Id) || sc.Types.ContainsKey(n.Id)) return null;
             }
-            return !IsLocal(n.Id) && _functionAliases.TryGetValue(n.Id, out var m) ? m : null;
+            return !IsLocal(n.Id) && _functionAliases.TryGetValue(n.Id, out var m) ? m : ImportAlias(n);
         }
 
         /// <summary>
