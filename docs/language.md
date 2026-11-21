@@ -157,7 +157,9 @@ comprehensions (`[x async for x in agen()]`). A coroutine starts running when it
 reflection on Python objects, multiple inheritance of classes, static methods
 on generic classes need explicit type arguments (`Stack[int].of(...)`), .NET `out`/`ref` parameters (planned: tuple
 returns like IronPython), ints beyond 64 bits outside big-int mode (`OverflowError`), exact comparison of an int with a
-float past 2**53 (they compare as floats), `doctest` examples (`testmod()` runs none). Union types other than
+float past 2**53 (they compare as floats), `doctest` examples (`testmod()` runs none), .NET attributes that another
+source generator acts on, such as `@JSExport` (the attribute is emitted, but Roslyn's generators do not see each other's
+output; declare such methods in C#, as [`samples/WasmLife`](../samples/WasmLife) does). Union types other than
 `X | None` are `object` for now (see [roadmap](roadmap.md)). The [conformance suite](conformance.md) tracks the differences that are known.
 
 **numpy (Typhon.NumPy)** covers the common API (creation, ufuncs with broadcasting, reductions with `axis`, `@`,

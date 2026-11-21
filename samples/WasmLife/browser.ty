@@ -1,0 +1,77 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+"""
+What the page sees of the Game of Life: one world and the functions JavaScript calls on it (JSExports.cs exports
+them). Their parameters and results use the types .NET's JavaScript interop marshals: int32 (a JavaScript number),
+float, bool, str, and arrays (Array[uint8] is a byte[], which arrives as a Uint8Array; Array[str] is a string[]).
+"""
+from System import Environment
+from life import PATTERNS, World
+
+world = World(96, 64)
+
+
+def new_world(width: int32, height: int32) -> None:
+    global world
+    world = World(width, height)
+
+
+def width() -> int32:
+    return int32(world.width)
+
+
+def height() -> int32:
+    return int32(world.height)
+
+
+def step(generations: int32) -> int32:
+    """Advances the world by some generations; returns how many cells changed in the last one."""
+    changed = 0
+    for _ in range(generations):
+        changed = world.step()
+    return int32(changed)
+
+
+def cells() -> Array[uint8]:
+    """Every cell's age (0 = dead), row by row, capped at 255 so that it fits a byte."""
+    return [uint8(min(age, 255)) for age in world.cells].ToArray()
+
+
+def toggle(x: int32, y: int32) -> None:
+    world.toggle(x, y)
+
+
+def set_alive(x: int32, y: int32, alive: bool) -> None:
+    if world.is_alive(x, y) != alive:
+        world.toggle(x, y)
+
+
+def clear() -> None:
+    world.clear()
+
+
+def randomize(seed: int32, density: float) -> None:
+    world.randomize(seed, density)
+
+
+def pattern_names() -> Array[str]:
+    return list(PATTERNS).ToArray()
+
+
+def place(name: str) -> None:
+    """Draws a pattern in the middle of the world."""
+    world.place_centered(name)
+
+
+def generation() -> int32:
+    return int32(world.generation)
+
+
+def population() -> int32:
+    return int32(world.population())
+
+
+if __name__ == "__main__":
+    # dotnet.run() in main.js runs this; print goes to the browser's console
+    print(f"Typhon's Game of Life is running on .NET {Environment.Version} in WebAssembly")

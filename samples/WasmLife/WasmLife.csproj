@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk.WebAssembly">
+
+  <!-- A browser app (.NET on WebAssembly, no workload needed) whose logic is in *.ty files; Typhon added like in every sample. -->
+  <PropertyGroup>
+    <TargetFramework>$(TyphonTargetFramework)</TargetFramework>
+    <TyphonTypeMode>strict</TyphonTypeMode>
+    <!-- life.ty has a console demo of its own: the browser app's entry point is the __main__ block of browser.ty -->
+    <TyphonMainModule>browser</TyphonMainModule>
+    <!-- the marshalling code the JSExport generator writes uses pointers -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- no culture data (ICU) to download: Python formats numbers and strings the same everywhere anyway -->
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- dotnet publish trims the app. The Typhon runtime's late-bound paths (values of type dynamic) cannot be analysed
+         for trimming; strict mode keeps this program off them, so their warnings are silenced, as in the Native AOT
+         builds of the typhon command. -->
+    <NoWarn>$(NoWarn);IL2026;IL2075</NoWarn>
+  </PropertyGroup>
+
+</Project>

@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Game of Life in Typhon</title>
+  <link rel="icon" href="data:,">
+  <link rel="modulepreload" href="./main.js">
+  <link rel="modulepreload" href="./_framework/dotnet.js">
+  <style>
+    :root { color-scheme: dark; --bg: #11151c; --panel: #1b212c; --text: #e6e9ef; --muted: #8b93a3; --accent: #f5c542; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, sans-serif; }
+    main { max-width: 800px; margin: 0 auto; padding: 24px 16px; }
+    h1 { margin: 0; font-size: 1.6rem; }
+    .sub, .hint, #status { color: var(--muted); margin: 4px 0 16px; }
+    .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+    button, select { background: var(--panel); color: var(--text); border: 1px solid #2c3442; border-radius: 6px;
+                     padding: 6px 12px; font: inherit; cursor: pointer; }
+    button:hover, select:hover { border-color: var(--accent); }
+    button:disabled, select:disabled { opacity: .5; cursor: default; }
+    label { color: var(--muted); display: flex; align-items: center; gap: 6px; }
+    canvas { display: block; width: 100%; height: auto; background: #0b0e13; border-radius: 6px;
+             image-rendering: pixelated; touch-action: none; cursor: crosshair; }
+    code { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Conway's Game of Life</h1>
+    <p class="sub">Python (<code>life.ty</code>) compiled by Typhon to .NET, running in your browser on WebAssembly</p>
+    <div class="controls">
+      <button id="run" disabled>Start</button>
+      <button id="step" disabled>Step</button>
+      <button id="random" disabled>Random</button>
+      <button id="clear" disabled>Clear</button>
+      <select id="pattern" disabled></select>
+      <button id="place" disabled>Place</button>
+      <label>Speed <input id="speed" type="range" min="1" max="60" value="15"></label>
+    </div>
+    <canvas id="board" width="768" height="512"></canvas>
+    <p id="status">Loading the .NET runtime …</p>
+    <p class="hint">Click or drag on the board to draw cells. Colours show how long a cell has been alive.</p>
+  </main>
+  <script type="module" src="./main.js"></script>
+</body>
+</html>

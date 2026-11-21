@@ -1,0 +1,179 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+"""
+Conway's Game of Life in plain Python. The browser app (browser.ty) runs this module in WebAssembly, and the same
+file runs under CPython and Typhon and prints the same:
+
+    python3 samples/WasmLife/life.ty
+    typhon run samples/WasmLife/life.ty
+
+The world is a torus (what leaves on one edge comes back on the other) stored as one int per cell: 0 for a dead
+cell, n > 0 for a cell that has been alive for n generations (the page colours cells by that age).
+"""
+import random
+
+# Patterns in run-length encoding, the format of the LifeWiki pattern collection: "o" is a live cell, "b" a dead one,
+# "$" ends a row, a number repeats what follows it, and "!" ends the pattern.
+PATTERNS: dict[str, str] = {
+    "glider": "bo$2bo$3o!",
+    "lightweight spaceship": "bo2bo$o4b$o3bo$4o!",
+    "r-pentomino": "b2o$2o$bo!",
+    "acorn": "bo5b$3bo3b$2o2b3o!",
+    "diehard": "6bob$2o6b$bo3b3o!",
+    "pulsar": "2b3o3b3o2$o4bobo4bo$o4bobo4bo$o4bobo4bo$2b3o3b3o2$2b3o3b3o$o4bobo4bo$o4bobo4bo$o4bobo4bo2$2b3o3b3o!",
+    "pentadecathlon": "2bo4bo2b$2ob4ob2o$2bo4bo!",
+    "gosper glider gun": "24bo$22bobo$12b2o6b2o12b2o$11bo3bo4b2o12b2o$2o8bo5bo3b2o$2o8bo3bob2o4bobo$10bo5bo7bo$"
+                         "11bo3bo$12b2o!",
+}
+
+
+def parse_rle(rle: str) -> list[tuple[int, int]]:
+    """The live cells of a pattern in run-length encoding, as (x, y) offsets from its top left corner."""
+    cells: list[tuple[int, int]] = []
+    x = 0
+    y = 0
+    count = 0
+    for ch in rle:
+        if ch.isdigit():
+            count = count * 10 + int(ch)
+            continue
+        n = count if count > 0 else 1
+        count = 0
+        if ch == "o":
+            for i in range(n):
+                cells.append((x + i, y))
+            x += n
+        elif ch == "b":
+            x += n
+        elif ch == "$":
+            x = 0
+            y += n
+        elif ch == "!":
+            break
+    return cells
+
+
+class World:
+    """A width x height grid of cells whose edges wrap around."""
+
+    def __init__(self, width: int, height: int) -> None:
+        self.width = width
+        self.height = height
+        self.cells: list[int] = [0] * (width * height)
+        self.generation = 0
+
+    def index(self, x: int, y: int) -> int:
+        """The position of cell (x, y) in cells; coordinates outside the grid wrap around."""
+        return (y % self.height) * self.width + x % self.width
+
+    def is_alive(self, x: int, y: int) -> bool:
+        return self.cells[self.index(x, y)] > 0
+
+    def toggle(self, x: int, y: int) -> None:
+        i = self.index(x, y)
+        self.cells[i] = 0 if self.cells[i] > 0 else 1
+
+    def clear(self) -> None:
+        self.cells = [0] * (self.width * self.height)
+        self.generation = 0
+
+    def population(self) -> int:
+        return sum(1 for age in self.cells if age > 0)
+
+    def place(self, name: str, left: int, top: int) -> None:
+        """Draws the pattern called name with its top left corner at (left, top)."""
+        for dx, dy in parse_rle(PATTERNS[name]):
+            i = self.index(left + dx, top + dy)
+            if self.cells[i] == 0:
+                self.cells[i] = 1
+
+    def place_centered(self, name: str) -> None:
+        cells = parse_rle(PATTERNS[name])
+        width = max(x for x, _ in cells) + 1
+        height = max(y for _, y in cells) + 1
+        self.place(name, (self.width - width) // 2, (self.height - height) // 2)
+
+    def randomize(self, seed: int, density: float) -> None:
+        """Fills the world at random: each cell is alive with probability density (the same seed, the same world)."""
+        rng = random.Random(seed)
+        self.cells = [1 if rng.random() < density else 0 for _ in range(self.width * self.height)]
+        self.generation = 0
+
+    def step(self) -> int:
+        """Advances one generation by Conway's rules (B3/S23) and returns how many cells were born or died."""
+        w = self.width
+        h = self.height
+        cells = self.cells
+        # every live cell adds 1 to the neighbour count of the 8 cells around it
+        counts = [0] * (w * h)
+        for y in range(h):
+            up = (y + h - 1) % h * w
+            row = y * w
+            down = (y + 1) % h * w
+            for x in range(w):
+                if cells[row + x] > 0:
+                    left = (x + w - 1) % w
+                    right = (x + 1) % w
+                    counts[up + left] += 1
+                    counts[up + x] += 1
+                    counts[up + right] += 1
+                    counts[row + left] += 1
+                    counts[row + right] += 1
+                    counts[down + left] += 1
+                    counts[down + x] += 1
+                    counts[down + right] += 1
+        changed = 0
+        for i in range(w * h):
+            n = counts[i]
+            if cells[i] > 0:
+                if n == 2 or n == 3:
+                    cells[i] += 1
+                else:
+                    cells[i] = 0
+                    changed += 1
+            elif n == 3:
+                cells[i] = 1
+                changed += 1
+        self.generation += 1
+        return changed
+
+    def render(self) -> str:
+        """The world as text: "#" for a live cell, "." for a dead one."""
+        rows: list[str] = []
+        for y in range(self.height):
+            rows.append("".join("#" if self.cells[y * self.width + x] > 0 else "." for x in range(self.width)))
+        return "\n".join(rows)
+
+
+if __name__ == "__main__":
+    glider = World(6, 6)
+    glider.place("glider", 0, 0)
+    frames: list[list[str]] = []
+    for _ in range(5):
+        frames.append(glider.render().split("\n"))
+        glider.step()
+    print("A glider, generations 0 to 4: every 4 generations it moves one cell down and to the right")
+    for y in range(glider.height):
+        print("   ".join(frame[y] for frame in frames))
+
+    gun = World(38, 20)
+    gun.place("gosper glider gun", 1, 1)
+    for _ in range(60):
+        gun.step()
+    print(f"\nThe Gosper glider gun after {gun.generation} generations ({gun.population()} live cells), two gliders out:")
+    print(gun.render())
+
+    soup = World(48, 24)
+    soup.randomize(2026, 0.35)
+    history = [soup.population()]
+    for _ in range(300):
+        soup.step()
+        if soup.generation % 50 == 0:
+            history.append(soup.population())
+    print(f"\nA random soup (seed 2026, 35% alive), population every 50 generations: {history}")
+    print(f"After {soup.generation} generations the oldest cell has lived {max(soup.cells)} generations:")
+    print(soup.render())
+    for name in PATTERNS:
+        cells = parse_rle(PATTERNS[name])
+        print(f"{name}: {len(cells)} cells, {max(x for x, _ in cells) + 1}x{max(y for _, y in cells) + 1}")

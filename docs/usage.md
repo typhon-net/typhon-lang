@@ -17,6 +17,9 @@ dotnet run --project samples/MinimalApi -- --urls http://localhost:5000
 # xUnit tests written in Typhon (@Fact, @Theory with @InlineData, Assert.*)
 dotnet test samples/XunitTests
 
+# A browser app on .NET WebAssembly: the Game of Life in plain Python, drawn by JavaScript (http://localhost:5080)
+dotnet run --project samples/WasmLife
+
 # 3. Python-style scripting with the typhon CLI (published with ReadyToRun: compiles about twice as fast)
 dotnet publish src/Typhon.Cli -c Release -r win-x64 -o tools/typhon    # linux-x64, osx-arm64, ...
 tools/typhon/typhon run samples/scripts/tour.ty          # compile in memory and run, like `python tour.py`
@@ -94,6 +97,21 @@ line (a comment to Python). Other programs never reference it, so they compile a
 `.runtimeconfig.json` lists both frameworks. When the ASP.NET Core runtime is not installed, the CLI says so.
 `typhon build --aot` does not support ASP.NET Core programs (Native AOT for minimal APIs needs the request delegate
 generator of a full project): build without `--aot`, or publish a project with `PublishAot`.
+
+## In the browser (WebAssembly)
+
+[`samples/WasmLife`](../samples/WasmLife) runs Conway's Game of Life in the browser. The rules are plain Python
+(`life.ty`, which CPython runs too), compiled into a `Microsoft.NET.Sdk.WebAssembly` project and run by .NET's
+WebAssembly runtime; it builds with the .NET SDK alone, no workload. JavaScript draws the board and calls a small
+Typhon module (`browser.ty`) whose functions use the types the JavaScript interop passes (`int32`, `float`, `str`,
+`Array[uint8]`). The `[JSExport]` declarations are a few lines of C# that forward to it: `@JSExport` compiles to the
+attribute, but the JSExport source generator cannot see code that another source generator wrote, so it would export
+nothing. The sample's README explains the interop.
+
+```sh
+dotnet run --project samples/WasmLife          # development server: open http://localhost:5080
+dotnet publish samples/WasmLife -c Release     # static files in samples/WasmLife/bin/Release/net11.0/publish/wwwroot
+```
 
 ## Adding Typhon to any C# project
 
