@@ -123,6 +123,51 @@ public sealed class EigenSvdTests
     }
 
     [Fact]
+    public void SvdOfAwkwardMatrices()
+    {
+        void Check(double[] a, int m, int n, string what)
+        {
+            var (u, s, vh) = numpy.linalg.svd(Ref.Array(a, m, n), false);
+            int k = Math.Min(m, n);
+            var ud = Ref.Data(u);
+            var sd = Ref.Data(s);
+            var vd = Ref.Data(vh);
+            double scale = sd.Length > 0 ? Math.Max(sd[0], double.Epsilon) : 1;
+            for (int i = 0; i < k; i++) Assert.True(sd[i] >= 0 && (i == 0 || sd[i - 1] >= sd[i]), what + " order");
+            Orthonormal(ud, m, k, 1e-13, what + " U");
+            Orthonormal(Ref.Transpose(vd, k, n), n, k, 1e-13, what + " V");
+            var us = new double[m * k];
+            for (int r = 0; r < m; r++)
+                for (int c = 0; c < k; c++) us[r * k + c] = ud[r * k + c] * sd[c];
+            var back = Ref.MatMul(us, vd, m, k, n);
+            for (int i = 0; i < a.Length; i++)
+                Assert.True(Math.Abs(back[i] - a[i]) <= 1e-13 * Math.Max(m, n) * scale, $"{what}: {back[i]} vs {a[i]}");
+        }
+
+        Check(new double[12], 4, 3, "zero matrix");
+        var eye = new double[25];
+        for (int i = 0; i < 5; i++) eye[i * 5 + i] = 1;
+        Check(eye, 5, 5, "identity (repeated singular values)");
+        var graded = new double[36];
+        for (int i = 0; i < 6; i++)
+            for (int j = 0; j < 6; j++) graded[i * 6 + j] = Math.Pow(10, -2 * (i + j)) * (1 + 0.1 * ((i * 7 + j * 3) % 5));
+        Check(graded, 6, 6, "graded");
+        var zeroRowCol = Ref.Random(7 * 5, 11);
+        for (int j = 0; j < 5; j++) zeroRowCol[3 * 5 + j] = 0;
+        for (int i = 0; i < 7; i++) zeroRowCol[i * 5 + 2] = 0;
+        Check(zeroRowCol, 7, 5, "zero row and column");
+        foreach (double big in new[] { 1e200, 1e-200 })
+        {
+            var a = Ref.Random(6 * 4, 12);
+            for (int i = 0; i < a.Length; i++) a[i] *= big;
+            Check(a, 6, 4, $"scaled by {big}");
+        }
+        var bidiag = new double[100];
+        for (int i = 0; i < 10; i++) { bidiag[i * 10 + i] = i % 3 == 0 ? 0 : i; if (i < 9) bidiag[i * 10 + i + 1] = 1; }
+        Check(bidiag, 10, 10, "bidiagonal with zeros on the diagonal");
+    }
+
+    [Fact]
     public void LeastSquaresAndPseudoInverse()
     {
         // overdetermined, full rank: matches the normal equations, residuals as NumPy defines them

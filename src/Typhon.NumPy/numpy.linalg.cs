@@ -164,7 +164,8 @@ public static partial class numpy
 
         /// <summary>
         /// Singular value decomposition a = U @ diag(S) @ Vh, S descending. full_matrices: U m x m and Vh n x n, else
-        /// U m x k and Vh k x n (k = min(m, n)). QR + one-sided Jacobi; singular vectors' signs may differ from NumPy's.
+        /// U m x k and Vh k x n (k = min(m, n)). Golub-Kahan-Reinsch (QR, bidiagonalization, implicit-shift QR sweeps);
+        /// singular vectors may differ from NumPy's in sign.
         /// For the singular values alone use svdvals (compute_uv=False is not supported).
         /// </summary>
         public static (ndarray U, ndarray S, ndarray Vh) svd(ndarray a, bool full_matrices = true)
