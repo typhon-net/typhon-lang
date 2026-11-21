@@ -15,13 +15,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="..\Typhon.Compiler\Runtime\Builtins.cs" Link="Builtins.cs" />
-    <Compile Include="..\Typhon.Compiler\Runtime\Stdlib.cs" Link="Stdlib.cs" />
-    <Compile Include="..\Typhon.Compiler\Runtime\Modules.cs" Link="Modules.cs" />
-    <Compile Include="..\Typhon.Compiler\Runtime\Json.cs" Link="Json.cs" />
-    <Compile Include="..\Typhon.Compiler\Runtime\Regex.cs" Link="Regex.cs" />
-    <Compile Include="..\Typhon.Compiler\Runtime\Bytes.cs" Link="Bytes.cs" />
-    <Compile Include="..\Typhon.Compiler\Runtime\Random.cs" Link="Random.cs" />
+    <Compile Include="..\Typhon.Compiler\Runtime\**\*.cs" LinkBase="Runtime" />
   </ItemGroup>
 
 </Project>

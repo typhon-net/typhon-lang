@@ -188,16 +188,20 @@ namespace Typhon.Compiler
             return emitter.Emit();
         }
 
+        const string RuntimeResourcePrefix = "Typhon.Compiler.Runtime/";
+
         /// <summary>C# source of the Typhon runtime (builtins + stdlib shims) that is compiled into every Typhon assembly.</summary>
         public static string RuntimeSource
         {
             get
             {
-                // Builtins.cs (builtins, runtime helpers, small modules) + Stdlib.cs (itertools, collections, functools, ...)
+                // every file under Runtime/ (embedded by the project file), in a fixed order; each file declares its usings
+                // inside its namespace blocks, so the order does not matter to the compilation
                 var asm = typeof(TyphonCompiler).Assembly;
                 var sb = new StringBuilder();
-                foreach (var name in new[] { "Typhon.Compiler.Runtime.Builtins.cs", "Typhon.Compiler.Runtime.Stdlib.cs", "Typhon.Compiler.Runtime.Modules.cs",
-                                             "Typhon.Compiler.Runtime.Json.cs", "Typhon.Compiler.Runtime.Regex.cs", "Typhon.Compiler.Runtime.Bytes.cs", "Typhon.Compiler.Runtime.Random.cs" })
+                var names = asm.GetManifestResourceNames().Where(n => n.StartsWith(RuntimeResourcePrefix, StringComparison.Ordinal))
+                    .OrderBy(n => n.Replace('\\', '/'), StringComparer.Ordinal);
+                foreach (var name in names)
                     using (var s = asm.GetManifestResourceStream(name))
                     using (var r = new StreamReader(s)) sb.Append(r.ReadToEnd()).Append('\n');
                 return sb.ToString();

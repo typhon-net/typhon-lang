@@ -28,13 +28,8 @@
   <ItemGroup>
     <!-- The runtime is C# source that gets compiled into each Typhon assembly, not into the compiler -->
     <Compile Remove="Runtime/**" />
-    <EmbeddedResource Include="Runtime/Builtins.cs" LogicalName="Typhon.Compiler.Runtime.Builtins.cs" />
-    <EmbeddedResource Include="Runtime/Stdlib.cs" LogicalName="Typhon.Compiler.Runtime.Stdlib.cs" />
-    <EmbeddedResource Include="Runtime/Modules.cs" LogicalName="Typhon.Compiler.Runtime.Modules.cs" />
-    <EmbeddedResource Include="Runtime/Json.cs" LogicalName="Typhon.Compiler.Runtime.Json.cs" />
-    <EmbeddedResource Include="Runtime/Regex.cs" LogicalName="Typhon.Compiler.Runtime.Regex.cs" />
-    <EmbeddedResource Include="Runtime/Bytes.cs" LogicalName="Typhon.Compiler.Runtime.Bytes.cs" />
-    <EmbeddedResource Include="Runtime/Random.cs" LogicalName="Typhon.Compiler.Runtime.Random.cs" />
+    <!-- every runtime file, under a name that keeps its folder (TyphonCompiler.RuntimeSource reads them all) -->
+    <EmbeddedResource Include="Runtime/**/*.cs" LogicalName="Typhon.Compiler.Runtime/%(RecursiveDir)%(Filename)%(Extension)" />
     <None Include="Runtime/**" />
 
     <None Include="build/**" Pack="true" PackagePath="build/" />

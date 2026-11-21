@@ -1,0 +1,510 @@
+// Copyright (c) 2026 The Typhon contributors.
+// Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
+using System.Numerics;
+using System.Text;
+using System;
+using Typhon.Compiler.Semantics;
+using Typhon.Compiler.Syntax;
+
+namespace Typhon.Compiler.Emit
+{
+    // Classes: the class body (fields, properties, methods), enums, protocols and bases.
+    internal sealed partial class ModuleEmitter
+    {
+        static string DottedName(Expr e)
+        {
+            switch (e)
+            {
+                case NameExpr n: return n.Id;
+                case AttributeExpr a: var t = DottedName(a.Target); return t == null ? null : t + "." + a.Name;
+                default: return null;
+            }
+        }
+
+        void EmitClass(ClassDef c)
+        {
+            var bases = new List<Expr>();
+            bool isInterface = false, isEnum = false, isAbstract = false;
+            foreach (var b in c.Bases)
+            {
+                string bn = DottedName(b is SubscriptExpr bs ? bs.Target : b);
+                if (bn == "Protocol" || bn == "typing.Protocol") { isInterface = true; continue; }
+                if (bn == "Enum" || bn == "IntEnum" || bn == "enum.Enum" || bn == "enum.IntEnum") { isEnum = true; continue; }
+                if (bn == "ABC" || bn == "abc.ABC") { isAbstract = true; continue; }
+                if (bn == "object" || bn == "Generic" || bn == "typing.Generic") continue;
+                bases.Add(b);
+            }
+            if (isEnum) { EmitEnum(c); return; }
+
+            var ctx = new ClassContext { Def = c, Name = c.Name, IsInterface = isInterface, IsSealed = HasDecorator(c.Decorators, "final") };
+            foreach (var tp in c.TypeParams) ctx.TypeParams.Add(tp.Name);
+            ctx.CsSelfType = Esc(c.Name) + TypeParamList(c.TypeParams);
+            bool hasAbstractMethods = c.Body.OfType<FunctionDef>().Any(f => HasDecorator(f.Decorators, "abstractmethod"));
+            if (hasAbstractMethods) isAbstract = true;
+
+            var savedCls = _cls; var savedScope = _scope; var savedEmptyFields = _emptyFields;
+            _cls = ctx; _scope = null; _emptyFields = new Dictionary<string, char>();
+
+            EmitDocComment(c.Body);
+            LineDirective(c);
+            EmitAttributes(c.Decorators);
+            string vis = Visibility(c.Name, topLevel: true);
+            string kind = isInterface ? "partial interface" : (isAbstract ? "abstract partial class" : (ctx.IsSealed ? "sealed partial class" : "partial class"));
+            var baseTypes = bases.Select(b => MapType(b, c)).ToList();
+            if (!isInterface) baseTypes.AddRange(StructuralProtocols(c, bases));
+            // def __iter__(self) -> Iterator[T]  ⇒  the class implements IEnumerable<T> (foreach, LINQ, comprehensions)
+            var iter = c.Body.OfType<FunctionDef>().FirstOrDefault(f => f.Name == "__iter__");
+            string iterElem = null;
+            if (iter != null && !isInterface)
+            {
+                string rt = iter.Returns != null ? MapType(iter.Returns, iter, isReturn: true) : null;
+                iterElem = rt != null && rt.StartsWith("IEnumerable<") ? GenericArg(rt) : "object";
+                baseTypes.Add($"global::System.Collections.Generic.IEnumerable<{iterElem}>");
+            }
+            ctx.IterElementType = iterElem;
+            // def __lt__(self, other: Self) -> bool  ⇒  IComparable<Self>, so sorted()/min()/max()/List.Sort order the objects
+            if (!isInterface && LtComparesSelf(c, ctx)) baseTypes.Add($"global::System.IComparable<{ctx.CsSelfType}>");
+            // def __len__(self) -> int  ⇒  IPyLen, so len(obj) works without reflection
+            if (!isInterface && c.Body.OfType<FunctionDef>().Any(f => f.Name == "__len__" && f.Params.Count == 1 && f.Returns is NameExpr rn && rn.Id == "int"))
+                baseTypes.Add("global::Typhon.Runtime.IPyLen");
+            // a namedtuple: a tuple of its fields (unpacking, indexing, iteration, len, comparison, repr)
+            if (c.NamedTupleFields != null && !isInterface)
+            {
+                baseTypes.Add("global::System.Runtime.CompilerServices.ITuple");
+                baseTypes.Add("global::Typhon.Runtime.IPyRepr");
+                baseTypes.Add("global::System.IComparable");
+                if (!baseTypes.Contains("global::Typhon.Runtime.IPyLen")) baseTypes.Add("global::Typhon.Runtime.IPyLen");
+                if (iter == null) { baseTypes.Add("global::System.Collections.Generic.IEnumerable<object?>"); ctx.IterElementType = "object"; }
+            }
+            string baseList = baseTypes.Count > 0 ? " : " + string.Join(", ", baseTypes) : "";
+            _w.Line($"{vis} {kind} {Esc(c.Name)}{TypeParamList(c.TypeParams)}{baseList}{TypeParamConstraints(c.TypeParams, c)}");
+            _w.Open();
+
+            if (isInterface) EmitInterfaceBody(c);
+            else EmitClassBody(c, ctx, bases, isAbstract);
+
+            _w.Close();
+            _cls = savedCls; _scope = savedScope; _emptyFields = savedEmptyFields;
+        }
+
+        static bool IsProtocol(ClassDef c) => c.Bases.Any(b => { var n = DottedName(b is SubscriptExpr s ? s.Target : b); return n == "Protocol" || n == "typing.Protocol"; });
+
+        /// <summary>
+        /// Python Protocols are structural, CLR interfaces are nominal. Bridge the gap inside the project: a Typhon class
+        /// that has every member of a Typhon Protocol (same names, same arity) implements that interface automatically.
+        /// </summary>
+        IEnumerable<string> StructuralProtocols(ClassDef c, List<Expr> explicitBases)
+        {
+            var explicitNames = new HashSet<string>(explicitBases.Select(b => DottedName(b)?.Split('.').Last()).Where(n => n != null));
+            var members = new Dictionary<string, int>();
+            foreach (var s in c.Body)
+            {
+                if (s is FunctionDef f) members[f.Name] = f.Params.Count;
+                else if (s is AnnAssignStmt a && a.Target is NameExpr n) members[n.Id] = -1;
+            }
+            foreach (var kv in CollectImplicitFields(c)) if (!members.ContainsKey(kv.Key)) members[kv.Key] = -1;
+
+            foreach (var mod in _p.Modules.Values)
+                foreach (var proto in mod.Classes.Values.Where(IsProtocol))
+                {
+                    if (proto.Name == c.Name || explicitNames.Contains(proto.Name) || proto.TypeParams.Count > 0) continue;
+                    bool matches = true;
+                    foreach (var s in proto.Body)
+                    {
+                        if (s is FunctionDef pf) matches &= members.TryGetValue(pf.Name, out var arity) && (arity == pf.Params.Count || HasDecorator(pf.Decorators, "property"));
+                        else if (s is AnnAssignStmt pa && pa.Target is NameExpr pn) matches &= members.ContainsKey(pn.Id);
+                        if (!matches) break;
+                    }
+                    if (matches && proto.Body.Any(s => s is FunctionDef || s is AnnAssignStmt))
+                        yield return mod == _m ? Esc(proto.Name) : $"{mod.QualifiedClassName}.{Esc(proto.Name)}";
+                }
+        }
+
+        void EmitEnum(ClassDef c)
+        {
+            EmitDocComment(c.Body);
+            LineDirective(c);
+            _w.Line($"{Visibility(c.Name, true)} enum {Esc(c.Name)}");
+            _w.Open();
+            foreach (var s in c.Body)
+            {
+                if (s is AssignStmt a && a.Targets[0] is NameExpr n)
+                {
+                    bool auto = a.Value is CallExpr call && DottedName(call.Func)?.EndsWith("auto") == true;
+                    _w.Line(auto ? Esc(n.Id) + "," : $"{Esc(n.Id)} = {EmitExpr(a.Value)},");
+                }
+                else if (!(s is PassStmt) && !(s is ExprStmt)) Unsupported(s, "methods or annotations inside an Enum");
+            }
+            _w.Close();
+        }
+
+        void EmitInterfaceBody(ClassDef c)
+        {
+            foreach (var s in c.Body)
+            {
+                switch (s)
+                {
+                    case AnnAssignStmt a when a.Target is NameExpr n:
+                        LineDirective(s);
+                        _w.Line($"{MapType(a.Annotation, s)} {Esc(n.Id)} {{ get; set; }}");
+                        break;
+                    case FunctionDef f:
+                        var sig = BuildSignature(f, dropFirst: !HasDecorator(f.Decorators, "staticmethod"));
+                        EmitDocComment(f.Body);
+                        LineDirective(f);
+                        if (HasDecorator(f.Decorators, "property")) _w.Line($"{sig.ReturnType} {Esc(f.Name)} {{ get; }}");
+                        else _w.Line($"{sig.ReturnType} {Esc(f.Name)}{TypeParamList(f.TypeParams)}({sig.Params});");
+                        break;
+                    case ExprStmt _:
+                    case PassStmt _:
+                        break;
+                    default: Unsupported(s, "this statement inside a Protocol"); break;
+                }
+            }
+        }
+
+        /// <summary>Resolves a base class expression to a Typhon class, or a .NET metadata name.</summary>
+        bool ResolveBase(Expr b, out ClassDef pyClass, out string meta)
+        {
+            pyClass = null; meta = null;
+            int arity = 0;
+            var target = b;
+            if (b is SubscriptExpr s) { target = s.Target; arity = s.Index is TupleExpr t ? t.Elts.Count : 1; }
+            string dotted = DottedName(target);
+            if (dotted == null) return false;
+            return TryResolveType(dotted, arity, out meta, out pyClass);
+        }
+
+        bool BaseHasMember(List<Expr> bases, string member, bool requireOverridable, int depth = 0)
+        {
+            if (depth > 20) return false;
+            foreach (var b in bases)
+            {
+                if (!ResolveBase(b, out var py, out var meta)) continue;
+                if (py != null)
+                {
+                    if (py.Body.Any(s => (s is FunctionDef f && (f.Name == member || DunderBridge(f.Name) == member)) ||
+                                         (!requireOverridable && s is AnnAssignStmt a && a.Target is NameExpr n && n.Id == member)))
+                        return true;
+                    if (!requireOverridable && CollectImplicitFields(py).ContainsKey(member)) return true;
+                    if (BaseHasMember(py.Bases, member, requireOverridable, depth + 1)) return true;
+                }
+                else if (meta != null)
+                {
+                    if (requireOverridable ? _r.IsOverridable(meta, member) : _r.HasMember(meta, member)) return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>self.x = ... assignments inside methods declare instance attributes (Python style).</summary>
+        static Dictionary<string, KeyValuePair<Expr, KeyValuePair<FunctionDef, Expr>>> CollectImplicitFields(ClassDef c)
+        {
+            var result = new Dictionary<string, KeyValuePair<Expr, KeyValuePair<FunctionDef, Expr>>>(); // name → (annotation, (method, value))
+            foreach (var f in c.Body.OfType<FunctionDef>())
+            {
+                if (f.Params.Count == 0 || HasDecorator(f.Decorators, "staticmethod")) continue;
+                string self = f.Params[0].Name;
+                AstWalker.VisitAll(f.Body, n =>
+                {
+                    Expr target = null, ann = null, value = null;
+                    if (n is AssignStmt a) foreach (var t in a.Targets) { target = t; value = a.Targets.Count == 1 ? a.Value : null; Check(); }
+                    else if (n is AnnAssignStmt aa) { target = aa.Target; ann = aa.Annotation; value = aa.Value; Check(); }
+                    else if (n is AugAssignStmt ag) { target = ag.Target; Check(); }
+
+                    void Check()
+                    {
+                        if (target is AttributeExpr at && at.Target is NameExpr tn && tn.Id == self)
+                        {
+                            if (!result.TryGetValue(at.Name, out var existing) || (existing.Key == null && ann != null) || (existing.Value.Value == null && value != null))
+                                result[at.Name] = new KeyValuePair<Expr, KeyValuePair<FunctionDef, Expr>>(ann ?? existing.Key, new KeyValuePair<FunctionDef, Expr>(f, value ?? existing.Value.Value));
+                        }
+                        if (target is TupleExpr tup)
+                        {
+                            // self.a, self.b = x, y: each field takes its own item
+                            var items = value is TupleExpr vt && vt.Elts.Count == tup.Elts.Count ? vt.Elts : null;
+                            for (int i = 0; i < tup.Elts.Count; i++) { target = tup.Elts[i]; value = items?[i]; Check(); }
+                        }
+                    }
+                });
+            }
+            return result;
+        }
+
+        void EmitClassBody(ClassDef c, ClassContext ctx, List<Expr> bases, bool isAbstract)
+        {
+            var methods = c.Body.OfType<FunctionDef>().ToList();
+            var declared = new HashSet<string>();
+            foreach (var m in methods)
+                if (m.Returns != null && !m.IsAsync && m.TypeParams.Count == 0 && !AstWalker.ContainsOutsideNestedScopes(m.Body, n => n is YieldExpr))
+                    ctx.MethodReturnTypes[m.Name] = MapType(m.Returns, m, isReturn: true);
+            foreach (var m in methods)
+                if (m.Returns == null && TargetOf(_m, c, m.Name) is InferenceTarget mt && mt.Class == c && !mt.InferParams &&
+                    Ti.Returns.TryGetValue(TypeInference.ReturnKey(mt.Key, ""), out var mrt) && mrt != "dynamic")
+                    ctx.MethodReturnTypes[m.Name] = mrt;
+            if (Obs != null && _m.Classes.TryGetValue(c.Name, out var topCls) && topCls == c)
+                Obs.MethodReturns[TypeInference.ClassKey(_m, c.Name)] = new Dictionary<string, string>(ctx.MethodReturnTypes);
+            bool isDataclass = HasDecorator(c.Decorators, "dataclass");
+            var dataFields = new List<AnnAssignStmt>();
+
+            // 1. class-level declarations
+            foreach (var s in c.Body)
+            {
+                switch (s)
+                {
+                    case AnnAssignStmt a when a.Target is NameExpr n:
+                    {
+                        bool isClassVar = a.Annotation is SubscriptExpr sub && (DottedName(sub.Target) == "ClassVar" || DottedName(sub.Target) == "typing.ClassVar");
+                        string type = MapType(isClassVar ? ((SubscriptExpr)a.Annotation).Index : a.Annotation, s);
+                        declared.Add(n.Id);
+                        ctx.Members.Add(n.Id);
+                        ctx.FieldTypes[n.Id] = type;
+                        LineDirective(s);
+                        string init = a.Value != null ? " = " + Checked(EmitExpr(a.Value, targetTyped: true)) + ";" : "";
+                        if (isClassVar) _w.Line($"{Visibility(n.Id, false)} static {type} {Esc(n.Id)}{(init.Length > 0 ? init : ";")}");
+                        else
+                        {
+                            _w.Line($"{Visibility(n.Id, false)} {type} {Esc(n.Id)} {{ get; set; }}{init}");
+                            if (isDataclass) dataFields.Add(a);
+                        }
+                        break;
+                    }
+                    case AssignStmt a when a.Targets.Count == 1 && a.Targets[0] is NameExpr n:
+                    {
+                        // NAME = None, assigned a value later from outside (Cls.NAME = Cls(...)): the type of those values
+                        string later = a.Value is ConstExpr cn0 && cn0.Kind == ConstKind.None ? ExternalType(TypeInference.ClassKey(_m, c.Name) + "|static|" + n.Id) : null;
+                        if (later == TypeInference.Pending || later == "dynamic") later = null;
+                        if (later != null && IsValueTypeName(later) && !later.EndsWith("?")) later += "?";
+                        string type = later ?? PyType(InferType(a.Value)) ?? ImplicitDynamic(s, $"class variable '{n.Id}'");
+                        declared.Add(n.Id);
+                        ctx.Members.Add(n.Id);
+                        ctx.FieldTypes[n.Id] = type; // read as self.name too (through the class)
+                        LineDirective(s);
+                        _w.Line($"{Visibility(n.Id, false)} static {type} {Esc(n.Id)} = {Checked(type != "dynamic" ? EmitExpr(a.Value, targetTyped: true) : EmitValue(a.Value))};");
+                        break;
+                    }
+                    case FunctionDef f: ctx.Members.Add(f.Name); break;
+                    case ClassDef _: break;
+                    case ExprStmt e when e.Value is ConstExpr: break; // docstring / ...
+                    case PassStmt _: break;
+                    default: Unsupported(s, "this statement in a class body"); break;
+                }
+            }
+
+            // 2. attributes created via self.x = ... in methods
+            foreach (var kv in CollectImplicitFields(c))
+            {
+                string name = kv.Key;
+                if (declared.Contains(name) || ctx.Members.Contains(name)) continue;
+                if (BaseHasMember(bases, name, requireOverridable: false)) continue;
+                var ann = kv.Value.Key; var method = kv.Value.Value.Key; var value = kv.Value.Value.Value;
+                string type;
+                if (ann != null) type = MapType(ann, method);
+                else if (value != null && TypeInference.IsEmptyContainer(value))
+                {
+                    // self.items = [] / {}: typed by what the methods add to it
+                    char kind = TypeInference.ContainerKind(value);
+                    _emptyFields[name] = kind;
+                    type = EmptyContainerType(TypeInference.ClassKey(_m, c.Name) + "|self." + name, kind, value) ?? ImplicitDynamic(method, $"attribute 'self.{name}'");
+                }
+                else
+                {
+                    // infer with the method's parameter types in scope: annotations, or every inferred constructor signature
+                    List<string[]> variants = null;
+                    if (method.Name == "__init__" && TargetOf(_m, c, "__init__") is InferenceTarget it && it.Class == c && it.InferParams &&
+                        Ti.Signatures.TryGetValue(it.Key, out var initSigs) && !Ti.Fallback.Contains(it.Key))
+                        variants = initSigs;
+                    var candidates = new HashSet<string>();
+                    foreach (var variant in (IEnumerable<string[]>)variants ?? new string[][] { null })
+                    {
+                        // (an instance method: self.reference = self is a reference to this class)
+                        var tmpScope = new Scope { HasSelf = !method.Decorators.Any(d => d is NameExpr dn && (dn.Id == "staticmethod" || dn.Id == "classmethod")) };
+                        int vi = 0;
+                        foreach (var p in method.Params.Skip(1))
+                        {
+                            string pt = p.Annotation != null ? MapType(p.Annotation, p) : variant != null && variant[vi] != TypeInference.Declared ? variant[vi] : null;
+                            vi++;
+                            if (pt != null) { tmpScope.Params.Add(p.Name); tmpScope.Types[p.Name] = pt; }
+                        }
+                        var saved = _scope; _scope = tmpScope;
+                        candidates.Add(value != null ? PyType(InferType(value)) : null);
+                        _scope = saved;
+                    }
+                    type = candidates.Count == 1 ? candidates.First() : null;
+                    if (TypeInference.IsUnknown(type) || type == TypeInference.Pending) type = null;
+                    type = type ?? ImplicitDynamic(method, $"attribute 'self.{name}'");
+                    // assignments from outside the class (obj.attr = v) count too: an int field that gets floats is a float
+                    if (type != "dynamic" && Ti != null && _m.Classes.TryGetValue(c.Name, out var wcls) && wcls == c &&
+                        Ti.ExternalFields.TryGetValue(TypeInference.ClassKey(_m, c.Name) + "|" + name, out var outside) && outside != type)
+                        type = (type == "long" || type == "double") && (outside == "long" || outside == "double") ? "double" : ImplicitDynamic(method, $"attribute 'self.{name}'");
+                }
+                declared.Add(name);
+                ctx.Members.Add(name);
+                ctx.FieldTypes[name] = type;
+                LineDirective(method);
+                _w.Line($"{SurfaceVisibility(Visibility(name, false), type)} {type} {Esc(name)} {{ get; set; }}");
+            }
+            // 2b. attributes other code creates (obj.attr = v, Cls.ATTR = v)
+            if (Ti != null && _m.Classes.TryGetValue(c.Name, out var extCls) && extCls == c)
+            {
+                string prefix = TypeInference.ClassKey(_m, c.Name) + "|";
+                foreach (var kv in Ti.ExternalFields.Where(kv => kv.Key.StartsWith(prefix)).OrderBy(kv => kv.Key, StringComparer.Ordinal))
+                {
+                    bool isStatic = kv.Key.Substring(prefix.Length).StartsWith("static|");
+                    string name = kv.Key.Substring(prefix.Length + (isStatic ? "static|".Length : 0));
+                    if (declared.Contains(name) || ctx.Members.Contains(name) || BaseHasMember(bases, name, requireOverridable: false)) continue;
+                    string type = kv.Value == TypeInference.Pending ? "dynamic" : kv.Value;
+                    declared.Add(name);
+                    ctx.Members.Add(name);
+                    ctx.FieldTypes[name] = type;
+                    LineDirective(c);
+                    _w.Line(isStatic ? $"{SurfaceVisibility("public", type)} static {type} {Esc(name)};" : $"{SurfaceVisibility("public", type)} {type} {Esc(name)} {{ get; set; }}");
+                }
+            }
+            if (declared.Count > 0) _w.Line();
+            if (Obs != null && _m.Classes.TryGetValue(c.Name, out var topLevel) && topLevel == c)
+                Obs.Fields[TypeInference.ClassKey(_m, c.Name)] = new Dictionary<string, string>(ctx.FieldTypes);
+
+            // 3. dataclass constructor / repr / equality
+            if (isDataclass && !methods.Any(m => m.Name == "__init__"))
+            {
+                var ps = dataFields.Select(a => $"{ctx.FieldTypes[((NameExpr)a.Target).Id]} {Esc(((NameExpr)a.Target).Id)}" + (a.Value != null ? " = " + EmitExpr(a.Value, targetTyped: true) : ""));
+                _w.Line($"public {Esc(c.Name)}({string.Join(", ", ps)})");
+                _w.Open();
+                foreach (var a in dataFields) { var n = Esc(((NameExpr)a.Target).Id); _w.Line($"this.{n} = {n};"); }
+                _w.Close();
+                if (dataFields.Count > 0) _w.Line($"public {Esc(c.Name)}() {{ }}");
+                if (!methods.Any(m => m.Name == "__repr__" || m.Name == "__str__"))
+                {
+                    var parts = dataFields.Select(a => { var n = ((NameExpr)a.Target).Id; return $"{n}={{repr(this.{Esc(n)})}}"; });
+                    _w.Line($"public override string ToString() => $\"{c.Name}({string.Join(", ", parts)})\";");
+                }
+                if (!methods.Any(m => m.Name == "__eq__"))
+                {
+                    var cmp = dataFields.Count == 0 ? "true" : string.Join(" && ", dataFields.Select(a => { var n = Esc(((NameExpr)a.Target).Id); return $"Equals(this.{n}, __o.{n})"; }));
+                    _w.Line($"public override bool Equals(object? obj) => obj is {ctx.CsSelfType} __o && {cmp};");
+                    _w.Line($"public static bool operator ==({ctx.CsSelfType}? a, {ctx.CsSelfType}? b) => a is null ? b is null : a.Equals(b);");
+                    _w.Line($"public static bool operator !=({ctx.CsSelfType}? a, {ctx.CsSelfType}? b) => !(a == b);");
+                    var hashFields = dataFields.Take(8).Select(a => "this." + Esc(((NameExpr)a.Target).Id));
+                    _w.Line(dataFields.Count == 0 ? "public override int GetHashCode() => 0;" : $"public override int GetHashCode() => HashCode.Combine({string.Join(", ", hashFields)});");
+                }
+                _w.Line();
+            }
+
+            // 4. methods (properties are grouped by name)
+            var propertyDone = new HashSet<string>();
+            foreach (var f in methods)
+            {
+                if (f.Name == "__init__") { EmitConstructor(f, ctx, bases); _w.Line(); continue; }
+                bool isProp = HasDecorator(f.Decorators, "property") || f.Decorators.Any(d => DecoratorName(d)?.EndsWith(".setter") == true);
+                if (isProp)
+                {
+                    if (propertyDone.Add(f.Name)) { EmitProperty(methods.Where(m => m.Name == f.Name).ToList(), ctx, bases); _w.Line(); }
+                    continue;
+                }
+                EmitMethod(f, ctx, bases);
+                _w.Line();
+            }
+            if (!isDataclass && !methods.Any(m => m.Name == "__init__")) EmitInheritedConstructors(ctx, bases);
+            EmitDunderBridges(methods, ctx);
+            if (c.NamedTupleFields != null) EmitNamedTupleMembers(c, ctx, methods);
+
+            // 5. nested classes
+            foreach (var nested in c.Body.OfType<ClassDef>()) EmitClass(nested);
+        }
+
+        string MethodModifiers(FunctionDef f, ClassContext ctx, List<Expr> bases, out bool isStatic, out bool isAbstract)
+        {
+            isStatic = HasDecorator(f.Decorators, "staticmethod") || HasDecorator(f.Decorators, "classmethod");
+            isAbstract = HasDecorator(f.Decorators, "abstractmethod");
+            string vis = Visibility(f.Name, false);
+            if (f.Name.StartsWith("__") && f.Name.EndsWith("__")) vis = "public";
+            var mods = new List<string> { vis };
+            if (isStatic) mods.Add("static");
+            else if (isAbstract) mods.Add("abstract");
+            else if (vis != "private")
+            {
+                bool explicitOverride = HasDecorator(f.Decorators, "override");
+                if (explicitOverride || BaseHasMember(bases, f.Name, requireOverridable: true)) mods.Add("override");
+                else if (!ctx.IsSealed && !HasDecorator(f.Decorators, "final")) mods.Add("virtual");
+                if (HasDecorator(f.Decorators, "final") && mods.Contains("override")) mods.Add("sealed");
+            }
+            if (f.IsAsync) mods.Add("async");
+            return string.Join(" ", mods);
+        }
+
+        void EmitMethod(FunctionDef f, ClassContext ctx, List<Expr> bases)
+        {
+            bool isStaticDecl = HasDecorator(f.Decorators, "staticmethod");
+            bool isClassMethod = HasDecorator(f.Decorators, "classmethod");
+            if (!isStaticDecl && f.Params.Count == 0) { Error(f, $"method '{f.Name}' needs a 'self' parameter (or use @staticmethod)"); return; }
+            foreach (var tp in f.TypeParams) _currentFuncTypeParams.Add(tp.Name);
+            try { EmitMethodCore(f, ctx, bases, isStaticDecl, isClassMethod); }
+            finally { foreach (var tp in f.TypeParams) _currentFuncTypeParams.Remove(tp.Name); }
+        }
+
+        void EmitMethodCore(FunctionDef f, ClassContext ctx, List<Expr> bases, bool isStaticDecl, bool isClassMethod)
+        {
+            var target = TargetOf(_m, ctx.Def, f.Name);
+            string retKey = target != null && target.Class == ctx.Def && !target.InferParams && !BaseHasMember(bases, f.Name, requireOverridable: false)
+                ? TypeInference.ReturnKey(target.Key, "") : null;
+            var savedRet = _retKey; _retKey = retKey;
+            var savedScopeKey = _scopeKey; _scopeKey = TypeInference.FuncKey(_m, ctx.Def, f.Name);
+            try { EmitMethodTyped(f, ctx, bases, isStaticDecl, isClassMethod, retKey); }
+            finally { _retKey = savedRet; _scopeKey = savedScopeKey; }
+        }
+
+        void EmitMethodTyped(FunctionDef f, ClassContext ctx, List<Expr> bases, bool isStaticDecl, bool isClassMethod, string retKey)
+        {
+            var sig = BuildSignature(f, dropFirst: !isStaticDecl, retKey: retKey);
+            string mods = MethodModifiers(f, ctx, bases, out bool isStatic, out bool isAbstract);
+            if (!isStatic) { sig.Scope.HasSelf = true; sig.Scope.Params.Remove(f.Params[0].Name); }
+            if (isClassMethod) { sig.Scope.ClsName = ctx.CsSelfType; sig.Scope.Params.Remove(f.Params[0].Name); }
+            if (f.IsAsync && sig.IsGenerator) mods = mods.Replace("async", "async");
+
+            EmitDocComment(f.Body);
+            LineDirective(f);
+            EmitAttributes(f.Decorators);
+            if (mods.StartsWith("public ") && SurfaceVisibility("public", sig.ReturnType, sig.Params) == "internal") mods = "internal " + mods.Substring("public ".Length);
+            string header = $"{mods} {sig.ReturnType} {Esc(f.Name)}{TypeParamList(f.TypeParams)}({sig.Params}){TypeParamConstraints(f.TypeParams, f)}";
+            if (isAbstract) { _w.Line(header + ";"); return; }
+            _w.Line(header);
+            EmitSignatureBody(f.Body, sig);
+        }
+
+        void EmitProperty(List<FunctionDef> defs, ClassContext ctx, List<Expr> bases)
+        {
+            var getter = defs.FirstOrDefault(d => HasDecorator(d.Decorators, "property"));
+            var setter = defs.FirstOrDefault(d => d.Decorators.Any(x => DecoratorName(x)?.EndsWith(".setter") == true));
+            if (getter == null) { Error(defs[0], "a property setter needs a @property getter"); return; }
+            var gsig = BuildSignature(getter, dropFirst: true);
+            gsig.Scope.HasSelf = true;
+            gsig.Scope.Params.Remove(getter.Params[0].Name);
+            string mods = MethodModifiers(getter, ctx, bases, out _, out bool isAbstract);
+            EmitDocComment(getter.Body);
+            LineDirective(getter);
+            EmitAttributes(getter.Decorators);
+            _w.Line($"{mods} {gsig.ReturnType} {Esc(getter.Name)}");
+            _w.Open();
+            if (isAbstract) { _w.Line(setter != null ? "get; set;" : "get;"); _w.Close(); return; }
+            _w.Line("get");
+            EmitFunctionBody(getter.Body, gsig.Scope, null, gsig.Locals);
+            if (setter != null)
+            {
+                var ssig = BuildSignature(setter, dropFirst: true);
+                ssig.Scope.HasSelf = true;
+                ssig.Scope.Params.Remove(setter.Params[0].Name);
+                string valueName = setter.Params.Count > 1 ? setter.Params[1].Name : "value";
+                LineDirective(setter);
+                _w.Line("set");
+                EmitFunctionBody(setter.Body, ssig.Scope, null, ssig.Locals,
+                    prologue: valueName != "value" ? $"var {Esc(valueName)} = value;" : null);
+            }
+            _w.Close();
+        }
+    }
+}

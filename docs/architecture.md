@@ -8,8 +8,13 @@
 ```
 
 * **Front end** (`src/Typhon.Compiler/Syntax`): a hand-written tokenizer and recursive-descent parser for the Python
-  subset. No dependency on CPython.
-* **Lowering** (`src/Typhon.Compiler/Emit`): Typhon → C#. The interesting parts:
+  subset (`Parser.cs` with `Parser.Statements.cs`, `Parser.Expressions.cs` and `Parser.Match.cs`). No dependency on
+  CPython.
+* **Lowering** (`src/Typhon.Compiler/Emit`): Typhon → C#. `ClassModel` normalizes classes before emission,
+  `TypeInference` runs the whole-program fixpoint, and `ModuleEmitter` writes the C#: one partial class split by concern
+  under `Emit/ModuleEmitter/` (module and imports, functions and function values, classes, construction and dunder
+  bridges, statements, assignments, loops and `match`, expressions, calls, operators, collections, subscripts, .NET
+  members, standard-library typing, and `ModuleEmitter.Types.cs` for the types of expressions). The interesting parts:
   * *Python has no `new`.* `Foo(1)` is a call or a construction depending on what `Foo` is, so the compiler resolves
     names against Typhon modules **and** the Roslyn compilation (referenced assemblies + C# code in the same project).
   * *Python locals are function-scoped, C# locals are block-scoped.* `LocalsAnalyzer` computes, per variable, the
@@ -23,7 +28,7 @@
 * **Build integration** (`src/Typhon.Compiler/Generator`): an incremental Roslyn **source generator** receives the
   `.ty` files as `AdditionalFiles`. That is why Typhon and C# can live in one project and reference each other in
   both directions, and why Typhon types show up in C# IntelliSense.
-* **Runtime** (`src/Typhon.Compiler/Runtime/`): Python builtins (`print`, `len`, `range`,
+* **Runtime** (`src/Typhon.Compiler/Runtime/`, see its README: `Builtins/`, `Types/`, `Modules/`): Python builtins (`print`, `len`, `range`,
   `sorted`, `format`, `frozenset`, str/list/dict/set methods, ...), small stdlib shims (`math`, `time`, `random` (CPython's Mersenne Twister and algorithms: a seeded program draws the same numbers),
   `sys` with `sys.stdout`/`stderr`/`stdin`, `os`, `asyncio`) and the commonly used parts of `itertools`,
   `collections` (`Counter`, `defaultdict`, `deque`, `OrderedDict`, `namedtuple`), `functools` (`reduce`,
