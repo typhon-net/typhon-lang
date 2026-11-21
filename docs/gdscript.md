@@ -37,7 +37,8 @@ a Godot project's other GDScript scripts stay GDScript. The extension alone sele
 * Godot's API is called by its GDScript names: members of Godot's types are found by the snake_case name and, failing
   that, by its PascalCase spelling (`position` → `Position`, `get_viewport_rect().size` → `GetViewportRect().Size`,
   `Vector2.ZERO` → `Vector2.Zero`, `Color.RED` → `Colors.Red`). Only types in the `Godot` namespace are looked up this
-  way, and only from `.gd` modules.
+  way, and only from `.gd` modules. A member the static type lacks on a Godot object (`var s := $Sprite2D` is a `Node`;
+  `s.flip_h = true`) is looked up at run time, as GDScript does for such "unsafe" accesses.
 * GDScript floats are 64-bit (C# `double`), Godot's math types use 32-bit floats: where C# needs it, a float is
   converted (`Vector2(x, y)`, `v * delta`, `node.rotation = angle`, `p.x = 2.0 * w - p.x`). A field of a value type
   reached through a property or an element (`position.x += 1`, `points[i].y = 0`) is changed on a copy that is stored
@@ -56,15 +57,16 @@ as Godot prints them (`true`, `<null>`, `1.0`, `0.33333333333333`, `[1, "a"]`, `
 
 ## Supported
 
-`extends` (a class name), `class_name`, `@tool`/`@icon` (ignored), `@export`/`@export_*` (recorded; no `[Export]`
-attribute yet), `@onready`, `var` (typed, `:=`, untyped, `static`), `const`, `enum` (named and anonymous), `signal`
+`extends` (a class name), `class_name`, `@tool`/`@icon` (ignored), `@export`/`@export_*` (Godot's `[Export]` for the
+types Godot can export; hints are not passed on), `@onready`, `var` (typed, `:=`, untyped, `static`), `const`, `enum` (named and anonymous), `signal`
 (`connect`, `disconnect`, `emit`, `emit_signal`, between scripts compiled by Typhon), `func` (typed and untyped
 parameters, defaults, `:=` defaults, return types, `static func`), `_init` with parameters, `super()` / `super.m()`,
 `_to_string`, inner classes extending each other or a native class, property accessors (`set(v):`/`get:` blocks and
 `set = f, get = g`), `if`/`elif`/`else`, `while`, `for` over `range(...)`, an int (`for i in 10`, `for i in count`),
 arrays, dictionaries and strings (typed loop variables too), `break`/`continue`/`pass`/`return`, `match` (literals,
 constants, several patterns per branch, `var` bindings, `_`, arrays with `..`, dictionaries, `when` guards), `assert`,
-`and`/`or`/`not`/`&&`/`||`/`!`, `in`/`not in`, `is`/`is not`, `as`, conditional expressions, one-line lambdas
+`and`/`or`/`not`/`&&`/`||`/`!`, `in`/`not in`, `is`/`is not` (`x is int`/`float`/`String`/`Array`/`Dictionary` test
+the value's kind at run time, `x is Node` its class), `as`, conditional expressions, one-line lambdas
 (`func(x): return x * 2`) and `callable.call(...)`, array and dictionary literals (also `{ key = value }`), `$Node/Path`
 and `%Unique` (`get_node`), `X.new(...)`, `PI`/`TAU`/`INF`/`NAN`, the print functions, `str`, `len`, `range`,
 `int`/`float`/`bool`, the math functions (`abs`, `sign`, `min`, `max`, `clamp`, `lerp`, `inverse_lerp`, `remap`, `sqrt`,
@@ -83,7 +85,7 @@ and `%Unique` (`get_node`), `X.new(...)`, `PI`/`TAU`/`INF`/`NAN`, the print func
 
 `await` and coroutines; Godot signals as the engine knows them (`[Signal]` delegates, connecting to engine signals such
 as `timer.timeout`, editor connections); multi-line lambdas; `extends "res://path.gd"` and `preload("x.gd")` as a class;
-references between `.gd` files by `class_name`; `@export` as Godot's `[Export]` (inspector); `@rpc`; packed arrays'
+references between `.gd` files by `class_name`; `@export` hints (`@export_range` and the like are plain exports); `@rpc`; packed arrays'
 copy-on-assignment (they are lists, shared like Arrays); ambiguous method names (`length`, `duplicate`, `keys`, ...) on
 values whose type the parser cannot see (untyped variables) are left to Godot's API; untyped code compiles, but where
 Typhon's inference cannot type a value it is late-bound (`dynamic`), which is slow.

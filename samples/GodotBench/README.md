@@ -30,6 +30,12 @@ godot --path samples/GodotBench -- --counts=4000 --frames=600
 Options after `--`: `--counts=` (object counts), `--variants=gdscript,typhon`, `--frames=` (measured frames per run),
 `--warmup=` (frames before measuring), `--repeat=` (repetitions; the summary shows the best of them).
 
+The first build also compiles the Typhon compiler and its `typhon-emit` tool from `src/` (in Release). Build a checkout
+with one operating system's .NET at a time: a WSL and a Windows build of the same folders share `bin/` and `obj/` and
+can confuse each other's incremental builds (delete `src/Typhon.Compiler/{bin,obj}` and `src/Typhon.Emit/{bin,obj}`
+when switching). `--build-solutions` finished its build in a few seconds here, but the headless editor sometimes did not
+exit afterwards; `dotnet build` does the same build without the editor.
+
 ## How the compiled script gets into Godot
 
 `GodotBench.csproj` is a normal `Godot.NET.Sdk` project with three Typhon settings:
@@ -79,17 +85,20 @@ with the lowest `step` time is shown, in milliseconds per frame:
 
 | objects | GDScript step | Typhon step | speedup | GDScript simulation | Typhon simulation | speedup | GDScript nodes | Typhon nodes |
 |--------:|--------------:|------------:|--------:|--------------------:|------------------:|--------:|---------------:|-------------:|
-|    1000 |          3.47 |        1.62 |    2.1x |                2.34 |              0.46 |    5.1x |           1.13 |         1.15 |
-|    4000 |         18.78 |        8.15 |    2.3x |               14.57 |              3.21 |    4.5x |           4.20 |         4.93 |
-|   16000 |        221.26 |       52.91 |    4.2x |              201.60 |             35.02 |    5.8x |          19.66 |        17.88 |
+|    1000 |          3.00 |        1.20 |    2.5x |                2.03 |              0.40 |    5.1x |           0.97 |         0.80 |
+|    4000 |         19.20 |        6.77 |    2.8x |               15.05 |              2.81 |    5.4x |           4.15 |         3.95 |
+|   16000 |        187.02 |       52.09 |    3.6x |              169.52 |             35.32 |    4.8x |          17.50 |        16.76 |
+
+The medians of the three runs give the same picture: `step` 3.63 vs 1.57 ms (2.3x), 21.53 vs 7.02 ms (3.1x) and
+199.6 vs 55.4 ms (3.6x). The whole frame took 0.03 to 0.1 ms more than `step` in both variants (headless: no rendering).
 
 The checksums of the two variants were identical in every run. Read it as:
 
-* the **simulation** (the script's own logic: loops, arrays, Vector2 math) runs 4.5 to 6 times faster compiled by
+* the **simulation** (the script's own logic: loops, arrays, Vector2 math) runs about 5 times faster compiled by
   Typhon;
 * **moving the nodes** costs the same in both: it is the engine's work, called through GDScript or through C#;
-* so the whole **step** gains 2x where the engine part is a large share (1000 objects: 1.6 ms of which 1.2 ms are node
-  updates) and 4x where the script's logic dominates (16000 objects, where the neighbour search grows).
+* so the whole **step** gains 2.5x where the engine part is a large share (1000 objects: 1.2 ms, of which 0.8 ms are
+  node updates) and 3.6x where the script's logic dominates (16000 objects, where the neighbour search grows).
 
 The numbers move between runs by 10 to 20% on this machine (other work was running); the speedups are stable.
 

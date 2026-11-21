@@ -428,9 +428,9 @@ namespace Typhon.Compiler.Syntax
             ExpectKw("var");
             var nameTok = Cur;
             string name = ExpectName();
-            Expr typeRef = null; Expr value = null; bool inferred = false;
+            Expr typeRef = null; Expr value = null;
             if (AcceptOp(":")) { if (!IsKw("set") && !IsKw("get") && Cur.Kind != TokenKind.Newline) typeRef = ParseTypeRef(); else _i--; }
-            if (AcceptOp(":=")) { inferred = true; value = ParseExpr(); }
+            if (AcceptOp(":=")) value = ParseExpr();
             else if (AcceptOp("=")) value = ParseExpr();
             string gdType = typeRef != null ? TypeString(typeRef) : value != null ? TypeOf(value) : null;
             if (gdType != null) cls.Types[name] = gdType;
@@ -460,6 +460,7 @@ namespace Typhon.Compiler.Syntax
                     {
                         if (Cur.Kind == TokenKind.Newline) { _i++; continue; }
                         ParseAccessor(cls, name, annotation, ref getter, ref setter);
+                        while (AcceptOp(",")) ParseAccessor(cls, name, annotation, ref getter, ref setter);
                     }
                     if (Cur.Kind == TokenKind.Dedent) _i++;
                 }
@@ -506,7 +507,6 @@ namespace Typhon.Compiler.Syntax
                 return;
             }
             if (annotation != null) def.Body.Add(At(new AnnAssignStmt { Target = Name(name, nameTok), Annotation = annotation }, nameTok));
-            _ = inferred;
             if (value != null || typeRef != null)
                 inits.Add(new MemberInit { Name = name, Value = value ?? DefaultValue(typeRef, nameTok), OnReady = onReady, At = P(nameTok) });
             else if (!AssignedInClass(name))
@@ -587,25 +587,19 @@ namespace Typhon.Compiler.Syntax
             ExpectNewline();
             string t = typeRef != null ? TypeString(typeRef) : TypeOf(value);
             if (t != null) cls.Types[name] = t;
-            if (IsLoad(value, out var preloaded)) { cls.Types[name] = "Resource"; }
+            if (IsLoad(value)) cls.Types[name] = "Resource";
             _info.AddConstant(cls.Def, name);
             if (typeRef != null)
                 cls.Def.Body.Add(At(new AnnAssignStmt { Target = Name(name, nameTok), Annotation = At(new SubscriptExpr { Target = Name("ClassVar", nameTok), Index = MapType(typeRef) }, nameTok), Value = value }, nameTok));
             else cls.Def.Body.Add(At(new AssignStmt { Targets = { Name(name, nameTok) }, Value = value }, nameTok));
-            _ = preloaded;
         }
 
-        static bool IsLoad(Expr e, out string path)
-        {
-            path = null;
-            if (e is CallExpr c && c.Func is AttributeExpr a && a.Target is NameExpr n && n.Id == Rt && a.Name == "load" && c.Args.Count == 1 && c.Args[0].Value is ConstExpr s)
-            { path = s.Str; return true; }
-            return false;
-        }
+        /// <summary>const Scene = preload("res://x.tscn"): a resource.</summary>
+        static bool IsLoad(Expr e) =>
+            e is CallExpr c && c.Func is AttributeExpr a && a.Target is NameExpr n && n.Id == Rt && a.Name == "load" && c.Args.Count == 1 && c.Args[0].Value is ConstExpr;
 
         void ParseSignal(ClassScope cls, List<MemberInit> inits)
         {
-            var tok = Cur;
             ExpectKw("signal");
             var nameTok = Cur;
             string name = ExpectName();
@@ -617,7 +611,6 @@ namespace Typhon.Compiler.Syntax
             ExpectNewline();
             // a signal is an object with connect / disconnect / emit, created with the instance
             inits.Add(new MemberInit { Name = name, Value = RtCall("Signal", nameTok), At = P(nameTok) });
-            _ = tok;
         }
 
         void ParseEnum(ClassScope cls)
@@ -1025,7 +1018,6 @@ namespace Typhon.Compiler.Syntax
             }
             if (IsKw("var") || IsKw("const"))
             {
-                bool isConst = Cur.Text == "const";
                 _i++;
                 var nt = Cur;
                 string name = ExpectName();
@@ -1034,7 +1026,6 @@ namespace Typhon.Compiler.Syntax
                 if (AcceptOp(":=") || AcceptOp("=")) value = ParseExpr();
                 string type = typeRef != null ? TypeString(typeRef) : value != null ? TypeOf(value) : null;
                 Declare(name, type);
-                _ = isConst;
                 if (typeRef != null)
                 {
                     var v = value ?? DefaultValue(typeRef, nt);
@@ -1554,7 +1545,15 @@ namespace Typhon.Compiler.Syntax
                 _i++;
                 bool negate = AcceptKw("not");
                 var t = ParseTypeRef();
-                Expr test = Call(Name("isinstance", tok), tok, e, IsTypeTarget(t));
+                // x is int / float / String / bool / Array / Dictionary: a run-time test of the value's kind (also for a
+                // late-bound value, whatever .NET type holds it); x is Node / an inner class: isinstance
+                string tn = TypeString(t is SubscriptExpr ts ? ts.Target : t);
+                string builtin = tn switch
+                {
+                    "int" => "is_int", "float" => "is_float", "bool" => "is_bool", "String" => "is_string", "StringName" => "is_string",
+                    "Array" => "is_array", "Dictionary" => "is_dictionary", _ => tn != null && tn.StartsWith("Packed") && tn.EndsWith("Array") ? "is_array" : null,
+                };
+                Expr test = builtin != null ? RtCall(builtin, tok, e) : Call(Name("isinstance", tok), tok, e, IsTypeTarget(t));
                 e = negate ? At(new UnaryExpr { Op = "not", Operand = test }, tok) : test;
             }
             return e;

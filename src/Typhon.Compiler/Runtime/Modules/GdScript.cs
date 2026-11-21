@@ -398,6 +398,14 @@ namespace Typhon.Runtime
         };
 
         public static bool is_instance_valid(object? o) => o != null;
+
+        // x is int / float / bool / String / Array / Dictionary
+        public static bool is_int(object? o) => o is long or int or short or sbyte or byte or ushort or uint or ulong;
+        public static bool is_float(object? o) => o is double or float;
+        public static bool is_bool(object? o) => o is bool;
+        public static bool is_string(object? o) => o is string;
+        public static bool is_array(object? o) => o is IList && !(o is string) && !(o is IDictionary); // (OrderedDictionary is an IList too)
+        public static bool is_dictionary(object? o) => o is IDictionary;
         public static bool is_same(object? a, object? b) => ReferenceEquals(a, b) || a is ValueType && Equals(a, b);
 
         // ── random numbers: Godot's PCG32 global generator ──
