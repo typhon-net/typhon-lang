@@ -212,7 +212,7 @@ namespace Typhon.Runtime
     {
         readonly object _target; readonly string _name;
         public PyBoundMethod(object target, string name) { _target = target; _name = name; }
-        public object? __call__(object?[] args)
+        public dynamic? __call__(object?[] args)
         {
             foreach (var m in _target.GetType().GetMethods(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public))
             {
@@ -238,6 +238,69 @@ namespace Typhon.Runtime
         static object? Convert(object? v, Type t) => v == null || t.IsInstanceOfType(v) || t == typeof(object) ? v : System.Convert.ChangeType(v, Nullable.GetUnderlyingType(t) ?? t, CultureInfo.InvariantCulture);
         public override bool TryInvoke(System.Dynamic.InvokeBinder binder, object?[]? args, out object? result) { result = __call__(args ?? Array.Empty<object?>()); return true; }
         public override string ToString() => $"<bound method {_name} of {Builtins.repr(_target)}>";
+    }
+
+    /// <summary>Equality of dict keys and set items of any type, like Python's: == and a hash consistent with it.</summary>
+    internal sealed class PyKeyComparer : IEqualityComparer<object?>
+    {
+        public static readonly PyKeyComparer Instance = new PyKeyComparer();
+        public new bool Equals(object? a, object? b) => Builtins.eq(a, b);
+        public int GetHashCode(object? o) => Builtins.KeyHash(o);
+    }
+
+    internal static partial class Builtins
+    {
+        /// <summary>
+        /// cls(args) for a class known at run time: the public constructor that takes this many arguments (optional ones
+        /// get their defaults), preferring one whose parameter types the arguments have over a late-bound one.
+        /// </summary>
+        static object Construct(Type t, object?[] args)
+        {
+            System.Reflection.ConstructorInfo? best = null; int bestScore = -1;
+            foreach (var c in t.GetConstructors())
+            {
+                var ps = c.GetParameters();
+                if (args.Length > ps.Length || ps.Take(args.Length).Any(p => p.ParameterType.IsByRef)) continue;
+                if (ps.Skip(args.Length).Any(p => !p.IsOptional)) continue;
+                int score = 0; bool ok = true;
+                for (int i = 0; i < args.Length && ok; i++)
+                {
+                    var pt = ps[i].ParameterType;
+                    if (args[i] == null) { ok = !pt.IsValueType || Nullable.GetUnderlyingType(pt) != null; continue; }
+                    if (pt == typeof(object)) continue;
+                    if (pt.IsInstanceOfType(args[i])) { score += 2; continue; }
+                    if (args[i] is IConvertible && (pt.IsPrimitive || Nullable.GetUnderlyingType(pt)?.IsPrimitive == true)) { score += 1; continue; }
+                    ok = false;
+                }
+                if (ok && score > bestScore) { best = c; bestScore = score; }
+            }
+            if (best == null) throw new InvalidCastException($"{t.Name}() takes no constructor for {args.Length} arguments");
+            var bps = best.GetParameters();
+            var call = new object?[bps.Length];
+            for (int i = 0; i < bps.Length; i++)
+            {
+                if (i >= args.Length) { call[i] = bps[i].HasDefaultValue ? bps[i].DefaultValue : Type.Missing; continue; }
+                var pt = bps[i].ParameterType;
+                call[i] = args[i] == null || pt.IsInstanceOfType(args[i]) || pt == typeof(object) ? args[i]
+                    : Convert.ChangeType(args[i], Nullable.GetUnderlyingType(pt) ?? pt, CultureInfo.InvariantCulture);
+            }
+            return best.Invoke(call);
+        }
+
+        /// <summary>
+        /// f(*args) on a late-bound callable: a Typhon function value, a bound method, a .NET delegate, or an object with
+        /// __call__ (the arguments are known only as a sequence, so the call is made at run time).
+        /// </summary>
+        public static dynamic? __invoke(object? f, object?[] args) => f switch
+        {
+            PyFunction pf => pf.__call__(args),
+            PyBoundMethod bm => bm.__call__(args),
+            Delegate d => d.DynamicInvoke(args),
+            // a class passed as a value (cls = Array2D; cls(n, n)): constructed with the constructor that fits the arguments
+            Type t => Construct(t, args),
+            null => throw new NullReferenceException("'NoneType' object is not callable"),
+            _ => new PyBoundMethod(f, "__call__").__call__(args),
+        };
     }
 
     /// <summary>
@@ -307,36 +370,94 @@ namespace Typhon.Runtime
         public AssertionError(string message) : base(message) { }
     }
 
+    /// <summary>
+    /// A text file (open(path, mode)): read, readline, iteration by lines, write, the with statement. Like CPython: UTF-8 by
+    /// default (any Python encoding name), universal newlines when reading (newline='' keeps \r\n), modes r, w, a, x and +.
+    /// </summary>
     internal sealed class PyFile : IDisposable, IEnumerable<string>
     {
+        readonly System.IO.FileStream _stream;
         readonly System.IO.StreamReader? _reader;
         readonly System.IO.StreamWriter? _writer;
-        public PyFile(string path, string mode)
+        readonly string? _newline;
+        public readonly string name, mode, encoding;
+        public bool closed { get; private set; }
+
+        public PyFile(string path, string mode, string? encoding = null, string? errors = null, string? newline = null)
         {
-            if (mode.Contains('w')) _writer = new System.IO.StreamWriter(path, append: false, Encoding.UTF8);
-            else if (mode.Contains('a')) _writer = new System.IO.StreamWriter(path, append: true, Encoding.UTF8);
-            else _reader = new System.IO.StreamReader(path, Encoding.UTF8);
+            name = path; this.mode = mode; this.encoding = encoding ?? "UTF-8"; _newline = newline;
+            var enc = encoding == null ? new UTF8Encoding(false) : ByteOps.EncodingOf(encoding, errors ?? "strict");
+            if (enc is UTF8Encoding && encoding?.ToLowerInvariant().Replace("_", "-") == "utf-8-sig") enc = new UTF8Encoding(true);
+            var fm = mode.Contains('w') ? System.IO.FileMode.Create : mode.Contains('a') ? System.IO.FileMode.Append
+                   : mode.Contains('x') ? System.IO.FileMode.CreateNew : System.IO.FileMode.Open;
+            bool plus = mode.Contains('+');
+            var access = fm == System.IO.FileMode.Open && !plus ? System.IO.FileAccess.Read
+                       : fm == System.IO.FileMode.Append ? System.IO.FileAccess.Write
+                       : plus ? System.IO.FileAccess.ReadWrite : System.IO.FileAccess.Write;
+            try { _stream = new System.IO.FileStream(path, fm, access); }
+            catch (System.IO.IOException) when (fm == System.IO.FileMode.CreateNew) { throw new System.IO.IOException($"[Errno 17] File exists: '{path}'"); }
+            if (access != System.IO.FileAccess.Write) _reader = new System.IO.StreamReader(_stream, enc, detectEncodingFromByteOrderMarks: false, bufferSize: 4096, leaveOpen: true);
+            if (access != System.IO.FileAccess.Read) _writer = new System.IO.StreamWriter(_stream, enc, bufferSize: 4096, leaveOpen: true);
         }
-        // text mode reads with universal newlines like Python: \r\n and \r become \n, and a line keeps its \n only if it has one
-        public string read() => _reader!.ReadToEnd().Replace("\r\n", "\n").Replace('\r', '\n');
+
+        System.IO.StreamReader Reader => _reader ?? throw new System.IO.IOException("not readable");
+        System.IO.StreamWriter Writer => _writer ?? throw new System.IO.IOException("not writable");
+        bool Universal => _newline == null;
+
+        string Translate(string s) => Universal ? s.Replace("\r\n", "\n").Replace('\r', '\n') : s;
+        public string read() => Translate(Reader.ReadToEnd());
+        public string read(long size)
+        {
+            if (size < 0) return read();
+            var buf = new char[size];
+            int n = Reader.ReadBlock(buf, 0, (int)size);
+            return Translate(new string(buf, 0, n));
+        }
         public string readline()
         {
             var sb = new StringBuilder();
             int c;
-            while ((c = _reader!.Read()) != -1)
+            var r = Reader;
+            while ((c = r.Read()) != -1)
             {
-                if (c == '\r') { if (_reader.Peek() == '\n') _reader.Read(); sb.Append('\n'); break; }
+                if (c == '\r')
+                {
+                    bool crlf = r.Peek() == '\n';
+                    if (crlf) r.Read();
+                    sb.Append(Universal ? "\n" : crlf ? "\r\n" : "\r");
+                    break;
+                }
                 sb.Append((char)c);
                 if (c == '\n') break;
             }
             return sb.ToString();
         }
         public List<string> readlines() => this.ToList();
-        public long write(string s) { _writer!.Write(s); return s.Length; }
+        public long write(string s) { Writer.Write(_newline is { Length: > 0 } nl && nl != "\n" ? s.Replace("\n", nl) : s); return s.Length; }
+        public void writelines(IEnumerable<string> lines) { foreach (var l in lines) write(l); }
+        public void flush() { _writer?.Flush(); }
+        public long seek(long offset, long whence = 0)
+        {
+            _writer?.Flush();
+            long pos = _stream.Seek(offset, whence == 0 ? System.IO.SeekOrigin.Begin : whence == 1 ? System.IO.SeekOrigin.Current : System.IO.SeekOrigin.End);
+            _reader?.DiscardBufferedData();
+            return pos;
+        }
+        public long tell() { _writer?.Flush(); return _stream.Position; }
+        public bool readable() => _reader != null;
+        public bool writable() => _writer != null;
+        public bool seekable() => true;
         public void close() => Dispose();
-        public void Dispose() { _reader?.Dispose(); _writer?.Dispose(); }
+        public void Dispose()
+        {
+            if (closed) return;
+            closed = true;
+            _writer?.Flush();
+            _reader?.Dispose(); _writer?.Dispose(); _stream.Dispose();
+        }
         public IEnumerator<string> GetEnumerator() { string l; while ((l = readline()).Length > 0) yield return l; }
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+        public override string ToString() => $"<_io.TextIOWrapper name='{name}' mode='{mode}' encoding='{encoding}'>";
     }
 
     /// <summary>
@@ -421,7 +542,7 @@ namespace Typhon.Runtime
         public override string ToString() => __repr__();
     }
 
-    internal static class Builtins
+    internal static partial class Builtins
     {
         static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
 
@@ -444,7 +565,8 @@ namespace Typhon.Runtime
             return Console.ReadLine() ?? throw new System.IO.EndOfStreamException("EOF when reading a line");
         }
 
-        public static PyFile open(string path, string mode = "r", string? encoding = null) => new PyFile(path, mode);
+        public static PyFile open(string path, string mode = "r", long buffering = -1, string? encoding = null, string? errors = null, string? newline = null) =>
+            new PyFile(path, mode, encoding, errors, newline);
         /// <summary>open(path, "rb"/"wb"/...): a binary file (the compiler picks it for a literal mode with 'b').</summary>
         public static PyBinaryFile open_binary(string path, string mode = "rb") => new PyBinaryFile(path, mode);
 
@@ -680,7 +802,9 @@ namespace Typhon.Runtime
         {
             foreach (var m in mappings)
             {
-                if (m is not IDictionary d) throw new InvalidCastException("argument after ** must be a mapping, not " + m?.GetType().Name);
+                // (a **kwargs parameter that received nothing is null until the body runs: forwarded from a base call, it is empty)
+                if (m is null) continue;
+                if (m is not IDictionary d) throw new InvalidCastException("argument after ** must be a mapping, not " + m.GetType().Name);
                 var en = d.GetEnumerator();
                 while (en.MoveNext())
                 {
@@ -1019,7 +1143,21 @@ namespace Typhon.Runtime
         public static decimal truediv(decimal a, decimal b) => a / b;
         public static T truediv<T>(T a, T b) where T : IDivisionOperators<T, T, T> => a / b;
         public static T truediv<T>(T a, double b) where T : IDivisionOperators<T, double, T> => a / b;
-        public static dynamic truediv(object a, object b) => (dynamic)a / (dynamic)b;
+        /// <summary>a / b on late-bound values: ints and floats divide as floats (Python's true division), others use their own /.</summary>
+        public static dynamic truediv(object a, object b)
+        {
+            if (a is bool ab) a = ab ? 1L : 0L;
+            if (b is bool bb) b = bb ? 1L : 0L;
+            if (AsInt(a, out var ia) && AsInt(b, out var ib)) return truediv(ia, ib);
+            if (a is BigInteger || b is BigInteger)
+            {
+                if ((a is BigInteger || AsInt(a, out _)) && (b is BigInteger || AsInt(b, out _))) return truediv(BigOf(a), BigOf(b));
+            }
+            if (IsRealNumber(a) && IsRealNumber(b)) return truediv(Convert.ToDouble(a, CultureInfo.InvariantCulture), Convert.ToDouble(b, CultureInfo.InvariantCulture));
+            return (dynamic)a / (dynamic)b;
+        }
+        static bool IsRealNumber(object o) => o is double || o is float || o is long || o is int || o is short || o is byte || o is sbyte || o is ushort || o is uint || o is decimal || o is BigInteger;
+        static BigInteger BigOf(object o) => o is BigInteger bi ? bi : AsInt(o, out var l) ? new BigInteger(l) : throw new InvalidCastException();
 
         // floor division / modulo: inlined, so the JIT turns constant divisors into multiplications; values that fit in 32 bits
         // divide in 32 bits (a 64-bit hardware division is several times slower on many CPUs)
@@ -1312,9 +1450,56 @@ namespace Typhon.Runtime
         public static bool contains(ITuple t, object? x) { for (int i = 0; i < t.Length; i++) if (eq(t[i], x)) return true; return false; }
         public static bool contains(object c, object x)
         {
-            if (c is IDictionary d) return d.Contains(x);
-            if (c is IEnumerable e) { foreach (var item in e) if (Equals(item, x)) return true; return false; }
+            if (c is IDictionary d) return d.Contains(KeyFor(d, x));
+            if (c is IEnumerable e) { foreach (var item in e) if (eq(item, x)) return true; return false; }
             return ((dynamic)c).__contains__((dynamic)x);
+        }
+
+        /// <summary>
+        /// A late-bound key converted to a typed dict's key type, as C# converts it for typed code: a tuple built from
+        /// late-bound items ((object, object)) to (long, long), an int to the float key type, ... (else as it is).
+        /// </summary>
+        internal static object? KeyFor(IDictionary d, object? key)
+        {
+            if (key == null) return null;
+            var keyType = DictKeyType(d.GetType());
+            if (keyType == null || keyType == typeof(object) || keyType.IsInstanceOfType(key)) return key;
+            return ConvertKey(key, keyType) ?? key;
+        }
+
+        /// <summary>d[k] with a late-bound k on a dict typed K: k as a K (a tuple of late-bound items converts item by item).</summary>
+        public static K __key<K>(object? k) => k is K kk ? kk : k != null && ConvertKey(k, typeof(K)) is K converted ? converted : (K)(dynamic)k!;
+
+        static Type? DictKeyType(Type t)
+        {
+            for (var x = t; x != null; x = x.BaseType)
+                if (x.IsGenericType && x.GetGenericArguments().Length == 2 && x.GetGenericTypeDefinition() is var g &&
+                    (g == typeof(Dictionary<,>) || g == typeof(OrderedDictionary<,>) || g == typeof(SortedDictionary<,>))) return x.GetGenericArguments()[0];
+            return null;
+        }
+
+        static object? ConvertKey(object key, Type keyType)
+        {
+            if (key is ITuple tuple && keyType.IsGenericType && keyType.FullName!.StartsWith("System.ValueTuple`") && keyType.GetGenericArguments() is var items && items.Length == tuple.Length)
+            {
+                var args = new object?[items.Length];
+                for (int i = 0; i < items.Length; i++)
+                {
+                    object? item = tuple[i];
+                    if (item == null || items[i].IsInstanceOfType(item) || items[i] == typeof(object)) { args[i] = item; continue; }
+                    args[i] = ConvertKey(item, items[i]);
+                    if (args[i] == null) return null;
+                }
+                return Activator.CreateInstance(keyType, args);
+            }
+            if (AsInt(key, out var l))
+            {
+                if (keyType == typeof(long)) return l;
+                if (keyType == typeof(double)) return (double)l;
+                if (keyType == typeof(BigInteger)) return new BigInteger(l);
+            }
+            if (key is double dk && keyType == typeof(long) && Math.Floor(dk) == dk && dk >= long.MinValue && dk <= long.MaxValue) return (long)dk;
+            return null;
         }
 
         /// <summary>Number of values in range(start, stop, step) — used by the compiler's counting-loop lowering.</summary>
@@ -1401,12 +1586,16 @@ namespace Typhon.Runtime
         {
             switch (o)
             {
+                // a dict first: .NET's OrderedDictionary is an IList too, but d[3] is a key, not a position
+                case IDictionary d:
+                {
+                    var k = KeyFor(d, key);
+                    if (!d.Contains(k!)) throw new KeyNotFoundException(repr(key));
+                    return d[k!];
+                }
                 case string s when IsIndex(key): return str_at(s, __pos(key is bool kb ? (kb ? 1L : 0L) : key!, s.Length));
                 case IList list when IsIndex(key): return list[__pos(key is bool lb ? (lb ? 1L : 0L) : key!, list.Count)];
-                case ITuple t when IsIndex(key) && o is not IDictionary: return t[__pos(key is bool tb ? (tb ? 1L : 0L) : key!, t.Length)];
-                case IDictionary d when !(o is IList):
-                    if (!d.Contains(key!)) throw new KeyNotFoundException(repr(key));
-                    return d[key!];
+                case ITuple t when IsIndex(key): return t[__pos(key is bool tb ? (tb ? 1L : 0L) : key!, t.Length)];
                 case null: throw new NullReferenceException("'NoneType' object is not subscriptable");
             }
             if (IsIndex(key) && o is not IDictionary)
@@ -1415,7 +1604,32 @@ namespace Typhon.Runtime
                 try { int count = (int)dyn.Count; return dyn[__pos(key!, count)]; }
                 catch (Microsoft.CSharp.RuntimeBinder.RuntimeBinderException) { }
             }
+            // obj[x, y]: a Typhon class takes the tuple as one key; a .NET indexer with several parameters takes its items
+            if (key is ITuple tk && key is not IPyTuple)
+            {
+                try { return ((dynamic)o)[(dynamic)key]; }
+                catch (Microsoft.CSharp.RuntimeBinder.RuntimeBinderException) { return IndexItems((dynamic)o, tk); }
+            }
             return ((dynamic)o)[(dynamic?)key];
+        }
+
+        static dynamic IndexItems(dynamic o, ITuple k) => k.Length switch
+        {
+            2 => o[(dynamic?)k[0], (dynamic?)k[1]],
+            3 => o[(dynamic?)k[0], (dynamic?)k[1], (dynamic?)k[2]],
+            4 => o[(dynamic?)k[0], (dynamic?)k[1], (dynamic?)k[2], (dynamic?)k[3]],
+            _ => o[(dynamic)k],
+        };
+
+        static void SetIndexItems(dynamic o, ITuple k, dynamic? value)
+        {
+            switch (k.Length)
+            {
+                case 2: o[(dynamic?)k[0], (dynamic?)k[1]] = value; break;
+                case 3: o[(dynamic?)k[0], (dynamic?)k[1], (dynamic?)k[2]] = value; break;
+                case 4: o[(dynamic?)k[0], (dynamic?)k[1], (dynamic?)k[2], (dynamic?)k[3]] = value; break;
+                default: o[(dynamic)k] = value; break;
+            }
         }
 
         /// <summary>o[key] = value on a late-bound value.</summary>
@@ -1423,9 +1637,15 @@ namespace Typhon.Runtime
         {
             switch (o)
             {
+                case IDictionary d: d[KeyFor(d, key)!] = value; return;
                 case IList list when IsIndex(key): list[__pos(key is bool lb ? (lb ? 1L : 0L) : key!, list.Count)] = value; return;
-                case IDictionary d when !(o is IList): d[key!] = value; return;
                 case null: throw new NullReferenceException("'NoneType' object does not support item assignment");
+            }
+            if (key is ITuple tk && key is not IPyTuple)
+            {
+                try { ((dynamic)o)[(dynamic)key] = (dynamic?)value; }
+                catch (Microsoft.CSharp.RuntimeBinder.RuntimeBinderException) { SetIndexItems((dynamic)o, tk, value); }
+                return;
             }
             ((dynamic)o)[(dynamic?)key] = (dynamic?)value;
         }
@@ -1643,7 +1863,37 @@ namespace Typhon.Runtime
 
         // literal helpers used by the compiler: [a, b] / {k: v} / {a, b} without a target type
         public static List<T> __list<T>(params T[] items) => new List<T>(items);
-        public static OrderedDictionary<K, V> __dict<K, V>(params (K, V)[] items) where K : notnull { var d = new OrderedDictionary<K, V>(items.Length); foreach (var (k, v) in items) d[k] = v; return d; }
+        public static OrderedDictionary<K, V> __dict<K, V>(params (K, V)[] items) where K : notnull { var d = __newdict<K, V>(items.Length); foreach (var (k, v) in items) d[k] = v; return d; }
+
+        /// <summary>A dict; with keys of any type (object), keys compare like Python's: (1, 2) whatever its items' static types, 1 == 1.0.</summary>
+        public static OrderedDictionary<K, V> __newdict<K, V>(int capacity = 0) where K : notnull =>
+            typeof(K) == typeof(object) ? new OrderedDictionary<K, V>(capacity, (IEqualityComparer<K>)(object)PyKeyComparer.Instance) : new OrderedDictionary<K, V>(capacity);
+
+        /// <summary>A set; with items of any type (object), items compare like Python's (see __newdict).</summary>
+        public static HashSet<T> __newset<T>() => typeof(T) == typeof(object) ? new HashSet<T>((IEqualityComparer<T>)(object)PyKeyComparer.Instance) : new HashSet<T>();
+
+        /// <summary>Python's hash for keys: equal values hash alike (1, 1.0 and True; a tuple by its items).</summary>
+        internal static int KeyHash(object? o)
+        {
+            switch (o)
+            {
+                case null: return 0;
+                case bool b: return b ? 1 : 0;
+                case string str: return str.GetHashCode();
+                case double d: return Math.Floor(d) == d && d >= long.MinValue && d <= long.MaxValue ? ((long)d).GetHashCode() : d.GetHashCode();
+                case float f: return KeyHash((double)f);
+                case BigInteger bi: return bi >= long.MinValue && bi <= long.MaxValue ? ((long)bi).GetHashCode() : bi.GetHashCode();
+                case ITuple t when o is not IDictionary:
+                {
+                    var h = new HashCode();
+                    for (int i = 0; i < t.Length; i++) h.Add(KeyHash(t[i]));
+                    return h.ToHashCode();
+                }
+            }
+            if (AsInt(o, out var l)) return l.GetHashCode();
+            if (o is IPyTuple pt) { var h = new HashCode(); foreach (var item in (IEnumerable)pt) h.Add(KeyHash(item)); return h.ToHashCode(); }
+            return o.GetHashCode();
+        }
         public static HashSet<T> __set<T>(params T[] items) => new HashSet<T>(items);
 
         // ───────────── slicing with Python semantics (clamping, negative indices, steps) ─────────────
@@ -1724,6 +1974,13 @@ namespace Typhon.Runtime
             if (o is PyRange pr) return slice(pr, start, stop, step);
             if (o is string str0) return slice(str0, start, stop, step);
             if (o is System.Collections.IList && (o.GetType().IsArray || o.GetType().IsGenericType)) return slice((dynamic)o, start, stop, step);
+            // a tuple of fixed shape (a ValueTuple): its slice is a tuple of the selected items
+            if (o is ITuple tuple)
+            {
+                var items = new object?[tuple.Length];
+                for (int i = 0; i < items.Length; i++) items[i] = tuple[i];
+                return new PyTuple<object?>(slice((IList<object?>)items, start, stop, step));
+            }
             if (step != 1) throw new NotSupportedException("stepped slices are only supported on str, list and arrays");
             Index s = start == null ? Index.Start : start.Value < 0 ? Index.FromEnd(checked((int)-start.Value)) : Index.FromStart(checked((int)start.Value));
             Index e = stop == null ? Index.End : stop.Value < 0 ? Index.FromEnd(checked((int)-stop.Value)) : Index.FromStart(checked((int)stop.Value));
@@ -1826,6 +2083,11 @@ namespace Typhon.Runtime
         public static int compare(object? a, object? b)
         {
             if (IntLike(a!, out var x) && IntLike(b!, out var y)) return x.CompareTo(y);
+            // a BigInteger next to a 64-bit int (big-int mode mixes them): by value
+            if ((a is BigInteger || b is BigInteger) && (a is BigInteger || AsInt(a, out _)) && (b is BigInteger || AsInt(b, out _)))
+                return BigOf(a!).CompareTo(BigOf(b!));
+            if (a is BigInteger ba && b is double db) return ((double)ba).CompareTo(db);
+            if (a is double da && b is BigInteger bb) return da.CompareTo((double)bb);
             if (a != null && b != null && IsNumber(a) && IsNumber(b)) return ToDoubleAny(a).CompareTo(ToDoubleAny(b));
             if (a is string sa && b is string sb) return string.CompareOrdinal(sa, sb);
             var la = TupleItems(a) ?? (a is IList l1 && !(a is IDictionary) && !IsSet(a) ? l1.Cast<object?>().ToList() : null);
@@ -1872,10 +2134,37 @@ namespace Typhon.Runtime
         public static HashSet<T> set_xor<T>(IEnumerable<T> a, IEnumerable<T> b) { var r = new HashSet<T>(a); r.SymmetricExceptWith(b); return r; }
         public static OrderedDictionary<K, V> dict_or<K, V>(IDictionary<K, V> a, IDictionary<K, V> b) where K : notnull { var r = dict(a); foreach (var kv in b) r[kv.Key] = kv.Value; return r; }
         // late-bound operands: sets use set algebra, everything else binds normally
-        public static dynamic sub(dynamic a, dynamic b) => IsSet((object)a) ? set_sub((dynamic)a, (dynamic)b) : checked(a - b);
-        public static dynamic or_(dynamic a, dynamic b) => IsSet((object)a) ? set_or((dynamic)a, (dynamic)b) : a is IDictionary ? dict_or((dynamic)a, (dynamic)b) : a | b;
-        public static dynamic and_(dynamic a, dynamic b) => IsSet((object)a) ? set_and((dynamic)a, (dynamic)b) : a & b;
-        public static dynamic xor_(dynamic a, dynamic b) => IsSet((object)a) ? set_xor((dynamic)a, (dynamic)b) : a ^ b;
+        public static dynamic sub(dynamic a, dynamic b) => IsSet((object)a) ? SetOp((object)a, (object)b, '-') : checked(a - b);
+        public static dynamic or_(dynamic a, dynamic b) => IsSet((object)a) ? SetOp((object)a, (object)b, '|') : a is IDictionary ? dict_or((dynamic)a, (dynamic)b) : a | b;
+        public static dynamic and_(dynamic a, dynamic b) => IsSet((object)a) ? SetOp((object)a, (object)b, '&') : a & b;
+        public static dynamic xor_(dynamic a, dynamic b) => IsSet((object)a) ? SetOp((object)a, (object)b, '^') : a ^ b;
+
+        /// <summary>
+        /// Set algebra on late-bound sets: typed when both hold the same item type, else on their items as objects (a set of
+        /// ints minus a set of late-bound values: the run-time binder cannot pick one T for set_sub&lt;T&gt;).
+        /// </summary>
+        static object SetOp(object a, object b, char op)
+        {
+            if (EnumerableItemType(a.GetType()) is Type ta && ta == EnumerableItemType(b.GetType()))
+                return op switch { '-' => set_sub((dynamic)a, (dynamic)b), '|' => set_or((dynamic)a, (dynamic)b), '&' => set_and((dynamic)a, (dynamic)b), _ => set_xor((dynamic)a, (dynamic)b) };
+            var r = new HashSet<object?>(((IEnumerable)a).Cast<object?>());
+            var other = ((IEnumerable)b).Cast<object?>();
+            switch (op)
+            {
+                case '-': r.ExceptWith(other); break;
+                case '|': r.UnionWith(other); break;
+                case '&': r.IntersectWith(other); break;
+                default: r.SymmetricExceptWith(other); break;
+            }
+            return r;
+        }
+
+        static Type? EnumerableItemType(Type t)
+        {
+            foreach (var i in t.GetInterfaces())
+                if (i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IEnumerable<>)) return i.GetGenericArguments()[0];
+            return null;
+        }
 
         // ───────────── match statements (PEP 634) ─────────────
 
@@ -1917,7 +2206,20 @@ namespace Typhon.Runtime
             if (idx.Count != vals.Count) throw new ArgumentException($"attempt to assign sequence of size {vals.Count} to extended slice of size {idx.Count}");
             for (int i = 0; i < idx.Count; i++) l[idx[i]] = vals[i];
         }
-        public static void setslice(object l, long? start, long? stop, long step, object values) => setslice((dynamic)l, start, stop, step, (dynamic)values);
+        /// <summary>
+        /// xs[a:b] = ys on late-bound values: the items are converted to the list's item type and assigned by the typed
+        /// version (dispatching dynamically would come back here when the item types differ).
+        /// </summary>
+        public static void setslice(object l, long? start, long? stop, long step, object values)
+        {
+            var itemType = EnumerableItemType(l.GetType());
+            if (itemType == null || l is not IList) throw new InvalidCastException($"'{l.GetType().Name}' object does not support slice assignment");
+            var typed = (IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(itemType))!;
+            foreach (var v in (IEnumerable)values)
+                typed.Add(v == null || itemType.IsInstanceOfType(v) || itemType == typeof(object) ? v : Convert.ChangeType(v, Nullable.GetUnderlyingType(itemType) ?? itemType, CultureInfo.InvariantCulture));
+            var generic = typeof(Builtins).GetMethods().First(m => m.Name == nameof(setslice) && m.IsGenericMethodDefinition);
+            generic.MakeGenericMethod(itemType).Invoke(null, new object?[] { l, start, stop, step, typed });
+        }
 
         public static void delslice<T>(List<T> l, long? start, long? stop, long step = 1)
         {
@@ -2335,24 +2637,6 @@ namespace Typhon.Stdlib
         public static double monotonic() => perf_counter();
         public static double time() => (DateTime.UtcNow - Epoch).TotalSeconds;
         public static void sleep(double seconds) => System.Threading.Thread.Sleep(TimeSpan.FromSeconds(seconds));
-    }
-
-    internal static class random_
-    {
-        static Random _rng = new Random();
-        public static void seed(long s) => _rng = new Random(unchecked((int)(s ^ (s >> 32))));
-        public static double random() => _rng.NextDouble();
-        public static long randint(long a, long b) => _rng.NextInt64(a, checked(b + 1));
-        public static long randrange(long stop) => _rng.NextInt64(stop);
-        public static long randrange(long start, long stop) => _rng.NextInt64(start, stop);
-        public static double uniform(double a, double b) => a + (b - a) * _rng.NextDouble();
-        public static double gauss(double mu = 0, double sigma = 1)
-        {
-            double u1 = 1.0 - _rng.NextDouble(), u2 = _rng.NextDouble();
-            return mu + sigma * Math.Sqrt(-2.0 * Math.Log(u1)) * Math.Cos(2 * Math.PI * u2);
-        }
-        public static T choice<T>(IList<T> xs) => xs[_rng.Next(xs.Count)];
-        public static void shuffle<T>(IList<T> xs) { for (int i = xs.Count - 1; i > 0; i--) { int j = _rng.Next(i + 1); (xs[i], xs[j]) = (xs[j], xs[i]); } }
     }
 
     internal static class sys_

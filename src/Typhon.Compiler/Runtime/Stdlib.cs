@@ -250,9 +250,9 @@ namespace Typhon.Runtime
         public bool exists() => System.IO.File.Exists(_p) || System.IO.Directory.Exists(_p);
         public bool is_file() => System.IO.File.Exists(_p);
         public bool is_dir() => System.IO.Directory.Exists(_p);
-        public string read_text(string? encoding = null) => System.IO.File.ReadAllText(_p);
-        public long write_text(string data, string? encoding = null) { System.IO.File.WriteAllText(_p, data); return data.Length; }
-        public PyFile open(string mode = "r", string? encoding = null) => new PyFile(_p, mode);
+        public string read_text(string? encoding = null, string? errors = null) { using var f = new PyFile(_p, "r", encoding, errors); return f.read(); }
+        public long write_text(string data, string? encoding = null, string? errors = null, string? newline = null) { using var f = new PyFile(_p, "w", encoding, errors, newline); return f.write(data); }
+        public PyFile open(string mode = "r", long buffering = -1, string? encoding = null, string? errors = null, string? newline = null) => new PyFile(_p, mode, encoding, errors, newline);
         public IEnumerable<Path> iterdir() => System.IO.Directory.EnumerateFileSystemEntries(_p).Select(e => new Path(e));
         public IEnumerable<Path> glob(string pattern) => System.IO.Directory.EnumerateFileSystemEntries(_p, pattern).Select(e => new Path(e));
         public void mkdir(bool parents = false, bool exist_ok = false) { if (exists() && !exist_ok) throw new System.IO.IOException($"[Errno 17] File exists: '{_p}'"); System.IO.Directory.CreateDirectory(_p); }

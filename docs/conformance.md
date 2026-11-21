@@ -18,14 +18,15 @@ python tests/conformance/update_expected.py                                  # r
 * CI ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)) runs the suite on Windows and Linux. The Native AOT pass
   can be started by hand.
 
-Status: 26 of 28 cases match CPython under `typhon run`, among them `binary_data` (bytes, bytearray, struct,
+Status: 27 of 29 cases match CPython under `typhon run`, among them `dynamic_programs` (callable objects, class values,
+function aliases, Python dict keys, mixed lists, seeded `random`), `binary_data` (bytes, bytearray, struct,
 hashlib), `generator_protocol` (send, throw, close, generator return values, coroutines driven by send, `__dict__`), `syntax_features` (match, walrus, starred
 unpacking, slice assignment), `builtin_semantics`, `inference_uses` (compiles with `--strict`), `stdlib_modules`,
 `stdlib_data` (heapq, bisect, copy, json, re, io, array, frozenset), `bigint_mode`, `dynamic_and_flow` (late-bound
 values, rebinding, optional values, ranges, `and`/`or` values), `functions_and_classes` (functions as values, `%`
 formatting, class hierarchies, two-phase construction) and `language_data` (namedtuple, `**kwargs`, tuples as
 sequences, lambdas in variables, `globals()`, classes defined in functions). The last full `--aot` pass predates the
-eleven newest cases: 10 of the 17 cases then built and matched as native executables
+twelve newest cases: 10 of the 17 cases then built and matched as native executables
 (`arithmetic`, `inference`, `loop_else` and `numpy_basics` use dynamic values, which Native AOT rejects). Known failures: NumPy details
 (`a.shape` is not a tuple, stepped `ndarray` slices, boolean `sum`), and ints beyond 64 bits in the default mode (`int_overflow`).
 [`big_ints.ty`](../tests/conformance/cases/big_ints.ty) covers ints past 32 bits: loops, recursion, inferred functions,

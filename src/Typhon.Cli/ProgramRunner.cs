@@ -35,6 +35,8 @@ internal static class ProgramRunner
 
     static void PrintTraceback(Exception ex)
     {
+        // a sort's comparison failed: Python reports the comparison's error itself (TypeError: '<' not supported ...)
+        while (ex is InvalidOperationException && ex.InnerException != null && ex.Message.StartsWith("Failed to compare")) ex = ex.InnerException;
         Console.Error.WriteLine("Traceback (most recent call last):");
         foreach (var frame in new StackTrace(ex, true).GetFrames().Reverse())
         {

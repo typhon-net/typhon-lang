@@ -24,7 +24,7 @@
   `.ty` files as `AdditionalFiles`. That is why Typhon and C# can live in one project and reference each other in
   both directions, and why Typhon types show up in C# IntelliSense.
 * **Runtime** (`src/Typhon.Compiler/Runtime/`): Python builtins (`print`, `len`, `range`,
-  `sorted`, `format`, `frozenset`, str/list/dict/set methods, ...), small stdlib shims (`math`, `time`, `random`,
+  `sorted`, `format`, `frozenset`, str/list/dict/set methods, ...), small stdlib shims (`math`, `time`, `random` (CPython's Mersenne Twister and algorithms: a seeded program draws the same numbers),
   `sys` with `sys.stdout`/`stderr`/`stdin`, `os`, `asyncio`) and the commonly used parts of `itertools`,
   `collections` (`Counter`, `defaultdict`, `deque`, `OrderedDict`, `namedtuple`), `functools` (`reduce`,
   `cmp_to_key`, `@cache`/`@lru_cache`), `operator`, `string`, `fractions`, `pathlib`, `heapq` (CPython's algorithm,

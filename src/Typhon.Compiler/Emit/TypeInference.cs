@@ -81,9 +81,18 @@ namespace Typhon.Compiler.Emit
             if (!Conflicts.TryGetValue(key, out var t) || t != "dynamic") Conflicts[key] = type;
         }
 
+        /// <summary>
+        /// Set while a function's dynamic fallback body is emitted. What it stores into containers is kept apart: a container
+        /// typed code fills too takes the typed code's element types (a dynamic value converts to them when it is stored),
+        /// only a container nothing else fills takes the fallback's.
+        /// </summary>
+        public bool InFallbackBody;
+        public readonly Dictionary<string, List<string>> FallbackElements = new Dictionary<string, List<string>>();
+
         public void AddElement(string key, string type)
         {
-            if (!Elements.TryGetValue(key, out var list)) Elements[key] = list = new List<string>();
+            var table = InFallbackBody ? FallbackElements : Elements;
+            if (!table.TryGetValue(key, out var list)) table[key] = list = new List<string>();
             list.Add(TypeInference.Settled(type ?? TypeInference.Unknown));
         }
 
@@ -225,6 +234,8 @@ namespace Typhon.Compiler.Emit
         /// <summary>[None] * n (or n * [None]): a list of placeholders, typed (nullable) by what is stored into it later.</summary>
         public static bool IsNonePlaceholder(Expr e) =>
             e is BinOpExpr b && b.Op == "*" && (IsNoneList(b.Left) || IsNoneList(b.Right)) ||
+            // [None, None]
+            e is ListExpr nl && nl.Elts.Count > 0 && nl.Elts.All(x => x is ConstExpr nc && nc.Kind == ConstKind.None) ||
             // [None for _ in range(n)]
             e is ComprehensionExpr c && c.Kind == ComprehensionKind.List && c.Elt is ConstExpr ce && ce.Kind == ConstKind.None &&
             c.Generators.Count == 1 && c.Generators[0].Ifs.Count == 0 && !c.Generators[0].IsAsync;
@@ -437,7 +448,10 @@ namespace Typhon.Compiler.Emit
                 {
                     if (call.Context != null && !live.Contains(call.Context)) continue;
                     if (!Targets.TryGetValue(call.Callee, out var t) || !t.InferParams) continue;
-                    if (call.Types == null || call.Types.Any(IsUnknown)) { unknownCall.Add(call.Callee); continue; }
+                    // a definitely late-bound argument (dynamic) makes only its own parameter dynamic; an argument whose type is not
+                    // known yet (or a call with nothing typed) needs the function's dynamic version
+                    if (call.Types == null || call.Types.Any(x => IsUnknown(x) && x != "dynamic") || call.Types.All(x => x == "dynamic" || x == Declared))
+                    { unknownCall.Add(call.Callee); continue; }
                     if (!sigs.TryGetValue(call.Callee, out var list)) sigs[call.Callee] = list = new List<string[]>();
                     if (!list.Any(s => SigKey(s) == SigKey(call.Types))) list.Add(call.Types);
                 }
@@ -464,8 +478,17 @@ namespace Typhon.Compiler.Emit
 
             var elements = new Dictionary<string, string>();
             foreach (var kv in Obs.Elements) if (UnifyElements(kv.Value) is string u) elements[kv.Key] = u;
+            // (a container only fallback bodies filled this pass keeps what typed code gave it before: whether a typed body is
+            // emitted can change from pass to pass, the container's type should not flip with it)
+            foreach (var kv in Obs.FallbackElements)
+                if (!Obs.Elements.ContainsKey(kv.Key))
+                    if (Elements.TryGetValue(kv.Key, out var typedBefore) && !typedBefore.Contains("dynamic")) elements[kv.Key] = typedBefore;
+                    else if (UnifyElements(kv.Value) is string fu) elements[kv.Key] = fu;
             var external = new Dictionary<string, string>();
             foreach (var kv in Obs.ExternalFields) if (UnifyElements(kv.Value) is string ext) external[kv.Key] = ext;
+            // attributes only grow: one seen set on an object stays (the code that sets it may stop seeing the object's class
+            // when that typing changes, args = _Options(); args.flag = None; ... args = table[k])
+            foreach (var kv in ExternalFields) if (!external.ContainsKey(kv.Key)) external[kv.Key] = kv.Value;
             var lambdaSigs = new Dictionary<string, string[]>();
             foreach (var kv in Obs.LambdaCalls)
             {
@@ -487,9 +510,20 @@ namespace Typhon.Compiler.Emit
             foreach (var kv in Obs.Hoisted)
             {
                 var known = kv.Value.Where(x => x != Pending).Distinct().ToList();
+                // None next to an object type: that type (a reference can be None); next to a value type: late-bound
+                bool hasNone = known.Remove(NoneType);
                 if (known.Count == 0) continue;
-                hoisted[kv.Key] = known.Count == 1 && !IsUnknown(known[0]) && known[0] != NoneType ? known[0] : "dynamic";
+                string ht = known.Count == 1 && !IsUnknown(known[0]) ? known[0] : "dynamic";
+                if (hasNone && (IsValueType(ht.TrimEnd('?')) || ht.StartsWith("("))) ht = "dynamic";
+                hoisted[kv.Key] = ht;
             }
+            // a type that keeps flipping between values it had before (a field copied out and written back) settles as dynamic
+            Damp("ret", returns, Returns);
+            Damp("elem", elements, Elements);
+            Damp("hoisted", hoisted, Hoisted);
+            Damp("external", external, ExternalFields);
+            foreach (var kv in Obs.Fields) Damp("field:" + kv.Key, kv.Value, Fields.TryGetValue(kv.Key, out var pf) ? pf : null);
+            foreach (var kv in Obs.MethodReturns) Damp("mret:" + kv.Key, kv.Value, MethodReturns.TryGetValue(kv.Key, out var pm) ? pm : null);
             bool changed = !SameSigs(sigs, Signatures) || !live.SetEquals(Fallback) || !SameMap(returns, Returns) ||
                            !SameNested(Obs.Fields, Fields) || !SameNested(Obs.MethodReturns, MethodReturns) || !SameMap(elements, Elements) ||
                            !SameMap(hoisted, Hoisted) || !SameMap(external, ExternalFields) ||
@@ -507,6 +541,33 @@ namespace Typhon.Compiler.Emit
             Fields = Obs.Fields;
             MethodReturns = Obs.MethodReturns;
             return changed;
+        }
+
+        readonly Dictionary<string, List<string>> _history = new Dictionary<string, List<string>>();
+        readonly Dictionary<string, int> _returnsToOld = new Dictionary<string, int>();
+        readonly HashSet<string> _pinned = new HashSet<string>();
+
+        /// <summary>
+        /// Oscillation damping. Inference only refines (unknown → a type, a type → dynamic), so a value never comes back. One
+        /// that goes back to a value it had before twice is a cycle through an unknown state (old = obj.f; ...; obj.f = old):
+        /// it is pinned to dynamic, which is always valid, and the rest of the program still converges with its types.
+        /// </summary>
+        void Damp(string kind, Dictionary<string, string> next, Dictionary<string, string> prev)
+        {
+            foreach (var key in next.Keys.ToList())
+            {
+                string id = kind + "|" + key;
+                string dyn = next[key] != null && next[key].Contains("→") ? "dynamic→dynamic" : "dynamic";
+                if (_pinned.Contains(id)) { next[key] = dyn; continue; }
+                if (prev == null || !prev.TryGetValue(key, out var old) || old == next[key]) continue;
+                if (!_history.TryGetValue(id, out var seen)) _history[id] = seen = new List<string> { old };
+                if (seen.Contains(next[key]))
+                {
+                    _returnsToOld[id] = _returnsToOld.TryGetValue(id, out var n) ? n + 1 : 1;
+                    if (_returnsToOld[id] >= 2) { _pinned.Add(id); next[key] = dyn; continue; }
+                }
+                seen.Add(next[key]);
+            }
         }
 
         /// <summary>The single type of all returned values; None mixed with a type T gives T (reference) or T? (value type).</summary>

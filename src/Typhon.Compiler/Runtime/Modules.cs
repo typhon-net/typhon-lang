@@ -88,11 +88,84 @@ namespace Typhon.Runtime
         public readonly string typecode;
         public PyArray(string typecode) { this.typecode = typecode; }
         public PyArray(string typecode, IEnumerable<T> items) : base(items) { this.typecode = typecode; }
-        public long itemsize => typecode switch { "b" or "B" => 1, "h" or "H" or "u" => 2, "i" or "I" or "f" or "l" or "L" => 4, _ => 8 };
+        /// <summary>Bytes per item, like CPython's C types (C long is 8 bytes on Linux and macOS, 4 on Windows; wchar_t 4 / 2).</summary>
+        public long itemsize => typecode switch
+        {
+            "b" or "B" => 1, "h" or "H" => 2, "i" or "I" or "f" => 4, "l" or "L" => OperatingSystem.IsWindows() ? 4 : 8,
+            "u" => OperatingSystem.IsWindows() ? 2 : 4, _ => 8,
+        };
         public List<T> tolist() => new List<T>(this);
-        public void frombytes(object b) => throw new NotSupportedException("array.frombytes");
+
+        /// <summary>The items as machine values (native byte order, little-endian here), like array.tobytes().</summary>
+        public PyBytes tobytes()
+        {
+            int size = (int)itemsize;
+            var buf = new byte[Count * size];
+            var span = buf.AsSpan();
+            for (int i = 0; i < Count; i++)
+            {
+                var dst = span.Slice(i * size, size);
+                object? v = this[i];
+                switch (typecode)
+                {
+                    case "f": BitConverter.TryWriteBytes(dst, (float)Convert.ToDouble(v)); break;
+                    case "d": BitConverter.TryWriteBytes(dst, Convert.ToDouble(v)); break;
+                    case "u": { int cp = char.ConvertToUtf32((string)v!, 0); if (size == 2) BitConverter.TryWriteBytes(dst, (ushort)cp); else BitConverter.TryWriteBytes(dst, cp); break; }
+                    default:
+                    {
+                        long x = Convert.ToInt64(v);
+                        for (int k = 0; k < size; k++) dst[k] = unchecked((byte)(x >> (8 * k)));
+                        break;
+                    }
+                }
+            }
+            return new PyBytes(buf);
+        }
+
+        /// <summary>Appends the items that the bytes encode (array.frombytes).</summary>
+        public void frombytes(PyBytes b)
+        {
+            int size = (int)itemsize;
+            var data = b.Data;
+            if (data.Length % size != 0) throw new ArgumentException("bytes length not a multiple of item size");
+            for (int i = 0; i < data.Length; i += size)
+            {
+                var src = data.AsSpan(i, size);
+                object item = typecode switch
+                {
+                    "f" => (double)BitConverter.ToSingle(src),
+                    "d" => BitConverter.ToDouble(src),
+                    "u" => size == 2 ? ((char)BitConverter.ToUInt16(src)).ToString() : char.ConvertFromUtf32(BitConverter.ToInt32(src)),
+                    "b" => (long)(sbyte)src[0],
+                    "h" => (long)BitConverter.ToInt16(src),
+                    "i" => (long)BitConverter.ToInt32(src),
+                    "l" => size == 4 ? BitConverter.ToInt32(src) : BitConverter.ToInt64(src),
+                    "q" => BitConverter.ToInt64(src),
+                    "B" => (long)src[0],
+                    "H" => (long)BitConverter.ToUInt16(src),
+                    "I" => (long)BitConverter.ToUInt32(src),
+                    "L" => size == 4 ? (long)BitConverter.ToUInt32(src) : checked((long)BitConverter.ToUInt64(src)),
+                    _ => checked((long)BitConverter.ToUInt64(src)),
+                };
+                Add((T)item);
+            }
+        }
         public string __repr__() => Count == 0 ? $"array('{typecode}')" : typecode == "u" ? $"array('u', {Builtins.repr(string.Concat(this))})" : $"array('{typecode}', {Builtins.repr(new List<T>(this))})";
         public override string ToString() => __repr__();
+    }
+}
+
+namespace Typhon.Runtime
+{
+    using System;
+    using System.Collections.Generic;
+
+    internal static partial class Builtins
+    {
+        // an array.array is typed as a list of its items: its own methods are reached through these
+        public static PyBytes tobytes<T>(this List<T> xs) => xs is PyArray<T> a ? a.tobytes() : throw new InvalidCastException("'list' object has no attribute 'tobytes'");
+        public static void frombytes<T>(this List<T> xs, PyBytes b) { if (xs is PyArray<T> a) a.frombytes(b); else throw new InvalidCastException("'list' object has no attribute 'frombytes'"); }
+        public static long itemsize<T>(this List<T> xs) => xs is PyArray<T> a ? a.itemsize : throw new InvalidCastException("'list' object has no attribute 'itemsize'");
     }
 }
 

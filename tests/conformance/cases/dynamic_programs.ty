@@ -1,0 +1,125 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+"""Conformance: what real programs do with late-bound values (callable objects, class values, function aliases, mixed
+containers, Python dict keys, seeded random, attributes added from other methods, tuple keys)."""
+
+import bisect
+import itertools
+import json
+import random
+
+isqrt_alias = itertools.count
+
+
+class Spline:
+    def __init__(self, k):
+        self.k = k
+
+    def __call__(self, t):
+        return self.k * t
+
+
+class Grid:
+    def __init__(self, w, h):
+        self.w = w
+        self.cells = [0] * (w * h)
+
+    def __getitem__(self, xy):
+        x, y = xy
+        return self.cells[y * self.w + x]
+
+    def __setitem__(self, xy, v):
+        x, y = xy
+        self.cells[y * self.w + x] = v
+
+
+class Vec:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+
+    def __eq__(self, other):
+        return self.x == other.x and self.y == other.y
+
+
+class Node:
+    def __init__(self):
+        self.kids = [None, None]
+        self.value = 0
+
+    def grow(self, i):
+        child = self.kids[i]
+        if not child:
+            child = self.kids[i] = Node()
+            child.extra = [i, i + 1]
+        return child
+
+
+class Base:
+    def __init__(self, v):
+        self.v = v
+
+
+class Derived(Base):
+    def __init__(self, v):
+        self.v = v * 2
+
+    def doubled(self):
+        return self.v
+
+
+class Stack(list):
+    pass
+
+
+def find(xs, x, bisect=bisect.bisect):
+    return bisect(xs, x)
+
+
+def make(cls, *args):
+    return cls(*args)
+
+
+if __name__ == "__main__":
+    s = Spline(3)
+    print(s(4), [s(t) for t in range(3)])
+    g = Grid(3, 2)
+    g[1, 1] = 7
+    print(g[1, 1], g.cells)
+    print(Vec(1, 2) == Vec(1, 2), Vec(1, 2) == Vec(2, 1))
+    n = Node()
+    c = n.grow(1)
+    print(c.extra, n.kids[1] is c)
+    print(Derived(5).doubled())
+    st = Stack()
+    st.append(3)
+    st.append(4)
+    print(st[-1], len(st))
+    print(find([1, 3, 5, 7], 4), next(isqrt_alias(5)))
+    print(make(Vec, 1, 2).y, make(Spline, 2)(5))
+    # dict keys the way Python compares them
+    d = {(1, 2): "a", 3: "b"}
+    loaded = json.loads("[1, 2]")
+    key = (loaded[0], loaded[1])
+    print(key in d, d[key], d.get(3.0), 3.0 in d)
+    # a list that gets ints and floats
+    xs = [0]
+    for v in json.loads("[1.5, 2]"):
+        xs.append(xs[-1] + v)
+    print(xs)
+    # x = None, then an object
+    best = None
+    for v in [Vec(3, 4), Vec(1, 1)]:
+        if best is None or v.x < best.x:
+            best = v
+    print(best.x, best.y)
+    # set algebra between sets of late-bound and typed items
+    a = frozenset([1, 2, 3])
+    b = set(json.loads("[2, 3]"))
+    print(sorted(a - b), sorted(a & b))
+    # random, bit for bit like CPython
+    random.seed(42)
+    print(random.random(), random.randint(1, 100), random.choice("abc"), random.sample(range(10), 3))
+    r = random.Random(7)
+    print(r.randrange(1000), round(r.gauss(0, 1), 10))

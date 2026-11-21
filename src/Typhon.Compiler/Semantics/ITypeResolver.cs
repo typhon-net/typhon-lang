@@ -81,6 +81,8 @@ namespace Typhon.Compiler.Semantics
         /// <summary>A generic method's type parameters, and its return type with them left in ("T", "List&lt;T&gt;"); null if not generic.</summary>
         public List<string> TypeParams;
         public string GenericType;
+        /// <summary>The method is declared to return dynamic (its Type is null then).</summary>
+        public bool ReturnsDynamic;
     }
 
     /// <summary>A constructor as the emitter needs it: fully qualified C# parameter types and names.</summary>

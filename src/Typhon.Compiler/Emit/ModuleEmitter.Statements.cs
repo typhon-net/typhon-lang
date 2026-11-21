@@ -119,7 +119,7 @@ namespace Typhon.Compiler.Emit
         {
             // d.sort() / d.append(x) on a late-bound value as a statement: the method may return nothing (void), so an if
             // statement, not a conditional expression, chooses between the runtime's method and the object's own
-            if (e.Value is CallExpr dc && dc.Func is AttributeExpr dm && InferType(dm.Target) == "dynamic" && !dc.Args.Any(a => a.Star || a.DoubleStar) && IsRuntimeMethod(dm.Name))
+            if (e.Value is CallExpr dc && dc.Func is AttributeExpr dm && InferType(dm.Target) == "dynamic" && !dc.Args.Any(a => a.Star || a.DoubleStar) && IsRuntimeMethod(dm.Name, dc.Args))
             {
                 if (Obs != null) RecordCall(CallTarget(dc, out _), dc.Args);
                 string r = NewTmp("r");
@@ -155,6 +155,9 @@ namespace Typhon.Compiler.Emit
         }
 
         // ───────────────────────────── assignment ─────────────────────────────
+
+        /// <summary>Locals that start as None (scope key | name): their later values decide their type.</summary>
+        readonly HashSet<string> _noneLocals = new HashSet<string>();
 
         /// <summary>Optional value-type names known to hold a value where they are read (see NarrowedBy): read as x.Value, typed T.</summary>
         readonly HashSet<string> _narrowed = new HashSet<string>();
@@ -205,7 +208,10 @@ namespace Typhon.Compiler.Emit
             if (a.Targets.Count == 1) { EmitAssignTo(a.Targets[0], a.Value, a); return; }
             string tmp = NewTmp();
             _w.Line($"var {tmp} = {EmitValue(a.Value)};");
-            foreach (var t in a.Targets) EmitAssignTo(t, new NameExpr { Id = tmp, Line = a.Line, Col = a.Col }, a, rawValue: tmp);
+            // a = b = value: the targets take the value's type (and the inference sees it: xs[i] = node = Node())
+            string vt = TypeInference.IsEmptyContainer(a.Value) || NeedsExplicitType(a.Value) ? null : InferType(a.Value);
+            if (vt != null && vt != TypeInference.Pending) SetType(tmp, vt); else vt = null;
+            foreach (var t in a.Targets) EmitAssignTo(t, new NameExpr { Id = tmp, Line = a.Line, Col = a.Col }, a, rawValue: vt == null ? tmp : null);
         }
 
         void EmitAssignTo(Expr target, Expr value, Stmt stmt, string rawValue = null)
@@ -285,7 +291,7 @@ namespace Typhon.Compiler.Emit
                             {
                                 _w.Line($"var {Esc(name)} = {EmitExpr(value)};");
                                 // what that emits: a container of dynamic values ([] / {} / set())
-                                SetType(n.Id, InferType(value) ?? (value is ListExpr ? "List<dynamic>" : value is DictExpr ? "OrderedDictionary<dynamic, dynamic>" : null));
+                                SetType(n.Id, InferType(value) ?? (kind == 'l' ? "List<dynamic>" : kind == 'd' ? "OrderedDictionary<dynamic, dynamic>" : kind == 's' ? "HashSet<dynamic>" : null));
                             }
                             else { _w.Line($"{t} {Esc(name)} = {EmitEmptyContainer(value, t, kind)};"); SetType(n.Id, t); }
                             if (t != null && t.Contains(TypeInference.Pending)) SetType(n.Id, t);
@@ -300,7 +306,16 @@ namespace Typhon.Compiler.Emit
                         }
                         else if (rawValue == null && NeedsExplicitType(value))
                         {
-                            string t = PyType(inferred) ?? ImplicitDynamic(stmt, $"variable '{n.Id}'");
+                            // x = None, then x = Node(...) later: the type of the later values (an object reference can be None)
+                            string noneTyped = null;
+                            if (IsNone(value))
+                            {
+                                _noneLocals.Add(_scopeKey + "|" + n.Id);
+                                if (Ti != null && Ti.Hoisted.TryGetValue(_scopeKey + "|" + n.Id, out var later) && !TypeInference.IsUnknown(later) &&
+                                    !later.Contains(TypeInference.Pending) && !IsValueTypeName(later.TrimEnd('?')) && !later.StartsWith("("))
+                                    noneTyped = later;
+                            }
+                            string t = noneTyped ?? PyType(inferred) ?? ImplicitDynamic(stmt, $"variable '{n.Id}'");
                             _w.Line($"{t} {Esc(name)} = {EmitExpr(value, targetTyped: t != "dynamic")};");
                             SetType(n.Id, t);
                         }
@@ -328,7 +343,8 @@ namespace Typhon.Compiler.Emit
                     {
                         string known = KnownType(n.Id) ?? (!IsLocal(n.Id) && _moduleFieldTypes.TryGetValue(n.Id, out var fieldType) ? fieldType : null);
                         string valueType = rawValue == null ? PyType(InferType(value)) : null;
-                        if (Obs != null && rawValue == null && IsHoistedLocal(n.Id)) Obs.AddHoisted(_scopeKey + "|" + n.Id, valueType);
+                        if (Obs != null && rawValue == null && (IsHoistedLocal(n.Id) || _noneLocals.Contains(_scopeKey + "|" + n.Id)))
+                            Obs.AddHoisted(_scopeKey + "|" + n.Id, IsNone(value) ? TypeInference.NoneType : valueType);
                         // rebinding to a value of another type (names = names.split(",")) in the block that declared the variable:
                         // every later use sees the new value, so it becomes a new C# variable
                         // rebinding elsewhere (a nested block, a hoisted variable): the variable needs a wider type
@@ -336,6 +352,12 @@ namespace Typhon.Compiler.Emit
                         if (Obs != null && valueType != null && known != null && !sameBlock &&
                             (Incompatible(known, valueType) || known == "double" && IsIntegral(valueType) && valueType != "bool" && IsIntConversion(value)))
                             Obs.AddConflict(_scopeKey + "|" + n.Id, IsIntegral(known) && valueType == "double" ? "double" : "dynamic");
+                        // total = total + x with a late-bound x on a number variable: the sum may be a float, the variable is late-bound
+                        else if (Obs != null && valueType == "dynamic" && IsNumeric(known) && value is BinOpExpr vb && ArithmeticOps.Contains(vb.Op))
+                            Obs.AddConflict(_scopeKey + "|" + n.Id, "dynamic");
+                        // an object variable rebound to a late-bound value (args = _Options() ... args = table[name]): anything
+                        else if (Obs != null && valueType == "dynamic" && known != null && ClassKeyOfType(known, out _) != null)
+                            Obs.AddConflict(_scopeKey + "|" + n.Id, "dynamic");
                         // (x = int(x) on a float: from here on x is an int, so it gets a new variable too)
                         bool narrows = known == "double" && IsIntegral(valueType) && valueType != "bool";
                         if (valueType != null && (Incompatible(known, valueType) || narrows) && _blocks.Count > 0 && _blocks.Peek().Declared.Contains(n.Id))
@@ -371,7 +393,7 @@ namespace Typhon.Compiler.Emit
                     // a call whose type Typhon cannot tell (it may be dynamic to C#): unpacked by position, which works for any
                     if (rawValue == null && value is CallExpr && unpackedType == null) unpackedType = "dynamic";
                     if (unpackedType != null && (unpackedType == "dynamic" || unpackedType == "object" ||
-                        (TupleElementTypes(unpackedType) == null && !unpackedType.StartsWith("global::Typhon.Runtime.PyTuple") && !HasDeconstruct(unpackedType))))
+                        (TupleElementTypes(unpackedType) == null && !(unpackedType.StartsWith("global::Typhon.Runtime.PyTuple") && elts.Count <= 5) && !HasDeconstruct(unpackedType))))
                     {
                         string seq = NewTmp("u");
                         // a late-bound value (a tuple, a list, a str, a dict at run time): its items by run-time type
@@ -470,9 +492,16 @@ namespace Typhon.Compiler.Emit
                             ? (PyType(InferType(sub.Index)) ?? TypeInference.Unknown) + "→" + (kind == 'c' ? "long" : PyType(InferType(value)) ?? TypeInference.Unknown)
                             : PyType(InferType(value)));
                     string et = InferType(sub);
-                    if (InferType(sub.Target) == "dynamic" && !(sub.Index is TupleExpr))
+                    // xs[i] = [v] into a list of typed lists: the literal is built with that item type (C# lists are invariant)
+                    if (rawValue == null && value is ListExpr sle && sle.Elts.Count > 0 && !sle.Elts.Any(x => x is StarredExpr) && et != null &&
+                        et.StartsWith("List<") && !et.Contains("dynamic") && !et.Contains(TypeInference.Pending) && InferType(value) != et)
+                        rawValue = $"new {et} {{ {string.Join(", ", sle.Elts.Select(x => EmitElementAs(x, GenericArg(et))))} }}";
+                    if ((InferType(sub.Target) == "dynamic" || InferType(sub.Target) == null && InferType(sub.Index) == "dynamic") &&
+                        (!(sub.Index is TupleExpr) || InferType(sub.Target) == "dynamic" && sub.Index is TupleExpr stk && !stk.Elts.Any(x => x is SliceExpr)))
                     {
-                        _w.Line($"{Rt("__setitem")}((object?){Paren(EmitExpr(sub.Target))}, (object?){Paren(EmitExpr(sub.Index))}, (object?){Paren(rawValue ?? EmitValue(value))});");
+                        // (a[x, y] = v: the key is the tuple (x, y))
+                        string key = sub.Index is TupleExpr kt && !kt.Parenthesized ? EmitExpr(new TupleExpr { Elts = kt.Elts, Parenthesized = true, Line = kt.Line, Col = kt.Col }) : EmitExpr(sub.Index);
+                        _w.Line($"{Rt("__setitem")}((object?){Paren(EmitExpr(sub.Target))}, (object?){Paren(key)}, (object?){Paren(rawValue ?? EmitValue(value))});");
                         return;
                     }
                     _w.Line($"{EmitExpr(sub)} = {rawValue ?? (et == null || et == "dynamic" ? EmitValue(value) : EmitExpr(value, targetTyped: IsEmptyLiteral(value)))};");
@@ -724,6 +753,9 @@ namespace Typhon.Compiler.Emit
             // n += 0.5 / n /= 2 on an int variable: it becomes a float
             if (Obs != null && a.Target is NameExpr an && IsIntegral(tt) && tt != "bool" && (a.Op == "/" || vt == "double" && ArithmeticOps.Contains(a.Op)))
                 Obs.AddConflict(_scopeKey + "|" + an.Id, "double");
+            // n += x with a late-bound x: the result may be a float (or anything): the variable is late-bound too
+            else if (Obs != null && a.Target is NameExpr an2 && IsNumeric(tt) && vt == "dynamic" && ArithmeticOps.Contains(a.Op))
+                Obs.AddConflict(_scopeKey + "|" + an2.Id, "dynamic");
             // sets and dicts update in place: s |= t, s -= t, s &= t, s ^= t, d |= e
             if (IsSetType(tt) && (a.Op == "|" || a.Op == "-" || a.Op == "&" || a.Op == "^"))
             {
@@ -1058,14 +1090,16 @@ namespace Typhon.Compiler.Emit
             {
                 // the body rebinds the loop variable (case = case.strip(), an inner `for _ in`): a C# foreach variable is
                 // read-only, so the item goes into an ordinary variable
+                // (an iterable of unknown type is iterated through __iter_dyn: its items are late-bound)
+                string loopType = IterElementType(IterableType(f.Iter)) ?? (iter.Contains("__iter_dyn(") ? "dynamic" : null);
                 if (IsInline(f, n.Id) && AssignsName(f.Body, n.Id))
                 {
                     string item = NewTmp("it");
-                    SetType(n.Id, IterElementType(IterableType(f.Iter)));
+                    SetType(n.Id, loopType);
                     _w.Line($"{kw} (var {item} in {iter})");
                     EmitBlock(f.Body, $"var {Esc(n.Id)} = {item};");
                 }
-                else if (IsInline(f, n.Id)) { SetType(n.Id, IterElementType(IterableType(f.Iter))); _w.Line($"{kw} (var {Esc(n.Id)} in {iter})"); EmitBlock(f.Body); }
+                else if (IsInline(f, n.Id)) { SetType(n.Id, loopType); _w.Line($"{kw} (var {Esc(n.Id)} in {iter})"); EmitBlock(f.Body); }
                 else
                 {
                     string t = NewTmp();

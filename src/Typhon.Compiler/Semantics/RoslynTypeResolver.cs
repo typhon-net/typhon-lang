@@ -70,7 +70,7 @@ namespace Typhon.Compiler.Semantics
 
         MemberSig MethodSig(IMethodSymbol m)
         {
-            var sig = new MemberSig { IsMethod = true, IsStatic = m.IsStatic, Type = Display(m.ReturnType) };
+            var sig = new MemberSig { IsMethod = true, IsStatic = m.IsStatic, Type = Display(m.ReturnType), ReturnsDynamic = m.ReturnType.TypeKind == TypeKind.Dynamic };
             if (m.TypeParameters.Length > 0)
             {
                 sig.TypeParams = m.TypeParameters.Select(tp => tp.Name).ToList();

@@ -535,6 +535,7 @@ namespace Typhon.Compiler.Emit
                     return code;
                 }
                 case CompareExpr c: return EmitCompare(c);
+                case IfExpr i when ConditionalNeedsDynamic(i): return $"({Cond(i.Test)} ? (dynamic?){Paren(EmitExpr(i.Body))} : (dynamic?){Paren(EmitExpr(i.OrElse))})";
                 case IfExpr i: return $"({Cond(i.Test)} ? {EmitExpr(i.Body, targetTyped)} : {EmitExpr(i.OrElse, targetTyped)})";
                 case LambdaExpr l:
                 {
@@ -589,6 +590,7 @@ namespace Typhon.Compiler.Emit
             {
                 case ConstExpr c when c.Kind == ConstKind.Int: return IntLiteral(EmitConst(c));
                 case UnaryExpr u when u.Op == "-" && u.Operand is ConstExpr uc && uc.Kind == ConstKind.Int: return "-" + IntLiteral(EmitConst(uc));
+                case IfExpr i when ConditionalNeedsDynamic(i): return EmitExpr(i);
                 case IfExpr i: return $"({Cond(i.Test)} ? {EmitValue(i.Body, targetTyped)} : {EmitValue(i.OrElse, targetTyped)})";
                 default: return EmitExpr(e, targetTyped);
             }
@@ -888,7 +890,7 @@ namespace Typhon.Compiler.Emit
             if (e is ListExpr || e is TupleExpr || e is SetExpr || e is ComprehensionExpr || e is ConstExpr) return code;
             // a late-bound value: a typed sequence of dynamic items (LINQ lambdas cannot take part in dynamic dispatch); the
             // argument is passed as object so that the call itself is bound statically
-            if (InferType(e) == "dynamic") return $"{Rt("__iter_dyn")}((object){Paren(code)})";
+            if (InferType(e) is "dynamic" or "object" or "object?") return $"{Rt("__iter_dyn")}((object){Paren(code)})";
             // str(n), "".join(...), s.lower(): a str-valued call iterates as one-character strs too
             if (e is CallExpr && InferType(e) == "string") return $"{Rt("chars")}({code})";
             if (e is CallExpr ce && ce.Func is NameExpr cn && !IsShadowed(cn.Id) && NonDictResults.Contains(cn.Id)) return code;
@@ -1094,6 +1096,11 @@ namespace Typhon.Compiler.Emit
             functionShapes ??= overloads;
             var parts = new List<string>();
             int position = 0, positional = 0;
+            // a call to a Typhon function with some late-bound arguments: the overload inferred for exactly these argument types
+            // (its parameters there are dynamic), bound statically by passing them as object; dispatched at run time instead,
+            // it could be ambiguous with a typed overload ((object, object, long) and (double, double, double) for 1.0, 2.0, 3)
+            bool partlyDynamic = typhonCallee && args.Any(a => a.Name == null && !a.Star && !a.DoubleStar && InferType(a.Value) == "dynamic") &&
+                                 args.Any(a => InferType(a.Value) != "dynamic");
             foreach (var a in args)
             {
                 if (a.DoubleStar) { Unsupported(a.Value, "**kwargs arguments"); continue; }
@@ -1175,6 +1182,7 @@ namespace Typhon.Compiler.Emit
                 if (!a.Star && paramsHere != null && paramsHere.Count > 0 && paramsHere.Any(x => x.IsArray) && !paramsHere.Any(x => x.TakesFunction) &&
                     InferType(a.Value) is string lat && lat.StartsWith("List<"))
                     v = $"{Paren(v)}.ToArray()";
+                if (partlyDynamic && !a.Star && !a.DoubleStar && InferType(a.Value) == "dynamic") v = $"(object?){Paren(v)}";
                 // *xs into a params array (print(*xs), .NET params methods): spread into an array of the parameter's element type
                 if (a.Star && !(InferType(a.Value) is string at && at.EndsWith("[]"))) v = $"[.. {EmitIterable(a.Value)}]";
                 parts.Add(a.Name != null ? $"{Esc(a.Name)}: {v}" : v);
@@ -1264,8 +1272,40 @@ namespace Typhon.Compiler.Emit
             }
         }
 
+        /// <summary>
+        /// Does appending a value of type v to a list of e need a list of any items? Numbers of another kind (an int list
+        /// getting floats), another container or class, or a late-bound value for a list of containers (C# lists of different
+        /// item types do not convert, not even at run time). A late-bound scalar converts when it is stored, so it does not.
+        /// </summary>
+        bool AppendWidens(string e, string v, bool arithmetic = false)
+        {
+            if (e == null || v == null || e == v || e == "dynamic" || e == "object" || v == TypeInference.Pending || e.Contains(TypeInference.Pending) || v.Contains(TypeInference.Pending)) return false;
+            if (IsNumeric(e) && IsNumeric(v)) return !(e == "double" && IsIntegral(v));
+            bool container = e.StartsWith("List<") || IsDictType(e) || IsSetType(e) || e.StartsWith("(") || e.StartsWith(PyTuplePrefix);
+            // (xs.append(xs[-1] + d) with a late-bound d on a list of numbers: the sum may be a float, like a variable's)
+            if (v == "dynamic") return container || arithmetic && IsNumeric(e);
+            if (e == v + "?" || DerivesFromType(v, e)) return false;
+            return container || ClassKeyOfType(e, out _) != null || IsNumeric(e) || e == "string" || e == "bool";
+        }
+
+        /// <summary>f(args) where f is an instance of a Typhon class with __call__: the call f.__call__(args), or null.</summary>
+        CallExpr CallableObjectCall(CallExpr c)
+        {
+            if (c.Func is NameExpr cn && !IsLocal(cn.Id) && (TryResolveType(cn.Id, 0, out _, out _) || _m.Functions.Contains(cn.Id))) return null;
+            if (c.Func is LambdaExpr) return null;
+            string t = InferType(c.Func);
+            if (t == null || ClassKeyOfType(t, out _) is not string key || ClassDefOfKey(key) is not ClassDef cd || !DefinesInHierarchy(cd, "__call__")) return null;
+            return new CallExpr { Func = new AttributeExpr { Target = c.Func, Name = "__call__", Line = c.Line, Col = c.Col }, Args = c.Args, Line = c.Line, Col = c.Col };
+        }
+
+        bool DefinesInHierarchy(ClassDef c, string method, int depth = 0) =>
+            depth < 20 && (Defines(c, method) || TyphonBases(c).Any(b => DefinesInHierarchy(b, method, depth + 1)));
+
         string EmitCall(CallExpr c, bool targetTyped)
         {
+            if (c.Func is NameExpr aliasName && AliasTarget(aliasName) is Expr aliasTarget)
+                return EmitCall(new CallExpr { Func = aliasTarget, Args = c.Args, Line = c.Line, Col = c.Col }, targetTyped);
+            if (CallableObjectCall(c) is CallExpr objectCall) return EmitCall(objectCall, targetTyped);
             if (Obs != null) RecordCall(CallTarget(c, out _), c.Args);
             RecordAdded(c);
             if (EmitFunctionValueCall(c) is string fnValueCall) return fnValueCall;
@@ -1323,7 +1363,7 @@ namespace Typhon.Compiler.Emit
             // base.m(...) cannot be dispatched dynamically: late-bound arguments go as object (binding to the dynamic overload)
             if (c.Func is AttributeExpr sm && sm.Target is CallExpr smc && smc.Func is NameExpr smn && smn.Id == "super" && smc.Args.Count == 0 &&
                 c.Args.Any(x => InferType(x.Value) == "dynamic") && c.Args.All(x => x.Name == null && !x.Star && !x.DoubleStar))
-                return $"base.{Esc(sm.Name)}({string.Join(", ", c.Args.Select(x => $"(object?){Paren(EmitValue(x.Value))}"))})";
+                return $"base.{Esc(sm.Name)}({string.Join(", ", c.Args.Select(x => InferType(x.Value) == "dynamic" ? $"(object?){Paren(EmitValue(x.Value))}" : EmitValue(x.Value)))})";
             // big-int mode: int(x) parses / truncates to a BigInteger
             if (_big && c.Func is NameExpr bi && bi.Id == "int" && !IsShadowed("int") && c.Args.Count >= 1 && c.Args.All(x => x.Name == null || x.Name == "base"))
                 return $"{Rt("__bigint")}({string.Join(", ", c.Args.Select(x => InferType(x.Value) == "dynamic" ? $"(object){Paren(EmitExpr(x.Value))}" : EmitExpr(x.Value)))})";
@@ -1401,8 +1441,24 @@ namespace Typhon.Compiler.Emit
                 return $"{(c.Func is NameExpr kfn ? EmitName(kfn) : EmitExpr(c.Func))}({kwArgs})";
             }
             if (ExpandStarArgs(c) is string expanded) return expanded;
+            // table[name](x, *rest) / cls(n, n) with cls a late-bound parameter: the callable is known only at run time (a
+            // function value, a bound method, a delegate or a class), so the call is made there
+            if (!c.Args.Any(a => a.Name != null || a.DoubleStar) && !(c.Func is AttributeExpr) && !(c.Func is LambdaExpr) &&
+                (c.Args.Any(a => a.Star) || c.Func is NameExpr || c.Func is SubscriptExpr || c.Func is CallExpr) &&
+                (InferType(c.Func) == "dynamic" || c.Func is NameExpr fnl && IsLocal(fnl.Id) && InferType(c.Func) == null ||
+                 c.Func is CallExpr && InferType(c.Func) == null && MaybeLateBound(c.Func)))
+            {
+                var spreadArgs = c.Args.Select(a => a.Star ? $".. {Rt("__iter_dyn")}((object){Paren(EmitExpr(a.Value))})" : $"(object?){Paren(EmitValue(a.Value))}");
+                return $"{Rt("__invoke")}((object?){Paren(EmitExpr(c.Func))}, [{string.Join(", ", spreadArgs)}])";
+            }
+            // obj.m(x, *rest) on a late-bound obj: the method chosen at run time by the number of arguments
+            if (c.Func is AttributeExpr sd && InferType(sd.Target) == "dynamic" && c.Args.Any(a => a.Star) && !c.Args.Any(a => a.Name != null || a.DoubleStar))
+            {
+                var spread = c.Args.Select(a => a.Star ? $".. {Rt("__iter_dyn")}((object){Paren(EmitExpr(a.Value))})" : $"(object?){Paren(EmitValue(a.Value))}");
+                return $"new global::Typhon.Runtime.PyBoundMethod((object){Paren(EmitExpr(sd.Target))}, {CsString(sd.Name)}).__call__([{string.Join(", ", spread)}])";
+            }
             if (TryTypeExpr(c.Func, out var typeCode))
-                return $"new {typeCode}({EmitArgs(c.Args, overloads: DotNetConstructors(c.Func), targetTypedAt: TypedParamPositions(c), typedKeywords: name => TypedKeyword(c, name), paramTypeAt: (i, name) => ParamTypeOf(c, i, name))})";
+                return $"new {typeCode}({EmitArgs(c.Args, overloads: DotNetConstructors(c.Func), targetTypedAt: TypedParamPositions(c), typedKeywords: name => TypedKeyword(c, name), paramTypeAt: (i, name) => ParamTypeOf(c, i, name), typhonCallee: TyphonCallee(c, out _) != null)})";
 
             // Counter() / deque() / OrderedDict() / defaultdict(f) where no declaration gives the element type
             if (TypeInference.IsEmptyContainer(c) && "cqoD".IndexOf(TypeInference.ContainerKind(c)) >= 0 && c.Func is NameExpr ecn && _staticTypes.Contains("Typhon.Stdlib.collections"))
@@ -1460,6 +1516,12 @@ namespace Typhon.Compiler.Emit
             // extension methods, so Typhon's list/dict/set/str methods are called as the static methods they are
             // (also an argument C# may see as dynamic although Typhon types it: a dynamically dispatched call or a call that may
             // reach a function's dynamic version; and any call on a class deriving from list/dict/set)
+            // xs.append(0.5) on a local list of ints (xs = [0]): Python's list holds both, so the variable becomes a list of any
+            if (Obs != null && c.Func is AttributeExpr wa && (wa.Name == "append" || wa.Name == "insert") && wa.Target is NameExpr wn && IsLocal(wn.Id) &&
+                InferType(wa.Target) is string wt && wt.StartsWith("List<") && c.Args.Count >= 1 &&
+                (InferType(c.Args[c.Args.Count - 1].Value) ?? (MaybeLateBound(c.Args[c.Args.Count - 1].Value) ? "dynamic" : null)) is string wv &&
+                AppendWidens(GenericArg(wt), wv, c.Args[c.Args.Count - 1].Value is BinOpExpr wb && ArithmeticOps.Contains(wb.Op)))
+                Obs.AddConflict(_scopeKey + "|" + wn.Id, "List<dynamic>");
             if (c.Func is AttributeExpr em && RuntimeExtensionMethods.Contains(em.Name) && (IsPythonContainer(InferType(em.Target)) || IsBuiltinSubclass(InferType(em.Target))) &&
                 em.Name != "get" && em.Name != "pop" && !c.Args.Any(a => a.Star || a.DoubleStar || a.Name != null) &&
                 (c.Args.Any(a => !(a.Value is ConstExpr) && !IsEmptyLiteral(a.Value)) || IsBuiltinSubclass(InferType(em.Target))) &&
@@ -1477,7 +1539,7 @@ namespace Typhon.Compiler.Emit
             // d.strip(), d.split(","), d.items() on a late-bound value: dynamic dispatch never finds extension methods, so a
             // Python value (str, list, dict, set, number) goes to the runtime's static method; anything else (a Typhon
             // object, a .NET object) keeps its own method
-            if (c.Func is AttributeExpr dm && InferType(dm.Target) == "dynamic" && !c.Args.Any(a => a.Star || a.DoubleStar) && IsRuntimeMethod(dm.Name))
+            if (c.Func is AttributeExpr dm && InferType(dm.Target) == "dynamic" && !c.Args.Any(a => a.Star || a.DoubleStar) && IsRuntimeMethod(dm.Name, c.Args))
             {
                 string r = NewTmp("r");
                 string rest = EmitArgs(c.Args, dynamicCall: true);
@@ -1515,6 +1577,30 @@ namespace Typhon.Compiler.Emit
         }
         readonly Dictionary<string, bool> _runtimeMethods = new Dictionary<string, bool>();
 
+        /// <summary>
+        /// A runtime method of that name that can take these arguments (count and keyword names). obj.find(update=True) on a
+        /// late-bound obj only has the runtime's branch when some str/list/dict method could be meant; otherwise the call goes
+        /// to the object's own method alone (a Typhon class with a find method).
+        /// </summary>
+        bool IsRuntimeMethod(string name, List<Arg> args)
+        {
+            if (!IsRuntimeMethod(name)) return false;
+            var overloads = _r.GetMembers("Typhon.Runtime.Builtins", name).Where(m => m.IsMethod && m.IsStatic && m.Parameters.Count >= 1).ToList();
+            if (overloads.Count == 0) return true;
+            int positional = args.Count(a => a.Name == null);
+            var keywords = args.Where(a => a.Name != null).Select(a => a.Name).ToList();
+            return overloads.Any(m =>
+            {
+                var ps = m.Parameters.Skip(1).ToList(); // the receiver comes first
+                bool hasParams = ps.Count > 0 && ps[ps.Count - 1].IsParams;
+                int fixedCount = hasParams ? ps.Count - 1 : ps.Count;
+                if (!hasParams && positional > fixedCount) return false;
+                for (int i = positional; i < fixedCount; i++)
+                    if (!ps[i].IsOptional && !keywords.Contains(ps[i].Name)) return false;
+                return keywords.All(k => ps.Take(fixedCount).Skip(positional).Any(x => x.Name == k));
+            });
+        }
+
         /// <summary>Python methods of str/list/dict/set that the Typhon runtime provides as extension methods.</summary>
         static readonly HashSet<string> RuntimeExtensionMethods = new HashSet<string>
         {
@@ -1524,6 +1610,29 @@ namespace Typhon.Compiler.Emit
             "strip", "lstrip", "rstrip", "replace", "startswith", "endswith", "find", "rfind", "partition", "rpartition", "zfill", "center",
             "ljust", "rjust", "removeprefix", "removesuffix",
         };
+
+        static readonly Dictionary<string, string> OperatorDunders = new Dictionary<string, string>
+        {
+            ["+"] = "add", ["-"] = "sub", ["*"] = "mul", ["/"] = "truediv", ["//"] = "floordiv", ["%"] = "mod", ["**"] = "pow",
+            ["@"] = "matmul", ["&"] = "and", ["|"] = "or", ["^"] = "xor", ["<<"] = "lshift", [">>"] = "rshift",
+        };
+
+        /// <summary>
+        /// The result type of l op r when l's class defines __op__ (or r's defines __rop__): that method's return type, dynamic
+        /// when it returns different types, Pending while a dry run has not seen it yet. Null when no Typhon class is involved.
+        /// </summary>
+        string DunderOperatorType(string op, string l, string r)
+        {
+            if (!OperatorDunders.TryGetValue(op, out var name)) return null;
+            string Of(string t, string method)
+            {
+                if (t == null || ClassKeyOfType(t, out _) is not string key || ClassDefOfKey(key) is not ClassDef cd || !DefinesInHierarchy(cd, method)) return null;
+                if (_cls != null && t == _cls.CsSelfType && _cls.MethodReturnTypes.TryGetValue(method, out var own)) return own == "void" ? "dynamic" : own;
+                if (Ti != null && Ti.MethodReturns.TryGetValue(key, out var ms) && ms.TryGetValue(method, out var rt)) return rt == "void" ? "dynamic" : rt;
+                return _dry ? TypeInference.Pending : "dynamic";
+            }
+            return Of(l, "__" + name + "__") ?? Of(r, "__r" + name + "__");
+        }
 
         /// <summary>The result type of a non-numeric .NET type's / operator (pathlib's Path / str), or null.</summary>
         string DivisionOperatorType(string t)
@@ -1569,6 +1678,20 @@ namespace Typhon.Compiler.Emit
                 c = c.Bases.Count > 0 && ResolveBase(c.Bases[0], out var py, out _) ? py : null;
             }
             return false;
+        }
+
+        /// <summary>The list/dict/set type a Typhon class derives from (class Stack(list) → List&lt;dynamic&gt;), or null.</summary>
+        string BuiltinBaseType(string t)
+        {
+            if (t == null || ClassKeyOfType(t, out _) is not string key || ClassDefOfKey(key) is not ClassDef c) return null;
+            for (int depth = 0; c != null && depth < 20; depth++)
+            {
+                foreach (var b in c.Bases)
+                    if ((b is SubscriptExpr bs ? bs.Target : b) is NameExpr bn && (bn.Id == "list" || bn.Id == "dict" || bn.Id == "set") && !IsShadowed(bn.Id))
+                        return MapType(b, c);
+                c = c.Bases.Count > 0 && ResolveBase(c.Bases[0], out var py, out _) ? py : null;
+            }
+            return null;
         }
 
         static bool IsPythonContainer(string t) => t != null && (t == "string" || t.StartsWith("List<") || IsSetType(t) || IsDictType(t));
@@ -1800,11 +1923,18 @@ namespace Typhon.Compiler.Emit
                 return $"{Rt("slice")}({target}, {(sl.Lower != null ? SliceBound(sl.Lower) : "null")}, {(sl.Upper != null ? SliceBound(sl.Upper) : "null")}{step})";
             }
             string targetType = InferType(s.Target);
+            // a class deriving from list: positions like a list's (a Python int, maybe negative)
+            if (BuiltinBaseType(targetType) is string subBase && subBase.StartsWith("List<")) targetType = subBase;
             // move[0] of a namedtuple: its first field (typed)
             if (NamedTupleOf(targetType) is ClassDef ntc && ConstIntValue(s.Index) is long nti && nti >= -ntc.NamedTupleFields.Count && nti < ntc.NamedTupleFields.Count)
                 return $"{target}.{Esc(ntc.NamedTupleFields[(int)(nti < 0 ? nti + ntc.NamedTupleFields.Count : nti)])}";
             // a late-bound container: a position (a Python int, maybe negative) or a key, resolved at run time
-            if (targetType == "dynamic" && !(s.Index is TupleExpr)) return $"{Rt("__getitem")}((object?){target}, (object?){Paren(EmitExpr(s.Index))})";
+            // (also a late-bound key on a container of a type Typhon does not know: C# would bind its indexer at run time to an int)
+            if ((targetType == "dynamic" || targetType == null && InferType(s.Index) == "dynamic") && !(s.Index is TupleExpr))
+                return $"{Rt("__getitem")}((object?){target}, (object?){Paren(EmitExpr(s.Index))})";
+            // a[x, y] on a late-bound a: the key is the tuple (x, y) (a Typhon class's __getitem__ takes one key)
+            if (targetType == "dynamic" && s.Index is TupleExpr dtk && !dtk.Parenthesized && !dtk.Elts.Any(x => x is SliceExpr))
+                return $"{Rt("__getitem")}((object?){target}, (object?){EmitExpr(new TupleExpr { Elts = dtk.Elts, Parenthesized = true, Line = dtk.Line, Col = dtk.Col })})";
             // s[i] is a one-character str
             if (targetType == "string" && !(s.Index is TupleExpr)) return $"{Rt("str_at")}({target}, {EmitPosition(s.Index, targetType)})";
             // t[i] of a tuple of fixed shape: ItemN for a constant index, else the ITuple indexer (items of one type)
@@ -1817,9 +1947,13 @@ namespace Typhon.Compiler.Emit
             }
             if (s.Index is TupleExpr dt && IsDictType(targetType)) return $"{target}[{EmitExpr(dt)}]"; // d[a, b]: the key is the tuple (a, b)
             // d[k] with a late-bound k on a typed dict: the key converted, so the lookup (and its result) stays static
+            // (also a number of another type: d[3.0] finds the key 3, as in Python)
             if (IsDictType(targetType) && DictTypes(targetType) is List<string> skv && skv[0] != "dynamic" && !skv[0].Contains(TypeInference.Pending) &&
-                !(s.Index is TupleExpr) && InferType(s.Index) == "dynamic")
-                return $"{target}[({skv[0]}){Paren(EmitExpr(s.Index))}]";
+                !(s.Index is TupleExpr) && (InferType(s.Index) == "dynamic" || IsNumeric(skv[0]) && InferType(s.Index) is string kit && IsNumeric(kit) && kit != skv[0] && !(skv[0] == "double" && IsIntegral(kit))))
+                return $"{target}[{Rt("__key")}<{skv[0]}>((object?){Paren(EmitExpr(s.Index))})]";
+            // self[x, y] on a Typhon class: its __getitem__ takes one key, the tuple (x, y)
+            if (s.Index is TupleExpr tk && !tk.Parenthesized && (ClassKeyOfType(targetType, out _) != null || _cls != null && targetType == _cls.CsSelfType || s.Target is NameExpr sn0 && sn0.Id == "self"))
+                return $"{target}[{EmitExpr(new TupleExpr { Elts = tk.Elts, Parenthesized = true, Line = tk.Line, Col = tk.Col })}]";
             if (s.Index is TupleExpr t && !t.Parenthesized)
                 return $"{target}[{string.Join(", ", t.Elts.Select(x => x is SliceExpr xs ? EmitRange(xs, targetType) : EmitPosition(x, targetType)))}]";
             // xs[i] with a late-bound i: a Python int converted, the position checked like any other (an int indexer does not
@@ -2124,7 +2258,12 @@ namespace Typhon.Compiler.Emit
             }
             // sets: - | & ^ are set algebra; dicts: | merges
             if ((b.Op == "-" || b.Op == "|" || b.Op == "&" || b.Op == "^") && (IsSetType(lType) || IsSetType(rType)))
+            {
+                // sets of different item types (ints and late-bound values): the operation on their items as objects
+                if (!(IsSetType(lType) && IsSetType(rType) && GenericArg(lType) == GenericArg(rType)))
+                    return $"{Rt(b.Op == "-" ? "sub" : b.Op == "|" ? "or_" : b.Op == "&" ? "and_" : "xor_")}((object){Paren(l)}, (object){Paren(r)})";
                 return $"{Rt(b.Op == "-" ? "set_sub" : b.Op == "|" ? "set_or" : b.Op == "&" ? "set_and" : "set_xor")}({l}, {r})";
+            }
             if (b.Op == "|" && IsDictType(lType) && IsDictType(rType)) return $"{Rt("dict_or")}({l}, {r})";
             // (1, 2) + (3,): tuples of fixed shape concatenate into a tuple of the combined shape
             // tuples as sequences: a PyTuple involved, or a result too long for a record tuple
@@ -2153,6 +2292,9 @@ namespace Typhon.Compiler.Emit
                 case ">>": return $"{Rt("rshift")}({l}, {r})";
                 // a .NET or runtime type with its own / (Path / "name"): that operator
                 case "/" when DivisionOperatorType(lType) != null: return $"({Paren(l)} / {Paren(r)})";
+                // a late-bound operand: bound statically to the object overload (the run-time binder trips over the generic ones)
+                case "/" when lType == "dynamic" || rType == "dynamic" || lType == null && MaybeLateBound(b.Left) || rType == null && MaybeLateBound(b.Right):
+                    return $"{Rt("truediv")}((object){Paren(l)}, (object){Paren(r)})";
                 case "/": return $"{Rt("truediv")}({l}, {r})";
                 case "//": return $"{Rt("floordiv")}({l}, {r})";
                 case "**": return $"{Rt("pow")}({l}, {r})";
@@ -2205,6 +2347,9 @@ namespace Typhon.Compiler.Emit
             string known = lt ?? rt;
             if (known == null || known == "dynamic" || known == "object" || known == TypeInference.Pending) return false;
             bool isClass = ClassKeyOfType(known, out _) != null || (_cls != null && known == _cls.CsSelfType);
+            // a class with __eq__ compares through Equals (C#'s == exists only for an __eq__ typed to the class itself)
+            var cdef = ClassKeyOfType(known, out _) is string ek ? ClassDefOfKey(ek) : _cls != null && known == _cls.CsSelfType ? _cls.Def : null;
+            if (cdef != null && DefinesInHierarchy(cdef, "__eq__")) return false;
             return isClass && (lt == rt || lt == null || rt == null);
         }
 
@@ -2336,7 +2481,7 @@ namespace Typhon.Compiler.Emit
             if (d.Keys.Count == 0)
             {
                 ImplicitDynamic(d, "the key/value types of an empty dict (annotate the variable, e.g. 'd: dict[str, int] = {}')");
-                return "new OrderedDictionary<dynamic, dynamic>()";
+                return $"{Rt("__newdict")}<dynamic, dynamic>()";
             }
             string typeArgs = "";
             if (!MixedTypes(d.Keys) && PyType(InferType(d.Keys[0])) is string tk && tk != TypeInference.Pending && TupleSequenceAmid(d.Values) is string tv)
@@ -2518,7 +2663,10 @@ namespace Typhon.Compiler.Emit
                 case "Typhon.Stdlib.fractions.Fraction": return "global::Typhon.Runtime.Fraction";
                 case "Typhon.Stdlib.pathlib.Path": return "global::Typhon.Runtime.Path";
             }
-            return GenericStdlibCallType(module, name, call);
+            if (GenericStdlibCallType(module, name, call) is string generic) return generic;
+            // a function declared to return dynamic (json.loads): late-bound to C# as well
+            var plain = _r.GetMembers(module, name).Where(m => m.IsMethod && m.IsStatic).ToList();
+            return plain.Count > 0 && plain.All(m => m.ReturnsDynamic) ? "dynamic" : null;
         }
 
         // ───────────────────────────── literal-dependent result types ─────────────────────────────
@@ -2930,6 +3078,29 @@ namespace Typhon.Compiler.Emit
         static readonly HashSet<string> WideningOps = new HashSet<string> { "+", "-", "*", "**", "<<" };
 
         /// <summary>Cheap local type inference, used where C# 'var' cannot be used (hoisted locals, fields).</summary>
+        /// <summary>a if c else b with branches of different types C# has no common type for (a range and a list, a str and an int).</summary>
+        bool ConditionalNeedsDynamic(IfExpr i)
+        {
+            if (IsNone(i.Body) || IsNone(i.OrElse)) return false;
+            string a = InferType(i.Body), o = InferType(i.OrElse);
+            if (a == null || o == null || a == o || a == "dynamic" || o == "dynamic" || a == TypeInference.Pending || o == TypeInference.Pending) return false;
+            if (a.Contains(TypeInference.Pending) || o.Contains(TypeInference.Pending)) return false;
+            if (IsNumeric(a) && IsNumeric(o)) return false;
+            if (a == o + "?" || o == a + "?") return false;
+            // a Typhon class and its base: C# converts the subclass to the base
+            if (DerivesFromType(a, o) || DerivesFromType(o, a)) return false;
+            return true;
+        }
+
+        bool DerivesFromType(string sub, string sup) =>
+            ClassKeyOfType(sub, out _) is string sk && ClassDefOfKey(sk) is ClassDef sc && ClassKeyOfType(sup, out _) is string pk && ClassDefOfKey(pk) is ClassDef pc && DerivesFrom(sc, pc);
+
+        bool SelfInScope()
+        {
+            for (var sc = _scope; sc != null; sc = sc.Parent) if (sc.HasSelf) return true;
+            return false;
+        }
+
         string InferType(Expr e)
         {
             switch (e)
@@ -2952,12 +3123,14 @@ namespace Typhon.Compiler.Emit
                 {
                     var t = KnownType(n.Id);
                     if (t != null) return t;
+                    // self as a value (node = self, [self], f(self)) in an instance method or a function nested in one
+                    if (n.Id == "self" && _cls != null && SelfInScope()) return _cls.CsSelfType;
                     if (FunctionRef(n, out var fnOwner, out var fnDef)) return FunctionValueType(fnOwner, fnDef.Name);
                     if (!IsLocal(n.Id) && _moduleFieldTypes.TryGetValue(n.Id, out var mt)) return mt;
                     return null;
                 }
                 case AttributeExpr at when at.Target is NameExpr self && self.Id == "self" && _cls != null:
-                    return _cls.FieldTypes.TryGetValue(at.Name, out var ft) ? ft : null;
+                    return _cls.FieldTypes.TryGetValue(at.Name, out var ft) ? ft : InheritedFieldType(_cls.Def, at.Name);
                 case AttributeExpr mp when mp.Name.StartsWith(LocalsAnalyzer.MatchPositionPrefix) && mp.Target is CallExpr mc0:
                 {
                     var names = MatchArgs(mc0.Func);
@@ -2987,8 +3160,14 @@ namespace Typhon.Compiler.Emit
                     if (IsBytesType(t)) return "long"; // b[i] is an int
                     if (NamedTupleOf(t) is ClassDef ntd && ConstIntValue(ix.Index) is long ntk && ntk >= -ntd.NamedTupleFields.Count && ntk < ntd.NamedTupleFields.Count)
                         return MemberType(t, ntd.NamedTupleFields[(int)(ntk < 0 ? ntk + ntd.NamedTupleFields.Count : ntk)], method: false);
+                    // (an unknown container with a late-bound key is read through __getitem: a late-bound value)
+                    if (t == null && !(ix.Index is TupleExpr) && InferType(ix.Index) == "dynamic") return "dynamic";
                     if (t == null || t == TypeInference.Pending || t == "dynamic") return t;
                     if (t == "string") return "string";
+                    // a class deriving from list/dict: its items; a class with __getitem__: what that returns
+                    if (BuiltinBaseType(t) is string ixBase) t = ixBase;
+                    else if (ClassKeyOfType(t, out _) is string gk && ClassDefOfKey(gk) is ClassDef gcd && DefinesInHierarchy(gcd, "__getitem__"))
+                        return MemberType(t, "__getitem__", method: true) ?? (_dry ? TypeInference.Pending : "dynamic");
                     var tupleItems = TupleElementTypes(t);
                     if (tupleItems != null)
                     {
@@ -3016,6 +3195,9 @@ namespace Typhon.Compiler.Emit
                 }
                 case CallExpr call:
                 {
+                    if (call.Func is NameExpr aliasName && AliasTarget(aliasName) is Expr aliasTarget)
+                        return InferType(new CallExpr { Func = aliasTarget, Args = call.Args, Line = call.Line, Col = call.Col });
+                    if (CallableObjectCall(call) is CallExpr objectCall) return InferType(objectCall);
                     if (FunctionValueCallType(call) is string fnCallType) return fnCallType;
                     if (call.Func is NameExpr gtn && gtn.Id == "globals" && call.Args.Count == 0 && !IsShadowed("globals")) return "OrderedDictionary<string, object?>";
                     if (call.Func is NameExpr dfn && IsLocal(dfn.Id) && KnownType(dfn.Id) is string dft && dft.StartsWith("global::System.Func<") && dft.EndsWith(">"))
@@ -3037,6 +3219,12 @@ namespace Typhon.Compiler.Emit
                         return fe == null || fe == TypeInference.Pending ? fe : $"HashSet<{fe}>";
                     }
                     if (InferredCallType(call) is string inferredCall) return inferredCall;
+                    // a module function Typhon does not infer (it has *args / **kwargs) and that returns values: dynamic to C#
+                    if (call.Func is NameExpr umf && !IsLocal(umf.Id) && _m.Functions.Contains(umf.Id) && CallTarget(call, out _) == null &&
+                        _m.Ast.Body.OfType<FunctionDef>().FirstOrDefault(fd => fd.Name == umf.Id) is FunctionDef ufd && ufd.Returns == null && !ufd.IsAsync &&
+                        ufd.TypeParams.Count == 0 && !AstWalker.ContainsOutsideNestedScopes(ufd.Body, n => n is YieldExpr) &&
+                        AstWalker.ContainsOutsideNestedScopes(ufd.Body, n => n is ReturnStmt ur && ur.Value != null && !IsNone(ur.Value)))
+                        return "dynamic";
                     if (call.Func is NameExpr known && _funcReturnTypes.TryGetValue(known.Id, out var rt) && (IsShadowed(known.Id) || IsLocal(known.Id)))
                         return rt == "void" ? null : rt;
                     if (call.Func is AttributeExpr mc && !(mc.Target is NameExpr mcs && mcs.Id == "self"))
@@ -3172,7 +3360,10 @@ namespace Typhon.Compiler.Emit
                         if (l == TypeInference.Pending && r == TypeInference.Pending) return TypeInference.Pending;
                         return l == TypeInference.Pending ? r : l;
                     }
+                    // an operator of a Typhon class: what its __sub__ / __add__ / ... returns (not "T - T is T": Point - Point is a Vector)
+                    if (DunderOperatorType(b.Op, l, r) is string dunderType) return dunderType;
                     if (b.Op == "/" && DivisionOperatorType(l) is string divType) return divType;
+                    if (b.Op == "/" && (l == "dynamic" || r == "dynamic")) return "dynamic";
                     if (b.Op == "/") return (l == "decimal" && r == "decimal") ? "decimal" : (NumericTypes.Contains(l ?? "") && NumericTypes.Contains(r ?? "") ? "double" : null);
                     if (l == null || r == null) return null;
                     if ((b.Op == "-" || b.Op == "|" || b.Op == "&" || b.Op == "^") && (IsSetType(l) || IsSetType(r))) return IsSetType(l) ? l : r;
@@ -3244,7 +3435,13 @@ namespace Typhon.Compiler.Emit
                     var a = InferType(i.Body); var o = InferType(i.OrElse);
                     if (a == TypeInference.Pending) return o;
                     if (o == TypeInference.Pending) return a;
-                    return a != null && a == o ? a : null;
+                    if (a != null && a == o) return a;
+                    // None or a list: the list type (a reference can be None); an int or a float: a float
+                    if (IsNone(i.Body) && o != null && !IsValueTypeName(o)) return o;
+                    if (IsNone(i.OrElse) && a != null && !IsValueTypeName(a)) return a;
+                    if (IsNumeric(a) && IsNumeric(o) && (a == "double" || o == "double")) return "double";
+                    // different types: late-bound (both branches are emitted as dynamic)
+                    return ConditionalNeedsDynamic(i) ? "dynamic" : null;
                 }
                 case ListExpr l when l.Elts.Any(x => x is StarredExpr):
                 {

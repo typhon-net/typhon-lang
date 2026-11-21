@@ -71,6 +71,19 @@ reference equality unless `__eq__` is defined) and **Python semantics where it i
   (`float`, else `dynamic`) when the rebinding is in a nested block; `if x is not None:` narrows an `int | None`
 * values of unknown type (`dynamic`) still call Python's str/list/dict methods (`d.strip()`, `"".join(d)`), unpack
   (`a, b = d`), iterate and index (`d[k]`, `d[i] += 1`); files read lines with exactly the newlines they contain
+* late-bound values keep Python's rules where C# would differ: a call through a late-bound callable works for function
+  values, bound methods, delegates, objects with `__call__` and classes passed as values (`cls(n, n)`); dict keys and set
+  items of any type compare like Python's (`(1, 2)` whatever its items' static types, `d[3.0]` finds the key `3`); a list
+  that gets ints and floats (`xs = [0]; xs.append(xs[-1] + 0.5)`) holds both; an int variable updated with a late-bound
+  value, or an object variable rebound to one, becomes late-bound itself; `x = None` followed by `x = Node()` types `x` as
+  a `Node`; set algebra works between sets of different item types
+* a name bound once to a function and only called (`icount = itertools.count`, or a parameter default that callers never
+  pass, `def solve(..., bisect=bisect)`) calls that function directly; an instance of a class with `__call__` is
+  callable; `self[x, y]` passes the tuple to `__getitem__`/`__setitem__`; attributes may be created on an object from any
+  method of any class; a subclass `__init__` may skip its base's `__init__`
+* whole-program inference only refines: a definitely late-bound argument makes only its own parameter dynamic, values
+  that keep flipping between types settle as dynamic, and a container's item types do not depend on whether a function's
+  typed or late-bound version was emitted in a pass
 * functions are values: a module function passed, assigned, stored or returned has its own type (one instance of a
   generated `PyFunction` subclass). A parameter that receives it is specialised per function, so a call through it is a
   direct, typed call (`apply(f, x)`, `eval_times_u(part_a, u)`); where the type is lost (a dict of handlers, `print(f)`)

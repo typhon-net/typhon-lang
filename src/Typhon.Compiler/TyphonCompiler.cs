@@ -197,7 +197,7 @@ namespace Typhon.Compiler
                 var asm = typeof(TyphonCompiler).Assembly;
                 var sb = new StringBuilder();
                 foreach (var name in new[] { "Typhon.Compiler.Runtime.Builtins.cs", "Typhon.Compiler.Runtime.Stdlib.cs", "Typhon.Compiler.Runtime.Modules.cs",
-                                             "Typhon.Compiler.Runtime.Json.cs", "Typhon.Compiler.Runtime.Regex.cs", "Typhon.Compiler.Runtime.Bytes.cs" })
+                                             "Typhon.Compiler.Runtime.Json.cs", "Typhon.Compiler.Runtime.Regex.cs", "Typhon.Compiler.Runtime.Bytes.cs", "Typhon.Compiler.Runtime.Random.cs" })
                     using (var s = asm.GetManifestResourceStream(name))
                     using (var r = new StreamReader(s)) sb.Append(r.ReadToEnd()).Append('\n');
                 return sb.ToString();
