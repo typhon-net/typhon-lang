@@ -37,6 +37,15 @@ namespace Typhon.Runtime
             return args;
         }
 
+        /// <summary>
+        /// e.args: the arguments the exception was made with (a runtime exception's own, those a Typhon subclass of a .NET
+        /// exception keeps), else the message as the one argument (none when it is empty).
+        /// </summary>
+        public static PyTuple<object?> Args(Exception e) =>
+            e is IPyExceptionArgs pa ? pa.args
+            : e.Data.Contains("__args__") && e.Data["__args__"] is object?[] kept ? new PyTuple<object?>(kept)
+            : new PyTuple<object?>(e.Message.Length == 0 ? Array.Empty<object?>() : new object?[] { e.Message });
+
         /// <summary>str(e): '' without args, str(arg) for one, the args tuple's repr for several.</summary>
         public static string Text(object?[] args) => args.Length switch
         {

@@ -66,6 +66,14 @@ namespace Typhon.Compiler.Emit
                     _w.Line();
                     return;
                 }
+                // class CycleError(ValueError) without an __init__: Python's exception constructor, any arguments, kept as its args
+                // (the .NET base's constructors would bind CycleError("msg", nodes) to (string message, Exception inner))
+                if (meta != null && !meta.StartsWith("Typhon.") && ExceptionMetaMap.ContainsValue(meta))
+                {
+                    _w.Line($"public {Esc(ctx.Name)}(params object?[]? args) : base(global::Typhon.Runtime.PyExc.Text(global::Typhon.Runtime.PyExc.Norm(args))) {{ Data[\"__args__\"] = global::Typhon.Runtime.PyExc.Norm(args); }}");
+                    _w.Line();
+                    return;
+                }
                 if (meta != null)
                 {
                     var ctors = _r.GetConstructors(meta);

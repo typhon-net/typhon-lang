@@ -144,6 +144,11 @@ namespace Typhon.Compiler.Emit
                     }
                     else EmitYieldValue(y);
                     return;
+                // Mapping.register(Context) / _collections_abc.Sequence.register(X): a virtual subclass of an ABC of the typing-only
+                // modules; nothing at run time in Typhon
+                case CallExpr rc when rc.Func is AttributeExpr ra && ra.Name == "register" && DottedName(ra.Target) is string rdn &&
+                                      _typingOnlyNames.Contains(rdn.Split('.')[0]) && !IsLocal(rdn.Split('.')[0]):
+                    return;
                 case CallExpr _:
                 case AwaitExpr _:
                     _statementCall = e.Value as CallExpr;
@@ -374,10 +379,18 @@ namespace Typhon.Compiler.Emit
                 }
                 string saved = null;
                 if (renamed) { _renames.TryGetValue(name, out saved); _renames[name] = csName; }
+                // except CycleError as e: in the handler, e is a CycleError (e.args, its attributes)
+                bool hadType = false; string oldType = null;
+                if (name != null)
+                {
+                    hadType = _scope.Types.TryGetValue(name, out oldType);
+                    _scope.Types[name] = h.Type != null && TryTypeExpr(h.Type, out var caught) && !(h.Type is TupleExpr) ? caught : "global::System.Exception";
+                }
                 _w.Open();
                 EmitBlockStatements(h.Body);
                 if (hasElse && !EndsWithJump(h.Body)) { _w.Line($"goto {after};"); usedAfter = true; }
                 _w.Close();
+                if (name != null) { if (hadType) _scope.Types[name] = oldType; else _scope.Types.Remove(name); }
                 if (renamed) { if (saved != null) _renames[name] = saved; else _renames.Remove(name); }
             }
             if (hasElse)

@@ -210,7 +210,9 @@ namespace Typhon.Compiler.Emit
                 // late-bound items (C# cannot deconstruct dynamic): each item's values by position, checked for the count
                 // (also a call dispatched dynamically, enumerate(u) with u late-bound: its C# type is dynamic, whatever it returns)
                 string loopElem = IterElementType(IterableType(f.Iter));
+                // (also when the loop iterates late-bound itself, for bit, char in table with table an object: __iter_dyn(table))
                 if ((loopElem == "dynamic" || IsDynamicallyDispatched(f.Iter) || IsUnknownType(IterableType(f.Iter)) && !(f.Iter is NameExpr) ||
+                     iter.StartsWith(Rt("__iter_dyn") + "(") ||
                      (loopElem == null || loopElem == "object") && f.Iter is CallExpr && UnpackPartTypes(loopElem, tup.Elts.Count) == null) &&
                     !tup.Elts.Any(e => e is StarredExpr))
                 {

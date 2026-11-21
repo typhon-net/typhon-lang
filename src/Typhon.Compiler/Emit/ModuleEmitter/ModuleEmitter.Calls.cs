@@ -309,7 +309,12 @@ namespace Typhon.Compiler.Emit
                 // between its typed overloads for string and List<long>)
                 else if (typhonCallee && !a.Star && IsNone(a.Value) && paramTypeAt != null && paramTypeAt(argPos, a.Name) == null) v = "(object?)null";
                 // *xs into a params array (print(*xs), .NET params methods): spread into an array of the parameter's element type
-                if (a.Star && !(InferType(a.Value) is string at && at.EndsWith("[]"))) v = $"[.. {EmitIterable(a.Value)}]";
+                // (a call dispatched at run time, f(node, *rest) with node late-bound: the collection expression would have no
+                // target type, the spread is an array)
+                if (a.Star && !(InferType(a.Value) is string at && at.EndsWith("[]")))
+                    v = dynamicCall || args.Any(o => o != a && !o.Star && !o.DoubleStar && InferType(o.Value) == "dynamic") || InferType(a.Value) == "dynamic"
+                        ? $"global::System.Linq.Enumerable.ToArray({Rt("__iter_dyn")}((object){Paren(EmitExpr(a.Value))}))"
+                        : $"[.. {EmitIterable(a.Value)}]";
                 parts.Add(a.Name != null ? $"{Esc(a.Name)}: {v}" : v);
             }
             return string.Join(", ", parts);

@@ -29,6 +29,9 @@ namespace Typhon.Runtime
 
         public PyRandom() => seed();
         public PyRandom(object? x) => seed(x);
+        /// <summary>random.SystemRandom(): the same methods, drawing from the operating system's generator (not seedable).</summary>
+        internal PyRandom(bool system) { _system = system; if (!system) seed(); }
+        readonly bool _system;
 
         // ── the generator (CPython's _randommodule.c) ──
 
@@ -67,6 +70,12 @@ namespace Typhon.Runtime
 
         uint NextUInt32()
         {
+            if (_system)
+            {
+                System.Span<byte> four = stackalloc byte[4];
+                System.Security.Cryptography.RandomNumberGenerator.Fill(four);
+                return System.BitConverter.ToUInt32(four);
+            }
             unchecked
             {
                 uint y;
@@ -103,6 +112,7 @@ namespace Typhon.Runtime
 
         public void seed(object? a, long version = 2)
         {
+            if (_system) return; // (SystemRandom: seeding does nothing, as in CPython)
             _gaussNext = null;
             switch (a)
             {
@@ -476,6 +486,7 @@ namespace Typhon.Stdlib
         static readonly PyRandom _inst = new PyRandom();
 
         public static PyRandom Random(object? x = null) => new PyRandom(x);
+        public static PyRandom SystemRandom(object? x = null) => new PyRandom(system: true);
 
         public static void seed() => _inst.seed();
         public static void seed(object? a, long version = 2) => _inst.seed(a, version);

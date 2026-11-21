@@ -90,6 +90,7 @@ namespace Typhon.Compiler.Emit
 
         string EmitModule()
         {
+            ResolveFailingImports(_m.Ast.Body);
             foreach (var n in AllNodes(_m.Ast.Body))
             {
                 if (n is ImportStmt i) ProcessImport(i);

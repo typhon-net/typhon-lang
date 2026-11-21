@@ -362,6 +362,41 @@ namespace Typhon.Compiler.Emit
             ["dict"] = "global::System.Collections.Generic.OrderedDictionary<object, object>",
         };
 
+        /// <summary>Does the class (or a Typhon base) set args itself (args = ... in its body, self.args = ... in a method)?</summary>
+        bool AssignsArgs(ClassDef c, int depth = 0)
+        {
+            if (c == null || depth > 20) return false;
+            bool found = false;
+            AstWalker.VisitAll(c.Body, n =>
+            {
+                if (n is AssignStmt a)
+                    foreach (var t in a.Targets)
+                        if (t is NameExpr tn && tn.Id == "args" || t is AttributeExpr ta && ta.Name == "args" && ta.Target is NameExpr ts && ts.Id == "self") found = true;
+            });
+            return found || c.Bases.Any(b => ResolveBase(b, out var py, out _) && py != null && py != c && AssignsArgs(py, depth + 1));
+        }
+
+        /// <summary>Is the C# type an exception: a .NET exception the builtin names map to, or a Typhon class deriving from one?</summary>
+        bool IsExceptionType(string t)
+        {
+            if (t == null || t == "dynamic") return false;
+            string bare = t.Replace("global::", "").TrimEnd('?');
+            if (bare == "System.Exception" || ExceptionMetaMap.ContainsValue(bare)) return true;
+            if (ClassKeyOfType(t, out _) is string ck && ClassDefOfKey(ck) is ClassDef c)
+                for (int depth = 0; c != null && depth < 20; depth++)
+                {
+                    ClassDef next = null;
+                    foreach (var b in c.Bases)
+                    {
+                        if (!ResolveBase(b, out var py, out var meta)) continue;
+                        if (py != null) { next = py; break; }
+                        if (meta != null && (meta == "System.Exception" || ExceptionMetaMap.ContainsValue(meta))) return true;
+                    }
+                    c = next;
+                }
+            return false;
+        }
+
         /// <summary>
         /// Is the runtime type a class (not a module: modules are static classes, named in lower case, without constructors)?
         /// (The resolver leaves out some constructors, a params one among them: a capitalized name is a class too.)
@@ -434,6 +469,21 @@ namespace Typhon.Compiler.Emit
 
         string EmitAttribute(AttributeExpr a)
         {
+            // e.args on an exception whose class does not declare args (a .NET exception or a Typhon subclass of one)
+            if (a.Name == "args" && InferType(a.Target) is string ext && IsExceptionType(ext) && !ext.Contains("Typhon.Runtime.") &&
+                !(ClassKeyOfType(ext, out _) is string eck && ClassDefOfKey(eck) is ClassDef ecd && AssignsArgs(ecd)))
+                return $"global::Typhon.Runtime.PyExc.Args((global::System.Exception){Paren(EmitExpr(a.Target))})";
+            // frozenset(kwlist).__contains__ / table.__getitem__ as a value (not called here): a function of the container
+            if ((a.Name == "__contains__" || a.Name == "__getitem__") && !Receivers.Contains(a) && InferType(a.Target) is string ct && ct != "dynamic" &&
+                (ct.StartsWith("HashSet<") || ct.StartsWith("List<") || ct.StartsWith("OrderedDictionary<") || ct.StartsWith("Dictionary<") ||
+                 ct.StartsWith("global::Typhon.Runtime.frozenset<") || ct.StartsWith("frozenset<") || ct == "string"))
+            {
+                string container = NewTmp("c"), et = ct == "string" ? "string" : ct.StartsWith("OrderedDictionary<") || ct.StartsWith("Dictionary<") ? SplitTypeArgs(GenericArg(ct))[0] : ElementTypeOf(ct) ?? "object";
+                string boundTo = EmitExpr(a.Target);
+                return a.Name == "__contains__"
+                    ? $"((global::System.Func<{ct}, global::System.Func<{et}, bool>>)({container} => __v => {Rt("contains")}({container}, __v)))({boundTo})"
+                    : $"((global::System.Func<{ct}, global::System.Func<object?, dynamic>>)({container} => __k => {Rt("__getitem")}((object?){container}, __k)))({boundTo})";
+            }
             if (a.Target is CallExpr sc && sc.Func is NameExpr sn && sn.Id == "super" && sc.Args.Count == 0) return "base." + Esc(a.Name);
             // np.random.random(...): C# forbids a member named like its class, the numpy library exposes it as random_sample
             if (a.Name == "random" && a.Target is AttributeExpr inner && inner.Name == "random" && DottedName(inner.Target) is string mod &&

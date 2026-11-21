@@ -1,0 +1,9 @@
+False 42 2 7 4 2 True
+ac b-
+True False 1
+{'a': ['b', 'c'], 'b': []}
+nodes are in a cycle ['a', 'b'] ('nodes are in a cycle', ['a', 'b'])
+203d1e5cedd2d18f8c5a3beff0bd9c1ebcb97097dfcb288c46b00c9227fde2c0
+4fd0b215276ef12f2b3e4c8ecac2811498b656fc 18f95825861c5feabeecd7eaef27ababebbb5327 32 hmac-sha256
+True False ed7e724d3a91554aaa2043041d9c5305
+True 8 True

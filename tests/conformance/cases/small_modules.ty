@@ -1,0 +1,97 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+"""Conformance: what CPython's smaller modules need: imports of C accelerators (_bisect, _struct, _stat), try/except
+ImportError around a module Typhon lacks, loops unpacking late-bound items, bound __contains__ as a value, an exception
+subclass with several arguments and e.args, *args forwarded late-bound, hmac and random.SystemRandom."""
+
+import hmac
+import hashlib
+from random import SystemRandom
+try:
+    from _bisect import *
+except ImportError:
+    pass
+try:
+    import _no_such_accelerator
+    fast = True
+except ImportError:
+    fast = False
+try:
+    from _definitely_missing import helper
+except (ImportError, AttributeError):
+    def helper(x: int) -> int:
+        return x * 2
+from _collections_abc import Sequence
+from _struct import pack, calcsize
+from _stat import S_ISDIR
+
+
+def first(xs: Sequence[int]) -> int:
+    return xs[0]
+
+
+print(fast, helper(21), bisect_left([1, 3, 5], 4), first([7, 8]), calcsize("<i"), len(pack("<h", 5)), S_ISDIR(0o40755))
+
+
+_table = (
+    ((1, "a"), (2, "b")),
+    ((4, "c"),),
+)
+
+
+def filemode(mode):
+    perm = []
+    for index, table in enumerate(_table):
+        for bit, char in table:
+            if mode & bit == bit:
+                perm.append(char)
+                break
+        else:
+            perm.append("-")
+    return "".join(perm)
+
+
+print(filemode(5), filemode(2))
+
+kwlist = ["if", "else", "def"]
+iskeyword = frozenset(kwlist).__contains__
+lookup = {"a": 1}.__getitem__
+print(iskeyword("if"), iskeyword("x"), lookup("a"))
+
+
+class CycleError(ValueError):
+    pass
+
+
+class Sorter:
+    def __init__(self, graph=None):
+        self.nodes = {}
+        if graph is not None:
+            for node, predecessors in graph.items():
+                self.add(node, *predecessors)
+
+    def add(self, node, *predecessors):
+        self.nodes[node] = list(predecessors)
+
+
+srt = Sorter({"a": ["b", "c"], "b": []})
+print(srt.nodes)
+try:
+    raise CycleError("nodes are in a cycle", ["a", "b"])
+except CycleError as e:
+    print(e.args[0], e.args[1], str(e))
+
+
+
+h = hmac.new(b"key", b"The quick brown fox", "sha256")
+print(h.hexdigest())
+h2 = hmac.new(b"key", digestmod=hashlib.sha1)
+h2.update(b"abc")
+c = h2.copy()
+c.update(b"def")
+print(h2.hexdigest(), c.hexdigest(), h.digest_size, h.name)
+print(hmac.compare_digest(b"abc", b"abc"), hmac.compare_digest("abc", "abd"), hmac.digest(b"k", b"m", "md5").hex())
+r = SystemRandom()
+x = r.randint(1, 6)
+print(1 <= x <= 6, len(r.randbytes(8)), r.getrandbits(4) < 16)
