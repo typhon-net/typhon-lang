@@ -68,6 +68,8 @@ namespace Typhon.Compiler.Emit
             ctx.IterElementType = iterElem;
             // def __lt__(self, other: Self) -> bool  ⇒  IComparable<Self>, so sorted()/min()/max()/List.Sort order the objects
             if (!isInterface && LtComparesSelf(c, ctx)) baseTypes.Add($"global::System.IComparable<{ctx.CsSelfType}>");
+            // def __lt__(self, other) with other of any type: IComparable, so sorting compares through __lt__ too
+            else if (!isInterface && LtComparesAny(c)) baseTypes.Add("global::System.IComparable");
             // def __len__(self) -> int  ⇒  IPyLen, so len(obj) works without reflection
             if (!isInterface && c.Body.OfType<FunctionDef>().Any(f => f.Name == "__len__" && f.Params.Count == 1 && f.Returns is NameExpr rn && rn.Id == "int"))
                 baseTypes.Add("global::Typhon.Runtime.IPyLen");

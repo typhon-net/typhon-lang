@@ -277,6 +277,18 @@ namespace Typhon.Compiler.Emit
         }
 
         /// <summary>The C# class that declares a class variable (a static field) of this name: the class or a Typhon base.</summary>
+        /// <summary>Is self.name something the current class, its bases and their attributes do not define?</summary>
+        bool SelfMemberUnknown(string name)
+        {
+            if (name.StartsWith("__") && name.EndsWith("__")) return false;
+            if (_cls.Members.Contains(name) || _cls.FieldTypes.ContainsKey(name) || _cls.Def.Body.OfType<ClassDef>().Any(n => n.Name == name)) return false;
+            if (CollectImplicitFields(_cls.Def).ContainsKey(name)) return false;
+            var bases = _cls.Def.Bases.Where(b => !(DottedName(b is SubscriptExpr bs ? bs.Target : b) is "object" or "Protocol" or "typing.Protocol" or "ABC" or "abc.ABC" or "Generic" or "typing.Generic")).ToList();
+            // (a base Typhon cannot see into, a .NET class it cannot resolve: assume it defines it)
+            if (bases.Any(b => !ResolveBase(b, out _, out _))) return false;
+            return !BaseHasMember(bases, name, requireOverridable: false);
+        }
+
         string StaticOwner(ClassDef c, string name, int depth)
         {
             if (c == null || depth > 20) return null;
@@ -310,6 +322,10 @@ namespace Typhon.Compiler.Emit
                 if (nt == null || nt == "dynamic" || nt == "object" || nt == "object?" || nt == "global::System.Type" || nt == "System.Type")
                     return $"{Rt("__name_of")}((object?){Paren(EmitExpr(a.Target))})";
             }
+            // self.x that neither the class nor its bases define (a mixin using an attribute of the classes it is mixed
+            // into): late-bound, found on the object's own class at run time, as Python does
+            if (a.Target is NameExpr sx && sx.Id == "self" && _cls != null && !_cls.IsInterface && HasSelfInScope() && SelfMemberUnknown(a.Name))
+                return $"((dynamic)this).{Esc(a.Name)}";
             // obj.__dict__: a live view of its attributes
             if (a.Name == "__dict__" && !(a.Target is NameExpr dn0 && TryResolveType(dn0.Id, 0, out _, out _)))
                 return $"{Rt("__dict__")}((object){Paren(EmitExpr(a.Target))})";

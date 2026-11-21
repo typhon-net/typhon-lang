@@ -85,6 +85,12 @@ namespace Typhon.Compiler.Emit
             return lt != null && lt.Params.Count == 2 && lt.Params[1].Annotation != null && MapType(lt.Params[1].Annotation, lt) == ctx.CsSelfType;
         }
 
+        bool LtComparesAny(ClassDef c)
+        {
+            var lt = c.Body.OfType<FunctionDef>().FirstOrDefault(f => f.Name == "__lt__");
+            return lt != null && lt.Params.Count == 2 && lt.Params[1].Annotation == null;
+        }
+
         static string DunderBridge(string name)
         {
             switch (name)
@@ -166,12 +172,18 @@ namespace Typhon.Compiler.Emit
             var ltDef = methods.FirstOrDefault(m => m.Name == "__lt__");
             if (ltDef != null && ltDef.Params.Count == 2 && ParamType(ltDef, 1) == self)
                 _w.Line($"public int CompareTo({self}? other) => other is null ? 1 : __lt__(other) ? -1 : other.__lt__(this) ? 1 : 0;");
+            else if (ltDef != null && ltDef.Params.Count == 2 && ltDef.Params[1].Annotation == null)
+                _w.Line("public int CompareTo(object? other) => other is null ? 1 : global::Typhon.Runtime.Builtins.truthy((object?)__lt__(other)) ? -1 : " +
+                        "global::Typhon.Runtime.Builtins.truthy((object?)((dynamic)other).__lt__(this)) ? 1 : 0;");
             // C# requires comparison operators in pairs: derive the missing partner by swapping operands
             foreach (var f in methods)
                 if (BinaryDunders.TryGetValue(f.Name, out var op) && ComparisonPairs.TryGetValue(op, out var partner) && !definedOps.Contains(partner))
                 {
                     string pt = ParamType(f, 1);
                     if (pt == self) _w.Line($"public static {RetType(f)} operator {partner}({self} a, {self} b) => b.{f.Name}(a);");
+                    // other operand of any type (def __lt__(self, other)): Python's reflected comparison, a > b is b < a
+                    else if (pt == "dynamic" || pt == "object") _w.Line($"public static {RetType(f)} operator {partner}({self} a, {pt} b) => ((dynamic)b).{f.Name}(a);");
+                    else _w.Line($"public static {RetType(f)} operator {partner}({self} a, {pt} b) => throw new global::System.InvalidCastException(\"'{partner}' not supported between instances of '{ctx.Name}' and '{pt}'\");");
                 }
         }
     }

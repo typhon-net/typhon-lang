@@ -1,0 +1,44 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+"""Conformance: mixins and multiple inheritance (attributes of the classes a mixin is mixed into, comparisons from __lt__ alone)."""
+
+class CompareMixin:
+    def key(self):
+        raise NotImplementedError
+
+    def __lt__(self, other) -> bool:
+        return self.key() < other.key()
+
+
+class LoggingMixin:
+    def log(self, msg: str) -> None:
+        self.messages.append(f"[{type(self).__name__}] {msg}")
+        self.count += 1
+
+
+class Account(LoggingMixin):
+    def __init__(self):
+        self.messages: list[str] = []
+        self.count = 0
+        self.balance = 0
+
+    def deposit(self, n: int) -> None:
+        self.balance += n
+        self.log(f"deposit {n}")
+
+
+class Item(CompareMixin):
+    def __init__(self, w: int):
+        self.w = w
+
+    def key(self):
+        return self.w
+
+
+acc = Account()
+acc.deposit(5)
+acc.deposit(2)
+print(acc.messages, acc.balance, acc.count)
+a, b = Item(1), Item(2)
+print(a < b, a > b, b > a, sorted([b, a])[0].w)

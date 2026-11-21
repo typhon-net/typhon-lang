@@ -102,7 +102,8 @@ namespace Typhon.Compiler.Emit
                     return null;
                 }
                 case AttributeExpr at when at.Target is NameExpr self && self.Id == "self" && _cls != null:
-                    return _cls.FieldTypes.TryGetValue(at.Name, out var ft) ? ft : InheritedFieldType(_cls.Def, at.Name);
+                    return _cls.FieldTypes.TryGetValue(at.Name, out var ft) ? ft : InheritedFieldType(_cls.Def, at.Name) ??
+                           (!_cls.IsInterface && HasSelfInScope() && SelfMemberUnknown(at.Name) ? "dynamic" : null); // (a mixin's: late-bound)
                 case AttributeExpr mp when mp.Name.StartsWith(LocalsAnalyzer.MatchPositionPrefix) && mp.Target is CallExpr mc0:
                 {
                     var names = MatchArgs(mc0.Func);
