@@ -1,0 +1,91 @@
+2024-01-31 datetime.date(2024, 1, 31) 2024 1 31 2 3 738916 2024-01-31
+2024-01-31 Wed Jan 31 00:00:00 2024 2024-01-01 2023-02-28 2024-02-29
+2024-02-01 2023-12-31 37 days, 0:00:00 2024-01-30 2024-01-31
+True True False False False
+datetime.IsoCalendarDate(year=2024, week=5, weekday=3) 5 True 2021-01-03
+2020 53 7 0001-01-01 9999-12-31 datetime.timedelta(days=1) 1 9999
+2024-01-31 12:30:00 datetime.datetime(2024, 1, 31, 12, 30) datetime.datetime(2024, 1, 31, 0, 0) datetime.datetime(2024, 1, 31, 12, 30, 15) datetime.datetime(2024, 1, 31, 0, 0, 0, 5)
+12 30 0 0 2024-01-31 12:30:00 2024-01-31T12:30:00 2024-01-31 12:30:00
+2024-01-02 03:00:00 2024-01-02T03:04:05.000 2024-01-31T12:30
+2024-02-01 00:30:00 2024-01-31 11:45:00 28 days, 18:00:00 2024-02-01 12:30:00
+2024-01-31 08:15:00 2024-01-31 00:00:00 2 738916 Wed Jan 31 12:30:00 2024
+0001-01-01 00:00:00 9999-12-31 23:59:59.999999 datetime.timedelta(microseconds=1) 0001-01-01 00:00:00 True False
+2024-01-01 00:00:00 2024-02-29 00:00:00
+12:30:00 datetime.time(12, 30) datetime.time(0, 0) datetime.time(1, 2, 3) datetime.time(1, 2, 0, 4) 01:02:03.000004 12 01:02:03.000
+12 30 0 0 00:00:00 23:59:59.999999 True True 01:05 PM, 1900 001
+1 day, 2:03:04.000005 datetime.timedelta(days=1, seconds=7384, microseconds=5) 1 7384 5 93784.000005
+5:00:00 6 days, 0:00:00 0:00:01.500000 -1 day, 23:59:00 datetime.timedelta(0) 0:00:00
+-1 day, 0:00:00 datetime.timedelta(days=-1, seconds=5) -1 day, 0:00:05 -1 day, 23:59:59.999999 -2 days, 3:00:00 datetime.timedelta(days=-1, seconds=86398, microseconds=500000)
+1:30:00 12:00:00 1 day, 12:06:00 7 days, 16:48:00 0:00:00
+0:00:00 0:00:00.000002 0:00:00.000002 0:00:00.000002 0:00:00.000004
+2 days, 4:06:08.000010 2 days, 4:06:08.000010 13:01:32.000002 13:01:32.000002 1.0 1:06:00 0:08:34.285714 0:20:00
+8.571428571428571 8 0:04:00
+(8, datetime.timedelta(seconds=240)) -1 day, 23:51:25.714285 -2 days, 21:56:55.999995 1 day, 2:03:04.000005 23:59:55 1 day, 2:03:04.000005
+-86400.0 True True False
+datetime.timedelta(days=-999999999) datetime.timedelta(days=999999999, seconds=86399, microseconds=999999) 999999999 days, 23:59:59.999999 -999999999 days, 0:00:00 datetime.timedelta(microseconds=1)
+a zero timedelta is false
+2024-03-10 12:00:00+00:00 datetime.datetime(2024, 3, 10, 12, 0, tzinfo=datetime.timezone.utc) 2024-03-10T12:00:00+00:00 0:00:00 UTC UTC datetime.timezone.utc
+datetime.timezone(datetime.timedelta(seconds=3600)) UTC+01:00 datetime.timezone(datetime.timedelta(seconds=32400), 'JST') JST UTC-05:30 datetime.timezone(datetime.timedelta(0), 'UTC') True
+1:00:00 True False
+2024-03-10 21:00:00+09:00 JST 2024-03-10 12:00:00 2024-03-10 12:00:00+01:00 None
+1 True 01:02:00+00:00
+1704164645.0 2024-02-01 00:00:00.500000+00:00 1970-01-01 01:00:00+01:00
+True 12:00:00+00:00 1971-01-01 06:00:00
+31/01/2024 Wednesday January 031 2024-01-31 12:30:00.000000 Wed Jan PM 12 24 %
+31|31|1|31|04|05|05|3|3|Jan|01/31/24|2024-01-31|00:00:00|00:00|20|2024|24| 0|12|am
+1|13|5|9|||Wed Jan 31 13:05:09 2024|01/31/24|13:05:09|01:05:09 PM +0000|UTC|+00:00
+0005|0005-03-04|Fri Mar  4 05:06:07 5|0005|%Q| 4|04|FRI|MAR|00005|0004|05|04 01 00 52 2022 7 0
+31.01.2024 12 h 2024-01-31 2024-01-31 12:30:00 1 day, 2:03:04.000005 2024 03-04
+datetime 2024-01-31 datetime.datetime(2024, 1, 31, 0, 0)
+datetime 20240131 datetime.datetime(2024, 1, 31, 0, 0)
+datetime 2024-W05-3 datetime.datetime(2024, 1, 31, 0, 0)
+datetime 2024-W05 datetime.datetime(2024, 1, 29, 0, 0)
+datetime 2024-01-31T12 datetime.datetime(2024, 1, 31, 12, 0)
+datetime 2024-01-31 12:30:45.5 datetime.datetime(2024, 1, 31, 12, 30, 45, 500000)
+datetime 2024-01-31T12:30:45,25 datetime.datetime(2024, 1, 31, 12, 30, 45, 250000)
+datetime 20240131T123045Z datetime.datetime(2024, 1, 31, 12, 30, 45, tzinfo=datetime.timezone.utc)
+datetime 2024-01-31T12:30:45-0800 datetime.datetime(2024, 1, 31, 12, 30, 45, tzinfo=datetime.timezone(datetime.timedelta(days=-1, seconds=57600)))
+datetime 2024-01-31T12:30:45+05:30:15.5 datetime.datetime(2024, 1, 31, 12, 30, 45, tzinfo=datetime.timezone(datetime.timedelta(seconds=19815, microseconds=500000)))
+datetime 2024-01-31T24:00 datetime.datetime(2024, 2, 1, 0, 0)
+datetime 2024-01-31T12:3 ValueError: Invalid isoformat string: '2024-01-31T12:3'
+date 2024-01-31T12 ValueError: Invalid isoformat string: '2024-01-31T12'
+time T12:30:45.5Z datetime.time(12, 30, 45, 500000, tzinfo=datetime.timezone.utc)
+strptime 1 datetime.datetime(2024, 3, 4, 5, 6, 7)
+strptime 2 datetime.datetime(2024, 3, 4, 13, 2)
+strptime 3 datetime.datetime(2024, 2, 5, 0, 0)
+strptime 4 datetime.datetime(2024, 2, 6, 10, 11, 12)
+strptime 5 datetime.datetime(2024, 3, 4, 5, 6, 7, 500000, tzinfo=datetime.timezone(datetime.timedelta(seconds=5400)))
+strptime 6 datetime.datetime(2024, 2, 29, 0, 0)
+strptime 7 datetime.datetime(2024, 2, 5, 0, 0)
+strptime 8 datetime.datetime(1999, 12, 31, 0, 0)
+strptime 9 datetime.datetime(2024, 1, 1, 0, 0)
+feb 30 ValueError: day 30 must be in range 1..29 for month 2 in year 2024
+month 13 ValueError: month must be in 1..12, not 13
+year 0 ValueError: year must be in 1..9999, not 0
+hour 24 ValueError: hour must be in 0..23, not 24
+microsecond ValueError: microsecond must be in 0..999999, not 1000000
+days OverflowError: days=1000000000; must have magnitude <= 999999999
+date.max + 1 OverflowError: date value out of range
+datetime.max + 1 OverflowError: date value out of range
+ordinal 0 ValueError: ordinal must be >= 1
+bad iso ValueError: Invalid isoformat string: '2024-1-1'
+no match ValueError: time data '2024-01-01' does not match format '%Y/%m/%d'
+remains ValueError: unconverted data remains: x
+bad directive ValueError: 'Q' is a bad directive in format '%Q'
+date < datetime TypeError: '<' not supported between instances of 'datetime.date' and 'datetime.datetime'
+naive - aware TypeError: can't subtract offset-naive and offset-aware datetimes
+naive < aware TypeError: can't compare offset-naive and offset-aware datetimes
+division by zero ZeroDivisionError: division by zero
+24h offset ValueError: offset must be a timedelta strictly between -timedelta(hours=24) and timedelta(hours=24), not datetime.timedelta(days=1)
+timespec ValueError: Unknown timespec value
+multiply OverflowError: days=1999999998; must have magnitude <= 999999999
+standup 09:00 - 09:15 0:15:00
+review 14:30 - 16:00 1:30:00
+['review', 'standup'] 1:45:00
+[Task(title='a', due=datetime.date(2024, 5, 10)), Task(title='b', due=datetime.date(2024, 5, 3))] b
+359 [datetime.date(2024, 5, 9), datetime.date(2024, 5, 10), datetime.date(2024, 5, 13), datetime.date(2024, 5, 14)]
+[datetime.timedelta(days=-1, seconds=84600), datetime.timedelta(seconds=6300)] 1:45:00 2024-01-01 09:30:00 {datetime.date(2024, 1, 1)} [datetime.timedelta(days=30), datetime.timedelta(seconds=10800)]
+{datetime.date(2024, 1, 1): 2} 2020-02-03 2 days, 0:00:00 2020-01-01 01:00:00 1
+30 days and 23 hours left
+True True True True
+True True

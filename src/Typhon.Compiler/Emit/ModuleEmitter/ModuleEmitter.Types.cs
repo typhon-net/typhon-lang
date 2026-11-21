@@ -443,6 +443,8 @@ namespace Typhon.Compiler.Emit
             }
             // an operator of a Typhon class: what its __sub__ / __add__ / ... returns (not "T - T is T": Point - Point is a Vector)
             if (DunderOperatorType(b.Op, l, r) is string dunderType) return dunderType;
+            // a .NET type's own operator for these operand types (date - date is a timedelta, date - timedelta a date)
+            if (DotNetOperatorType(b.Op, l, r) is string netOpType) return netOpType;
             if (b.Op == "/" && DivisionOperatorType(l) is string divType) return divType;
             if (b.Op == "/" && (l == "dynamic" || r == "dynamic")) return "dynamic";
             if (b.Op == "/") return (l == "decimal" && r == "decimal") ? "decimal" : (NumericTypes.Contains(l ?? "") && NumericTypes.Contains(r ?? "") ? "double" : null);

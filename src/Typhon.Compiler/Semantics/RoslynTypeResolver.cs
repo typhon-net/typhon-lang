@@ -91,7 +91,7 @@ namespace Typhon.Compiler.Semantics
                                                   IsDelegateBase = elem.SpecialType == SpecialType.System_Delegate || elem.SpecialType == SpecialType.System_MulticastDelegate,
                                                               IsArray = !p.IsParams && p.Type is IArrayTypeSymbol,
                                                   BigAccepts = bigAccepts, BigNarrowTo = bigNarrow, IsBigInteger = isBig, TakesFunction = takesFunction,
-                                                  GenericType = m.TypeParameters.Length > 0 ? GenericDisplay(elem) : null });
+                                                  GenericType = GenericDisplay(elem) });
             }
             return sig;
         }

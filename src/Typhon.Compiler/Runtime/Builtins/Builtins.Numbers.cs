@@ -39,6 +39,7 @@ namespace Typhon.Runtime
             double d => d != 0,
             float f => f != 0,
             decimal m => m != 0,
+            IPyBool pb => pb.__bool__(),
             ICollection c => c.Count > 0,
             IEnumerable e => e.GetEnumerator().MoveNext(),
             _ => true,

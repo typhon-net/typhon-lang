@@ -314,10 +314,10 @@ namespace Typhon.Compiler.Emit
                         string init = fieldSpec != null ? (fieldSpec.Default != null ? " = " + Checked(EmitExpr(fieldSpec.Default, targetTyped: true)) + ";"
                                                            : fieldSpec.Factory != null ? " = " + FactoryCall(fieldSpec.Factory, type) + ";" : "")
                             : a.Value != null ? " = " + Checked(EmitExpr(a.Value, targetTyped: true)) + ";" : "";
-                        if (isClassVar) _w.Line($"{Visibility(n.Id, false)} static {type} {Esc(n.Id)}{(init.Length > 0 ? init : ";")}");
+                        if (isClassVar) _w.Line($"{SurfaceVisibility(Visibility(n.Id, false), type)} static {type} {Esc(n.Id)}{(init.Length > 0 ? init : ";")}");
                         else
                         {
-                            _w.Line($"{Visibility(n.Id, false)} {type} {Esc(n.Id)} {{ get; set; }}{init}");
+                            _w.Line($"{SurfaceVisibility(Visibility(n.Id, false), type)} {type} {Esc(n.Id)} {{ get; set; }}{init}");
                             if (isDataclass) dataFields.Add(a);
                         }
                         break;
@@ -333,7 +333,7 @@ namespace Typhon.Compiler.Emit
                         ctx.Members.Add(n.Id);
                         ctx.FieldTypes[n.Id] = type; // read as self.name too (through the class)
                         LineDirective(s);
-                        _w.Line($"{Visibility(n.Id, false)} static {type} {Esc(n.Id)} = {Checked(type != "dynamic" ? EmitExpr(a.Value, targetTyped: true) : EmitValue(a.Value))};");
+                        _w.Line($"{SurfaceVisibility(Visibility(n.Id, false), type)} static {type} {Esc(n.Id)} = {Checked(type != "dynamic" ? EmitExpr(a.Value, targetTyped: true) : EmitValue(a.Value))};");
                         break;
                     }
                     case FunctionDef f: ctx.Members.Add(f.Name); break;
@@ -433,8 +433,8 @@ namespace Typhon.Compiler.Emit
                     if (spec?.Factory != null) return $"{NullableOf(t)} {Esc(n)} = null";
                     var dv = spec != null ? spec.Default : a.Value;
                     return $"{t} {Esc(n)}" + (dv != null ? " = " + EmitExpr(dv, targetTyped: true) : "");
-                });
-                _w.Line($"public {Esc(c.Name)}({string.Join(", ", ps)})");
+                }).ToArray();
+                _w.Line($"{SurfaceVisibility("public", ps)} {Esc(c.Name)}({string.Join(", ", ps)})");
                 _w.Open();
                 foreach (var a in initFields)
                 {

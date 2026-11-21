@@ -38,6 +38,27 @@ namespace Typhon.Compiler.Emit
             return Of(l, "__" + name + "__") ?? Of(r, "__r" + name + "__");
         }
 
+        static readonly Dictionary<string, string> OperatorMethods = new Dictionary<string, string>
+        {
+            ["+"] = "op_Addition", ["-"] = "op_Subtraction", ["*"] = "op_Multiply", ["/"] = "op_Division", ["%"] = "op_Modulus",
+        };
+
+        /// <summary>
+        /// The result type of a .NET type's own operator for exactly these operand types (date - date is a timedelta, date -
+        /// timedelta a date), from either operand's type; // goes to the runtime's typed floordiv overloads. Null if none.
+        /// </summary>
+        string DotNetOperatorType(string op, string l, string r)
+        {
+            if (IsUnknownType(l) || IsUnknownType(r) || (IsNumeric(l) || l == "bool" || l == "string") && (IsNumeric(r) || r == "bool" || r == "string")) return null;
+            string Typed(string meta, string name) => _r.GetMembers(meta, name)
+                .FirstOrDefault(m => m.IsStatic && m.Parameters.Count == 2 && m.Parameters[0].GenericType == l && m.Parameters[1].GenericType == r)?.Type;
+            if (op == "//") return Typed("Typhon.Runtime.Builtins", "floordiv");
+            if (!OperatorMethods.TryGetValue(op, out var method)) return null;
+            foreach (var t in new[] { l, r })
+                if (!IsNumeric(t) && t != "bool" && t != "string" && DotNetMeta(t) is string meta && Typed(meta, method) is string result) return result;
+            return null;
+        }
+
         /// <summary>The result type of a non-numeric .NET type's / operator (pathlib's Path / str), or null.</summary>
         string DivisionOperatorType(string t)
         {

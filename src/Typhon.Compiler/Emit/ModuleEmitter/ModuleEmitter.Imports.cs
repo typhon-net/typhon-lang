@@ -112,7 +112,11 @@ namespace Typhon.Compiler.Emit
                 foreach (var a in s.Names)
                     if (a.AsName != null)
                     {
-                        if (_r.TypeExists(meta + "+" + a.Name)) _usingLines.Add($"using {Esc(a.AsName)} = global::{csName}.{a.Name};");
+                        if (_r.TypeExists(meta + "+" + a.Name))
+                        {
+                            _usingLines.Add($"using {Esc(a.AsName)} = global::{csName}.{a.Name};");
+                            _importedTypes[a.AsName] = meta + "+" + a.Name; // a class: calling it constructs one
+                        }
                         else Unsupported(s, $"renaming the member '{a.Name}' on import");
                     }
                 return;

@@ -276,8 +276,16 @@ namespace Typhon.Compiler.Emit
             if (IsShadowed(name) && !_importedFromModules.ContainsKey(name)) return null;
             if (name == "Fraction" && _staticTypes.Contains("Typhon.Stdlib.fractions")) return "global::Typhon.Runtime.Fraction";
             if (name == "Path" && _staticTypes.Contains("Typhon.Stdlib.pathlib")) return "global::Typhon.Runtime.Path";
-            return null;
+            return StdlibNestedType(name);
         }
+
+        /// <summary>
+        /// A class nested in a Typhon standard module (date, datetime.date, re.Pattern): its full C# name, which the inference
+        /// and member signatures use too (and which keeps a function taking one internal, like the class).
+        /// </summary>
+        string StdlibNestedType(string dotted) =>
+            TryResolveType(dotted, 0, out var meta, out var pyClass) && pyClass == null && meta != null && meta.StartsWith("Typhon.Stdlib.") && meta.Contains('+')
+                ? CsTypeName(meta) : null;
 
         bool IsTypeParamInScope(string name)
         {
@@ -316,7 +324,7 @@ namespace Typhon.Compiler.Emit
                     if (dotted == null) { Error(at, "invalid type annotation"); return "dynamic"; }
                     string stripped = StripTypingPrefix(dotted);
                     if (stripped != dotted) return MapType(new NameExpr { Id = stripped, Line = a.Line, Col = a.Col }, at, isReturn);
-                    return string.Join(".", dotted.Split('.').Select(Esc));
+                    return StdlibNestedType(dotted) ?? string.Join(".", dotted.Split('.').Select(Esc));
                 }
                 case SubscriptExpr s:
                 {
@@ -419,13 +427,13 @@ namespace Typhon.Compiler.Emit
                 case NameExpr n:
                     if (BuiltinConversionNames.Contains(n.Id) && !IsShadowed(n.Id)) return false;
                     if (!TryResolveType(n.Id, 0, out _, out _)) return false;
-                    code = ExceptionMap.TryGetValue(n.Id, out var ex) && !IsShadowed(n.Id) ? ex : (_cls != null && _cls.Name == n.Id ? _cls.CsSelfType : Esc(n.Id));
+                    code = ExceptionMap.TryGetValue(n.Id, out var ex) && !IsShadowed(n.Id) ? ex : (_cls != null && _cls.Name == n.Id ? _cls.CsSelfType : StdlibNestedType(n.Id) ?? Esc(n.Id));
                     return true;
                 case AttributeExpr a:
                 {
                     string dotted = DottedName(a);
                     if (dotted == null || !TryResolveType(dotted, 0, out _, out _)) return false;
-                    code = string.Join(".", dotted.Split('.').Select(Esc));
+                    code = StdlibNestedType(dotted) ?? string.Join(".", dotted.Split('.').Select(Esc));
                     return true;
                 }
                 case SubscriptExpr s:

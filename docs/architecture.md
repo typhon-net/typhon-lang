@@ -32,7 +32,8 @@
   `sorted`, `format`, `frozenset`, str/list/dict/set methods, ...), small stdlib shims (`math`, `time`, `random` (CPython's Mersenne Twister and algorithms: a seeded program draws the same numbers),
   `sys` with `sys.stdout`/`stderr`/`stdin`, `os`, `asyncio`) and the commonly used parts of `itertools`,
   `collections` (`Counter`, `defaultdict`, `deque`, `OrderedDict`, `namedtuple`), `functools` (`reduce`,
-  `cmp_to_key`, `@cache`/`@lru_cache`), `operator`, `string`, `fractions`, `pathlib`, `heapq` (CPython's algorithm,
+  `cmp_to_key`, `@cache`/`@lru_cache`), `operator`, `string`, `fractions`, `pathlib`, `datetime` (`date`, `time`,
+  `datetime`, `timedelta`, `timezone` with CPython's normalization, reprs, `strftime` and `strptime`), `heapq` (CPython's algorithm,
   so heaps print the same), `bisect`, `copy`, `json` (CPython's output format), `re` (on .NET's regex engine, with
   Python's syntax, group numbering and `sub`/`split`/`findall` rules), `io.StringIO`, `array`, `struct`, `hashlib`,
   `tempfile`, `timeit` and `doctest` (`testmod()` runs no examples), plus `bytes`, `bytearray` and binary files, compiled

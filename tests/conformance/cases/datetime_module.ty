@@ -1,0 +1,176 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+"""Conformance: the datetime module (date, time, datetime, timedelta, timezone: arithmetic, reprs, strftime, parsing)."""
+
+import datetime as dtmod
+from dataclasses import dataclass
+from datetime import MAXYEAR, MINYEAR, date, datetime, time, timedelta, timezone
+from datetime import datetime as dt
+from typing import Callable
+
+
+def attempt(label: str, f: Callable[[], object]) -> None:
+    try:
+        print(label, repr(f()))
+    except ValueError as e:
+        print(label, "ValueError:", e)
+    except TypeError as e:
+        print(label, "TypeError:", e)
+    except OverflowError as e:
+        print(label, "OverflowError:", e)
+    except ZeroDivisionError as e:
+        print(label, "ZeroDivisionError:", e)
+
+
+# date: fields, reprs, ordinals, ISO calendar, arithmetic and comparisons
+d = date(2024, 1, 31)
+print(d, repr(d), d.year, d.month, d.day, d.weekday(), d.isoweekday(), d.toordinal(), date.fromordinal(738916))
+print(d.isoformat(), d.ctime(), d.replace(day=1), d.replace(year=2023, month=2, day=28), date.fromisoformat("2024-02-29"))
+print(d + timedelta(days=1), d - timedelta(days=31), d - date(2023, 12, 25), d + timedelta(hours=-1), d - timedelta(hours=1))
+print(d < date(2024, 2, 1), d == date(2024, 1, 31), d != date(2024, 1, 31), d >= date(2025, 1, 1), d == datetime(2024, 1, 31))
+print(d.isocalendar(), d.isocalendar().week, d.isocalendar() == (2024, 5, 3), date.fromisocalendar(2020, 53, 7))
+year, week, weekday = date(2021, 1, 3).isocalendar()
+print(year, week, weekday, date.min, date.max, repr(date.resolution), MINYEAR, MAXYEAR)
+
+# datetime: reprs omit trailing zero seconds/microseconds, str is isoformat(" ")
+moment = datetime(2024, 1, 31, 12, 30)
+print(moment, repr(moment), repr(datetime(2024, 1, 31)), repr(datetime(2024, 1, 31, 12, 30, 15)), repr(datetime(2024, 1, 31, 0, 0, 0, 5)))
+print(moment.hour, moment.minute, moment.second, moment.microsecond, moment.date(), moment.time(), moment.isoformat(), moment.isoformat(" "))
+print(datetime(2024, 1, 2, hour=3), datetime(2024, 1, 2, 3, 4, 5, 6).isoformat(timespec="milliseconds"), moment.isoformat(timespec="minutes"))
+print(moment + timedelta(hours=12), moment - timedelta(minutes=45), datetime(2024, 3, 1) - datetime(2024, 2, 1, 6), timedelta(1) + moment)
+print(datetime.combine(d, time(8, 15)), moment.replace(hour=0, minute=0), moment.weekday(), moment.toordinal(), moment.ctime())
+print(datetime.min, datetime.max, repr(datetime.resolution), datetime.fromordinal(1), isinstance(moment, date), isinstance(d, datetime))
+print(datetime(2023, 12, 31, 23, 59, 59, 999999) + timedelta(microseconds=1), datetime(2024, 3, 1) - timedelta(days=1))
+
+# time
+t = time(12, 30)
+print(t, repr(t), repr(time()), repr(time(1, 2, 3)), repr(time(1, 2, 0, 4)), time(1, 2, 3, 4), t.isoformat("hours"), time(1, 2, 3, 4).isoformat("milliseconds"))
+print(t.hour, t.minute, t.second, t.microsecond, time.min, time.max, t < time(13), t == time(12, 30, 0), time(13, 5).strftime("%I:%M %p, %Y %j"))
+
+# timedelta: normalization, str/repr, float arguments rounded half to even, arithmetic
+span = timedelta(days=1, hours=2, minutes=3, seconds=4, microseconds=5)
+print(span, repr(span), span.days, span.seconds, span.microseconds, span.total_seconds())
+print(timedelta(hours=5), timedelta(weeks=1, days=-1), timedelta(milliseconds=1500), timedelta(minutes=-1), repr(timedelta()), timedelta(0))
+print(timedelta(-1), repr(timedelta(-1, 5)), timedelta(-1, 5), timedelta(microseconds=-1), timedelta(days=-2, hours=3), repr(timedelta(seconds=-1.5)))
+print(timedelta(hours=1.5), timedelta(days=0.5), timedelta(days=1.5, hours=0.1), timedelta(weeks=1.1), timedelta(milliseconds=0.0005))
+print(timedelta(seconds=0.5e-6), timedelta(seconds=1.5e-6), timedelta(seconds=2.5e-6), timedelta(microseconds=5) / 2, timedelta(microseconds=7) / 2)
+print(span * 2, 2 * span, span * 0.5, span / 2, span / span, timedelta(hours=1) * 1.1, timedelta(hours=1) / 7.0, timedelta(hours=1) / 3)
+print(timedelta(hours=1) / timedelta(minutes=7), timedelta(hours=1) // timedelta(minutes=7), timedelta(hours=1) % timedelta(minutes=7))
+print(divmod(timedelta(hours=1), timedelta(minutes=7)), timedelta(hours=-1) // 7, -span, +span, abs(timedelta(-1, 5)), abs(-span))
+print(timedelta(days=-1).total_seconds(), timedelta(hours=1) < timedelta(hours=2), timedelta(hours=1) == timedelta(minutes=60), bool(timedelta(0)))
+print(repr(timedelta.min), repr(timedelta.max), timedelta.max, timedelta.min, repr(timedelta.resolution))
+if timedelta(0):
+    print("a zero timedelta is true")
+else:
+    print("a zero timedelta is false")
+
+# time zones: aware datetimes compare and subtract as moments
+utc_noon = datetime(2024, 3, 10, 12, tzinfo=timezone.utc)
+cet = timezone(timedelta(hours=1))
+jst = timezone(timedelta(hours=9), "JST")
+print(utc_noon, repr(utc_noon), utc_noon.isoformat(), utc_noon.utcoffset(), utc_noon.tzname(), timezone.utc, repr(timezone.utc))
+print(repr(cet), cet, repr(jst), jst, timezone(timedelta(hours=-5, minutes=-30)), repr(timezone(timedelta(0), "UTC")), dtmod.UTC is timezone.utc)
+print(utc_noon - datetime(2024, 3, 10, 12, tzinfo=cet), utc_noon == datetime(2024, 3, 10, 13, tzinfo=cet), datetime(2024, 1, 1) == datetime(2024, 1, 1, tzinfo=timezone.utc))
+print(utc_noon.astimezone(jst), utc_noon.astimezone(jst).tzname(), utc_noon.replace(tzinfo=None), utc_noon.replace(tzinfo=cet), repr(moment.tzinfo))
+print(len({utc_noon, datetime(2024, 3, 10, 13, tzinfo=cet)}), utc_noon < datetime(2024, 3, 10, 14, tzinfo=cet), time(1, 2, tzinfo=timezone.utc))
+print(datetime(2024, 1, 2, 3, 4, 5, tzinfo=timezone.utc).timestamp(), datetime.fromtimestamp(1706745600.5, tz=timezone.utc), datetime.fromtimestamp(0, cet))
+print(datetime.fromisoformat("2024-03-10T12:00:00+00:00") == utc_noon, utc_noon.timetz(), datetime.utcfromtimestamp(86400 * 365.25))
+
+# strftime: glibc's directives and flags, CPython's %f, %z, %:z and 4-digit %Y
+print(d.strftime("%d/%m/%Y %A %B %j"), moment.strftime("%Y-%m-%d %H:%M:%S.%f %a %b %p %I %y %%"))
+print(date(2024, 1, 31).strftime("%e|%-d|%-m|%-j|%U|%W|%V|%u|%w|%h|%D|%F|%T|%R|%C|%G|%g|%k|%l|%P"))
+print(datetime(2024, 1, 31, 13, 5, 9, 123).strftime("%-I|%-H|%-M|%-S|%z|%Z|%c|%x|%X|%r"), utc_noon.strftime("%z|%Z|%:z"))
+print(datetime(5, 3, 4, 5, 6, 7).strftime("%Y|%F|%c|%G|%Q|%_d|%0e|%^a|%#b|%5Y|%4d|%Ey|%Od"), datetime(2023, 1, 1).strftime("%U %W %V %G %u %w"))
+print(f"{d:%d.%m.%Y}", f"{moment:%H h}", f"{d}", f"{moment}", f"{span}", "{:%Y}".format(date(2024, 5, 5)), format(time(3, 4), "%H-%M"))
+
+# fromisoformat and strptime
+for text in ["2024-01-31", "20240131", "2024-W05-3", "2024-W05", "2024-01-31T12", "2024-01-31 12:30:45.5", "2024-01-31T12:30:45,25",
+             "20240131T123045Z", "2024-01-31T12:30:45-0800", "2024-01-31T12:30:45+05:30:15.5", "2024-01-31T24:00", "2024-01-31T12:3"]:
+    attempt("datetime " + text, lambda: datetime.fromisoformat(text))
+attempt("date 2024-01-31T12", lambda: date.fromisoformat("2024-01-31T12"))
+attempt("time T12:30:45.5Z", lambda: time.fromisoformat("T12:30:45.5Z"))
+attempt("strptime 1", lambda: datetime.strptime("2024-03-04 05:06:07", "%Y-%m-%d %H:%M:%S"))
+attempt("strptime 2", lambda: datetime.strptime("04/Mar/24 1:02 PM", "%d/%b/%y %I:%M %p"))
+attempt("strptime 3", lambda: datetime.strptime("Monday 5 February 2024", "%A %d %B %Y"))
+attempt("strptime 4", lambda: datetime.strptime("Tue Feb  6 10:11:12 2024", "%c"))
+attempt("strptime 5", lambda: datetime.strptime("2024-03-04T05:06:07.5+0130", "%Y-%m-%dT%H:%M:%S.%f%z"))
+attempt("strptime 6", lambda: datetime.strptime("2024 060", "%Y %j"))
+attempt("strptime 7", lambda: datetime.strptime("2024-W06-1", "%G-W%V-%u"))
+attempt("strptime 8", lambda: datetime.strptime("99/12/31 12:00 AM", "%y/%m/%d %I:%M %p"))
+attempt("strptime 9", lambda: dt.strptime("  2024", " %Y"))
+
+# errors with CPython's messages
+attempt("feb 30", lambda: date(2024, 2, 30))
+attempt("month 13", lambda: date(2024, 13, 1))
+attempt("year 0", lambda: date(0, 1, 1))
+attempt("hour 24", lambda: datetime(2024, 1, 1, 24))
+attempt("microsecond", lambda: time(1, 1, 1, 1000000))
+attempt("days", lambda: timedelta(days=1000000000))
+attempt("date.max + 1", lambda: date.max + timedelta(1))
+attempt("datetime.max + 1", lambda: datetime.max + timedelta(1))
+attempt("ordinal 0", lambda: date.fromordinal(0))
+attempt("bad iso", lambda: date.fromisoformat("2024-1-1"))
+attempt("no match", lambda: datetime.strptime("2024-01-01", "%Y/%m/%d"))
+attempt("remains", lambda: datetime.strptime("2024-01-01x", "%Y-%m-%d"))
+attempt("bad directive", lambda: datetime.strptime("2024", "%Q"))
+attempt("date < datetime", lambda: date(2024, 1, 1) < datetime(2024, 1, 1))
+attempt("naive - aware", lambda: datetime(2024, 1, 1) - datetime(2024, 1, 1, tzinfo=timezone.utc))
+attempt("naive < aware", lambda: datetime(2024, 1, 1) < datetime(2024, 1, 1, tzinfo=timezone.utc))
+attempt("division by zero", lambda: timedelta(1) / 0)
+attempt("24h offset", lambda: timezone(timedelta(hours=24)))
+attempt("timespec", lambda: moment.isoformat(timespec="x"))
+attempt("multiply", lambda: timedelta(days=999999999) * 2)
+
+
+# in programs: classes, dataclasses, collections, inference through operators
+class Event:
+    def __init__(self, name: str, when: datetime, length: timedelta) -> None:
+        self.name = name
+        self.when = when
+        self.length = length
+
+    def end(self) -> datetime:
+        return self.when + self.length
+
+
+@dataclass
+class Task:
+    title: str
+    due: dtmod.date
+
+
+def days_between(a, b):
+    return (b - a).days
+
+
+def next_weekdays(start: date, count: int) -> list[date]:
+    out = []
+    cur = start
+    while len(out) < count:
+        if cur.weekday() < 5:
+            out.append(cur)
+        cur += timedelta(days=1)
+    return out
+
+
+events = [Event("standup", dt(2024, 5, 6, 9, 0), timedelta(minutes=15)), Event("review", dt(2024, 5, 6, 14, 30), timedelta(hours=1, minutes=30))]
+for e in events:
+    print(e.name, e.when.strftime("%H:%M"), "-", e.end().strftime("%H:%M"), e.length)
+print([e.name for e in sorted(events, key=lambda e: e.end(), reverse=True)], sum([e.length for e in events], timedelta()))
+tasks = [Task("a", dtmod.date(2024, 5, 10)), Task("b", dtmod.date(2024, 5, 3))]
+print(tasks, min(tasks, key=lambda task: task.due).title)
+print(days_between(date(2024, 1, 1), date(2024, 12, 25)), next_weekdays(date(2024, 5, 9), 4))
+stamps = [dt(2024, 1, 1, 10), dt(2024, 1, 1, 9, 30), dt(2024, 1, 1, 11, 15)]
+gaps = [b - a for a, b in zip(stamps, stamps[1:])]
+print(gaps, max(gaps), sorted(stamps)[0], {s.date() for s in stamps}, [d - date(2024, 1, 1), timedelta(hours=3)])
+counts = {date(2024, 1, 1): 1}
+counts[date(2024, 1, 1)] += 1
+print(counts, dtmod.date(2020, 2, 3), dtmod.timedelta(days=2), dtmod.datetime(2020, 1, 1, 1), dtmod.MINYEAR)
+remaining = datetime(2024, 12, 31, 23, 59, 59) - datetime(2024, 12, 1)
+print(f"{remaining.days} days and {remaining.seconds // 3600} hours left")
+
+# the current time (not printed: it changes)
+now = datetime.now()
+print(isinstance(now, datetime), datetime.now() - now < timedelta(seconds=5), date.today() >= date(2024, 1, 1), now.year >= 2024)
+print(datetime.now(timezone.utc).tzinfo is timezone.utc, abs(datetime.now(timezone.utc).timestamp() - now.timestamp()) < 5)
