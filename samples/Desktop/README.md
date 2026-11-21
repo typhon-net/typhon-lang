@@ -41,7 +41,10 @@ out/wpf/WpfTodo.exe --smoke | Out-String
 
 `dotnet build` works on Linux and macOS for all three (WinUI runs no Windows tool in this configuration); run the result
 on Windows. Under WSL, publish to a Windows folder (`-o /mnt/c/...`) and start the `.exe` from the WSL shell: its output
-comes back to the terminal. The smoke run shows the real window and runs the framework's message loop, but places the window off-screen
+comes back to the terminal. Do not start the WPF app from the WSL file system (`\\wsl.localhost\...`, `\\wsl$\...`): WPF
+loads its native pen and touch library (`PenIMC_cor3.dll`) when the first window opens, that load fails from such a path,
+and the app ends with a `DllNotFoundException` before a window appears (any WPF app does; WinUI and Windows Forms are not
+affected). The smoke run shows the real window and runs the framework's message loop, but places the window off-screen
 without a taskbar button, and ends the process after 60 seconds if the script got stuck. All three print the same,
 apart from the first line:
 
