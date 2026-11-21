@@ -36,6 +36,11 @@ namespace Typhon.Runtime
     /// reads the sent value (and a pending throw()/close()) from this object after each yield; return value ends it with
     /// StopIteration(value). It is its own iterator, like a Python generator object.
     /// </summary>
+    /// <remarks>
+    /// The body is a C# iterator, or, when its yields stand where C# iterators allow none (in a try block with an except,
+    /// in an except or finally block, inside an expression), an async method that awaits <see cref="Yield"/>: the await
+    /// suspends it, and MoveNext/send resume it on the caller's thread (a coroutine without threads or a scheduler).
+    /// </remarks>
     internal sealed class PyGenerator<T> : IEnumerable<T>, IEnumerator<T>
     {
         IEnumerator<T>? _body;
@@ -44,6 +49,38 @@ namespace Typhon.Runtime
         Exception? _pending;
         public object? __return;
         public void __start(IEnumerable<T> body) => _body = body.GetEnumerator();
+
+        // the async form: the body's task, the continuation of its pending yield, the value it yielded
+        Func<System.Threading.Tasks.Task<object?>>? _asyncBody;
+        System.Threading.Tasks.Task<object?>? _task;
+        Action? _continuation;
+        T _yielded = default!;
+        public void __start_async(Func<System.Threading.Tasks.Task<object?>> body) => _asyncBody = body;
+
+        /// <summary>yield value in an async-form body: await suspends the body here; the await's result is what send() passes in.</summary>
+        public YieldAwaiter Yield(T value) { _yielded = value; return new YieldAwaiter(this); }
+
+        public readonly struct YieldAwaiter : ICriticalNotifyCompletion
+        {
+            readonly PyGenerator<T> _g;
+            internal YieldAwaiter(PyGenerator<T> g) { _g = g; }
+            public YieldAwaiter GetAwaiter() => this;
+            public bool IsCompleted => false;
+            public void OnCompleted(Action continuation) => _g._continuation = continuation;
+            public void UnsafeOnCompleted(Action continuation) => _g._continuation = continuation;
+            public object? GetResult() => _g.__resume();
+        }
+
+        /// <summary>Runs the async-form body to its next yield (true) or to its end (false, its return value kept).</summary>
+        bool StepAsync()
+        {
+            if (_task == null) _task = _asyncBody!();
+            else { var k = _continuation!; _continuation = null; k(); }
+            if (_continuation != null) return true;
+            if (_task.IsFaulted) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(_task.Exception!.InnerException!).Throw();
+            __return = _task.Result;
+            return false;
+        }
 
         /// <summary>After a yield, in the body: the value sent in (or the exception thrown in).</summary>
         public object? __resume()
@@ -57,7 +94,7 @@ namespace Typhon.Runtime
             if (_done) return false;
             _started = true;
             bool more;
-            try { more = _body!.MoveNext(); }
+            try { more = _asyncBody != null ? StepAsync() : _body!.MoveNext(); }
             catch { _done = true; throw; }
             if (!more) _done = true;
             return more;
@@ -90,7 +127,7 @@ namespace Typhon.Runtime
             _done = true;
         }
 
-        public T Current => _body!.Current;
+        public T Current => _asyncBody != null ? _yielded : _body!.Current;
         object? IEnumerator.Current => Current;
         public bool MoveNext() { __sent = null; return Step(); }
         public void Reset() => throw new NotSupportedException();
@@ -118,7 +155,13 @@ namespace Typhon.Runtime
             var e = IteratorOf(gen);
             return e.MoveNext() ? e.Current : throw new StopIteration();
         }
-        public static void close<T>(this IEnumerable<T> gen) { }
+        /// <summary>gen.close() on a generator compiled as a C# iterator: disposing its iterator runs its pending finally blocks.</summary>
+        public static void close<T>(this IEnumerable<T> gen)
+        {
+            if (gen is PyGenerator<T> pg) { pg.close(); return; }
+            if (Iterators<T>.Of.TryGetValue(gen, out var it)) { it.Dispose(); Iterators<T>.Of.Remove(gen); }
+            else if (gen is IDisposable d) d.Dispose();
+        }
 
         /// <summary>obj.__dict__ / vars(obj): a live view of the object's attributes.</summary>
         public static PyAttrDict __dict__(object o) => new PyAttrDict(o);

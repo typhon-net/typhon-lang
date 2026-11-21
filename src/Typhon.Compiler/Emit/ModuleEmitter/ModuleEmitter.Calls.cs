@@ -455,6 +455,9 @@ namespace Typhon.Compiler.Emit
         /// </summary>
         string SpecialFormCall(CallExpr c, bool targetTyped)
         {
+            // KeyError(key): Python's str() of a KeyError is the key's repr (KeyError: 'k')
+            if (c.Func is NameExpr ke && ke.Id == "KeyError" && !IsShadowed("KeyError") && c.Args.Count == 1 && c.Args[0].Name == null && !c.Args[0].Star)
+                return $"new global::System.Collections.Generic.KeyNotFoundException({Rt("repr")}((object?){Paren(EmitExpr(c.Args[0].Value))}))";
             // open(path, "rb"): a binary file (reads and writes bytes)
             if (c.Func is NameExpr ofn && ofn.Id == "open" && !IsShadowed("open") && OpenMode(c)?.Contains('b') == true)
                 return $"{Rt("open_binary")}({EmitExpr(c.Args[0].Value)}, {CsString(OpenMode(c))})";

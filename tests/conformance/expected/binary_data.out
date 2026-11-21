@@ -33,3 +33,11 @@ b'A' b'\x00'
 bb8a448c1e7b1ef9400da3382fce603a
 b1fc1c68a28135561cdb827e85081055da92f15662d9c33466d153b4e8e9a7b4
 16d1e261aefff5999b17fe076c0c7765839b8e29 20
+bytearray(b'  HELLO WORLD  ') bytearray(b'  hello world  ') bytearray(b'Hello World') bytearray(b'Hello World  ') bytearray(b'  Hello World')
+[bytearray(b'Hello'), bytearray(b'World')] bytearray(b'  HeLLo WorLd  ') True True
+6 9 8 3 False True
+bytearray(b'a-b') (bytearray(b'a'), bytearray(b','), bytearray(b'b,c')) (bytearray(b'a,b'), bytearray(b','), bytearray(b'c'))
+b'Hello world' b'Hello World' b'HELLO WORLD' b'**hello world**' b'hello world..' b'  hello world' b'00042' b'-00042'
+b'world' b'hello' [b'hello', b'world'] b'a   bc  d' 7
+True False True True bytearray(b'aBC') bytearray(b'--x--')
+6 b'xyz'

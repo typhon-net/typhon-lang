@@ -44,9 +44,18 @@ namespace Typhon.Compiler.Emit
         }
 
         /// <summary>yield v; in a generator that receives values, then what was sent in (or thrown in) when it resumes.</summary>
-        string EmitYieldValue(YieldExpr y)
+        string EmitYieldValue(YieldExpr y, bool wantSent = false)
         {
-            _w.Line($"yield return {(y.Value == null ? "default!" : _scope?.ReturnType == "dynamic" ? EmitValue(y.Value) : EmitExpr(y.Value, targetTyped: true))};");
+            string value = YieldedValue(y);
+            if (_scope != null && _scope.AsyncForm)
+            {
+                if (!wantSent) { _w.Line($"await {GenVar}.Yield({value});"); return null; }
+                string got = NewTmp("sent");
+                _w.Line($"dynamic {got} = await {GenVar}.Yield({value});");
+                SetType(got, "dynamic");
+                return got;
+            }
+            _w.Line($"yield return {value};");
             if (_scope == null || !_scope.ReceivesValues) return null;
             string sent = NewTmp("sent");
             _w.Line($"dynamic {sent} = {GenVar}.__resume();");
@@ -54,12 +63,15 @@ namespace Typhon.Compiler.Emit
             return sent;
         }
 
+        string YieldedValue(YieldExpr y) =>
+            y.Value == null ? "default!" : _scope?.ReturnType == "dynamic" ? EmitValue(y.Value) : EmitExpr(y.Value, targetTyped: true);
+
         void EmitAssign(AssignStmt a)
         {
             // x = yield v: the value send() passes in (late-bound: a generator can be sent anything)
             if (a.Value is YieldExpr ay && !ay.From && _scope != null && _scope.ReceivesValues)
             {
-                string sent = EmitYieldValue(ay);
+                string sent = EmitYieldValue(ay, wantSent: true);
                 foreach (var t in a.Targets) EmitAssignTo(t, new NameExpr { Id = sent, Line = a.Line, Col = a.Col }, a);
                 return;
             }

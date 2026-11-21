@@ -35,6 +35,8 @@ namespace Typhon.Compiler.Emit
         public bool IsGenerator;
         /// <summary>A generator that receives values (x = yield v) or returns one: a PyGenerator whose body reads them.</summary>
         public bool ReceivesValues;
+        /// <summary>A generator whose yields stand where C# iterators allow none: its body is an async method awaiting Yield.</summary>
+        public bool AsyncForm;
         public bool IsAsync;
         public bool HasSelf;             // instance method: 'self' → 'this'
         public string ClsName;           // classmethod: 'cls' → class name

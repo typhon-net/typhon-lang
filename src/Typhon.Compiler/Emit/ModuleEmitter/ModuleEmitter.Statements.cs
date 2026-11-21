@@ -138,7 +138,8 @@ namespace Typhon.Compiler.Emit
                     if (y.From)
                     {
                         string t = NewTmp("y");
-                        _w.Line($"foreach (var {t} in {EmitExpr(y.Value)}) yield return {t};");
+                        _w.Line(_scope != null && _scope.AsyncForm ? $"foreach (var {t} in {EmitIterable(y.Value)}) await {GenVar}.Yield({t});"
+                                                                    : $"foreach (var {t} in {EmitExpr(y.Value)}) yield return {t};");
                     }
                     else EmitYieldValue(y);
                     return;
@@ -164,6 +165,11 @@ namespace Typhon.Compiler.Emit
             if (_scope != null && _scope.IsGenerator)
             {
                 // return v: the value StopIteration carries (next(), send(), yield from)
+                if (_scope.AsyncForm)
+                {
+                    _w.Line(r.Value != null && !IsNone(r.Value) ? $"return (object?){Paren(EmitValue(r.Value))};" : "return null;");
+                    return;
+                }
                 if (r.Value != null && !IsNone(r.Value))
                 {
                     if (_scope.ReceivesValues) _w.Line($"{GenVar}.__return = (object?){Paren(EmitValue(r.Value))};");

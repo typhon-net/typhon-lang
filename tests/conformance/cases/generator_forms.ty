@@ -1,0 +1,78 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+"""Conformance: yields where C# iterators allow none (try/except, except, finally, inside expressions), close() running finally."""
+
+def safe_ints(items):
+    for x in items:
+        try:
+            yield int(x)
+        except ValueError:
+            yield -1
+
+
+def resilient():
+    total = 0
+    while True:
+        try:
+            v = yield total
+            total += v
+        except ValueError:
+            total = 0
+            yield "reset"
+        finally:
+            pass
+
+
+def cleanup(log):
+    try:
+        yield 1
+        yield 2
+    finally:
+        log.append("closed")
+
+
+def nested():
+    received = []
+    while len(received) < 3:
+        received.append((yield len(received)))
+    return received
+
+
+def doubled():
+    x = 1
+    while x < 50:
+        x = 2 * (yield x)
+
+
+def rethrow():
+    try:
+        yield "a"
+    except KeyError as e:
+        yield f"caught {e}"
+        raise
+
+
+if __name__ == "__main__":
+    print(list(safe_ints(["1", "x", "3"])))
+    g = resilient()
+    print(next(g), g.send(5), g.send(10), g.throw(ValueError("x")), next(g), g.send(2))
+    log = []
+    c = cleanup(log)
+    print(next(c), log)
+    c.close()
+    print(log)
+    n = nested()
+    print(next(n), n.send("a"), n.send("b"))
+    try:
+        n.send("c")
+    except StopIteration as stop:
+        print("returned", stop.value)
+    d = doubled()
+    print(next(d), d.send(3), d.send(10))
+    r = rethrow()
+    print(next(r), r.throw(KeyError("k")))
+    try:
+        next(r)
+    except KeyError as err:
+        print("re-raised", err)

@@ -73,3 +73,15 @@ h = hashlib.sha1()
 h.update(b"ty")
 h.update(b"phon")
 print(h.hexdigest(), len(h.digest()))
+
+# the rest of the bytes methods, and bytearray with all of them
+barr = bytearray(b"  Hello World  ")
+print(barr.upper(), barr.lower(), barr.strip(), barr.lstrip(), barr.rstrip())
+print(barr.strip().split(b" "), barr.replace(b"l", b"L"), barr.startswith(b"  H"), barr.endswith(b"  "))
+print(barr.find(b"o"), barr.rfind(b"o"), barr.index(b"W"), barr.count(b"l"), barr.isdigit(), bytearray(b"123").isdigit())
+print(bytearray(b"-").join([b"a", b"b"]), bytearray(b"a,b,c").partition(b","), bytearray(b"a,b,c").rpartition(b","))
+bs = b"hello world"
+print(bs.capitalize(), bs.title(), bs.swapcase(), bs.center(15, b"*"), bs.ljust(13, b"."), bs.rjust(13), b"42".zfill(5), b"-42".zfill(6))
+print(bs.removeprefix(b"hello "), bs.removesuffix(b" world"), bs.rsplit(b" ", 1), b"a\tbc\td".expandtabs(4), bs.rindex(b"o"))
+print(bs.islower(), bs.isupper(), b"Hello World".istitle(), bs.isascii(), bytearray(b"Abc").swapcase(), bytearray(b"x").center(5, b"-"))
+print(bs.find(bytearray(b"wor")), b"x" + bytes(bytearray(b"yz")))

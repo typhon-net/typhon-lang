@@ -135,6 +135,8 @@ namespace Typhon.Compiler.Emit
                 case DictExpr d: return EmitDict(d, targetTyped);
                 case ComprehensionExpr c: return EmitComprehension(c);
                 case AwaitExpr a: return $"(await {EmitExpr(a.Value)})";
+                // (yield v) inside an expression: the async form awaits it; its value is what send() passes in
+                case YieldExpr y when _scope != null && _scope.AsyncForm && !y.From: return $"(await {GenVar}.Yield({YieldedValue(y)}))";
                 case YieldExpr y: Unsupported(y, "using 'yield' as an expression"); return "default";
                 case StarredExpr s: Unsupported(s, "starred expressions here"); return "default";
                 case SliceExpr s: Error(s, "slice outside of a subscript"); return "default";

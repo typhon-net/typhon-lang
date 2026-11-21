@@ -99,7 +99,7 @@ namespace Typhon.Compiler.Emit
             public string ReturnType;      // full C# return type incl. Task/IEnumerable wrapping
             public string ElementType;     // yield element type / awaited type / plain type
             public string Params;
-            public bool IsGenerator, IsAsync, ReceivesValues;
+            public bool IsGenerator, IsAsync, ReceivesValues, AsyncForm;
             public LocalsResult Locals;
             public Scope Scope;
             /// <summary>Statements at the start of the body (parameters falling back to definition-time defaults).</summary>
@@ -161,9 +161,11 @@ namespace Typhon.Compiler.Emit
                 // the generator object, then its body as a local iterator that reads what send() / throw() pass in
                 _w.Open();
                 _w.Line($"var {GenVar} = new {sig.ReturnType}();");
-                _w.Line($"IEnumerable<{sig.ElementType}> __body()");
+                // (the async form: an async method that awaits each yield, so yields may stand in try/except/finally and
+                // inside expressions)
+                _w.Line(sig.AsyncForm ? "async global::System.Threading.Tasks.Task<object?> __body()" : $"IEnumerable<{sig.ElementType}> __body()");
                 EmitFunctionBody(body, sig.Scope, null, sig.Locals, extraPrologue: () => { foreach (var line in sig.Prologue) _w.Line(line); });
-                _w.Line($"{GenVar}.__start(__body());");
+                _w.Line(sig.AsyncForm ? $"{GenVar}.__start_async(__body);" : $"{GenVar}.__start(__body());");
                 _w.Line($"return {GenVar};");
                 _w.Close();
             }
@@ -177,6 +179,42 @@ namespace Typhon.Compiler.Emit
         /// A generator that uses what is sent in (x = yield v) or returns a value: it needs the generator protocol (send,
         /// throw, close, StopIteration.value), not just an iterator.
         /// </summary>
+        /// <summary>
+        /// Does the generator yield where a C# iterator cannot: in a try block that has except clauses, in an except or finally
+        /// block, or inside a larger expression (print((yield)), y = f((yield x)))? Then its body takes the async form.
+        /// </summary>
+        static bool GeneratorNeedsAsyncForm(List<Stmt> body)
+        {
+            bool found = false;
+            void InExpr(Expr e) { if (e != null && !found) AstWalker.VisitAll(e, n => { if (n is YieldExpr) found = true; }); }
+            void Stmts(List<Stmt> ss, bool restricted) { foreach (var st in ss) { if (found) return; Statement(st, restricted); } }
+            void Statement(Stmt st, bool restricted)
+            {
+                switch (st)
+                {
+                    case FunctionDef _: case ClassDef _: return;
+                    case TryStmt t:
+                        Stmts(t.Body, restricted || t.Handlers.Count > 0);
+                        foreach (var h in t.Handlers) { InExpr(h.Type); Stmts(h.Body, true); }
+                        Stmts(t.OrElse, restricted || t.Handlers.Count > 0);
+                        Stmts(t.FinalBody, true);
+                        return;
+                    case ExprStmt es when es.Value is YieldExpr y: if (restricted) found = true; else InExpr(y.Value); return;
+                    case AssignStmt a when a.Value is YieldExpr y && a.Targets.Count == 1: if (restricted) found = true; else InExpr(y.Value); return;
+                    case AnnAssignStmt an when an.Value is YieldExpr y: if (restricted) found = true; else InExpr(y.Value); return;
+                }
+                foreach (var child in AstWalker.Children(st))
+                {
+                    if (child is List<Stmt> list) Stmts(list, restricted);
+                    else if (child is Expr ex) InExpr(ex);
+                    else if (child is System.Collections.IEnumerable items && !(child is string))
+                        foreach (var item in items) { if (item is Stmt cs) Statement(cs, restricted); else if (item is Expr ce) InExpr(ce); }
+                }
+            }
+            Stmts(body, false);
+            return found;
+        }
+
         static bool GeneratorReceivesValues(List<Stmt> body) => AstWalker.ContainsOutsideNestedScopes(body, n =>
             n is AssignStmt a && a.Value is YieldExpr ay && !ay.From || n is AnnAssignStmt an && an.Value is YieldExpr ny && !ny.From ||
             n is ReturnStmt r && r.Value != null && !(r.Value is ConstExpr rc && rc.Kind == ConstKind.None));
@@ -188,8 +226,9 @@ namespace Typhon.Compiler.Emit
             sig.Locals = locals;
             sig.IsGenerator = locals.HasYield;
             sig.IsAsync = f.IsAsync;
-            sig.ReceivesValues = sig.IsGenerator && !f.IsAsync && GeneratorReceivesValues(f.Body);
-            var scope = new Scope { Locals = locals, IsGenerator = sig.IsGenerator, IsAsync = f.IsAsync, Parent = _scope, ReceivesValues = sig.ReceivesValues };
+            sig.AsyncForm = sig.IsGenerator && !f.IsAsync && GeneratorNeedsAsyncForm(f.Body);
+            sig.ReceivesValues = sig.IsGenerator && !f.IsAsync && (sig.AsyncForm || GeneratorReceivesValues(f.Body));
+            var scope = new Scope { Locals = locals, IsGenerator = sig.IsGenerator, IsAsync = f.IsAsync, Parent = _scope, ReceivesValues = sig.ReceivesValues, AsyncForm = sig.AsyncForm };
             sig.Scope = scope;
 
             var ps = new List<string>();
@@ -517,6 +556,7 @@ namespace Typhon.Compiler.Emit
             // parameters count as declared by the body's top block: rebinding one there to another type gives a new variable
             EmitBlockStatements(body, preDeclared: scope.Params);
             // falling off the end returns None (C# warns about unreachable code where the end cannot be reached; that is off)
+            if (scope.AsyncForm) _w.Line("return null;"); // the async form's body: falling off the end returns None
             if (scope.ReturnType != null && scope.ReturnType != "void" && !scope.IsGenerator)
             {
                 if (Obs != null && _retKey != null && CanFallThrough(body)) Obs.AddReturn(_retKey, TypeInference.NoneType);

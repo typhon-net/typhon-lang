@@ -84,6 +84,7 @@ namespace Typhon.Compiler.Emit
                         default: return null;
                     }
                 case FStringExpr _: return "string";
+                case YieldExpr _ when _scope != null && _scope.AsyncForm: return "dynamic";
                 case NamedExpr ne: return InferType(ne.Value);
                 case ComprehensionExpr comp: return ComprehensionType(comp);
                 case NameExpr n when n.Id == "__file__" && !IsShadowed(n.Id): return "string";

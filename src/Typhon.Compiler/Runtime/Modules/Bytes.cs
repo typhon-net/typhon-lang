@@ -316,6 +316,77 @@ namespace Typhon.Runtime
             return r;
         }
         public bool __contains__(object? x) => x is PyBytes b ? Data.AsSpan().IndexOf(b.Data) >= 0 : Array.IndexOf(Data, ByteOps.Byte(x)) >= 0;
+
+        // ── the rest of Python's bytes methods (ASCII rules, like CPython's) ──
+        static bool Lower(byte b) => b >= 'a' && b <= 'z';
+        static bool Upper(byte b) => b >= 'A' && b <= 'Z';
+        static byte ToUpper(byte b) => Lower(b) ? (byte)(b - 32) : b;
+        static byte ToLower(byte b) => Upper(b) ? (byte)(b + 32) : b;
+        public PyBytes capitalize() => new PyBytes(Data.Select((b, i) => i == 0 ? ToUpper(b) : ToLower(b)).ToArray());
+        public PyBytes swapcase() => new PyBytes(Data.Select(b => Lower(b) ? ToUpper(b) : ToLower(b)).ToArray());
+        public PyBytes title()
+        {
+            var r = new byte[Data.Length];
+            bool prevCased = false;
+            for (int i = 0; i < Data.Length; i++)
+            {
+                byte b = Data[i];
+                r[i] = prevCased ? ToLower(b) : ToUpper(b);
+                prevCased = Lower(b) || Upper(b);
+            }
+            return new PyBytes(r);
+        }
+        public bool islower() => Data.Any(Lower) && !Data.Any(Upper);
+        public bool isupper() => Data.Any(Upper) && !Data.Any(Lower);
+        public bool isascii() => Data.All(b => b < 128);
+        public bool istitle() => Data.Any(b => Lower(b) || Upper(b)) && title().Equals(this);
+        static byte Fill(PyBytes? fill) => fill == null ? (byte)' ' : fill.Data.Length == 1 ? fill.Data[0] : throw new InvalidCastException("The fill character must be exactly one byte long");
+        public PyBytes center(long width, PyBytes? fillbyte = null)
+        {
+            int pad = (int)Math.Max(0, width - Data.Length), left = pad / 2 + (pad & (int)width & 1);
+            byte f = Fill(fillbyte);
+            return new PyBytes(Enumerable.Repeat(f, left).Concat(Data).Concat(Enumerable.Repeat(f, pad - left)).ToArray());
+        }
+        public PyBytes ljust(long width, PyBytes? fillbyte = null) => new PyBytes(Data.Concat(Enumerable.Repeat(Fill(fillbyte), (int)Math.Max(0, width - Data.Length))).ToArray());
+        public PyBytes rjust(long width, PyBytes? fillbyte = null) => new PyBytes(Enumerable.Repeat(Fill(fillbyte), (int)Math.Max(0, width - Data.Length)).Concat(Data).ToArray());
+        public PyBytes zfill(long width)
+        {
+            int pad = (int)Math.Max(0, width - Data.Length);
+            if (pad == 0) return this;
+            bool sign = Data.Length > 0 && (Data[0] == '+' || Data[0] == '-');
+            var digits = sign ? Data[1..] : Data;
+            return new PyBytes((sign ? new[] { Data[0] } : Array.Empty<byte>()).Concat(Enumerable.Repeat((byte)'0', pad)).Concat(digits).ToArray());
+        }
+        public PyBytes removeprefix(PyBytes prefix) => startswith(prefix) ? new PyBytes(Data[prefix.Data.Length..]) : this;
+        public PyBytes removesuffix(PyBytes suffix) => suffix.Data.Length > 0 && endswith(suffix) ? new PyBytes(Data[..^suffix.Data.Length]) : this;
+        public long rindex(PyBytes sub, long start = 0, long? end = null) { long i = rfind(sub, start, end); return i >= 0 ? i : throw new ArgumentException("subsection not found"); }
+        public (PyBytes, PyBytes, PyBytes) rpartition(PyBytes sep)
+        {
+            int k = Data.AsSpan().LastIndexOf(sep.Data);
+            return k < 0 ? (Empty, Empty, this) : (new PyBytes(Data[..k]), sep, new PyBytes(Data[(k + sep.Data.Length)..]));
+        }
+        public List<PyBytes> rsplit(PyBytes? sep = null, long maxsplit = -1)
+        {
+            if (maxsplit < 0) return split(sep);
+            // split from the right: reverse, split, reverse back
+            var reversed = new PyBytes(Data.Reverse().ToArray());
+            var rsep = sep == null ? null : new PyBytes(sep.Data.Reverse().ToArray());
+            var parts = reversed.split(rsep, maxsplit);
+            parts.Reverse();
+            return parts.Select(x => new PyBytes(x.Data.Reverse().ToArray())).ToList();
+        }
+        public PyBytes expandtabs(long tabsize = 8)
+        {
+            var r = new List<byte>();
+            int col = 0;
+            foreach (var b in Data)
+            {
+                if (b == '\t') { int n = tabsize > 0 ? (int)(tabsize - col % tabsize) : 0; r.AddRange(Enumerable.Repeat((byte)' ', n)); col += n; }
+                else { r.Add(b); col = b == '\n' || b == '\r' ? 0 : col + 1; }
+            }
+            return new PyBytes(r.ToArray());
+        }
+        public long count(PyBytes sub, long start, long? end = null) => Slice(start, end, 1).count(sub);
     }
 
     /// <summary>Python's bytearray: a mutable sequence of ints 0..255.</summary>
@@ -358,6 +429,51 @@ namespace Typhon.Runtime
         public string hex(string? sep = null) => ByteOps.Hex(_data.ToArray(), sep);
         public long find(PyBytes sub, long start = 0, long? end = null) => ByteOps.Find(_data.ToArray(), sub.Data, start, end, false);
         public long count(long b) => _data.Count(x => x == b);
+
+        // ── bytes' methods: computed on a snapshot; those returning bytes return a bytearray, as in Python ──
+        public static implicit operator PyBytes(PyByteArray b) => new PyBytes(b.ToArray());
+        PyBytes B => new PyBytes(_data.ToArray());
+        static PyByteArray A(PyBytes b) => new PyByteArray(b.Data);
+        static List<PyByteArray> A(List<PyBytes> bs) => bs.Select(A).ToList();
+        static (PyByteArray, PyByteArray, PyByteArray) A((PyBytes, PyBytes, PyBytes) t) => (A(t.Item1), A(t.Item2), A(t.Item3));
+        public long find(long b, long start = 0, long? end = null) => B.find(b, start, end);
+        public long rfind(PyBytes sub, long start = 0, long? end = null) => B.rfind(sub, start, end);
+        public long index(PyBytes sub, long start = 0, long? end = null) => B.index(sub, start, end);
+        public long index(long b, long start = 0, long? end = null) => B.index(b, start, end);
+        public long rindex(PyBytes sub, long start = 0, long? end = null) => B.rindex(sub, start, end);
+        public long count(PyBytes sub) => B.count(sub);
+        public bool startswith(PyBytes prefix) => B.startswith(prefix);
+        public bool endswith(PyBytes suffix) => B.endswith(suffix);
+        public bool isdigit() => B.isdigit();
+        public bool isalpha() => B.isalpha();
+        public bool isalnum() => B.isalnum();
+        public bool isspace() => B.isspace();
+        public bool islower() => B.islower();
+        public bool isupper() => B.isupper();
+        public bool isascii() => B.isascii();
+        public bool istitle() => B.istitle();
+        public PyByteArray upper() => A(B.upper());
+        public PyByteArray lower() => A(B.lower());
+        public PyByteArray capitalize() => A(B.capitalize());
+        public PyByteArray swapcase() => A(B.swapcase());
+        public PyByteArray title() => A(B.title());
+        public PyByteArray strip(PyBytes? chars = null) => A(B.strip(chars));
+        public PyByteArray lstrip(PyBytes? chars = null) => A(B.lstrip(chars));
+        public PyByteArray rstrip(PyBytes? chars = null) => A(B.rstrip(chars));
+        public PyByteArray replace(PyBytes old, PyBytes @new, long count = -1) => A(B.replace(old, @new, count));
+        public PyByteArray center(long width, PyBytes? fillbyte = null) => A(B.center(width, fillbyte));
+        public PyByteArray ljust(long width, PyBytes? fillbyte = null) => A(B.ljust(width, fillbyte));
+        public PyByteArray rjust(long width, PyBytes? fillbyte = null) => A(B.rjust(width, fillbyte));
+        public PyByteArray zfill(long width) => A(B.zfill(width));
+        public PyByteArray removeprefix(PyBytes prefix) => A(B.removeprefix(prefix));
+        public PyByteArray removesuffix(PyBytes suffix) => A(B.removesuffix(suffix));
+        public PyByteArray expandtabs(long tabsize = 8) => A(B.expandtabs(tabsize));
+        public PyByteArray join(IEnumerable parts) => A(B.join(parts));
+        public List<PyByteArray> split(PyBytes? sep = null, long maxsplit = -1) => A(B.split(sep, maxsplit));
+        public List<PyByteArray> rsplit(PyBytes? sep = null, long maxsplit = -1) => A(B.rsplit(sep, maxsplit));
+        public List<PyByteArray> splitlines(bool keepends = false) => A(B.splitlines(keepends));
+        public (PyByteArray, PyByteArray, PyByteArray) partition(PyBytes sep) => A(B.partition(sep));
+        public (PyByteArray, PyByteArray, PyByteArray) rpartition(PyBytes sep) => A(B.rpartition(sep));
         public static PyByteArray operator +(PyByteArray a, PyBytes b) => new PyByteArray(a._data.Concat(b.Data));
         public static PyByteArray operator +(PyByteArray a, PyByteArray b) => new PyByteArray(a._data.Concat(b._data));
         public PyByteArray __iadd__(object? b) { extend(b); return this; }

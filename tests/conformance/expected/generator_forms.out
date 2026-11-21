@@ -1,0 +1,9 @@
+[1, -1, 3]
+0 5 15 reset 0 2
+1 []
+['closed']
+0 1 2
+returned ['a', 'b', 'c']
+1 6 20
+a caught 'k'
+re-raised 'k'
