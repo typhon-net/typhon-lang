@@ -211,6 +211,47 @@ raise `SystemExit` with its status, as in CPython (`except SystemExit` catches i
 work. Not supported: custom `Action` or `HelpFormatter` subclasses. (Functions and fields annotated with a standard module's type, such as
 `argparse.ArgumentParser`, `logging.Logger` or `re.Pattern`, are internal to the program, like the runtime's types.)
 
+**threading** runs a `Thread` (a `target` with `args`/`kwargs`, or a subclass overriding `run()`) on a .NET thread
+of its own: a daemon thread is a background thread, any other a foreground thread that the process waits for at exit.
+`Lock` (not owned: any thread may release it), `RLock`, `Condition` (`wait`, `wait_for`, `notify`, `notify_all`),
+`Semaphore`/`BoundedSemaphore`, `Event`, `Barrier`, `Timer`, `local`, `current_thread`/`main_thread`/`enumerate`/
+`active_count`/`get_ident`/`get_native_id`, `excepthook` (an exception that leaves `run()` is printed on stderr and
+ends only its thread), `stack_size`, `TIMEOUT_MAX`, `serialize_iterator`; `settrace`/`setprofile` keep the function but
+never call it. There is no GIL: as in free-threaded CPython, state that threads share needs a lock (`print` writes whole
+lines). Idents are .NET's managed thread ids (`native_id` is the operating system's), the main thread is the thread
+that first used `threading`, and a new thread starts with an empty `contextvars` context, as in CPython. `_thread`
+(`allocate_lock`, `start_new_thread`, `get_ident`, `LockType`, `RLock`), `queue` (`Queue`, `LifoQueue`,
+`PriorityQueue`, `SimpleQueue`: `put`/`get` with `block` and `timeout`, `task_done`/`join`, `shutdown`, `Empty`/`Full`/
+`ShutDown`) and `concurrent.futures` (`ThreadPoolExecutor` with `submit`/`map`/`shutdown`, `Future`, `as_completed`,
+`wait`; `ProcessPoolExecutor` is a thread pool, which runs in parallel without a GIL; write `from concurrent.futures
+import ...`) build on it. `contextvars` provides `ContextVar`, `Token` and `Context` (`copy_context()`, `run`): the
+context flows with .NET's execution context, so an awaited coroutine shares its caller's, but an asyncio task does not
+get a copy. Not supported yet: a public class deriving from `threading.Thread` (or any runtime class: C# requires
+the class to be internal, so name it `_Worker` for now), subclasses of `threading.local` (their `__init__` does not run
+per thread), and the stdlib's own `threading.py`/`queue.py` internals (`_thread.start_joinable_thread`, `_ThreadHandle`).
+`queue.Queue` and `contextvars.ContextVar` are not generic: annotate `queue.Queue`, not `queue.Queue[int]`.
+
+**weakref** (`ref` with a callback, `proxy`, `WeakMethod`, `finalize` with `atexit`, `WeakValueDictionary`,
+`WeakKeyDictionary`, `WeakSet`, `getweakrefcount`, `getweakrefs`) is built on .NET weak references. .NET has no
+reference counts: an object dies at a garbage collection some time after its last reference goes, not at once as in
+CPython, so a reference goes dead (and its callback or finalizer runs, on .NET's finalizer thread) later. Do not rely on
+the moment; `gc.collect()` runs a full collection and the finalizers it makes due, after which an object that nothing
+refers to any more is gone. `ref(o) is ref(o)` is false (the refs are equal, and `getweakrefcount` counts them once, as
+CPython shares them); refs to `None`, numbers, `str`, `bytes`, tuples, plain lists and dicts raise `TypeError` as in
+CPython. `finalize(obj, func, *args)` takes no keyword arguments for `func` yet. `gc` itself: `collect`, `enable`/
+`disable` (recorded only: .NET's collector cannot be switched off), `isenabled`, `get_threshold`, `is_tracked`, `freeze`;
+`get_referrers`/`get_objects` raise `NotImplementedError`.
+
+**memoryview** views the bytes of a `bytes` (read-only), `bytearray` (writes go through to it) or `byte[]` without
+copying: indexing, slices (views again, steps included), `tobytes`, `tolist`, `hex`, `cast` between byte formats and
+the native formats (`'B'`, `'b'`, `'c'`, `'h'`, `'i'`, `'q'`, `'f'`, `'d'`, ...), `nbytes`/`itemsize`/`format`/`ndim`/
+`shape`/`strides`/`readonly`/`obj`, `release` and `with`, comparison with bytes-like objects, `hash` of a read-only
+view, and `bytes(m)`/`bytearray(m)`. A memoryview is accepted where bytes are (`hashlib`, `struct.unpack`, a binary
+file's `write` and `readinto`, a parameter annotated `bytes`: copied). One dimension only; an `array.array` is viewed
+as a read-only copy; unlike CPython, a `bytearray` may be resized while viewed (positions past its new end raise
+`IndexError`). A public function annotated with `memoryview` does not compile yet (the type is internal: name the
+function `_like_this` or leave the parameter unannotated).
+
 **logging** covers loggers and their hierarchy, levels, `basicConfig`, `StreamHandler`/`FileHandler`/`NullHandler`,
 `Formatter` (`%`, `{` and `$` styles), filters (`Filter` or a function of the record), `extra=` and the last-resort
 handler. Approximations: `exc_info=True` and `logging.exception()` show the last exception raised on the thread, as a

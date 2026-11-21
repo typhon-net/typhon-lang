@@ -18,7 +18,12 @@ python tests/conformance/update_expected.py                                  # r
 * CI ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)) runs the suite on Windows and Linux. The Native AOT pass
   can be started by hand.
 
-Status: 38 of 40 cases match CPython under `typhon run`, among them `mixins` (multiple inheritance, MRO, cooperative
+Status: 46 of 48 cases match CPython under `typhon run`, among them `threads_weakrefs` (threading, `_thread`, queue,
+`concurrent.futures`, `contextvars`, weakref with `gc.collect()`, memoryview), `stdlib_core` and `stdlib_warnings`
+(builtin exceptions, `issubclass`/`dir`/`frozendict`, types, stat/errno, getopt, atexit, warnings, traceback),
+`stdlib_idioms` (renamed member imports, `del`, a method's first parameter under another name), `kwargs_spread`
+(`f(**opts)` with known callees), `attributes_from_outside`, `inferred_overloads`, `numpy_linalg` (matmul, solve, inv,
+det, qr, cholesky, eigh, svd, lstsq, pinv), `mixins` (multiple inheritance, MRO, cooperative
 super() across diamonds), `system_exit`, `asyncio_module` (one event loop, tasks, queues,
 locks, task groups), `argparse_module`, `logging_module`, `stdlib_more` (textwrap, statistics, base64, csv,
 glob, shutil, uuid), `datetime_module` (date, time, datetime, timedelta,

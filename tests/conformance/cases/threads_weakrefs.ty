@@ -1,0 +1,438 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+"""Conformance: threading (Thread with a target or an overridden run(), Lock, RLock, Condition, Semaphore, Event,
+Barrier, Timer, local, excepthook), _thread, queue, concurrent.futures, contextvars, weakref (ref, proxy, finalize, the
+weak collections) and memoryview. Deterministic: threads are joined, nothing depends on timing, and weak references are
+checked only after gc.collect() for objects that only a finished call referred to."""
+
+import _thread
+import contextvars
+import gc
+import queue
+import struct
+import threading
+import weakref
+from concurrent.futures import ThreadPoolExecutor, as_completed, wait
+
+
+# ── threads and locks ──
+
+counter = 0
+counter_lock = threading.Lock()
+
+
+def add(n: int, step: int) -> None:
+    global counter
+    for i in range(n):
+        with counter_lock:
+            counter += step
+
+
+workers = [threading.Thread(target=add, args=(500, 2)) for i in range(4)]
+for w in workers:
+    w.start()
+for w in workers:
+    w.join()
+print("counter:", counter)
+print("default name:", workers[0].name.startswith("Thread-"), workers[0].name.endswith("(add)"))
+print("after join:", workers[0].is_alive(), workers[0].ident is not None)
+
+named = threading.Thread(target=add, kwargs={"n": 1, "step": 1}, name="adder", daemon=True)
+print("before start:", named.name, named.daemon, named.is_alive(), named.ident is None)
+named.start()
+named.join()
+print("kwargs target:", counter)
+try:
+    named.start()
+except RuntimeError as e:
+    print("RuntimeError:", e)
+
+
+# (internal: a public Typhon class cannot derive from a runtime class such as threading.Thread yet, CS0060)
+class _Squarer(threading.Thread):
+    def __init__(self, n: int) -> None:
+        super().__init__(name=f"squarer-{n}")
+        self.n = n
+        self.result = 0
+
+    def run(self) -> None:
+        self.result = self.n * self.n
+
+
+squarers = [_Squarer(i) for i in range(1, 5)]
+for s in squarers:
+    s.start()
+for s in squarers:
+    s.join()
+print("run() overridden:", [s.result for s in squarers], squarers[2].name)
+
+print("main:", threading.current_thread().name, threading.current_thread() is threading.main_thread())
+print("main alive:", threading.main_thread().is_alive(), threading.active_count() >= 1)
+print("idents:", threading.get_ident() == threading.main_thread().ident, _thread.get_ident() == threading.get_ident())
+
+lock = threading.Lock()
+print("lock:", lock.acquire(), lock.locked(), lock.acquire(False), lock.acquire(True, 0.01))
+lock.release()
+try:
+    lock.release()
+except RuntimeError as e:
+    print("RuntimeError:", e)
+
+rlock = threading.RLock()
+with rlock:
+    with rlock:
+        print("rlock reentered")
+try:
+    rlock.release()
+except RuntimeError as e:
+    print("RuntimeError:", e)
+
+low = _thread.allocate_lock()
+with low:
+    print("_thread lock held:", low.locked())
+print("_thread lock free:", low.locked())
+
+# ── conditions, events, semaphores, barriers, timers ──
+
+cond = threading.Condition()
+ready: list[int] = []
+
+
+def consumer() -> None:
+    with cond:
+        cond.wait_for(lambda: len(ready) > 0)
+        print("consumer got", ready[0])
+
+
+ct = threading.Thread(target=consumer)
+ct.start()
+with cond:
+    ready.append(42)
+    cond.notify()
+ct.join()
+with cond:
+    print("wait timeout:", cond.wait(0.01))
+
+event = threading.Event()
+print("event:", event.is_set(), event.wait(0.01))
+setter = threading.Thread(target=event.set)
+setter.start()
+print("event waited:", event.wait())
+setter.join()
+event.clear()
+print("cleared:", event.is_set())
+
+sem = threading.Semaphore(2)
+print("semaphore:", sem.acquire(), sem.acquire(), sem.acquire(blocking=False), sem.acquire(timeout=0.01))
+sem.release(2)
+bounded = threading.BoundedSemaphore(1)
+with bounded:
+    print("bounded held")
+try:
+    bounded.release()
+except ValueError as e:
+    print("ValueError:", e)
+
+barrier = threading.Barrier(3, action=lambda: print("barrier released"))
+indexes: list[int] = []
+
+
+def party() -> None:
+    i = barrier.wait()
+    with counter_lock:
+        indexes.append(i)
+
+
+parties = [threading.Thread(target=party) for i in range(3)]
+for p in parties:
+    p.start()
+for p in parties:
+    p.join()
+print("barrier indexes:", sorted(indexes), barrier.parties, barrier.broken)
+barrier.abort()
+try:
+    barrier.wait()
+except threading.BrokenBarrierError:
+    print("BrokenBarrierError, broken:", barrier.broken)
+
+fired: list[str] = []
+timer = threading.Timer(0.01, fired.append, args=["fired"])
+timer.start()
+timer.join()
+cancelled = threading.Timer(60, fired.append, args=["too late"])
+cancelled.start()
+cancelled.cancel()
+cancelled.join()
+print("timers:", fired)
+
+local = threading.local()
+local.value = "main"
+seen: list[str] = []
+
+
+def look() -> None:
+    seen.append(str(hasattr(local, "value")))
+    local.value = "worker"
+    seen.append(local.value)
+
+
+lt = threading.Thread(target=look)
+lt.start()
+lt.join()
+print("local:", seen, local.value)
+
+hooked: list[str] = []
+
+
+def hook(args: threading.ExceptHookArgs) -> None:
+    hooked.append(f"{args.thread.name}: {args.exc_value}")
+
+
+def broken() -> None:
+    raise ValueError("boom")
+
+
+threading.excepthook = hook
+bt = threading.Thread(target=broken, name="breaker")
+bt.start()
+bt.join()
+threading.excepthook = threading.__excepthook__
+print("excepthook:", hooked, bt.is_alive())
+
+# ── queues ──
+
+jobs = queue.Queue()
+results: list[int] = []
+
+
+def worker() -> None:
+    while True:
+        item = jobs.get()
+        if item is None:
+            jobs.task_done()
+            break
+        n: int = item
+        with counter_lock:
+            results.append(n * 10)
+        jobs.task_done()
+
+
+qts = [threading.Thread(target=worker) for i in range(3)]
+for t in qts:
+    t.start()
+for i in range(9):
+    jobs.put(i)
+for t in qts:
+    jobs.put(None)
+jobs.join()
+for t in qts:
+    t.join()
+print("queue results:", sorted(results), jobs.empty(), jobs.qsize())
+
+bounded_q = queue.Queue(maxsize=1)
+bounded_q.put("a")
+print("full:", bounded_q.full())
+try:
+    bounded_q.put("b", timeout=0.01)
+except queue.Full:
+    print("queue.Full")
+print("got:", bounded_q.get_nowait())
+try:
+    bounded_q.get(block=False)
+except queue.Empty:
+    print("queue.Empty")
+
+lifo = queue.LifoQueue()
+prio = queue.PriorityQueue()
+for x in [3, 1, 2]:
+    lifo.put(x)
+    prio.put((x, f"job{x}"))
+print("lifo:", [lifo.get() for i in range(3)])
+print("priority:", [prio.get()[1] for i in range(3)])
+simple = queue.SimpleQueue()
+simple.put("s")
+print("simple:", simple.get(), simple.empty())
+closing = queue.Queue()
+closing.put(1)
+closing.shutdown()
+try:
+    closing.put(2)
+except queue.ShutDown:
+    print("queue.ShutDown")
+print("drained after shutdown:", closing.get())
+
+# ── concurrent.futures ──
+
+
+def cube(x: int) -> int:
+    return x * x * x
+
+
+def fails(x: int) -> int:
+    raise KeyError(x)
+
+
+with ThreadPoolExecutor(max_workers=3) as pool:
+    futures = [pool.submit(cube, i) for i in range(6)]
+    print("results:", [f.result() for f in futures])
+    print("as_completed:", sorted(f.result() for f in as_completed(futures)))
+    print("map:", list(pool.map(cube, [2, 3])), list(pool.map(lambda x: x + 1, [1, 2])))
+    done, not_done = wait(futures)
+    print("wait:", len(done), len(not_done))
+    failing = pool.submit(fails, 5)
+    try:
+        failing.result()
+    except KeyError as e:
+        print("KeyError from future:", e)
+    print("done:", failing.done(), failing.cancelled())
+    noted: list[int] = []
+    finished = pool.submit(cube, 4)
+    finished.result()
+    finished.add_done_callback(lambda f: noted.append(f.result()))
+    print("callback:", noted)
+
+# ── contextvars ──
+
+request = contextvars.ContextVar("request", default="none")
+print("var:", request.get(), request.name)
+token = request.set("first")
+print("set:", request.get(), token.old_value is contextvars.Token.MISSING)
+request.reset(token)
+print("reset:", request.get())
+
+
+def inside() -> str:
+    request.set("inside")
+    return request.get()
+
+
+context = contextvars.copy_context()
+print("run:", context.run(inside), request.get(), context[request])
+request.set("main value")
+thread_saw: list[str] = []
+
+
+def read_request() -> None:
+    thread_saw.append(request.get())
+
+
+vt = threading.Thread(target=read_request)
+vt.start()
+vt.join()
+print("new thread starts empty:", thread_saw)
+
+# ── weakref ──
+
+
+class Node:
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def greet(self) -> str:
+        return "hi " + self.name
+
+
+notes: list[str] = []
+
+
+def on_collect(r: weakref.ref) -> None:
+    notes.append("callback ran")
+
+
+def short_lived() -> weakref.ref:
+    return weakref.ref(Node("temp"), on_collect)
+
+
+root = Node("root")
+r = weakref.ref(root)
+print("ref:", r() is root, r().name, r == weakref.ref(root), hash(r) == hash(root))
+print("weakref count:", weakref.getweakrefcount(root), len(weakref.getweakrefs(root)))
+gone = short_lived()
+gc.collect()
+print("collected:", gone() is None, notes)
+try:
+    weakref.ref("text")
+except TypeError as e:
+    print("TypeError:", e)
+
+p = weakref.proxy(root)
+print("proxy:", p.name, p.greet())
+wm = weakref.WeakMethod(root.greet)
+print("weak method:", wm()())
+
+cleaned: list[str] = []
+fin = weakref.finalize(root, cleaned.append, "finalized")
+print("finalize alive:", fin.alive, fin.atexit)
+fin()
+fin()
+print("finalize:", fin.alive, cleaned)
+
+
+def finalized_later() -> weakref.finalize:
+    return weakref.finalize(Node("short"), cleaned.append, "by the collector")
+
+
+later = finalized_later()
+gc.collect()
+print("finalized by gc:", later.alive, cleaned)
+
+values = weakref.WeakValueDictionary()
+keys = weakref.WeakKeyDictionary()
+members = weakref.WeakSet()
+
+
+def add_temporaries() -> None:
+    values["temp"] = Node("t1")
+    keys[Node("t2")] = "temp"
+    members.add(Node("t3"))
+
+
+values["root"] = root
+keys[root] = "root value"
+members.add(root)
+add_temporaries()
+gc.collect()
+print("WeakValueDictionary:", list(values.keys()), values["root"].name, "temp" in values, len(values))
+print("WeakKeyDictionary:", len(keys), keys[root], root in keys, keys.get(Node("other"), "missing"))
+print("WeakSet:", len(members), root in members)
+values.pop("root")
+print("popped:", len(values), values.get("root"))
+
+# ── memoryview ──
+
+buf = bytearray(b"hello world")
+view = memoryview(buf)
+print("view:", len(view), view[0], view[-1], view.format, view.itemsize, view.nbytes, view.readonly, view.ndim)
+print("shape:", view.shape, view.strides)
+word = view[6:]
+print("slice:", word.tobytes(), bytes(word), word.tolist()[:3])
+word[0] = ord("W")
+view[0:5] = b"HELLO"
+print("written through:", buf)
+print("steps:", view[::2].tobytes(), view[::-1].tobytes())
+print("hex:", view[:3].hex(), view[:4].hex(":"), view[:4].hex("-", 2))
+print("compare:", view == b"HELLO World", b"HELLO World" == view, view[:5] == bytearray(b"HELLO"))
+print("copies:", bytes(view[:5]), bytearray(view[-5:]), list(memoryview(b"ab")), 98 in memoryview(b"ab"))
+readonly_view = memoryview(b"abcdef")
+print("readonly:", readonly_view.readonly, readonly_view[1:3].tobytes(), hash(readonly_view) == hash(b"abcdef"))
+try:
+    readonly_view[0] = 65
+except TypeError as e:
+    print("TypeError:", e)
+try:
+    view[0] = 300
+except ValueError as e:
+    print("ValueError:", e)
+numbers = memoryview(struct.pack("<4i", 1, -2, 3, 40000)).cast("i")
+print("cast:", numbers.format, numbers.itemsize, len(numbers), numbers.tolist(), numbers.cast("B").tolist()[:8])
+chars = memoryview(b"xy").cast("c")
+print("chars:", chars[0], chars.tolist())
+with memoryview(b"scoped") as scoped:
+    print("with:", scoped.tobytes())
+try:
+    scoped.tobytes()
+except ValueError as e:
+    print("ValueError:", e)
+print("struct:", struct.unpack_from("<H", memoryview(b"\x01\x02\x03"), 1))
+print("isinstance:", isinstance(view, memoryview), isinstance(buf, memoryview))

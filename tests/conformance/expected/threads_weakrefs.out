@@ -1,0 +1,82 @@
+counter: 4000
+default name: True True
+after join: False True
+before start: adder True False True
+kwargs target: 4001
+RuntimeError: threads can only be started once
+run() overridden: [1, 4, 9, 16] squarer-3
+main: MainThread True
+main alive: True True
+idents: True True
+lock: True True False False
+RuntimeError: release unlocked lock
+rlock reentered
+RuntimeError: cannot release un-acquired lock
+_thread lock held: True
+_thread lock free: False
+consumer got 42
+wait timeout: False
+event: False False
+event waited: True
+cleared: False
+semaphore: True True False False
+bounded held
+ValueError: Semaphore released too many times
+barrier released
+barrier indexes: [0, 1, 2] 3 False
+BrokenBarrierError, broken: True
+timers: ['fired']
+local: ['False', 'worker'] main
+excepthook: ['breaker: boom'] False
+queue results: [0, 10, 20, 30, 40, 50, 60, 70, 80] True 0
+full: True
+queue.Full
+got: a
+queue.Empty
+lifo: [2, 1, 3]
+priority: ['job1', 'job2', 'job3']
+simple: s True
+queue.ShutDown
+drained after shutdown: 1
+results: [0, 1, 8, 27, 64, 125]
+as_completed: [0, 1, 8, 27, 64, 125]
+map: [8, 27] [2, 3]
+wait: 6 0
+KeyError from future: 5
+done: True False
+callback: [64]
+var: none request
+set: first True
+reset: none
+run: inside none inside
+new thread starts empty: ['none']
+ref: True root True True
+weakref count: 1 1
+collected: True ['callback ran']
+TypeError: cannot create weak reference to 'str' object
+proxy: root hi root
+weak method: hi root
+finalize alive: True True
+finalize: False ['finalized']
+finalized by gc: False ['finalized', 'by the collector']
+WeakValueDictionary: ['root'] root False 1
+WeakKeyDictionary: 1 root value True missing
+WeakSet: 1 True
+popped: 0 None
+view: 11 104 100 B 1 11 False 1
+shape: (11,) (1,)
+slice: b'world' b'world' [119, 111, 114]
+written through: bytearray(b'HELLO World')
+steps: b'HLOWrd' b'dlroW OLLEH'
+hex: 48454c 48:45:4c:4c 4845-4c4c
+compare: True True True
+copies: b'HELLO' bytearray(b'World') [97, 98] True
+readonly: True b'bc' True
+TypeError: cannot modify read-only memory
+ValueError: memoryview: invalid value for format 'B'
+cast: i 4 4 [1, -2, 3, 40000] [1, 0, 0, 0, 254, 255, 255, 255]
+chars: b'x' [b'x', b'y']
+with: b'scoped'
+ValueError: operation forbidden on released memoryview object
+struct: (770,)
+isinstance: True False
