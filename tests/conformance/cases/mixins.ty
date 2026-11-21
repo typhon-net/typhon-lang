@@ -42,3 +42,216 @@ acc.deposit(2)
 print(acc.messages, acc.balance, acc.count)
 a, b = Item(1), Item(2)
 print(a < b, a > b, b > a, sorted([b, a])[0].w)
+
+
+# multiple inheritance: mixins before and after the base class, MRO order, isinstance
+class ReprMixin:
+    def __repr__(self) -> str:
+        fields = ", ".join(f"{k}={v!r}" for k, v in vars(self).items())
+        return f"{type(self).__name__}({fields})"
+
+
+class KeyCompareMixin:
+    def key(self):
+        raise NotImplementedError
+
+    def __lt__(self, other) -> bool:
+        return self.key() < other.key()
+
+    def __eq__(self, other) -> bool:
+        return self.key() == other.key()
+
+
+class Shape:
+    def __init__(self, name: str):
+        self.name = name
+
+    def area(self) -> float:
+        return 0.0
+
+    def describe(self) -> str:
+        return f"{self.name} with area {self.area():.2f}"
+
+
+class Square(ReprMixin, KeyCompareMixin, Shape):
+    def __init__(self, side: float):
+        super().__init__("square")
+        self.side = side
+
+    def area(self) -> float:
+        return self.side * self.side
+
+    def key(self):
+        return self.area()
+
+
+class LogMixin:
+    def log(self, msg: str) -> None:
+        self.messages.append(f"[{type(self).__name__}] {msg}")
+
+
+class Ledger(LogMixin):
+    def __init__(self):
+        self.messages: list[str] = []
+        self.balance = 0
+
+    def deposit(self, n: int) -> None:
+        self.balance += n
+        self.log(f"deposit {n}")
+
+
+sq1, sq2 = Square(2.0), Square(3.0)
+print(sq1, sq1 < sq2, sq1 == Square(2.0), sq1.describe())
+print(sorted([sq2, sq1])[0].side, isinstance(sq1, KeyCompareMixin), isinstance(sq1, Shape))
+led = Ledger()
+led.deposit(5)
+print(led.messages, led.balance)
+
+
+# diamonds and cooperative super(): methods, __init__ chains, mixins forwarding *args/**kwargs, view mixins
+class A:
+    def who(self) -> str:
+        return "A"
+
+    def chain(self) -> list[str]:
+        return ["A"]
+
+
+class B(A):
+    def who(self) -> str:
+        return "B>" + super().who()
+
+    def chain(self) -> list[str]:
+        return ["B"] + super().chain()
+
+
+class C(A):
+    def who(self) -> str:
+        return "C>" + super().who()
+
+    def chain(self) -> list[str]:
+        return ["C"] + super().chain()
+
+
+class D(B, C):
+    def who(self) -> str:
+        return "D>" + super().who()
+
+
+class TimestampMixin:
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.created = "now"
+
+    def stamp(self) -> str:
+        return f"{self.created}:{self.label()}"
+
+
+class TagMixin:
+    tags_default = ["new"]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.tags = list(self.tags_default)
+
+
+class Record:
+    def __init__(self, name: str):
+        self.name = name
+
+    def label(self) -> str:
+        return self.name.upper()
+
+
+class Note(TimestampMixin, TagMixin, Record):
+    pass
+
+
+class Doc(TimestampMixin, Record):
+    def __init__(self, name: str, pages: int):
+        super().__init__(name)
+        self.pages = pages
+
+    def label(self) -> str:
+        return f"{self.name}({self.pages}p)"
+
+
+class View:
+    def dispatch(self, user: str) -> str:
+        return f"view for {user}"
+
+
+class LoginRequiredMixin:
+    def dispatch(self, user: str) -> str:
+        if not user:
+            return "denied"
+        return super().dispatch(user)
+
+
+class AuditMixin:
+    def dispatch(self, user: str) -> str:
+        return "audited " + super().dispatch(user)
+
+
+class SecretView(LoginRequiredMixin, AuditMixin, View):
+    pass
+
+
+class JsonMixin:
+    def to_json(self) -> str:
+        return "{" + ", ".join(f'"{k}": {v!r}' for k, v in sorted(vars(self).items())) + "}"
+
+
+class Point:
+    def __init__(self, x: int, y: int):
+        self.x = x
+        self.y = y
+
+
+class JsonPoint(Point, JsonMixin):
+    pass
+
+
+dd = D()
+print(dd.who(), dd.chain(), isinstance(dd, C), isinstance(dd, B), isinstance(dd, A))
+n = Note("todo")
+print(n.name, n.created, n.tags, n.stamp(), isinstance(n, TagMixin), isinstance(n, Record))
+doc = Doc("spec", 3)
+print(doc.stamp(), doc.pages)
+v = SecretView()
+print(v.dispatch("ann"), v.dispatch(""), isinstance(v, View), isinstance(v, AuditMixin))
+print(JsonPoint(1, 2).to_json())
+
+
+# a diamond whose __init__ methods print: Python's order
+class Base:
+    def __init__(self):
+        print("Base.__init__")
+        self.trail = ["Base"]
+
+
+class Left(Base):
+    def __init__(self):
+        super().__init__()
+        print("Left.__init__")
+        self.trail.append("Left")
+
+
+class Right(Base):
+    def __init__(self):
+        super().__init__()
+        print("Right.__init__")
+        self.trail.append("Right")
+
+
+class Bottom(Left, Right):
+    def __init__(self):
+        super().__init__()
+        print("Bottom.__init__")
+        self.trail.append("Bottom")
+
+
+bottom = Bottom()
+print(bottom.trail)
+left = Left()
+print(left.trail)

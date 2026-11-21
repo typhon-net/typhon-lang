@@ -536,6 +536,9 @@ namespace Typhon.Compiler.Emit
                         string Is(Expr t)
                         {
                             string mt = MapType(t, c);
+                            // a class whose members were copied into classes with several bases: their objects are instances too
+                            if (DottedName(t) is string tn && TryResolveType(tn, 0, out _, out var mixin) && mixin != null && _p.MixedInto.TryGetValue(mixin, out var into))
+                                return "(" + string.Join(" || ", new[] { $"{v} is {mt}" }.Concat(into.Select(x => $"{v} is {ModuleClassName(x.Module)}.{Esc(x.Class.Name)}"))) + ")";
                             return mt == TypeInference.BigInt && IsUnknownType(vt) ? $"({v} is {mt} || {v} is long)" : $"{v} is {mt}";
                         }
                         if (c.Args[1].Value is TupleExpr types) return "(" + string.Join(" || ", types.Elts.Select(Is)) + ")";
@@ -692,6 +695,13 @@ namespace Typhon.Compiler.Emit
             return $"global::Typhon.Stdlib.asyncio_.run(() => {EmitExpr(c.Args[0].Value)})";
         }
 
+        bool SuperLacks(string name)
+        {
+            var bases = _cls.Def.Bases.Where(b => !(DottedName(b is SubscriptExpr bs ? bs.Target : b) is "object" or "Protocol" or "typing.Protocol" or "ABC" or "abc.ABC" or "Generic" or "typing.Generic")).ToList();
+            if (bases.Any(b => !ResolveBase(b, out _, out _))) return false;
+            return !BaseHasMember(bases, name, requireOverridable: false);
+        }
+
         /// <summary>functools.partial(f, *args, **keywords) with keywords: the keywords go in a dict.</summary>
         string PartialCall(CallExpr c)
         {
@@ -722,6 +732,11 @@ namespace Typhon.Compiler.Emit
                 if (TryTypeExpr(c.Func, out var kwType)) return $"new {kwType}({kwArgs})";
                 return $"{(c.Func is NameExpr kfn ? EmitName(kfn) : EmitExpr(c.Func))}({kwArgs})";
             }
+            // super().m(...) in a class whose bases have no m (a mixin compiled on its own: the next class in an MRO it is
+            // mixed into has it): AttributeError when it runs, as in Python
+            if (c.Func is AttributeExpr nsa && nsa.Target is CallExpr nsc && nsc.Func is NameExpr nsn && nsn.Id == "super" && nsc.Args.Count == 0 &&
+                nsa.Name != "__init__" && _cls != null && SuperLacks(nsa.Name))
+                return $"{Rt("__no_super")}({CsString(nsa.Name)})";
             if (PartialCall(c) is string partialCall) return partialCall;
             if (AsyncioRunCall(c) is string asyncioRun) return asyncioRun;
             if (DataclassReplaceCall(c) is string replaceCall) return replaceCall;

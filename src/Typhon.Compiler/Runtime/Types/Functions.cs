@@ -111,6 +111,9 @@ namespace Typhon.Runtime
         /// f(*args) on a late-bound callable: a Typhon function value, a bound method, a .NET delegate, or an object with
         /// __call__ (the arguments are known only as a sequence, so the call is made at run time).
         /// </summary>
+        /// <summary>super().m(...) where no further class defines m: Python's AttributeError.</summary>
+        public static dynamic __no_super(string name) => throw new MissingMemberException($"'super' object has no attribute '{name}'");
+
         /// <summary>x.__name__ of a class, function or other object known only at run time.</summary>
         public static string __name_of(object? o) => o switch
         {

@@ -202,6 +202,14 @@ namespace Typhon.Compiler.Emit
                          call.Args.Count >= 1 && call.Args[0].Value is NameExpr selfArg && selfArg.Id == f.Params[0].Name && call.Args[0].Name == null)
                     superArgs = call.Args.Skip(1).ToList();
             }
+            // super().__init__(*args, **kwargs) in a class without a base (a mixin's cooperative __init__, compiled on its own):
+            // object's __init__, which does nothing
+            if (superArgs != null && bases.Count == 0)
+            {
+                body = body.Where((s, i) => i != first).ToList();
+                sig.Locals = LocalsAnalyzer.Analyze(body, f.Params.Select(p => p.Name), null);
+                superArgs = null;
+            }
             if (superArgs != null)
             {
                 var saved = _scope; _scope = sig.Scope;

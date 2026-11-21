@@ -26,6 +26,8 @@ namespace Typhon.Compiler.Emit
         {
             foreach (var m in p.Modules.Values)
                 if (m.Ast != null && m.ParseDiagnostics.Count == 0) { HoistLocalClasses(m); SynthesizeNamedTuples(m); }
+            // several bases: one stays the C# base, the others' members are copied in, in MRO order
+            MultipleInheritance.Apply(p);
             foreach (var m in p.Modules.Values)
             {
                 if (m.Ast == null || m.ParseDiagnostics.Count > 0) continue;
@@ -261,6 +263,7 @@ namespace Typhon.Compiler.Emit
                 foreach (var f in d.Body.OfType<FunctionDef>())
                 {
                     if (f.Name.StartsWith("__") && f.Name.EndsWith("__") || f.Decorators.Count > 0 || f.Params.Count == 0) continue;
+                    if (MultipleInheritance.IsGenerated(f.Name)) continue; // (multiple inheritance's own hooks and copies)
                     if (ancestors.Any(a => Defines(a, f.Name))) continue;
                     if (!wanted.TryGetValue((root, f.Name), out var list)) wanted[(root, f.Name)] = list = new List<FunctionDef>();
                     list.Add(f);

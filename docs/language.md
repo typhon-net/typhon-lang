@@ -118,7 +118,11 @@ reference equality unless `__eq__` is defined) and **Python semantics where it i
 
 Modules & packages (folders → namespaces), `import`/`from ... import` of Typhon modules, .NET namespaces/types and the
 Typhon stdlib, functions with defaults/`*args`/keyword arguments, PEP 695 generics (`def f[T]`, `class Box[T]`, bounds),
-classes with inheritance, `super()`, properties (+setters), `@staticmethod`/`@classmethod`, `@abstractmethod`/`ABC`,
+classes with inheritance, `super()`, multiple inheritance and mixins (Python's C3 method resolution order: one base
+stays the C# base class, the other bases' members are copied in, `super()` and `Base.method(self)` follow the MRO —
+cooperative `super()` across diamonds included, for methods and for `__init__` chains whose classes call
+`super().__init__()` first — and `isinstance(x, Mixin)` holds for the classes it is mixed into; a mixin may use
+attributes of the classes it is mixed into), properties (+setters), `@staticmethod`/`@classmethod`, `@abstractmethod`/`ABC`,
 `@override`, `@final`, `@dataclass` (with `field(default=..., default_factory=..., init=, repr=, compare=)`,
 `__post_init__`, `asdict`, `astuple`, `fields`, `replace`), `Enum` and `IntEnum` (with `auto()`), `Protocol` (→ interface,
 implemented structurally *or* explicitly), operator overloading, docstrings → XML docs,
@@ -160,7 +164,7 @@ comprehensions (`[x async for x in agen()]`). A coroutine starts running when it
 
 `del` of names/attributes, complex, metaclasses, `decimal`, a Python decorator combined with `@classmethod` or
 `@property` on the same method, a class decorator that returns something other than the class, enums with non-int values, `eval`/`exec` and other runtime
-reflection on Python objects, multiple inheritance of classes, static methods
+reflection on Python objects, multiple inheritance from two .NET classes, static methods
 on generic classes need explicit type arguments (`Stack[int].of(...)`), .NET `out`/`ref` parameters (planned: tuple
 returns like IronPython), ints beyond 64 bits outside big-int mode (`OverflowError`), exact comparison of an int with a
 float past 2**53 (they compare as floats), `doctest` examples (`testmod()` runs none), .NET attributes that another

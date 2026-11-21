@@ -87,9 +87,11 @@ namespace Typhon.Compiler.Emit
         /// <summary>Does any definition of the method in the class's hierarchy (its bases and subclasses) return a value?</summary>
         bool FamilyReturnsValue(ClassDef c, string method)
         {
+            // (a mixin's family also has the classes its members were copied into: multiple inheritance)
+            var copies = _p.MixedInto.TryGetValue(c, out var into) ? into.Select(x => x.Class).ToList() : new List<ClassDef>();
             foreach (var k in AllClasses())
             {
-                if (!(k == c || DerivesFrom(k, c) || DerivesFrom(c, k))) continue;
+                if (!(k == c || DerivesFrom(k, c) || DerivesFrom(c, k) || copies.Any(x => k == x || DerivesFrom(k, x)))) continue;
                 foreach (var f in k.Body.OfType<FunctionDef>())
                 {
                     if (f.Name != method) continue;

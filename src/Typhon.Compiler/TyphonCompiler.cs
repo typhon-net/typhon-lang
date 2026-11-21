@@ -75,6 +75,12 @@ namespace Typhon.Compiler
         internal HashSet<string> FunctionValueKeys;
         /// <summary>Classes constructed in two phases (allocation, then an __init__ method), see Typhon.Runtime.NoInit.</summary>
         internal HashSet<Syntax.ClassDef> TwoPhaseClasses;
+        /// <summary>
+        /// Classes whose members were copied into classes with several bases (multiple inheritance): each with the classes it
+        /// was copied into and their modules, so isinstance(x, Mixin) is also true for those.
+        /// </summary>
+        internal readonly Dictionary<Syntax.ClassDef, List<(Syntax.ClassDef Class, ModuleInfo Module)>> MixedInto =
+            new Dictionary<Syntax.ClassDef, List<(Syntax.ClassDef, ModuleInfo)>>();
 
         public ModuleInfo FindModule(string dotted) => Modules.TryGetValue(dotted, out var m) ? m : null;
 

@@ -1,2 +1,18 @@
 ['[Account] deposit 5', '[Account] deposit 2'] 7 2
 True False True 1
+Square(name='square', side=2.0) True True square with area 4.00
+2.0 True True
+['[Ledger] deposit 5'] 5
+D>B>C>A ['B', 'C', 'A'] True True True
+todo now ['new'] now:TODO True True
+now:spec(3p) 3
+audited view for ann denied True True
+{"x": 1, "y": 2}
+Base.__init__
+Right.__init__
+Left.__init__
+Bottom.__init__
+['Base', 'Right', 'Left', 'Bottom']
+Base.__init__
+Left.__init__
+['Base', 'Left']
