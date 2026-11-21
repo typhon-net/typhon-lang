@@ -160,8 +160,8 @@ float past 2**53 (they compare as floats), `doctest` examples (`testmod()` runs 
 `parse_args()` returns a late-bound `Namespace` (`args.verbose`; an `argparse.Namespace` annotation keeps it late-bound);
 list values are typed lists (`list[int]` for `type=int`). An error, `-h` and `--version` print what CPython prints and
 exit with its status, but Typhon has no `SystemExit` to catch (use `exit_on_error=False` and `except
-argparse.ArgumentError`). Not supported: the `**kwargs` forms `set_defaults(func=...)` and `Namespace(a=1)`, and
-custom `Action` or `HelpFormatter` subclasses. (Functions and fields annotated with a standard module's type, such as
+argparse.ArgumentError`). `set_defaults(func=...)` (subcommand handlers) and `Namespace(a=1)`
+work. Not supported: custom `Action` or `HelpFormatter` subclasses. (Functions and fields annotated with a standard module's type, such as
 `argparse.ArgumentParser`, `logging.Logger` or `re.Pattern`, are internal to the program, like the runtime's types.)
 
 **logging** covers loggers and their hierarchy, levels, `basicConfig`, `StreamHandler`/`FileHandler`/`NullHandler`,

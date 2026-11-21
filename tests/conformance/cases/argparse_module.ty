@@ -108,3 +108,35 @@ try_parse(cfg, ["--json", "--xml"])
 try_parse(cfg, ["--output", "x"])
 
 print(defaults_parser("defaults").format_help(), end="")
+
+
+# subcommands dispatching through set_defaults(func=...), and Namespace(**kwargs)
+
+
+def cmd_add(args):
+    print("add", args.a + args.b)
+
+
+def cmd_greet(args):
+    print("hello", args.name)
+
+
+def sub_main(argv):
+    parser = argparse.ArgumentParser(prog="tool")
+    sub = parser.add_subparsers(dest="command")
+    p_add = sub.add_parser("add")
+    p_add.add_argument("a", type=int)
+    p_add.add_argument("b", type=int)
+    p_add.set_defaults(func=cmd_add)
+    p_greet = sub.add_parser("greet")
+    p_greet.add_argument("--name", default="world")
+    p_greet.set_defaults(func=cmd_greet, loud=False)
+    args = parser.parse_args(argv)
+    args.func(args)
+    print(args.loud if args.command == "greet" else args.command)
+
+
+sub_main(["add", "2", "3"])
+sub_main(["greet", "--name", "ann"])
+ns = argparse.Namespace(x=1, y="two")
+print(ns, ns.x, ns.y)

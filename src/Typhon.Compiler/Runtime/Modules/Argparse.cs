@@ -334,6 +334,8 @@ namespace Typhon.Stdlib
         {
             readonly PyAttrDict _attrs;
             public Namespace() { _attrs = new PyAttrDict(this); }
+            /// <summary>argparse.Namespace(a=1, b="x").</summary>
+            public Namespace(IDictionary<string, object?> __kwargs) : this() { foreach (var kv in __kwargs) _attrs[kv.Key] = kv.Value; }
 
             internal bool Has(string name) => _attrs.ContainsKey(name);
             internal object? Get(string name) => _attrs.TryGetValue(name, out var v) ? v : null;
@@ -687,6 +689,17 @@ namespace Typhon.Stdlib
                 var group = new _MutuallyExclusiveGroup(Root, this, required);
                 Root._mutually_exclusive_groups.Add(group);
                 return group;
+            }
+
+            /// <summary>parser.set_defaults(func=handler, verbose=False): values for these names whatever the arguments (subcommands' handlers).</summary>
+            public void set_defaults(IDictionary<string, object?>? __kwargs = null)
+            {
+                if (__kwargs == null) return;
+                foreach (var kv in __kwargs)
+                {
+                    Root._defaults[kv.Key] = kv.Value;
+                    foreach (var a in Root._actions) if (a.dest == kv.Key) a.@default = kv.Value;
+                }
             }
 
             public object? get_default(string dest)

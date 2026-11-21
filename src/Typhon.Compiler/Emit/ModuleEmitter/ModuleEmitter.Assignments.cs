@@ -203,6 +203,12 @@ namespace Typhon.Compiler.Emit
                             _w.Line($"{known} {Esc(name)} = {EmitValue(value)};");
                             SetType(n.Id, known);
                         }
+                        else if (inferred == "dynamic")
+                        {
+                            // a value Typhon binds late though C# knows its class (argparse.Namespace(a=1)): a dynamic variable
+                            _w.Line($"dynamic {Esc(name)} = {rawValue ?? EmitValue(value)};");
+                            SetType(n.Id, "dynamic");
+                        }
                         else
                         {
                             _w.Line($"var {Esc(name)} = {rawValue ?? EmitValue(value)};");

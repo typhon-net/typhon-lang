@@ -657,6 +657,27 @@ namespace Typhon.Compiler.Emit
             return t != null && t != "dynamic" && t != TypeInference.Pending ? $"(({t}){call})" : call;
         }
 
+        /// <summary>
+        /// A call of a runtime/.NET method or constructor whose last parameter is named __kwargs (the runtime's form of
+        /// Python's **kwargs: parser.set_defaults(func=handler), argparse.Namespace(a=1)): the keyword arguments it has no
+        /// parameter for, and **mappings, go into that dict. Null for other calls.
+        /// </summary>
+        string DotNetKwargsCall(CallExpr c)
+        {
+            if (!c.Args.Any(a => a.Name != null || a.DoubleStar)) return null;
+            bool isType = TryTypeExpr(c.Func, out var typeCode);
+            var overloads = isType ? DotNetConstructors(c.Func) : DotNetOverloads(c);
+            var target = overloads?.FirstOrDefault(o => o.Parameters.Count > 0 && o.Parameters[o.Parameters.Count - 1].Name == "__kwargs");
+            if (target == null) return null;
+            var known = new HashSet<string>(target.Parameters.Select(p => p.Name));
+            var direct = c.Args.Where(a => !a.DoubleStar && (a.Name == null || known.Contains(a.Name))).ToList();
+            var extra = c.Args.Where(a => a.DoubleStar || a.Name != null && !known.Contains(a.Name)).ToList();
+            if (extra.Count == 0) return null;
+            string args = EmitArgs(direct, overloads: overloads);
+            string callee = isType ? $"new {typeCode}" : c.Func is NameExpr fn ? EmitName(fn) : EmitExpr(c.Func);
+            return $"{callee}({args}{(args.Length > 0 ? ", " : "")}__kwargs: {KeywordArgs(extra)})";
+        }
+
         /// <summary>functools.partial(f, *args, **keywords) with keywords: the keywords go in a dict.</summary>
         string PartialCall(CallExpr c)
         {
@@ -690,6 +711,7 @@ namespace Typhon.Compiler.Emit
             if (PartialCall(c) is string partialCall) return partialCall;
             if (DataclassReplaceCall(c) is string replaceCall) return replaceCall;
             if (DecoratedMethodCall(c) is string decoratedCall) return decoratedCall;
+            if (DotNetKwargsCall(c) is string kwargsCall) return kwargsCall;
             if (ExpandStarArgs(c) is string expanded) return expanded;
             // table[name](x, *rest) / cls(n, n) with cls a late-bound parameter: the callable is known only at run time (a
             // function value, a bound method, a delegate or a class), so the call is made there

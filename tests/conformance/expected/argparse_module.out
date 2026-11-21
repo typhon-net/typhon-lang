@@ -76,3 +76,8 @@ options:
   -h, --help   show this help message and exit
   --size SIZE  the size (default: 10)
   --unit UNIT  the unit (default: cm)
+add 5
+add
+hello ann
+False
+Namespace(x=1, y='two') 1 two
