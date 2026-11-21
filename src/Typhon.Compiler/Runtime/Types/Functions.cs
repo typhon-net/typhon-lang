@@ -64,8 +64,111 @@ namespace Typhon.Runtime
             throw new InvalidCastException($"{_name}() does not take {args.Length} arguments");
         }
         static object? Convert(object? v, Type t) => v == null || t.IsInstanceOfType(v) || t == typeof(object) ? v : System.Convert.ChangeType(v, Nullable.GetUnderlyingType(t) ?? t, CultureInfo.InvariantCulture);
+
+        /// <summary>obj.m(x, **kwargs): the method whose parameters take these arguments, positional ones first, then by name.</summary>
+        public dynamic? __call_kw__(object?[] args, IDictionary<string, object?>? kw)
+        {
+            if (kw == null || kw.Count == 0) return __call__(args);
+            var type = _target as Type ?? _target.GetType();
+            var flags = _target is Type ? System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public : System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public;
+            var candidates = type.GetMethods(flags).Where(m => m.Name == _name && !m.IsGenericMethodDefinition).ToList();
+            var best = PyArgs.Best(candidates, args, kw, out var call) ?? throw PyArgs.NoFit(_name, kw, candidates);
+            try { return best.Invoke(_target is Type ? null : _target, call); }
+            catch (System.Reflection.TargetInvocationException tie) when (tie.InnerException != null)
+            {
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
+                throw;
+            }
+        }
         public override bool TryInvoke(System.Dynamic.InvokeBinder binder, object?[]? args, out object? result) { result = __call__(args ?? Array.Empty<object?>()); return true; }
         public override string ToString() => $"<bound method {_name} of {Builtins.repr(_target)}>";
+    }
+
+    /// <summary>
+    /// Python's argument binding against .NET methods and constructors found by reflection: positional arguments first,
+    /// then keyword arguments by parameter name, defaults for the rest; among the overloads that take the arguments, the
+    /// one whose parameter types they have (Typhon's typed versions of a function) over a late-bound one.
+    /// </summary>
+    internal static class PyArgs
+    {
+        public static T? Best<T>(IEnumerable<T> candidates, object?[] args, IDictionary<string, object?>? kw, out object?[] call) where T : System.Reflection.MethodBase
+        {
+            T? best = null; int bestScore = -1; call = Array.Empty<object?>();
+            foreach (var m in candidates)
+            {
+                int score = Bind(m.GetParameters(), args, kw, out var c);
+                if (score > bestScore) { best = m; bestScore = score; call = c; }
+            }
+            return best;
+        }
+
+        /// <summary>Python's TypeError for arguments no overload takes: an unknown keyword, or ones missing or too many.</summary>
+        public static Exception NoFit(string name, IDictionary<string, object?>? kw, IEnumerable<System.Reflection.MethodBase> candidates)
+        {
+            var names = new HashSet<string>(candidates.SelectMany(m => m.GetParameters()).Select(p => p.Name ?? ""));
+            string? unknown = kw?.Keys.FirstOrDefault(k => !names.Contains(k));
+            return new InvalidCastException(unknown != null ? $"{name}() got an unexpected keyword argument '{unknown}'"
+                                                            : $"{name}() got missing, repeated or too many arguments");
+        }
+
+        /// <summary>The arguments of a call to a method with these parameters, and how well they fit (-1: they do not).</summary>
+        public static int Bind(System.Reflection.ParameterInfo[] ps, object?[] args, IDictionary<string, object?>? kw, out object?[] call)
+        {
+            call = new object?[ps.Length];
+            if (ps.Any(p => p.ParameterType.IsByRef || p.ParameterType == typeof(NoInit))) return -1;
+            bool hasParams = ps.Length > 0 && ps[ps.Length - 1].IsDefined(typeof(ParamArrayAttribute), false);
+            int fixedCount = hasParams ? ps.Length - 1 : ps.Length;
+            if (!hasParams && args.Length > fixedCount) return -1;
+            int score = 0, byName = 0;
+            for (int i = 0; i < fixedCount; i++)
+            {
+                var p = ps[i];
+                object? v;
+                if (i < args.Length)
+                {
+                    if (kw != null && p.Name != null && kw.ContainsKey(p.Name)) return -1; // given twice
+                    v = args[i];
+                }
+                else if (kw != null && p.Name != null && kw.TryGetValue(p.Name, out v)) byName++;
+                else
+                {
+                    if (!p.IsOptional) return -1;
+                    call[i] = p.HasDefaultValue ? p.DefaultValue : Type.Missing;
+                    continue;
+                }
+                int fit = Fit(v, p.ParameterType);
+                if (fit < 0) return -1;
+                score += fit;
+                call[i] = To(v, p.ParameterType);
+            }
+            if (kw != null && byName != kw.Count) return -1; // a name no parameter has
+            if (hasParams)
+            {
+                var elem = ps[ps.Length - 1].ParameterType.GetElementType()!;
+                var rest = Array.CreateInstance(elem, Math.Max(0, args.Length - fixedCount));
+                for (int i = fixedCount; i < args.Length; i++)
+                {
+                    if (Fit(args[i], elem) < 0) return -1;
+                    rest.SetValue(To(args[i], elem), i - fixedCount);
+                }
+                call[ps.Length - 1] = rest;
+            }
+            return score;
+        }
+
+        static int Fit(object? v, Type t)
+        {
+            if (v == null) return !t.IsValueType || Nullable.GetUnderlyingType(t) != null ? 1 : -1;
+            if (t == typeof(object)) return 0;
+            if (t.IsInstanceOfType(v)) return 2;
+            var u = Nullable.GetUnderlyingType(t) ?? t;
+            // an int where a float is expected, as Python allows
+            if (u == typeof(double) && (v is long || v is int || v is bool)) return 1;
+            return -1;
+        }
+
+        static object? To(object? v, Type t) =>
+            v == null || t.IsInstanceOfType(v) || t == typeof(object) ? v : Convert.ChangeType(v, Nullable.GetUnderlyingType(t) ?? t, CultureInfo.InvariantCulture);
     }
 
     internal static partial class Builtins
@@ -152,6 +255,28 @@ namespace Typhon.Runtime
         {
             if (kw == null || kw.Count == 0) return __invoke(f, args);
             if (f is PyFunction pf) return pf.__call_kw__(args, kw);
+            if (f is PyBoundMethod bm) return bm.__call_kw__(args, kw);
+            // a typed function's value (a delegate of the method itself, or of a lambda): its parameters by name
+            if (f is Delegate d)
+            {
+                if (PyArgs.Bind(d.Method.GetParameters(), args, kw, out var dcall) < 0) throw PyArgs.NoFit(d.Method.Name, kw, new[] { d.Method });
+                try { return d.Method.Invoke(d.Target, dcall); }
+                catch (System.Reflection.TargetInvocationException tie) when (tie.InnerException != null)
+                {
+                    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
+                    throw;
+                }
+            }
+            if (f is Type t)
+            {
+                var ctor = PyArgs.Best(t.GetConstructors(), args, kw, out var call) ?? throw PyArgs.NoFit(t.Name, kw, t.GetConstructors());
+                try { return ctor.Invoke(call); }
+                catch (System.Reflection.TargetInvocationException tie) when (tie.InnerException != null)
+                {
+                    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
+                    throw;
+                }
+            }
             throw new ArgumentException($"keyword arguments to a {f?.GetType().Name ?? "None"} value are not supported");
         }
 

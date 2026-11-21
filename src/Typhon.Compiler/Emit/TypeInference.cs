@@ -163,7 +163,7 @@ namespace Typhon.Compiler.Emit
             var ti = new TypeInference();
             p.Inference = ti;
             ti.CollectTargets(p);
-            if (ti.Targets.Count == 0 && !p.Modules.Values.Any(m => HasEmptyContainers(m) || HasRebinding(m) || HasLambdaLocals(m))) { ti.Converged = true; return; }
+            if (ti.Targets.Count == 0 && !p.Modules.Values.Any(m => HasEmptyContainers(m) || HasRebinding(m) || HasLambdaLocals(m) || HasExternalAttributes(m))) { ti.Converged = true; return; }
             for (int pass = 0; pass < MaxPasses; pass++)
             {
                 ti.Passes = pass + 1;
@@ -265,6 +265,20 @@ namespace Typhon.Compiler.Emit
         public static bool IsMappingKind(char kind) => kind == 'd' || kind == 'o' || kind == 'D' || kind == 'c';
 
         /// <summary>Might a variable get values of different types (a name assigned twice, an assigned parameter, x /= y)? Then a dry run looks for conflicts.</summary>
+        /// <summary>obj.attr = v / Cls.ATTR = v outside a method: the dry runs find the attributes such code creates.</summary>
+        static bool HasExternalAttributes(ModuleInfo m)
+        {
+            if (m.Ast == null) return false;
+            bool found = false;
+            AstWalker.VisitAll(m.Ast.Body, n =>
+            {
+                if (found) return;
+                if (n is AssignStmt a && a.Targets.Any(t => t is AttributeExpr at && !(at.Target is NameExpr sn && sn.Id == "self"))) found = true;
+                if (n is AugAssignStmt au && au.Target is AttributeExpr aat && !(aat.Target is NameExpr asn && asn.Id == "self")) found = true;
+            });
+            return found;
+        }
+
         static bool HasRebinding(ModuleInfo m)
         {
             if (m.Ast == null) return false;

@@ -1,0 +1,39 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+"""Conformance: attributes created from outside a class (obj.attr = v, Cls.ATTR = v) in a file without functions, and
+del of an attribute set in __init__ (no type inference is needed elsewhere in this file)."""
+
+
+class Options:
+    pass
+
+
+opts = Options()
+opts.width = 80
+opts.verbose = True
+opts.width += 4
+print(opts.width, opts.verbose)
+
+
+class Config:
+    DEBUG = False
+
+
+Config.LEVEL = 3
+Config.DEBUG = True
+print(Config.LEVEL, Config.DEBUG)
+
+
+class Holder:
+    def __init__(self):
+        self.target = "t"
+        self.count = 5
+
+
+h = Holder()
+setattr(h, "extra", [1, 2])
+del h.target
+print(h.count, hasattr(h, "extra"))
+del h.extra
+print(hasattr(h, "extra"))

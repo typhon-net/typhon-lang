@@ -644,6 +644,43 @@ namespace Typhon.Compiler.Emit
         }
 
         /// <summary>The keyword arguments of a late-bound call as a dict: name=value pairs and **mappings.</summary>
+        /// <summary>
+        /// f(x, **opts) / obj.m(**opts) / Cls(**opts) / Cls.m(**opts) with a callee known here: which parameters the mapping
+        /// fills is known only at run time, so the call binds there, by parameter name (the function's value, the bound
+        /// method or the class, through reflection); its value has the type the call has.
+        /// </summary>
+        /// <summary>The call an expression statement consists of, while it is emitted.</summary>
+        CallExpr _statementCall;
+
+        string KwargsSpreadCall(CallExpr c)
+        {
+            if (!c.Args.Any(a => a.DoubleStar)) return null;
+            string callee = null;
+            if (c.Func is NameExpr n && !IsLocal(n.Id) && !_moduleFieldTypes.ContainsKey(n.Id))
+            {
+                if (TryResolveType(n.Id, 0, out _, out var cls) && cls != null) callee = $"typeof({MapType(n, n)})";
+                else if (TyphonCallee(c, out _) != null) callee = $"(object?){Paren(EmitLooseValue(c.Func))}";
+            }
+            else if (c.Func is AttributeExpr a && !(a.Target is CallExpr sc && sc.Func is NameExpr scn && scn.Id == "super"))
+            {
+                if (DottedName(a.Target) is string dotted && !IsLocal(dotted.Split('.')[0]) && ModuleRef(dotted) != null)
+                    callee = TyphonCallee(c, out _) != null ? $"(object?){Paren(EmitLooseValue(c.Func))}" : null;
+                else if (a.Target is NameExpr cn && !IsLocal(cn.Id) && TryResolveType(cn.Id, 0, out _, out var ccls) && ccls != null)
+                    callee = $"new global::Typhon.Runtime.PyBoundMethod(typeof({MapType(cn, cn)}), {CsString(a.Name)})";
+                else if (InferType(a.Target) is string tt && tt != "dynamic" && !IsDotNetMethod(a))
+                    callee = $"new global::Typhon.Runtime.PyBoundMethod((object){Paren(EmitExpr(a.Target))}, {CsString(a.Name)})";
+            }
+            if (callee == null) return null;
+            // the function's own (dynamic) version may be what the call reaches
+            if (Obs != null && CallTarget(c, out _) is InferenceTarget t && t.InferParams)
+                Obs.Calls.Add(new Observations.Call { Callee = t.Key, Types = null, Context = _ctxFallbackKey });
+            var spreadArgs = c.Args.Where(x => x.Name == null && !x.DoubleStar)
+                .Select(x => x.Star ? $".. {Rt("__iter_dyn")}((object){Paren(EmitExpr(x.Value))})" : $"(object?){Paren(EmitLooseValue(x.Value))}");
+            string call = $"{Rt("__invoke_kw")}({callee}, [{string.Join(", ", spreadArgs)}], {KeywordArgs(c.Args)})";
+            string type = c == _statementCall ? null : InferType(c); // (a cast is no statement: f(**opts) on its own line)
+            return type != null && type != "dynamic" && type != "void" && !TypeInference.IsUnknown(type) && type != TypeInference.Pending ? $"(({type}){call})" : call;
+        }
+
         string KeywordArgs(List<Arg> args)
         {
             var spreads = args.Where(a => a.DoubleStar).Select(a => $"(object?){Paren(EmitExpr(a.Value))}");
@@ -746,6 +783,7 @@ namespace Typhon.Compiler.Emit
             if (DecoratedMethodCall(c) is string decoratedCall) return decoratedCall;
             if (DotNetKwargsCall(c) is string kwargsCall) return kwargsCall;
             if (ExpandStarArgs(c) is string expanded) return expanded;
+            if (KwargsSpreadCall(c) is string spreadCall) return spreadCall;
             // table[name](x, *rest) / cls(n, n) with cls a late-bound parameter: the callable is known only at run time (a
             // function value, a bound method, a delegate or a class), so the call is made there
             // (also f(*args, **kwargs) / f(x, key=v) on such a callable, and f(*args) on a value of a function type: a

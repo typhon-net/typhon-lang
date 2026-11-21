@@ -146,7 +146,9 @@ namespace Typhon.Compiler.Emit
                     return;
                 case CallExpr _:
                 case AwaitExpr _:
+                    _statementCall = e.Value as CallExpr;
                     _w.Line(StripParens(EmitExpr(e.Value)) + ";");
+                    _statementCall = null;
                     return;
                 default:
                     _w.Line($"_ = {EmitExpr(e.Value)};");
@@ -315,8 +317,12 @@ namespace Typhon.Compiler.Emit
                 else if (t is AttributeExpr da)
                 {
                     string ot = da.Target is NameExpr dsn && dsn.Id == "self" && _cls != null && HasSelfInScope() ? _cls.CsSelfType : InferType(da.Target);
-                    bool declared = ot != null && ot != "dynamic" && (ClassKeyOfType(ot, out _) != null || _cls != null && ot == _cls.CsSelfType) &&
-                                    (MemberType(ot, da.Name, method: false) != null || _cls != null && ot == _cls.CsSelfType && _cls.FieldTypes.ContainsKey(da.Name));
+                    // (a field of the class: declared in its body, set through self in a method, or created from outside)
+                    bool declared = ot != null && ot != "dynamic" &&
+                                    (_cls != null && ot == _cls.CsSelfType && _cls.FieldTypes.ContainsKey(da.Name) ||
+                                     ClassKeyOfType(ot, out _) is string dck && ClassDefOfKey(dck) is ClassDef dcd &&
+                                     (DeclaresMember(dcd, da.Name) || CollectImplicitFields(dcd).ContainsKey(da.Name) || ExternalType(dck + "|" + da.Name) is string et && et != TypeInference.Pending) ||
+                                     MemberType(ot, da.Name, method: false) != null);
                     if (declared) _w.Line($"{EmitExpr(da)} = default!;");
                     else _w.Line($"{Rt("delattr")}((object?){Paren(EmitExpr(da.Target))}, {CsString(da.Name)});");
                 }

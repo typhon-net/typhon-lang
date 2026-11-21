@@ -1,0 +1,45 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+"""Conformance: f(**opts) / f(x, *args, **opts) with a known callee: functions, methods, static methods and constructors bind
+the mapping's keys to parameters by name at run time; an unknown keyword is a TypeError."""
+
+def area(width: int, height: int = 2, unit: str = "m") -> str:
+    return f"{width * height} {unit}2"
+
+
+def describe(name, count=1):
+    return f"{name} x{count}"
+
+
+class Box:
+    def __init__(self, w: int, h: int = 1, label: str = "box"):
+        self.w = w
+        self.h = h
+        self.label = label
+
+    def scaled(self, factor: int = 2, suffix: str = "") -> "Box":
+        return Box(self.w * factor, self.h * factor, self.label + suffix)
+
+    @staticmethod
+    def unit(label: str = "u") -> "Box":
+        return Box(1, 1, label)
+
+    def __repr__(self) -> str:
+        return f"Box({self.w}, {self.h}, {self.label!r})"
+
+
+opts = {"height": 3, "unit": "cm"}
+print(area(4, **opts))
+print(area(**{"width": 5}))
+print(describe("apple", **{"count": 3}), describe(**{"name": "pear"}))
+b = Box(**{"w": 2, "label": "big"})
+print(b)
+print(b.scaled(**{"suffix": "!"}))
+print(Box.unit(**{"label": "one"}))
+args = (7,)
+print(area(*args, **{"unit": "km"}))
+try:
+    area(1, **{"depth": 2})
+except TypeError:
+    print("TypeError")

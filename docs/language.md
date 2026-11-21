@@ -144,7 +144,8 @@ deriving from .NET classes (a method overriding a .NET virtual or abstract membe
 `if/elif/else`, `while`, `for` (counting loops over `range` compile to plain `for` loops; iterating a dict yields its
 keys), `for/while ... else`, `match`/`case` (PEP 634: literal, capture, sequence, mapping, class and or-patterns,
 guards), the walrus operator `:=`, `except A, B:` (PEP 758), starred unpacking (`a, *rest = xs`, `[*a, *b]`, `f(*args)`,
-`{**d1, **d2}`), slice assignment and `del xs[a:b]`, `del d[key]`/`del xs[i]`, `try/except/else/finally`,
+`{**d1, **d2}`), slice assignment and `del xs[a:b]`, `del d[key]`/`del xs[i]`, `del obj.attr` and `del name` (see below
+for how they differ), `try/except/else/finally`,
 `raise`, `with` (Python's `__enter__`/`__exit__` protocol, an `__exit__` that returns true suppresses the exception; a
 .NET `IDisposable` such as a file → `using`), `contextlib` (`contextmanager`, `suppress`, `nullcontext`, `closing`),
 `async def`/`await`/`async for`/`async with` (→ `Task`), generators (`yield`, `yield from`, `yield` in `try`/`except`/
@@ -172,7 +173,14 @@ point: decorate the function that starts the UI, which Windows Forms, WPF and Wi
 
 ## Not supported yet / known gaps
 
-`del` of names/attributes, complex, metaclasses, `decimal`, a Python decorator combined with `@classmethod` or
+Approximations of `del`: `del obj.attr` removes an attribute that was added at run time; one the class has as a field
+(declared in its body, set through `self` in a method, or set from outside the class) goes back to its default value
+(`None`, `0`), so reading it afterwards gives that value instead of raising `AttributeError`. `del name` does not unbind
+the name: a module's clean-up of helper names (`del _f, _g`) compiles, but the name keeps its value and stays in
+`globals()` (reading it after `del` is an error in Python, so only code that tests for the name sees the difference).
+
+
+complex, metaclasses, `decimal`, a Python decorator combined with `@classmethod` or
 `@property` on the same method, a class decorator that returns something other than the class, enums with non-int values, `eval`/`exec` and other runtime
 reflection on Python objects, multiple inheritance from two .NET classes, static methods
 on generic classes need explicit type arguments (`Stack[int].of(...)`), .NET `out`/`ref` parameters (planned: tuple
