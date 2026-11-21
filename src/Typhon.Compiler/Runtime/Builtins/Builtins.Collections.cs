@@ -155,6 +155,18 @@ namespace Typhon.Runtime
         public static PyIterator<T> iter<T>(IEnumerable<T> xs) => xs as PyIterator<T> ?? new PyIterator<T>(xs.GetEnumerator());
         public static PyIterator<string> iter(string s) => new PyIterator<string>(s.Select(c => c.ToString()).GetEnumerator());
         public static PyIterator<object?> iter(IEnumerable xs) => new PyIterator<object?>(xs.Cast<object?>().GetEnumerator());
+        /// <summary>iter(f, sentinel): f() called until it returns the sentinel (iter(read_char, "") reads to the end).</summary>
+        public static PyIterator<T> iter<T>(Func<T> f, T sentinel) => new PyIterator<T>(CallUntil(f, sentinel).GetEnumerator());
+        public static PyIterator<object?> iter(object f, object? sentinel) => new PyIterator<object?>(CallUntil(() => (object?)__invoke(f, Array.Empty<object?>()), sentinel).GetEnumerator());
+        static IEnumerable<T> CallUntil<T>(Func<T> f, T sentinel)
+        {
+            while (true)
+            {
+                T v = f();
+                if (eq(v, sentinel)) yield break;
+                yield return v;
+            }
+        }
 
         /// <summary>A generator object is its own iterator in Python: repeated next(gen) continue where the last one stopped.</summary>
         static class Iterators<T> { public static readonly ConditionalWeakTable<object, IEnumerator<T>> Of = new ConditionalWeakTable<object, IEnumerator<T>>(); }

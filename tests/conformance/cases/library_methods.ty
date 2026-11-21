@@ -1,0 +1,67 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+"""Conformance: more of what CPython's modules need: runtime methods with late-bound arguments, min/max default=,
+str.rfind/rindex ranges, iter(f, sentinel), bytearray.take_bytes, __module__/__qualname__, del in a class body, an
+inferred constructor called with a keyword argument of another type than its default."""
+
+from typing import Any
+
+
+def lookup(table: dict[int, str], key: Any) -> str:
+    return table.get(key, "missing")
+
+
+def expand(text: str, size: Any) -> str:
+    return text.expandtabs(size)
+
+
+print(lookup({1: "one"}, 1), lookup({1: "one"}, 2), expand("a\tb", 4), expand("a\tb", 2))
+
+print(min([], default=""), max([3, 1, 2], default=0), min(["bb", "a"], key=len, default="z"))
+sentinel = object()
+print(min([], default=sentinel) is sentinel, max([5], default=sentinel))
+s = "a-b-c-d"
+print(s.rfind("-", 0, 4), s.rfind("-", 0, 1), s.rindex("-", 2), s.count("-", 2), s.count("-", 0, 3))
+chars = iter(["x", "y", "", "z"])
+reader = iter(lambda: next(chars), "")
+print(list(reader))
+ba = bytearray(b"hello world")
+print(ba.take_bytes(5), ba, ba.take_bytes(), ba)
+
+
+class Point:
+    letters = "abc"
+    upper = letters.upper()
+    del letters
+
+    def __repr__(self) -> str:
+        return '%s.%s(%s)' % (self.__class__.__module__, self.__class__.__qualname__, "x")
+
+
+print(Point(), type(3).__qualname__, type("s").__module__, Point.upper)
+
+
+class _Chunk:
+    def __init__(self, file, align=True, bigendian=True, inclheader=False):
+        self.file = file
+        self.align = align
+        self.bigendian = bigendian
+        self.inclheader = inclheader
+
+
+class Reader:
+    def __init__(self, f):
+        self._file = _Chunk(f, bigendian=0)
+
+    def describe(self):
+        return f"{self._file.file} {self._file.bigendian} {self._file.align}"
+
+
+print(Reader("data").describe())
+
+def find_byte(data: bytes, b: Any) -> int:
+    return data.find(b)
+
+
+print(find_byte(b"abc", b"c"))

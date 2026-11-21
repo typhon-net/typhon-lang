@@ -679,6 +679,16 @@ namespace Typhon.Runtime
             return sb.ToString();
         }
         public static long rfind(this string s, string sub) => s.LastIndexOf(sub, StringComparison.Ordinal);
+        /// <summary>s.rfind(sub, start[, end]) / s.rindex over s[start:end] (an empty sub is found at the end).</summary>
+        public static long rfind(this string s, string sub, long start, long? end = null)
+        {
+            var (a, b) = SliceBounds(s.Length, start, end);
+            if (b < a) return -1;
+            if (sub.Length == 0) return b;
+            int i = s.LastIndexOf(sub, b - 1, b - a, StringComparison.Ordinal);
+            return i >= 0 && i + sub.Length <= b ? i : -1;
+        }
+        public static long rindex(this string s, string sub, long start, long? end = null) { long i = s.rfind(sub, start, end); return i >= 0 ? i : throw new ArgumentException("substring not found"); }
         public static long index(this string s, string sub) { int i = s.IndexOf(sub, StringComparison.Ordinal); return i >= 0 ? i : throw new ArgumentException("substring not found"); }
         public static long count(this string s, string sub) { long n = 0; int i = 0; while (sub.Length > 0 && (i = s.IndexOf(sub, i, StringComparison.Ordinal)) >= 0) { n++; i += sub.Length; } return n; }
         public static bool isdigit(this string s) => s.Length > 0 && s.All(char.IsDigit);

@@ -399,6 +399,16 @@ namespace Typhon.Runtime
         public byte[] ToArray() => _data.ToArray();
         /// <summary>The storage itself (a memoryview of the bytearray reads and writes it).</summary>
         internal List<byte> Buffer => _data;
+
+        /// <summary>take_bytes(n=None) (Python 3.15): the first n bytes (all of them) as bytes, removed from the bytearray.</summary>
+        public PyBytes take_bytes(long? n = null)
+        {
+            int count = n == null ? _data.Count : (int)(n < 0 ? Math.Max(0, _data.Count + n.Value) : Math.Min(n.Value, _data.Count));
+            if (n != null && (n > _data.Count || n < -_data.Count)) throw new IndexOutOfRangeException("can't take more bytes than are in the bytearray");
+            var taken = _data.GetRange(0, count).ToArray();
+            _data.RemoveRange(0, count);
+            return new PyBytes(taken);
+        }
         public static implicit operator byte[](PyByteArray b) => b.ToArray();
 
         public int Count => _data.Count;

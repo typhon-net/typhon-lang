@@ -165,6 +165,11 @@ namespace Typhon.Runtime
         public static T min<T>(T a, T b, T c, params T[] rest) => new[] { a, b, c }.Concat(rest).Min(PyComparer<T>())!;
         public static T min<T>(IEnumerable<T> xs) => xs.Min(PyComparer<T>()) ?? throw new ArgumentException("min() arg is an empty sequence");
         public static T min<T, K>(IEnumerable<T> xs, Func<T, K> key) => xs.MinBy(key, PyComparer<K>()) ?? throw new ArgumentException("min() arg is an empty sequence");
+        // min(xs, default=d) / max(xs, default=d, key=f): d for an empty xs (of the items' type, or any object such as a sentinel)
+        public static T min<T>(IEnumerable<T> xs, T @default) { var l = xs.ToList(); return l.Count == 0 ? @default : min(l); }
+        public static object? min<T>(IEnumerable<T> xs, object? @default) { var l = xs.ToList(); return l.Count == 0 ? @default : min(l); }
+        public static T min<T, K>(IEnumerable<T> xs, Func<T, K> key, T @default) { var l = xs.ToList(); return l.Count == 0 ? @default : min(l, key); }
+        public static object? min<T, K>(IEnumerable<T> xs, Func<T, K> key, object? @default) { var l = xs.ToList(); return l.Count == 0 ? @default : min(l, key); }
         public static int max(int a, int b) => Math.Max(a, b);
         public static long max(long a, long b) => Math.Max(a, b);
         public static double max(double a, double b) => Math.Max(a, b);
@@ -172,6 +177,10 @@ namespace Typhon.Runtime
         public static T max<T>(T a, T b, T c, params T[] rest) => new[] { a, b, c }.Concat(rest).Max(PyComparer<T>())!;
         public static T max<T>(IEnumerable<T> xs) => xs.Max(PyComparer<T>()) ?? throw new ArgumentException("max() arg is an empty sequence");
         public static T max<T, K>(IEnumerable<T> xs, Func<T, K> key) => xs.MaxBy(key, PyComparer<K>()) ?? throw new ArgumentException("max() arg is an empty sequence");
+        public static T max<T>(IEnumerable<T> xs, T @default) { var l = xs.ToList(); return l.Count == 0 ? @default : max(l); }
+        public static object? max<T>(IEnumerable<T> xs, object? @default) { var l = xs.ToList(); return l.Count == 0 ? @default : max(l); }
+        public static T max<T, K>(IEnumerable<T> xs, Func<T, K> key, T @default) { var l = xs.ToList(); return l.Count == 0 ? @default : max(l, key); }
+        public static object? max<T, K>(IEnumerable<T> xs, Func<T, K> key, object? @default) { var l = xs.ToList(); return l.Count == 0 ? @default : max(l, key); }
 
         /// <summary>Python orders strings by code point, .NET's default comparer is culture-aware: use ordinal.</summary>
         internal static IComparer<T> PyComparer<T>() => typeof(T) == typeof(string) ? (IComparer<T>)(object)StringComparer.Ordinal

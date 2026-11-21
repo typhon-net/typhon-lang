@@ -378,6 +378,8 @@ namespace Typhon.Compiler.Emit
                     case ClassDef _: break;
                     case ExprStmt e when e.Value is ConstExpr: break; // docstring / ...
                     case PassStmt _: break;
+                    // del helper names after using them to build class attributes (del word_punct, letter): they stay fields
+                    case DelStmt ds when ds.Targets.All(t => t is NameExpr): break;
                     default: Unsupported(s, "this statement in a class body"); break;
                 }
             }
@@ -616,6 +618,9 @@ namespace Typhon.Compiler.Emit
             if (mods.StartsWith("public ") && SurfaceVisibility("public", sig.ReturnType, sig.Params) == "internal" &&
                 !(mods.Contains(" override") && OverridesRuntimeMember(ctx.Def, f.Name)))
                 mods = "internal " + mods.Substring("public ".Length);
+            // (a _method is protected internal: with an internal type in its signature, internal, unless it overrides)
+            else if (mods.StartsWith("protected internal ") && !mods.Contains(" override") && SurfaceVisibility("public", sig.ReturnType, sig.Params) == "internal")
+                mods = "internal " + mods.Substring("protected internal ".Length);
             bool decorated = _m.Ast.MethodDecorators.TryGetValue(f, out var decorators);
             if (decorated) { mods = isStatic ? "internal static" : "internal"; if (f.IsAsync) mods += " async"; }
             string methodName = decorated ? Decorators.UndecoratedPrefix + f.Name : f.Name;

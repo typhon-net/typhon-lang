@@ -491,7 +491,12 @@ namespace Typhon.Compiler.Emit
                 return EmitExpr(a.Target) + ".random_sample";
             // type(x).__name__, x.__class__, SomeClass.__name__
             if (a.Name == "__class__") return Paren(EmitExpr(a.Target)) + ".GetType()";
-            if (a.Name == "__name__")
+            // type(x).__module__ / self.__class__.__module__: the module the class is defined in ('builtins' for the runtime's)
+            if (a.Name == "__module__" && (a.Target is CallExpr mtc && mtc.Func is NameExpr mtn && mtn.Id == "type" && !IsShadowed("type") ||
+                                           a.Target is AttributeExpr mca && mca.Name == "__class__" || InferType(a.Target) is "global::System.Type" or "System.Type"))
+                return $"{Rt("__module_of")}((object?){Paren(EmitExpr(a.Target))})";
+            if (a.Name == "__name__" || a.Name == "__qualname__" && (a.Target is CallExpr || a.Target is AttributeExpr qa && qa.Name == "__class__" ||
+                                                                    InferType(a.Target) is "global::System.Type" or "System.Type"))
             {
                 if (a.Target is CallExpr tc && tc.Func is NameExpr tn && tn.Id == "type" && !IsShadowed("type")) return $"{Rt("__name_of")}({EmitExpr(a.Target)})";
                 if (a.Target is AttributeExpr ca && ca.Name == "__class__") return $"{Rt("__name_of")}({EmitExpr(a.Target)})";

@@ -79,7 +79,10 @@ namespace Typhon.Compiler.Emit
         string SurfaceVisibility(string vis, params string[] signatureParts) =>
             (vis == "public" || vis == "protected internal" || vis == "protected") &&
             signatureParts.Any(p => p != null && (p.Contains("global::Typhon.Runtime.") || p.Contains("global::Typhon.Stdlib.") || p.Contains("." + FnPrefix) ||
-                                                  InternalClassNames is { } ic && ic.IsMatch(p))) ? "internal" : vis;
+                                                  RuntimeShortName.IsMatch(p) || InternalClassNames is { } ic && ic.IsMatch(p))) ? "internal" : vis;
+
+        /// <summary>A runtime type written by its short name (PyFile, PyTextStream: the runtime's types are named Py...).</summary>
+        static readonly System.Text.RegularExpressions.Regex RuntimeShortName = new System.Text.RegularExpressions.Regex(@"(^|[^\w.])Py[A-Z]\w*");
 
         /// <summary>The project's internal classes (named _Like_this) as one pattern of whole type names, or null.</summary>
         System.Text.RegularExpressions.Regex InternalClassNames => _internalClassNames ??= BuildInternalClassNames();
@@ -357,6 +360,12 @@ namespace Typhon.Compiler.Emit
                         }
                     }
                     else if (keepDefault) defaultCode = " = " + EmitExpr(p.Default, targetTyped: true);
+                    // an inferred overload whose type for this parameter is not its default's (bigendian=0 for bigendian=True):
+                    // every call that made the overload passes it, so it stays optional without its value (an earlier optional
+                    // parameter would otherwise have to lose its default, C# allowing no required parameter after optional ones)
+                    else if (p.Default != null && paramTypes != null && p.Annotation == null && !_quietDynamic && p.Kind == ParamKind.Normal &&
+                             defaults.Any(d => d != null))
+                        defaultCode = " = default!";
                     if (wider != null)
                     {
                         string local = p.Name + "__v";

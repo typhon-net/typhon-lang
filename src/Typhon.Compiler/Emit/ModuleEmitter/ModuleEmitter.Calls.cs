@@ -459,6 +459,18 @@ namespace Typhon.Compiler.Emit
             // which parameters take functions: the .NET overloads, or a builtin's (print(f), str(f) take the function object)
             var shapes = overloads ?? (c.Func is NameExpr bfn && !IsShadowed(bfn.Id) && c.Args.Any(x => x.Value is NameExpr)
                 ? _r.GetMembers("Typhon.Runtime.Builtins", bfn.Id).Where(m => m.IsMethod && m.IsStatic).ToList() : null);
+            // d.get(k) / s.expandtabs(n) with a late-bound argument on a typed receiver: the runtime's extension method called as
+            // the static method it is (C# cannot dispatch an extension method dynamically, CS1973; a static one it can)
+            if (dynamicCall && c.Func is AttributeExpr em && InferType(em.Target) is string emt && emt != "dynamic" && !emt.Contains("dynamic>") &&
+                IsPythonContainer(emt) && // (str and the containers: their Python methods are the runtime's extensions; bytes has its own)
+                !c.Args.Any(x => x.Star || x.DoubleStar) && MemberType(emt, em.Name, method: true) == null &&
+                _r.GetMembers("Typhon.Runtime.Builtins", em.Name).Any(m => m.IsMethod && m.IsStatic && m.Parameters.Count >= 1) &&
+                !(em.Target is NameExpr emn && (ModuleRef(emn.Id) != null || _dotnetAliases.ContainsKey(emn.Id) || TryResolveType(emn.Id, 0, out _, out _))))
+            {
+                string rest = EmitArgs(c.Args, dynamicCall: true);
+                // (by its full name: using static does not bring extension methods in as plain names)
+                return $"global::Typhon.Runtime.Builtins.{Esc(em.Name)}({EmitExpr(em.Target)}{(rest.Length > 0 ? ", " + rest : "")})";
+            }
             return $"{func}({EmitArgs(c.Args, overloads: overloads, targetTypedAt: typedAt, dynamicCall: dynamicCall, typedKeywords: name => TypedKeyword(c, name), paramTypeAt: (i, name) => ParamTypeOf(c, i, name), typedFunctionArgs: typedFunctionArgs, functionShapes: shapes, typhonCallee: typhonTarget != null)})";
         }
 
@@ -561,7 +573,9 @@ namespace Typhon.Compiler.Emit
                         return $"(({MapType(c.Args[0].Value, c)}){Paren(EmitExpr(c.Args[1].Value))})";
                     case "type":
                         if (c.Args.Count != 1) break;
-                        return $"{Paren(EmitValue(c.Args[0].Value))}.GetType()"; // (a value: type(3) is int, the literal a long)
+                        // (a value: type(3) is int, the literal a long; a late-bound value as object: GetType() on dynamic is dynamic too)
+                        return InferType(c.Args[0].Value) == "dynamic" ? $"((object){Paren(EmitValue(c.Args[0].Value))}).GetType()"
+                                                                       : $"{Paren(EmitValue(c.Args[0].Value))}.GetType()";
                     case "print":
                         if (c.Args.Any(a => a.Name != null))
                         {

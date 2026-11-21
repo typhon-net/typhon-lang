@@ -227,6 +227,24 @@ namespace Typhon.Runtime
             _ => (string)((dynamic)o).__name__,
         };
 
+        /// <summary>X.__module__: the module a class (or a function) is defined in; 'builtins' for the runtime's and .NET's types.</summary>
+        public static string __module_of(object? o) => o switch
+        {
+            PyFunction f => f.__module__,
+            Type t => ModuleOfType(t),
+            null => throw new MissingMemberException("'NoneType' object has no attribute '__module__'"),
+            _ => (string)((dynamic)o).__module__,
+        };
+
+        /// <summary>The module of a class: a Typhon class's is the module class it is nested in; the runtime's and .NET's are builtins.</summary>
+        static string ModuleOfType(Type t)
+        {
+            if (t.Namespace is string ns && (ns == "System" || ns.StartsWith("System.") || ns.StartsWith("Microsoft.") || ns.StartsWith("Typhon."))) return "builtins";
+            var outer = t;
+            while (outer.DeclaringType != null) outer = outer.DeclaringType;
+            return outer != t ? outer.Name : t.Namespace ?? "builtins";
+        }
+
         /// <summary>A type's Python name: int for long, str for string, list for List&lt;T&gt;, a Typhon class's own name.</summary>
         public static string PyTypeName(Type t)
         {
