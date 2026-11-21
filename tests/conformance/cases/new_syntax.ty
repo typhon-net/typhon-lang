@@ -1,0 +1,44 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+"""Conformance: newer syntax CPython's own library uses: lazy imports (PEP 810, 3.15), f-strings with the same quotes
+inside replacement fields and nested fields in format specs (PEP 701, 3.12), template strings (PEP 750, 3.14), and
+isinstance narrowing to a runtime class."""
+
+lazy import math
+lazy from os import path as p
+from string.templatelib import Template, Interpolation
+
+name = "x"
+w = 5
+t = t'hi {name!r:>{w}} and {w}'
+print(repr(t))
+print(t.strings, t.values)
+print(list(t))
+print(type(t).__name__, t.interpolations[0].expression, t.interpolations[0].conversion, repr(t.interpolations[0].format_spec))
+print(repr(t + t'!'))
+print(isinstance(t, Template), type(t"") is Template)
+
+
+def render(tpl: Template) -> str:
+    out = []
+    for part in tpl:
+        if isinstance(part, Interpolation):
+            out.append(str(part.value).upper())
+        else:
+            out.append(part)
+    return "".join(out)
+
+
+print(render(t"Hello {name}, you are {w} " t"today"))
+
+args = ["a", "b", "c"]
+decorator = "@cache"
+body = "    pass"
+print(f'({', '.join(args)})')
+print(f'{f' {decorator}\n' if decorator else ''} def {name}({", ".join(args)}):\n{body}')
+d = {"k": 1, "j": 2}
+print(f"{d['k']} {d["j"]} {'{'}{'}'} {{literal}}")
+print(f"[{name:>{w}}] [{3.14159:.{2}f}]")
+print(f"""{'''triple'''} {"x" + 'y'}""")
+print(math.sqrt(4.0), p.basename("a/b.txt"))

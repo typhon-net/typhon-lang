@@ -87,6 +87,9 @@ namespace Typhon.Compiler.Syntax
                 while (AcceptOp(",")) d.Targets.Add(ParseOrExpr());
                 return d;
             }
+            // lazy import x / lazy from x import y (PEP 810, Python 3.15): a soft keyword; a compiled program binds its imports
+            // when it starts, so the import is an ordinary one
+            if (IsKw("lazy") && Peek().Kind == TokenKind.Name && (Peek().Text == "import" || Peek().Text == "from")) _i++;
             if (AcceptKw("import"))
             {
                 var s = At(new ImportStmt(), tok);

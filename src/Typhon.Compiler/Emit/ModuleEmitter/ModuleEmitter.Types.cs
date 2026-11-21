@@ -86,6 +86,7 @@ namespace Typhon.Compiler.Emit
                         case ConstKind.Bool: return "bool";
                         default: return null;
                     }
+                case FStringExpr tf when tf.IsTemplate: return TemplateType;
                 case FStringExpr _: return "string";
                 case YieldExpr _ when _scope != null && _scope.AsyncForm: return "dynamic";
                 case NamedExpr ne: return InferType(ne.Value);

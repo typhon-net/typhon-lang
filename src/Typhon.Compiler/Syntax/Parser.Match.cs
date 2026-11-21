@@ -229,11 +229,12 @@ namespace Typhon.Compiler.Syntax
         Expr ParseStrings()
         {
             var tok = Cur;
-            bool anyF = false, anyBytes = false;
+            bool anyF = false, anyBytes = false, anyT = false;
             var pieces = new List<Token>();
             while (Cur.Kind == TokenKind.String)
             {
                 if (Cur.Prefix.IndexOf('f') >= 0) anyF = true;
+                if (Cur.Prefix.IndexOf('t') >= 0) anyT = true;
                 if (Cur.Prefix.IndexOf('b') >= 0) anyBytes = true;
                 pieces.Add(Cur);
                 _i++;
@@ -247,6 +248,18 @@ namespace Typhon.Compiler.Syntax
                 foreach (char ch in bytesText.ToString())
                     if (ch > 0xff) throw new SyntaxError("bytes can only contain ASCII literal characters", tok.Line, tok.Col);
                 return At(new ConstExpr { Kind = ConstKind.Bytes, Str = bytesText.ToString() }, tok);
+            }
+            // t"...": a template (PEP 750); adjacent t-strings make one template (a str literal may not join them)
+            if (anyT)
+            {
+                if (pieces.Exists(x => x.Prefix.IndexOf('t') < 0)) throw new SyntaxError("cannot mix t-string literals with string or bytes literals", tok.Line, tok.Col);
+                var t = At(new FStringExpr { IsTemplate = true }, tok);
+                foreach (var p in pieces)
+                {
+                    bool raw = p.Prefix.IndexOf('r') >= 0;
+                    ParseFStringBody(p, raw, t.Parts);
+                }
+                return t;
             }
             if (!anyF)
             {
@@ -307,8 +320,15 @@ namespace Typhon.Compiler.Syntax
                     exprText = trimmed.Substring(0, trimmed.Length - 1);
                 }
                 part.Expr = ParseExpression(exprText, tok.Line, tok.Col);
+                part.ExprText = exprText.Trim();
                 if (convPos >= 0) part.Conversion = s[convPos + 1];
                 if (specPos >= 0) part.FormatSpec = s.Substring(specPos + 1, j - specPos - 1);
+                // f"{x:>{width}}": the spec's own replacement fields, evaluated when the string is built
+                if (part.FormatSpec != null && part.FormatSpec.Contains("{"))
+                {
+                    part.SpecParts = new List<FStringPart>();
+                    ParseFStringBody(new Token { Kind = TokenKind.String, Text = part.FormatSpec, Prefix = "f", Line = tok.Line, Col = tok.Col }, raw, part.SpecParts);
+                }
                 if (selfDocumenting && convPos < 0 && specPos < 0) part.Conversion = 'r';
                 parts.Add(part);
                 i = j + 1;

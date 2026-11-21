@@ -86,7 +86,7 @@ namespace Typhon.Compiler.Syntax
                     // string prefix?
                     int start = _pos;
                     int p = _pos;
-                    while (p < _src.Length && p - start < 2 && "rRbBfFuU".IndexOf(_src[p]) >= 0) p++;
+                    while (p < _src.Length && p - start < 2 && "rRbBfFuUtT".IndexOf(_src[p]) >= 0) p++;
                     if (p < _src.Length && (_src[p] == '"' || _src[p] == '\'') && p > start)
                     {
                         string prefix = _src.Substring(start, p - start).ToLowerInvariant();
@@ -201,10 +201,30 @@ namespace Typhon.Compiler.Syntax
             int startLine = _line, startCol = start - _lineStart + 1;
             _pos += triple ? 3 : 1;
             int contentStart = _pos;
+            // an f-string's replacement fields may hold strings with the same quote (PEP 701, Python 3.12): f'{', '.join(xs)}'
+            bool formatted = prefix.IndexOf('f') >= 0 || prefix.IndexOf('t') >= 0;
+            int depth = 0;
             while (true)
             {
                 if (_pos >= _src.Length) throw new SyntaxError("unterminated string literal", startLine + _lineOffset, startCol);
                 char c = _src[_pos];
+                if (formatted)
+                {
+                    if (depth == 0 && (c == '{' || c == '}'))
+                    {
+                        if (_pos + 1 < _src.Length && _src[_pos + 1] == c) { _pos += 2; continue; } // {{ / }}
+                        if (c == '{') depth = 1;
+                        _pos++; continue;
+                    }
+                    if (depth > 0)
+                    {
+                        if (c == '{') depth++;
+                        else if (c == '}') depth--;
+                        else if (c == '\'' || c == '"') { SkipNestedString(); continue; }
+                        else if (c == '\n') { if (!triple) throw new SyntaxError("unterminated string literal", startLine + _lineOffset, startCol); _pos++; NewLine(); continue; }
+                        _pos++; continue;
+                    }
+                }
                 if (c == '\\')
                 {
                     if (_pos + 1 < _src.Length && _src[_pos + 1] == '\n') { _pos += 2; NewLine(); continue; }
@@ -227,6 +247,43 @@ namespace Typhon.Compiler.Syntax
             var tok = new Token { Kind = TokenKind.String, Text = content, Prefix = prefix, Line = startLine + _lineOffset, Col = startCol, Pos = start, EndPos = _pos };
             _tokens.Add(tok);
             _ = raw;
+        }
+
+        /// <summary>
+        /// Past a string inside an f-string's replacement field (its prefix letters were scanned as part of the expression):
+        /// to its closing quote, through its own replacement fields when it is an f-string itself.
+        /// </summary>
+        void SkipNestedString()
+        {
+            int p = _pos - 1;
+            while (p >= 0 && "rRbBfFuUtT".IndexOf(_src[p]) >= 0) p--;
+            string prefix = _src.Substring(p + 1, _pos - p - 1).ToLowerInvariant();
+            bool formatted = prefix.IndexOf('f') >= 0 || prefix.IndexOf('t') >= 0, raw = prefix.IndexOf('r') >= 0;
+            char q = _src[_pos];
+            bool triple = _pos + 2 < _src.Length && _src[_pos + 1] == q && _src[_pos + 2] == q;
+            _pos += triple ? 3 : 1;
+            int depth = 0;
+            while (_pos < _src.Length)
+            {
+                char c = _src[_pos];
+                if (c == '\\' && !raw) { _pos += 2; continue; }
+                if (c == '\n') { _pos++; NewLine(); continue; }
+                if (formatted && depth == 0 && (c == '{' || c == '}'))
+                {
+                    if (_pos + 1 < _src.Length && _src[_pos + 1] == c) { _pos += 2; continue; }
+                    if (c == '{') depth = 1;
+                    _pos++; continue;
+                }
+                if (formatted && depth > 0)
+                {
+                    if (c == '{') depth++;
+                    else if (c == '}') depth--;
+                    else if (c == '\'' || c == '"') { SkipNestedString(); continue; }
+                    _pos++; continue;
+                }
+                if (c == q && (!triple || _pos + 2 < _src.Length && _src[_pos + 1] == q && _src[_pos + 2] == q)) { _pos += triple ? 3 : 1; return; }
+                _pos++;
+            }
         }
 
         void Add(TokenKind kind, string text, int start, int end)

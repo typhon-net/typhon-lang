@@ -32,9 +32,11 @@ namespace Typhon.Compiler.Syntax
         public Expr Expr;          // ...or an interpolation hole
         public char Conversion;    // 'r', 's', 'a' or '\0'
         public string FormatSpec;  // null if none
+        public List<FStringPart> SpecParts; // a format spec with replacement fields of its own (f"{x:>{width}}"), else null
+        public string ExprText;    // the hole's expression as written (a t-string's Interpolation.expression)
     }
 
-    public sealed class FStringExpr : Expr { public List<FStringPart> Parts = new List<FStringPart>(); }
+    public sealed class FStringExpr : Expr { public List<FStringPart> Parts = new List<FStringPart>(); public bool IsTemplate; }
 
     public sealed class AttributeExpr : Expr { public Expr Target; public string Name; }
 

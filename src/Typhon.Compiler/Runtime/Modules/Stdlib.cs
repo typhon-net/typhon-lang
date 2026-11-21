@@ -549,7 +549,7 @@ namespace Typhon.Stdlib
     }
 
     /// <summary>string: character classes as str constants.</summary>
-    internal static class string_
+    internal static partial class string_
     {
         public const string ascii_lowercase = "abcdefghijklmnopqrstuvwxyz";
         public const string ascii_uppercase = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";

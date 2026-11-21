@@ -1,0 +1,15 @@
+Template(strings=('hi ', ' and ', ''), interpolations=(Interpolation('x', 'name', 'r', '>5'), Interpolation(5, 'w', None, '')))
+('hi ', ' and ', '') ('x', 5)
+['hi ', Interpolation('x', 'name', 'r', '>5'), ' and ', Interpolation(5, 'w', None, '')]
+Template name r '>5'
+Template(strings=('hi ', ' and ', '!'), interpolations=(Interpolation('x', 'name', 'r', '>5'), Interpolation(5, 'w', None, '')))
+True True
+Hello X, you are 5 today
+(a, b, c)
+ @cache
+ def x(a, b, c):
+    pass
+1 2 {} {literal}
+[    x] [3.14]
+triple xy
+2.0 b.txt

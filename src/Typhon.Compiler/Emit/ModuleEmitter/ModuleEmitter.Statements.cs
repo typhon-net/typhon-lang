@@ -275,7 +275,9 @@ namespace Typhon.Compiler.Emit
             name = null; type = null;
             if (!(test is CallExpr c && c.Func is NameExpr f && f.Id == "isinstance" && !IsShadowed("isinstance") && c.Args.Count == 2 &&
                   c.Args[0].Value is NameExpr n && c.Args[1].Value is NameExpr cls && IsLocal(n.Id) && !AssignsName(body, n.Id))) return false;
-            if (!TryResolveType(cls.Id, 0, out _, out var pyClass) || pyClass == null || pyClass.TypeParams.Count > 0) return false;
+            // (a Typhon class, or a class of the runtime or of .NET: not a generic one, nor a builtin type such as int or str)
+            if (BuiltinTypeNames.Contains(cls.Id) || !TryResolveType(cls.Id, 0, out var clsMeta, out var pyClass) ||
+                (pyClass != null ? pyClass.TypeParams.Count > 0 : clsMeta == null || clsMeta.Contains('`'))) return false;
             string current = KnownType(n.Id);
             type = MapType(cls, test);
             if (type == null || current == type) return false;

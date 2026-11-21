@@ -80,6 +80,8 @@ namespace Typhon.Compiler.Emit
                 // an exception class as a value (exc_type is KeyError, a tuple of exception classes): its type object
                 case NameExpr ev when ExceptionMap.TryGetValue(ev.Id, out var evType) && !IsShadowed(ev.Id) && !IsLocal(ev.Id) && !_renames.ContainsKey(ev.Id):
                     return $"typeof({evType})";
+                // one of the runtime's classes imported by name, as a value (type(t) is Template): its type object
+                case NameExpr rc when !Receivers.Contains(rc) && RuntimeClassValue(rc) is string rcValue: return rcValue;
                 case NameExpr n: return EmitName(n);
                 case FStringExpr f: return EmitFString(f);
                 // one of the runtime's classes as a value ({weakref.ref: ...}, cls is collections.deque): its type object
@@ -256,8 +258,25 @@ namespace Typhon.Compiler.Emit
             return sb.Append('"').ToString();
         }
 
+        const string TemplateType = "global::Typhon.Stdlib.string_.templatelib.Template";
+
+        /// <summary>t"...": a string.templatelib.Template of the literal parts and the interpolations (values not formatted).</summary>
+        string EmitTemplate(FStringExpr f)
+        {
+            var args = new List<string>();
+            foreach (var p in f.Parts)
+            {
+                if (p.Literal != null) { args.Add(CsString(p.Literal)); continue; }
+                string spec = p.SpecParts != null ? EmitFString(new FStringExpr { Parts = p.SpecParts, Line = f.Line, Col = f.Col }) : CsString(p.FormatSpec ?? "");
+                string conv = p.Conversion == '\0' ? "null" : CsString(p.Conversion.ToString());
+                args.Add($"new global::Typhon.Stdlib.string_.templatelib.Interpolation((object?){Paren(EmitValue(p.Expr))}, {CsString(p.ExprText ?? "")}, {conv}, {spec})");
+            }
+            return $"new {TemplateType}({string.Join(", ", args)})";
+        }
+
         string EmitFString(FStringExpr f)
         {
+            if (f.IsTemplate) return EmitTemplate(f);
             var sb = new StringBuilder("$\"");
             foreach (var p in f.Parts)
             {
@@ -271,9 +290,10 @@ namespace Typhon.Compiler.Emit
                 string hole;
                 if (p.FormatSpec != null)
                 {
-                    if (p.FormatSpec.Contains("{")) Unsupported(f, "nested replacement fields in f-string format specs");
-                    hole = $"{Rt("format")}({code}, {CsString(p.FormatSpec)})";
-                    if (p.Conversion == 'r') hole = $"{Rt("format")}({Rt("repr")}({code}), {CsString(p.FormatSpec)})";
+                    // (a spec with replacement fields of its own is built when the string is: f"{x:>{width}}")
+                    string spec = p.SpecParts != null ? EmitFString(new FStringExpr { Parts = p.SpecParts, Line = f.Line, Col = f.Col }) : CsString(p.FormatSpec);
+                    hole = $"{Rt("format")}({code}, {spec})";
+                    if (p.Conversion == 'r') hole = $"{Rt("format")}({Rt("repr")}({code}), {spec})";
                 }
                 else hole = p.Conversion == 'r' ? $"{Rt("repr")}({code})" : $"{Rt("str")}({code})";
                 sb.Append('{').Append(hole).Append('}');
@@ -328,17 +348,55 @@ namespace Typhon.Compiler.Emit
             return set;
         }
 
+        /// <summary>
+        /// Is the runtime type a class (not a module: modules are static classes, named in lower case, without constructors)?
+        /// (The resolver leaves out some constructors, a params one among them: a capitalized name is a class too.)
+        /// </summary>
+        bool IsRuntimeClassMeta(string meta)
+        {
+            string last = meta.Split('+', '.').Last().Split('`')[0];
+            return last.Length > 0 && char.IsUpper(last[0]) || _r.GetConstructors(meta).Count > 0;
+        }
+
+        /// <summary>A name imported from a standard module that is one of the runtime's classes: its type object, or null.</summary>
+        string RuntimeClassValue(NameExpr n)
+        {
+            if (IsLocal(n.Id) || _moduleFieldTypes.ContainsKey(n.Id) || _renames.ContainsKey(n.Id) || BuiltinTypeNames.Contains(n.Id) ||
+                ExceptionMap.ContainsKey(n.Id))
+                return null;
+            // (from string.templatelib import Template: the import made the name an alias of the class)
+            string meta = _dotnetAliases.TryGetValue(n.Id, out var aliased) ? aliased
+                        : StdlibOwner(n.Id) is string owner ? owner.Replace('+', '.') + "." + n.Id
+                        : TryResolveType(n.Id, 0, out var resolved, out var py) && py == null ? resolved : null;
+            if (meta == null || !meta.StartsWith("Typhon.Stdlib.") || meta.Contains('`')) return null;
+            // (a class nested two deep, string.templatelib.Template, may be recorded with dots: find its metadata name)
+            if (!_r.TypeExists(meta))
+            {
+                // Typhon.Stdlib.a.b.C → Typhon.Stdlib.a+b+C, Typhon.Stdlib.a.b+C, ...: the first that exists
+                string dotted = meta.Replace('+', '.'), tail = dotted.Substring("Typhon.Stdlib.".Length);
+                var segs = tail.Split('.');
+                for (int top = 1; top <= segs.Length; top++)
+                {
+                    string cand = "Typhon.Stdlib." + string.Join(".", segs.Take(top)) + (top < segs.Length ? "+" + string.Join("+", segs.Skip(top)) : "");
+                    if (_r.TypeExists(cand)) { meta = cand; break; }
+                }
+            }
+            // (classes only: a module is a static class, lower-case and without constructors)
+            return _r.TypeExists(meta) && IsRuntimeClassMeta(meta) ? $"typeof({CsTypeName(meta)})" : null;
+        }
+
         string ModuleOrClassValue(Expr e)
         {
+            if (e is NameExpr cn && RuntimeClassValue(cn) is string imported) return imported;
             if (e is NameExpr n && !IsLocal(n.Id) && !_moduleFieldTypes.ContainsKey(n.Id) && !_renames.ContainsKey(n.Id) &&
                 _dotnetAliases.TryGetValue(n.Id, out var meta) && meta.StartsWith("Typhon.Stdlib.") && !meta.Contains('+'))
                 return $"global::Typhon.Runtime.PyModule.Of(typeof({EmitName(n)}), {CsString(meta.Substring("Typhon.Stdlib.".Length).TrimEnd('_'))})";
             if (e is AttributeExpr a && DottedName(a) is string dotted && !IsLocal(dotted.Split('.')[0]))
                 // (a generic class such as collections.deque: the type with object for its type arguments, constructible and a dict key)
                 for (int arity = 0; arity <= 3; arity++)
-                    // (not a module nested in a module, os.path or numpy.linalg: a static class, without constructors)
+                    // (not a module nested in a module, os.path or numpy.linalg: a static class)
                     if (TryResolveType(dotted, arity, out var tmeta, out var py) && py == null && tmeta != null && tmeta.StartsWith("Typhon.Stdlib.") && tmeta.Contains('+') &&
-                        _r.GetConstructors(tmeta).Count > 0)
+                        IsRuntimeClassMeta(tmeta))
                         return arity == 0 ? $"typeof({CsTypeName(tmeta)})"
                              : $"typeof({CsTypeName(tmeta.Split('`')[0])}<{string.Join(", ", Enumerable.Repeat("object", arity))}>)";
             // a class the runtime defines beside its module, made by a factory function of the module (collections.deque)
