@@ -756,7 +756,10 @@ public static partial class numpy
         return new ndarray(r, new[] { n, m });
     }
 
-    /// <summary>Matrix product (a @ b). 1-D @ 1-D gives a 0-d array.</summary>
+    /// <summary>
+    /// Matrix product (a @ b). 1-D @ 1-D gives a 0-d array; a 1-D operand is a row (left) or column (right) vector
+    /// whose axis is dropped from the result; leading (batch) dimensions broadcast.
+    /// </summary>
     public static ndarray matmul(ndarray a, ndarray b)
     {
         if (a.ndim == 0 || b.ndim == 0)
@@ -768,49 +771,59 @@ public static partial class numpy
             return ndarray.Scalar0d(TensorPrimitives.Dot<double>(a._data, b._data));
         }
 
+        int n = a.ndim == 1 ? 1 : a._shape[^2];
+        int k = a._shape[^1];
+        int kb = b.ndim == 1 ? b._shape[0] : b._shape[^2];
+        int m = b.ndim == 1 ? 1 : b._shape[^1];
+        if (k != kb)
+            throw Err.Value($"matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size {kb} is different from {k})");
+
         if (a.ndim <= 2 && b.ndim <= 2)
         {
-            int n = a.ndim == 1 ? 1 : a._shape[0];
-            int k = a._shape[^1];
-            int kb = b._shape[0];
-            int m = b.ndim == 1 ? 1 : b._shape[1];
-            if (k != kb)
-                throw Err.Value($"matmul: Input operand 1 has a mismatch in its core dimension 0, with gufunc signature (n?,k),(k,m?)->(n?,m?) (size {kb} is different from {k})");
-            if (b.ndim == 1) return new ndarray(MatMulKernels.MatVec(a._data, b._data, n, k), new[] { n });
-            if (a.ndim == 1) return new ndarray(MatMulKernels.VecMat(a._data, b._data, k, m), new[] { m });
-            return new ndarray(MatMulKernels.MatMul(a._data, b._data, n, k, m), new[] { n, m });
+            int[] shape2 = a.ndim == 1 ? new[] { m } : b.ndim == 1 ? new[] { n } : new[] { n, m };
+            return new ndarray(MatMulKernels.MatMul(a._data, b._data, n, k, m), shape2);
         }
 
-        // Batched: (..., n, k) @ (k, m) or matching batch dims.
-        if (b.ndim == 2)
+        // Batched: the leading (batch) dimensions broadcast against each other; a 1-D operand has none.
+        int[] batchA = a.ndim <= 2 ? Array.Empty<int>() : a._shape[..^2];
+        int[] batchB = b.ndim <= 2 ? Array.Empty<int>() : b._shape[..^2];
+        int[] batch = Kernels.BroadcastShapes(batchA, batchB);
+        var shape = new List<int>(batch);
+        if (a.ndim > 1) shape.Add(n);
+        if (b.ndim > 1) shape.Add(m);
+        int count = Kernels.Prod(batch);
+        long cells = (long)count * n * m;
+        if (cells > Array.MaxLength) throw new OutOfMemoryException("array is too big");
+        var res = k == 0 ? new double[cells] : Kernels.Alloc((int)cells);
+        if (cells == 0) return new ndarray(res, shape.ToArray());
+
+        // One b for all batches and a's batches are contiguous: a single tall product (all rows of a) @ b.
+        if (Kernels.Prod(batchB) == 1 && Kernels.SameShape(batchA, batch))
         {
-            int k = a._shape[^1];
-            int rows = a._data.Length / Math.Max(1, k);
-            var flat = new ndarray(a._data, new[] { rows, k });
-            var r = matmul(flat, b);
-            var shp = (int[])a._shape.Clone();
-            shp[^1] = b._shape[1];
-            return new ndarray(r._data, shp);
+            MatMulKernels.MatMulInto(a._data, 0, b._data, 0, res, 0, count * n, k, m);
+            return new ndarray(res, shape.ToArray());
         }
-        if (a.ndim == b.ndim && Kernels.SameShape(a._shape[..^2], b._shape[..^2]))
+
+        int[] stA = Kernels.PaddedStrides(batchA, batch), stB = Kernels.PaddedStrides(batchB, batch);
+        int sizeA = n * k, sizeB = k * m, sizeC = n * m;
+        void One(int t, int threads)
         {
-            int n = a._shape[^2], k = a._shape[^1], m = b._shape[^1];
-            if (b._shape[^2] != k) throw Err.Value("matmul: core dimension mismatch");
-            int batch = a._data.Length / Math.Max(1, n * k);
-            var res = new double[batch * n * m];
-            for (int t = 0; t < batch; t++)
+            int oa = 0, ob = 0, rem = t;
+            for (int d = batch.Length - 1; d >= 0; d--)
             {
-                var A = new double[n * k];
-                var Bm = new double[k * m];
-                Array.Copy(a._data, t * n * k, A, 0, n * k);
-                Array.Copy(b._data, t * k * m, Bm, 0, k * m);
-                Array.Copy(MatMulKernels.MatMul(A, Bm, n, k, m), 0, res, t * n * m, n * m);
+                int i = rem % batch[d];
+                rem /= batch[d];
+                oa += i * stA[d];
+                ob += i * stB[d];
             }
-            var shp = (int[])a._shape.Clone();
-            shp[^1] = m;
-            return new ndarray(res, shp);
+            MatMulKernels.MatMulInto(a._data, oa * sizeA, b._data, ob * sizeB, res, t * sizeC, n, k, m, threads);
         }
-        throw new NotSupportedException("matmul: broadcasting of batch dimensions is not supported");
+        long work = (long)n * k * m;
+        if (count > 1 && NumPyRuntime.MaxDegreeOfParallelism > 1 && work < NumPyRuntime.MatMulParallelThreshold * 4L)
+            Kernels.ChunkedItems(count, work, (t0, cnt) => { for (int t = t0; t < t0 + cnt; t++) One(t, 1); });
+        else
+            for (int t = 0; t < count; t++) One(t, 0);
+        return new ndarray(res, shape.ToArray());
     }
 
     // ====================================================================== shape manipulation

@@ -26,6 +26,7 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Typhon.Conformance.Tests/Typhon.Conformance.Tests.csproj" />
+    <Project Path="tests/Typhon.NumPy.Tests/Typhon.NumPy.Tests.csproj" />
     <Project Path="tests/Typhon.Playground.Tests/Typhon.Playground.Tests.csproj" />
   </Folder>
   <Folder Name="/benchmarks/">

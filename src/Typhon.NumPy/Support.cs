@@ -49,8 +49,8 @@ public static class NumPyRuntime
     /// <summary>Element count from which element-wise ops are split across threads.</summary>
     public static int ParallelThreshold { get; set; } = 1 << 17;
 
-    /// <summary>n*k*m from which matmul is split across threads.</summary>
-    public static long MatMulParallelThreshold { get; set; } = 1L << 18;
+    /// <summary>n*k*m from which matmul (and the matrix products inside linalg) is split across threads.</summary>
+    public static long MatMulParallelThreshold { get; set; } = 1L << 19;
 
     private static int DefaultThreads()
     {

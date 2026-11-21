@@ -13,12 +13,18 @@
     <AssemblyName>Typhon.NumPy</AssemblyName>
     <Nullable>disable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
+    <!-- MatMul.cs: prefetch instructions take a pointer (Sse.Prefetch0). -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <!-- CS8981: lowercase type names (numpy, ndarray, random, linalg) are intentional: they mirror Python names. -->
     <NoWarn>$(NoWarn);CS8981</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="System.Numerics.Tensors" Version="10.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Typhon.NumPy.Tests" />
   </ItemGroup>
 
 </Project>
