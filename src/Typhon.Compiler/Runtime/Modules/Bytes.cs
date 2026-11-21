@@ -484,50 +484,6 @@ namespace Typhon.Runtime
         public bool __contains__(object? x) => x is PyBytes b ? _data.ToArray().AsSpan().IndexOf(b.Data) >= 0 : _data.Contains(ByteOps.Byte(x));
     }
 
-    /// <summary>A file opened in binary mode ('rb', 'wb', 'ab', 'r+b'): reads and writes bytes.</summary>
-    internal sealed class PyBinaryFile : IEnumerable<PyBytes>, IDisposable
-    {
-        readonly System.IO.FileStream _s;
-        public readonly string name, mode;
-        public PyBinaryFile(string path, string mode)
-        {
-            name = path; this.mode = mode;
-            var fm = mode.Contains('w') ? System.IO.FileMode.Create : mode.Contains('a') ? System.IO.FileMode.Append : mode.Contains('x') ? System.IO.FileMode.CreateNew : System.IO.FileMode.Open;
-            var fa = mode.Contains('+') ? System.IO.FileAccess.ReadWrite : mode.Contains('r') ? System.IO.FileAccess.Read : System.IO.FileAccess.Write;
-            _s = new System.IO.FileStream(path, fm, fa);
-        }
-        public PyBytes read(long size = -1)
-        {
-            if (size < 0)
-            {
-                var ms = new System.IO.MemoryStream();
-                _s.CopyTo(ms);
-                return new PyBytes(ms.ToArray());
-            }
-            var buf = new byte[size];
-            int got = 0, n;
-            while (got < size && (n = _s.Read(buf, got, (int)size - got)) > 0) got += n;
-            return new PyBytes(got == size ? buf : buf[..got]);
-        }
-        public PyBytes readline()
-        {
-            var ms = new System.IO.MemoryStream();
-            int b;
-            while ((b = _s.ReadByte()) >= 0) { ms.WriteByte((byte)b); if (b == '\n') break; }
-            return new PyBytes(ms.ToArray());
-        }
-        public List<PyBytes> readlines() => this.ToList();
-        public long write(object data) { var b = ByteOps.From(data); _s.Write(b); return b.Length; }
-        public long seek(long offset, long whence = 0) => _s.Seek(offset, whence == 0 ? System.IO.SeekOrigin.Begin : whence == 1 ? System.IO.SeekOrigin.Current : System.IO.SeekOrigin.End);
-        public long tell() => _s.Position;
-        public void flush() => _s.Flush();
-        public void close() => _s.Dispose();
-        public bool closed => !_s.CanRead && !_s.CanWrite;
-        public void Dispose() => _s.Dispose();
-        public IEnumerator<PyBytes> GetEnumerator() { PyBytes l; while ((l = readline()).Count > 0) yield return l; }
-        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
-    }
-
     /// <summary>A hashlib hash object: update() data, digest() / hexdigest() at any point, copy().</summary>
     internal sealed class PyHash
     {
