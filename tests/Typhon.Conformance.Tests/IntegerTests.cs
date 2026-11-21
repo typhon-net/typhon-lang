@@ -11,7 +11,7 @@ namespace Typhon.Conformance.Tests;
 /// </summary>
 public sealed class IntegerTests
 {
-    static string RunScript(string source, out int exitCode, out string stdErr)
+    internal static string RunScript(string source, out int exitCode, out string stdErr)
     {
         string dir = Path.Combine(Suite.RepoRoot, "artifacts", "integer-tests", Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(dir);

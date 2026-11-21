@@ -66,6 +66,26 @@ namespace Typhon.Compiler.Semantics
             return false;
         }
 
+        public string OverrideAccessibility(string metadataName, string memberName)
+        {
+            var start = Find(metadataName);
+            if (start == null || start.TypeKind == TypeKind.Interface) return null;
+            for (ITypeSymbol t = start; t != null; t = t.BaseType)
+                foreach (var m in t.GetMembers(memberName))
+                    if ((m.IsVirtual || m.IsAbstract || m.IsOverride) && !m.IsSealed)
+                        switch (m.DeclaredAccessibility)
+                        {
+                            case Accessibility.Public: return "public";
+                            case Accessibility.Protected: return "protected";
+                            // overridden from another assembly, a protected internal member is protected
+                            case Accessibility.ProtectedOrInternal:
+                                return SymbolEqualityComparer.Default.Equals(m.ContainingAssembly, _compilation.Assembly) ? "protected internal" : "protected";
+                            case Accessibility.Internal: return "internal";
+                            case Accessibility.ProtectedAndInternal: return "private protected";
+                        }
+            return null;
+        }
+
         readonly Dictionary<string, IReadOnlyList<MemberSig>> _members = new Dictionary<string, IReadOnlyList<MemberSig>>();
 
         MemberSig MethodSig(IMethodSymbol m)

@@ -52,6 +52,23 @@ namespace Typhon.Compiler.Emit
         }
 
         /// <summary>
+        /// typing.Annotated metadata that names a .NET attribute (PEP 593 leaves its meaning to tools) becomes that attribute on
+        /// the member declared with it: count: Annotated[int, Parameter()] → [Parameter()] public long count { get; set; }.
+        /// Other metadata (strings, Python values) means nothing to the compiler, as it means nothing to CPython at run time.
+        /// </summary>
+        void EmitAnnotatedAttributes(Expr annotation)
+        {
+            if (!(annotation is SubscriptExpr s) || StripTypingPrefix(DottedName(s.Target)) != "Annotated" || !(s.Index is TupleExpr t)) return;
+            foreach (var meta in t.Elts.Skip(1))
+            {
+                if (!(meta is NameExpr || meta is AttributeExpr || meta is CallExpr) || !(DecoratorName(meta) is string name)) continue;
+                bool attribute = TryResolveType(name, 0, out var m, out var py) && py == null && m != null ||
+                                 TryResolveType(name + "Attribute", 0, out m, out py) && py == null && m != null;
+                if (attribute) EmitAttributes(new List<Expr> { meta });
+            }
+        }
+
+        /// <summary>
         /// Typhon's runtime types (PyTuple, Counter, deque, Path, ...) are internal to each assembly (no runtime dependency), so a
         /// member whose signature uses one cannot be public: it becomes internal (C# callers see everything else).
         /// </summary>

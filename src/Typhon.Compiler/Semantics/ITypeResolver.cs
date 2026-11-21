@@ -19,6 +19,11 @@ namespace Typhon.Compiler.Semantics
         bool HasMember(string metadataName, string memberName);
         /// <summary>Is there a virtual/abstract/override member with that name in the type or its bases?</summary>
         bool IsOverridable(string metadataName, string memberName);
+        /// <summary>
+        /// The access modifier an override of that member must declare ("public", "protected", "protected internal", ...),
+        /// or null when the type has no overridable member of that name (ComponentBase.OnInitialized → "protected").
+        /// </summary>
+        string OverrideAccessibility(string metadataName, string memberName);
         /// <summary>Public and protected instance constructors of a non-generic class (empty when unknown).</summary>
         IReadOnlyList<CtorSignature> GetConstructors(string metadataName);
         /// <summary>
@@ -101,6 +106,7 @@ namespace Typhon.Compiler.Semantics
         public IReadOnlyList<MemberSig> GetExtensionMethods(string receiverMetadataName, string name, IReadOnlyList<string> namespaces) => new List<MemberSig>();
         public bool HasMember(string metadataName, string memberName) => false;
         public bool IsOverridable(string metadataName, string memberName) => false;
+        public string OverrideAccessibility(string metadataName, string memberName) => null;
         public IReadOnlyList<CtorSignature> GetConstructors(string metadataName) => new CtorSignature[0];
         public IReadOnlyList<MemberSig> GetMembers(string metadataName, string memberName) => new MemberSig[0];
     }

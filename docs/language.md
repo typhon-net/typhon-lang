@@ -131,6 +131,12 @@ Exception` does not catch it, uncaught it ends the program with its code; `os._e
 class variables, methods as bound methods, attributes added at run time, Python methods of built-in values),
 function values called with `*args`, `**kwargs` and keyword arguments, attributes set on functions (`wrapper.calls = 0`),
 `functools.partial`, a decorator that names no Python callable → .NET attribute (`@Obsolete("...")`, `@Fact`),
+`typing.Annotated` metadata that names a .NET attribute → that attribute on the property a class-level annotation
+declares (`start: Annotated[int, Parameter()] = 0` → `[Parameter()] public long start { get; set; } = 0;`, for Blazor's
+`[Parameter]`/`[Inject]` or DataAnnotations' `[Required]`; other metadata is ignored, as CPython ignores it), classes
+deriving from .NET classes (a method overriding a .NET virtual or abstract member keeps that member's access:
+`def OnInitialized(self)` in a subclass of Blazor's `ComponentBase` is `protected override`; see
+[`samples/BlazorApp`](../samples/BlazorApp)),
 `if/elif/else`, `while`, `for` (counting loops over `range` compile to plain `for` loops; iterating a dict yields its
 keys), `for/while ... else`, `match`/`case` (PEP 634: literal, capture, sequence, mapping, class and or-patterns,
 guards), the walrus operator `:=`, `except A, B:` (PEP 758), starred unpacking (`a, *rest = xs`, `[*a, *b]`, `f(*args)`,

@@ -31,6 +31,22 @@ namespace Typhon.Compiler.Emit
             return false;
         }
 
+        /// <summary>
+        /// The access modifier of the .NET member an override in a class with these bases overrides (through Typhon bases too),
+        /// or null when none is overridden: C# requires an override to keep it, so ComponentBase.OnInitialized stays protected.
+        /// </summary>
+        string DotNetOverrideVisibility(List<Expr> bases, string member, int depth = 0)
+        {
+            if (depth > 20) return null;
+            foreach (var b in bases)
+            {
+                if (!ResolveBase(b, out var py, out var meta)) continue;
+                string access = py != null ? DotNetOverrideVisibility(py.Bases, member, depth + 1) : meta != null ? _r.OverrideAccessibility(meta, member) : null;
+                if (access != null) return access;
+            }
+            return null;
+        }
+
         /// <summary>obj.attr = v / Cls.ATTR = v where the class does not declare it: the attribute becomes a field (dry run).</summary>
         void RecordExternalAttribute(AttributeExpr at, Expr value)
         {

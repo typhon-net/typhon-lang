@@ -312,6 +312,7 @@ namespace Typhon.Compiler.Emit
                         ctx.Members.Add(n.Id);
                         ctx.FieldTypes[n.Id] = type;
                         LineDirective(s);
+                        EmitAnnotatedAttributes(a.Annotation);
                         var fieldSpec = isDataclass && !isClassVar ? DataclassField(a) : null;
                         string init = fieldSpec != null ? (fieldSpec.Default != null ? " = " + Checked(EmitExpr(fieldSpec.Default, targetTyped: true)) + ";"
                                                            : fieldSpec.Factory != null ? " = " + FactoryCall(fieldSpec.Factory, type) + ";" : "")
@@ -499,7 +500,11 @@ namespace Typhon.Compiler.Emit
             else if (vis != "private")
             {
                 bool explicitOverride = HasDecorator(f.Decorators, "override");
-                if (explicitOverride || BaseHasMember(bases, f.Name, requireOverridable: true)) mods.Add("override");
+                if (explicitOverride || BaseHasMember(bases, f.Name, requireOverridable: true))
+                {
+                    mods.Add("override");
+                    if (DotNetOverrideVisibility(bases, f.Name) is string access) mods[0] = access; // C# keeps the overridden member's access
+                }
                 else if (!ctx.IsSealed && !HasDecorator(f.Decorators, "final")) mods.Add("virtual");
                 if (HasDecorator(f.Decorators, "final") && mods.Contains("override")) mods.Add("sealed");
             }
