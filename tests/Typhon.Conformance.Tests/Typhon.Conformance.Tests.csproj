@@ -22,7 +22,9 @@
     <!-- Build the CLI first, but do not reference its assembly: the tests start it as a process. -->
     <ProjectReference Include="..\..\src\Typhon.Cli\Typhon.Cli.csproj" ReferenceOutputAssembly="false" />
     <!-- the emit tool of TyphonEmitToDisk builds (GdScriptTests.EmitToDisk runs it) -->
-    <ProjectReference Include="..\..\src\Typhon.Emit\Typhon.Emit.csproj" ReferenceOutputAssembly="false" SkipGetTargetFrameworkProperties="true" SetTargetFramework="TargetFramework=net8.0" />
+    <!-- (a plain reference: with SetTargetFramework it would be a second instance of the project, built at the same time as
+         the solution's into the same obj/ folder, which Windows refuses) -->
+    <ProjectReference Include="..\..\src\Typhon.Emit\Typhon.Emit.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
   <ItemGroup>
