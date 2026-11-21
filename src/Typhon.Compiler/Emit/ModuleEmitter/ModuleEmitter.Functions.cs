@@ -381,7 +381,8 @@ namespace Typhon.Compiler.Emit
             else if (dropFirst && _cls != null && FamilyReturnsValue(_cls.Def, f.Name)) elem = "dynamic";
             // a method that only raises (def key(self): raise NotImplementedError, an abstract method without the decorator):
             // what the classes that define it return, which C# cannot know here
-            else if (dropFirst && _cls != null && f.Body.Count > 0 && !CanFallThrough(f.Body) && !AstWalker.ContainsOutsideNestedScopes(f.Body, n => n is ReturnStmt)) elem = "dynamic";
+            else if (dropFirst && _cls != null && f.Body.Count > 0 && !CanFallThrough(f.Body) && !AstWalker.ContainsOutsideNestedScopes(f.Body, n => n is ReturnStmt) &&
+                     !FamilyDefinesElsewhere(_cls.Def, f.Name)) elem = "dynamic"; // (with overrides, their return type decides: above)
             else elem = "void";
 
             sig.ElementType = elem;

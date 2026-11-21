@@ -132,7 +132,6 @@ public sealed class PlaygroundCompiler
         try
         {
             var compilation = _empty.AddSyntaxTrees(result.Tree);
-            compilation = RedirectSysExit(compilation, result.Tree);
             using var pe = new MemoryStream();
             using var pdb = new MemoryStream();
             var emitted = compilation.Emit(pe, pdb, options: EmitOptions);
@@ -159,42 +158,4 @@ public sealed class PlaygroundCompiler
 
     static PlaygroundDiagnostic InternalError(Exception e) =>
         new(DiagnosticOrigin.Typhon, "error", "TY9999", 0, 0, $"internal compiler error: {e.GetType().Name}: {e.Message}");
-
-    const string SystemExitSource = """
-        namespace TyphonPlayground
-        {
-            /// <summary>sys.exit in the playground: Typhon's sys.exit calls Environment.Exit, which would end the page's .NET runtime.</summary>
-            internal sealed class SystemExit : global::System.Exception
-            {
-                public readonly int Code;
-                SystemExit(int code) : base("SystemExit: " + code) { Code = code; }
-                public static void Raise(long code = 0) => throw new SystemExit(checked((int)code));
-            }
-        }
-        """;
-
-    /// <summary>The name of the exception <c>sys.exit(code)</c> throws in the playground (it has an int field Code).</summary>
-    public const string SystemExitTypeName = "TyphonPlayground.SystemExit";
-
-    /// <summary>
-    /// Typhon's sys.exit is Environment.Exit, which in a browser shuts down the .NET runtime of the page. Calls to it
-    /// become a throw of <see cref="SystemExitTypeName"/>, which the runner turns into the exit code (finally blocks still
-    /// run, as with Python's SystemExit).
-    /// </summary>
-    static CSharpCompilation RedirectSysExit(CSharpCompilation compilation, SyntaxTree tree)
-    {
-        var root = tree.GetRoot();
-        var candidates = root.DescendantNodes().OfType<InvocationExpressionSyntax>()
-            .Where(c => c.Expression is MemberAccessExpressionSyntax { Name.Identifier.Text: "exit" } or IdentifierNameSyntax { Identifier.Text: "exit" })
-            .ToList();
-        if (candidates.Count == 0) return compilation;
-        var model = compilation.GetSemanticModel(tree);
-        var calls = candidates.Where(c => model.GetSymbolInfo(c).Symbol is IMethodSymbol { Name: "exit", ContainingType: var t } &&
-                                          t.ToDisplayString() == "Typhon.Stdlib.sys_").ToList();
-        if (calls.Count == 0) return compilation;
-        var raise = SyntaxFactory.ParseExpression("global::TyphonPlayground.SystemExit.Raise");
-        var newRoot = root.ReplaceNodes(calls, (_, call) => call.WithExpression(raise.WithTriviaFrom(call.Expression)));
-        return compilation.ReplaceSyntaxTree(tree, tree.WithRootAndOptions(newRoot, tree.Options))
-                          .AddSyntaxTrees(CSharpSyntaxTree.ParseText(SystemExitSource, ParseOptions, path: "SystemExit.g.cs", encoding: Encoding.UTF8));
-    }
 }

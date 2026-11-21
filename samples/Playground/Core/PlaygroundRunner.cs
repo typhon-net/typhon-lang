@@ -84,11 +84,16 @@ public sealed class PlaygroundRunner
         }
     }
 
-    /// <summary>The exit code of an uncaught exception: sys.exit's code, else 1 after a traceback.</summary>
+    /// <summary>The exit code of an uncaught exception: SystemExit's code, else 1 after a traceback.</summary>
     static int Uncaught(Exception ex, Assembly program, byte[]? pdb, TextWriter stderr)
     {
-        if (ex.GetType().FullName == PlaygroundCompiler.SystemExitTypeName)
-            return ex.GetType().GetField("Code")?.GetValue(ex) is int code ? code : 1;
+        // sys.exit raised while a module initializes (Main itself turns an uncaught SystemExit into the exit code)
+        while (ex is TypeInitializationException && ex.InnerException != null) ex = ex.InnerException;
+        if (ex.GetType().FullName == "Typhon.Runtime.SystemExit" && ex.GetType().GetMethod("Exit") is MethodInfo exit)
+        {
+            exit.Invoke(ex, null);
+            return Environment.ExitCode;
+        }
         WriteTraceback(ex, program, pdb, stderr);
         return 1;
     }

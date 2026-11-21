@@ -103,6 +103,14 @@ namespace Typhon.Compiler.Emit
             return false;
         }
 
+        /// <summary>Does another class of the method's family (base, subclass, a class its members were copied into) define it?</summary>
+        bool FamilyDefinesElsewhere(ClassDef c, string method)
+        {
+            var copies = _p.MixedInto.TryGetValue(c, out var into) ? into.Select(x => x.Class).ToList() : new List<ClassDef>();
+            return AllClasses().Any(k => k != c && (DerivesFrom(k, c) || DerivesFrom(c, k) || copies.Any(x => k == x || DerivesFrom(k, x))) &&
+                                         k.Body.OfType<FunctionDef>().Any(f => f.Name == method));
+        }
+
         bool DefinesInHierarchy(ClassDef c, string method, int depth = 0) =>
             depth < 20 && (Defines(c, method) || TyphonBases(c).Any(b => DefinesInHierarchy(b, method, depth + 1)));
 

@@ -24,20 +24,26 @@ namespace Typhon.Runtime
     /// </summary>
     internal sealed class PyEventLoop : SynchronizationContext
     {
-        readonly System.Collections.Concurrent.BlockingCollection<(SendOrPostCallback Callback, object? State)> _queue = new System.Collections.Concurrent.BlockingCollection<(SendOrPostCallback, object?)>();
+        readonly System.Collections.Concurrent.ConcurrentQueue<(SendOrPostCallback Callback, object? State)> _ready =
+            new System.Collections.Concurrent.ConcurrentQueue<(SendOrPostCallback, object?)>();
+        readonly SemaphoreSlim _signal = new SemaphoreSlim(0);
+        volatile bool _ended;
         // the loop's timers (asyncio.sleep, wait_for's timeout): due in deadline order, ties in the order they were set,
         // whatever the operating system's timer resolution (Windows ticks every ~15.6 ms)
         readonly PriorityQueue<TaskCompletionSource<bool>, (long Due, long Seq)> _timers = new PriorityQueue<TaskCompletionSource<bool>, (long, long)>();
         long _timerSeq;
         readonly int _thread = Environment.CurrentManagedThreadId;
+        // single-threaded WebAssembly cannot block: the loop spins until its next timer instead
+        static readonly bool CannotBlock = OperatingSystem.IsBrowser() || OperatingSystem.IsWasi();
 
         public static PyEventLoop? Running => Current as PyEventLoop;
         bool OnLoopThread => Environment.CurrentManagedThreadId == _thread;
 
         public override void Post(SendOrPostCallback d, object? state)
         {
-            try { _queue.Add((d, state)); }
-            catch (InvalidOperationException) { ThreadPool.QueueUserWorkItem(_ => d(state)); } // after the loop ended
+            if (_ended) { ThreadPool.QueueUserWorkItem(_ => d(state)); return; } // (after the loop ended)
+            _ready.Enqueue((d, state));
+            if (!CannotBlock) _signal.Release();
         }
         public override void Send(SendOrPostCallback d, object? state)
         {
@@ -59,28 +65,35 @@ namespace Typhon.Runtime
         /// <summary>Runs the loop until the task is done: ready callbacks first, then the timers that are due, in order.</summary>
         public void RunUntil(Task task)
         {
-            task.ContinueWith(_ => { try { _queue.Add((_ => { }, null)); } catch (InvalidOperationException) { } }, CancellationToken.None,
-                              TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
-            while (!task.IsCompleted)
+            if (!CannotBlock)
+                task.ContinueWith(_ => _signal.Release(), CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+            try
             {
-                if (_queue.TryTake(out var item)) { item.Callback(item.State); continue; }
-                if (_timers.TryPeek(out _, out var next))
+                while (!task.IsCompleted)
                 {
-                    long wait = next.Due - System.Diagnostics.Stopwatch.GetTimestamp();
-                    if (wait > 0)
+                    if (_ready.TryDequeue(out var item)) { item.Callback(item.State); continue; }
+                    if (_timers.TryPeek(out _, out var next))
                     {
-                        int ms = (int)Math.Min(int.MaxValue, Math.Ceiling(wait * 1000.0 / System.Diagnostics.Stopwatch.Frequency));
-                        if (_queue.TryTake(out item, ms)) { item.Callback(item.State); continue; }
+                        long wait = next.Due - System.Diagnostics.Stopwatch.GetTimestamp();
+                        if (wait > 0)
+                        {
+                            if (CannotBlock)
+                                while (System.Diagnostics.Stopwatch.GetTimestamp() < next.Due && _ready.IsEmpty && !task.IsCompleted) Thread.SpinWait(64);
+                            else
+                                _signal.Wait((int)Math.Min(int.MaxValue, Math.Ceiling(wait * 1000.0 / System.Diagnostics.Stopwatch.Frequency)));
+                            continue;
+                        }
+                        // every timer due by now, earliest first (their continuations are posted to this loop)
+                        long now = System.Diagnostics.Stopwatch.GetTimestamp();
+                        while (_timers.TryPeek(out var due, out var at) && at.Due <= now) { _timers.Dequeue(); due.SetResult(true); }
+                        continue;
                     }
-                    // every timer due by now, earliest first (their continuations are posted to this loop)
-                    long now = System.Diagnostics.Stopwatch.GetTimestamp();
-                    while (_timers.TryPeek(out var due, out var at) && at.Due <= now) { _timers.Dequeue(); due.SetResult(true); }
-                    continue;
+                    if (CannotBlock)
+                        throw new PlatformNotSupportedException("asyncio.run cannot wait here for work outside its event loop (only for its own timers): the platform cannot block");
+                    _signal.Wait();
                 }
-                item = _queue.Take();
-                item.Callback(item.State);
             }
-            _queue.CompleteAdding();
+            finally { _ended = true; }
         }
 
         public static T Run<T>(Func<Task<T>> start)
