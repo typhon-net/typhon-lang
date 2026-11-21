@@ -178,8 +178,13 @@ for name in ["a.txt", "b.txt", "c.py", "data1.csv", "data2.csv", "[x].txt", ".do
         f.write(name * 3)
 
 
+def slash(text: str) -> str:
+    """Paths printed the same on every platform: BASE for the temporary folder, / as the separator."""
+    return text.replace(repr(base)[1:-1], "BASE").replace(base, "BASE").replace("\\\\", "/").replace("\\", "/")
+
+
 def rel(paths: list[str]) -> list[str]:
-    return sorted(os.path.relpath(p, base) for p in paths)
+    return sorted(slash(os.path.relpath(p, base)).rstrip("/") for p in paths)
 
 
 print(rel(glob.glob(os.path.join(src, "*.txt"))), rel(glob.glob(os.path.join(src, "data?.csv"))))
@@ -193,39 +198,38 @@ print(fnmatch.fnmatch("data1.csv", "data[0-9].csv"), fnmatch.fnmatchcase("A.TXT"
 
 dst = os.path.join(base, "dst")
 os.mkdir(dst)
-print(os.path.relpath(shutil.copyfile(os.path.join(src, "a.txt"), os.path.join(dst, "a2.txt")), base))
-print(os.path.relpath(shutil.copy(os.path.join(src, "b.txt"), dst), base), os.path.relpath(shutil.copy2(os.path.join(src, "c.py"), os.path.join(dst, "c2.py")), base))
+print(slash(os.path.relpath(shutil.copyfile(os.path.join(src, "a.txt"), os.path.join(dst, "a2.txt")), base)))
+print(slash(os.path.relpath(shutil.copy(os.path.join(src, "b.txt"), dst), base)), slash(os.path.relpath(shutil.copy2(os.path.join(src, "c.py"), os.path.join(dst, "c2.py")), base)))
 with open(os.path.join(dst, "a2.txt")) as f:
     print(sorted(os.listdir(dst)), f.read())
 tree = os.path.join(base, "tree")
-print(os.path.relpath(shutil.copytree(src, tree, ignore=shutil.ignore_patterns("*.csv", ".hidden")), base))
+print(slash(os.path.relpath(shutil.copytree(src, tree, ignore=shutil.ignore_patterns("*.csv", ".hidden")), base)))
 print(rel(glob.glob(os.path.join(tree, "**"), recursive=True)))
 shutil.copytree(src, tree, dirs_exist_ok=True)
 print(len(glob.glob(os.path.join(tree, "*.csv"))))
 try:
     shutil.copytree(src, tree)
 except OSError as e:
-    print("OSError:", str(e).replace(base, "BASE"))
+    print("OSError:", slash(str(e)))
 moved = shutil.move(os.path.join(dst, "a2.txt"), os.path.join(dst, "moved.txt"))
-print(os.path.relpath(moved, base), os.path.exists(os.path.join(dst, "a2.txt")))
-print(os.path.relpath(shutil.move(os.path.join(tree, "sub"), dst), base), sorted(os.listdir(dst)))
+print(slash(os.path.relpath(moved, base)), os.path.exists(os.path.join(dst, "a2.txt")))
+print(slash(os.path.relpath(shutil.move(os.path.join(tree, "sub"), dst), base)), sorted(os.listdir(dst)))
 try:
     shutil.copyfile(os.path.join(src, "missing.txt"), os.path.join(dst, "x"))
 except FileNotFoundError as e:
-    print("FileNotFoundError:", str(e).replace(base, "BASE"))
+    print("FileNotFoundError:", slash(str(e)))
 try:
     shutil.copyfile(os.path.join(src, "a.txt"), os.path.join(src, "a.txt"))
 except shutil.SameFileError as e:
-    print("SameFileError:", str(e).replace(base, "BASE"))
+    print("SameFileError:", slash(str(e)))
 try:
     shutil.move(os.path.join(src, "b.txt"), dst)
 except shutil.Error as e:
-    print("shutil.Error:", str(e).replace(base, "BASE"))
+    print("shutil.Error:", slash(str(e)))
 shutil.rmtree(tree)
 shutil.rmtree(tree, ignore_errors=True)
 print(os.path.exists(tree))
-sh = shutil.which("sh")
-print(sh is not None and os.path.basename(sh) == "sh", shutil.which("no-such-command-for-typhon"))
+print(shutil.which("no-such-command-for-typhon"))
 usage = shutil.disk_usage(base)
 print(usage.total >= usage.used, usage.free > 0, str(usage).startswith("usage(total="), shutil.get_terminal_size().columns > 0)
 shutil.rmtree(base)

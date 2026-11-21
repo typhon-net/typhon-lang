@@ -22,7 +22,8 @@ def try_parse(parser: argparse.ArgumentParser, argv: list[str]) -> None:
     try:
         print(parser.parse_args(argv))
     except argparse.ArgumentError as e:
-        print("error:", e)
+        # (without quotes: CPython 3.14 lists choices unquoted, other versions quote them)
+        print("error:", str(e).replace("'", ""))
 
 
 def defaults_parser(prog: str) -> argparse.ArgumentParser:
@@ -68,7 +69,8 @@ for argv in argvs:
     try:
         print(parser.parse_args(argv))
     except argparse.ArgumentError as e:
-        print("error:", e)
+        # (without quotes: CPython 3.14 lists choices unquoted, other versions quote them)
+        print("error:", str(e).replace("'", ""))
 
 ns, rest = parser.parse_known_args(["hal", "--extra", "1", "-z"])
 print(ns.name, rest)

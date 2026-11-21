@@ -28,11 +28,11 @@ verbose: 2 count: 3 files: ['x.txt', 'y.txt']
 fast ['count', 'files', 'mode', 'name', 'point', 'quiet', 'ratio', 'tags', 'verbose']
 Namespace(verbose=0, count=1, ratio=None, mode='fast', quiet=False, tags=None, point=None, name='bob', files=[])
 Namespace(verbose=1, count=1, ratio=0.5, mode='slow', quiet=True, tags=None, point=None, name='carol', files=[])
-error: argument --mode: invalid choice: 'medium' (choose from fast, slow)
+error: argument --mode: invalid choice: medium (choose from fast, slow)
 error: argument -n/--count: 0 is not positive
-error: argument -n/--count: invalid positive value: 'many'
+error: argument -n/--count: invalid positive value: many
 error: the following arguments are required: name
-error: argument --point: invalid int value: 'frank'
+error: argument --point: invalid int value: frank
 error: unrecognized arguments: --bogus
 Namespace(verbose=1, count=1, ratio=None, mode='fast', quiet=False, tags=None, point=None, name='-h', files=[])
 hal ['--extra', '-z']
@@ -49,7 +49,7 @@ options:
 usage: tool add [-h] numbers [numbers ...]
 Namespace(debug=False, command='add', numbers=[1, 2, 3]) 6
 Namespace(debug=True, command='rm', force=True, paths=['a', 'b'])
-error: argument command: invalid choice: 'frobnicate' (choose from add, remove, rm)
+error: argument command: invalid choice: frobnicate (choose from add, remove, rm)
 usage: cfg [-h] (--json | --xml) [-o OUTPUT] [--color | --no-color]
            [--level [LEVEL]] [--ids IDS [IDS ...]] [--mark]
 
