@@ -51,6 +51,9 @@ jobs:
       - name: Conformance tests
         run: dotnet test tests/Typhon.Conformance.Tests -c Release --no-build --logger "console;verbosity=normal"
 
+      - name: Playground tests (its compile-and-run code on .NET; the Blazor app is built above)
+        run: dotnet test tests/Typhon.Playground.Tests -c Release --no-build --logger "console;verbosity=normal"
+
       - name: Native AOT conformance
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.aot }}
         env:

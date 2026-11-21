@@ -1,0 +1,3 @@
+<Project>
+  <!-- Stops the import of samples/Directory.Build.targets (Typhon's build-time targets); see Directory.Build.props. -->
+</Project>

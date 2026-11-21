@@ -1,0 +1,332 @@
+@* Copyright (c) 2026 The Typhon contributors. Licensed under the MIT License. *@
+@implements IDisposable
+@inject ReferenceLoader Loader
+@inject IJSRuntime JS
+@inject NavigationManager Navigation
+
+<div class="shell" data-ready="@(_ready ? "true" : "false")">
+    <header class="toolbar">
+        <a class="brand" href="https://typhon-lang.com" target="_blank" rel="noopener">
+            <img src="favicon.svg" alt="" width="28" height="28" /> Typhon <span>Playground</span>
+        </a>
+        <label class="field">
+            Example
+            <select value="@_example" @onchange="LoadExample" disabled="@_busy">
+                @if (_example < 0)
+                {
+                    <option value="-1">(your program)</option>
+                }
+                @for (int i = 0; i < Examples.All.Count; i++)
+                {
+                    <option value="@i">@Examples.All[i].Name</option>
+                }
+            </select>
+        </label>
+        <label class="field" title="What happens where Typhon has to fall back to 'dynamic' (typhon --strict / --permissive)">
+            Types
+            <select @bind="_typeMode" disabled="@_busy">
+                <option value="@TypeMode.Warn">warn</option>
+                <option value="@TypeMode.Strict">strict</option>
+                <option value="@TypeMode.Permissive">permissive</option>
+            </select>
+        </label>
+        <label class="field check" title="Python's int as an unbounded BigInteger (typhon --bigint)">
+            <input type="checkbox" @bind="_bigInts" disabled="@_busy" /> big ints
+        </label>
+        <button class="run" @onclick="RunAsync" disabled="@_busy" title="Compile and run (Ctrl+Enter)">&#9654; Run</button>
+        <button class="secondary" @onclick="ShareAsync" disabled="@_busy" title="Put the program in the page's URL and copy it">Copy link</button>
+        <span class="status @(_statusIsError ? "error" : "")" role="status">@_status</span>
+    </header>
+
+    <main class="panes">
+        <section class="pane editor-pane" aria-label="Typhon source">
+            <div class="pane-title">main.ty</div>
+            <div class="editor">
+                <pre class="gutter" aria-hidden="true" @ref="_gutter">@_lineNumbers</pre>
+                <textarea @ref="_editor" spellcheck="false" autocapitalize="off" autocomplete="off" wrap="off"
+                          aria-label="Typhon source" value="@_source" @oninput="OnSourceInput"></textarea>
+            </div>
+            <details class="stdin" open="@_stdinOpen">
+                <summary>stdin <span class="hint">(what input() reads)</span></summary>
+                <textarea spellcheck="false" wrap="off" aria-label="stdin" @bind="_stdin" @bind:event="oninput"></textarea>
+            </details>
+        </section>
+
+        <section class="pane output-pane" aria-label="Results">
+            <nav class="tabs" role="tablist">
+                <button role="tab" class="@(_tab == 0 ? "active" : "")" aria-selected="@(_tab == 0)" @onclick="() => _tab = 0">Output</button>
+                <button role="tab" class="@(_tab == 1 ? "active" : "")" aria-selected="@(_tab == 1)" @onclick="() => _tab = 1">Generated C#</button>
+            </nav>
+            @if (_tab == 0)
+            {
+                <div class="output" role="tabpanel">
+                    @foreach (var d in _diagnostics)
+                    {
+                        <div class="diagnostic @d.Severity" title="@(d.Line > 0 ? "Go to the line" : "")" @onclick="() => GoToAsync(d)">
+                            <span class="where">@Where(d)</span> <span class="id">@d.Severity @d.Id</span>: @d.Message
+                            @if (d.Origin == DiagnosticOrigin.CSharp && d.CSharpLine > 0)
+                            {
+                                <span class="csharp-line" title="Show it in the generated C#" @onclick:stopPropagation="true" @onclick="() => ShowCSharpLine(d.CSharpLine)">C# line @d.CSharpLine</span>
+                            }
+                        </div>
+                    }
+                    @if (_output != null)
+                    {
+                        <pre class="console">@foreach (var (isError, text) in _output.Segments){<span class="@(isError ? "stderr" : null)">@text</span>}</pre>
+                        @if (_output.Truncated)
+                        {
+                            <div class="note">The output was cut off after @OutputCapture.Limit.ToString("N0") characters.</div>
+                        }
+                    }
+                    @if (_exitCode is int exit)
+                    {
+                        <div class="exit @(exit == 0 ? "ok" : "failed")">exit code @exit</div>
+                    }
+                    @if (_output == null && _diagnostics.Count == 0)
+                    {
+                        <div class="placeholder">Press <b>Run</b> (or Ctrl+Enter in the editor) to compile and run the program.
+                            Everything happens in this page: the Typhon compiler turns it into C#, Roslyn compiles that to
+                            IL, and the .NET runtime in WebAssembly runs it.</div>
+                    }
+                </div>
+            }
+            else
+            {
+                <div class="code-view" role="tabpanel" @ref="_codeView">
+                    @if (_csharp == null)
+                    {
+                        <div class="placeholder">Run the program to see the C# the Typhon compiler generates for it.</div>
+                    }
+                    else
+                    {
+                        <pre class="gutter" aria-hidden="true">@_csharpLineNumbers</pre>
+                        <pre class="code">@foreach (var (line, i) in _csharpLines.Select((l, i) => (l, i + 1))){<span class="@(i == _csharpHighlight ? "highlight" : null)">@line&#10;</span>}</pre>
+                    }
+                </div>
+            }
+        </section>
+    </main>
+</div>
+
+@code {
+    string _source = "";
+    string _stdin = "";
+    bool _stdinOpen; // the stdin box opens for an example that reads input; otherwise it stays as the user left it
+    int _example;
+    TypeMode _typeMode = TypeMode.Warn;
+    bool _bigInts;
+    bool _busy;
+    bool _ready; // the references are loaded (and the first example ran): for tests that drive the page
+    string _status = "";
+    bool _statusIsError;
+    int _tab;
+    string _lineNumbers = "1";
+
+    List<PlaygroundDiagnostic> _diagnostics = new();
+    OutputCapture? _output;
+    int? _exitCode;
+    string? _csharp;
+    string[] _csharpLines = [];
+    string _csharpLineNumbers = "";
+    int _csharpHighlight;
+
+    ElementReference _editor, _gutter, _codeView;
+    DotNetObjectReference<Home>? _self;
+
+    protected override void OnInitialized()
+    {
+        // a shared program (#code=...) or the first example
+        if (ProgramFromUrl() is { } shared) { _source = shared; _example = -1; }
+        else Select(0);
+        UpdateLineNumbers();
+        Loader.Progress += OnLoaderProgress;
+        _status = "Loading the compiler...";
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        _self = DotNetObjectReference.Create(this);
+        await CallJsAsync("playground.initEditor", _editor, _gutter, _self);
+        try
+        {
+            await Loader.GetAsync(); // the references download while the page is idle
+            SetStatus($"Ready: {Loader.Total} reference assemblies ({Loader.Bytes / 1024.0 / 1024:0.0} MB) loaded in {Ms(Loader.Elapsed)}.");
+            // The first compile is the slow one (Roslyn and the Typhon compiler warm up): do it for the example now, so
+            // the page shows what it does and the next run is fast. A program from a link runs only when asked to.
+            if (_example >= 0) await RunAsync();
+        }
+        catch (Exception e) { SetStatus($"Could not load the reference assemblies: {e.Message}", error: true); }
+        _ready = true;
+        StateHasChanged();
+    }
+
+    void OnLoaderProgress()
+    {
+        if (_busy || Loader.Loaded == Loader.Total) return;
+        _status = $"Loading the compiler... {Loader.Loaded}/{Loader.Total} reference assemblies";
+        StateHasChanged();
+    }
+
+    void OnSourceInput(ChangeEventArgs e)
+    {
+        _source = e.Value as string ?? "";
+        UpdateLineNumbers();
+    }
+
+    void UpdateLineNumbers()
+    {
+        int lines = 1;
+        foreach (char c in _source) if (c == '\n') lines++;
+        _lineNumbers = string.Join('\n', Enumerable.Range(1, lines));
+    }
+
+    void LoadExample(ChangeEventArgs e)
+    {
+        if (!int.TryParse(e.Value as string, out int i) || i < 0 || i >= Examples.All.Count) return;
+        Select(i);
+        UpdateLineNumbers();
+        _diagnostics.Clear();
+        _output = null;
+        _exitCode = null;
+    }
+
+    void Select(int i)
+    {
+        _example = i;
+        _source = Examples.All[i].Source + "\n";
+        _stdin = Examples.All[i].Stdin;
+        _stdinOpen = _stdin.Length > 0;
+    }
+
+    [JSInvokable]
+    public async Task RunFromEditor()
+    {
+        await RunAsync();
+        StateHasChanged(); // not an event handler of a component: no automatic render
+    }
+
+    async Task RunAsync()
+    {
+        if (_busy) return;
+        _busy = true;
+        _diagnostics = new();
+        _output = null;
+        _exitCode = null;
+        _tab = 0;
+        try
+        {
+            await ShowStatusAsync("Loading the compiler...");
+            var (compiler, runner) = await Loader.GetAsync();
+
+            await ShowStatusAsync("Typhon → C#...");
+            var result = compiler.Translate(_source, new PlaygroundOptions(_typeMode, _bigInts));
+            ShowCSharp(result.CSharp);
+            _diagnostics = result.Diagnostics.ToList();
+            if (!result.HasErrors)
+            {
+                await ShowStatusAsync("C# → IL (Roslyn)...");
+                compiler.Emit(result);
+                _diagnostics = result.Diagnostics.ToList();
+            }
+            string compiled = $"Typhon → C# {Ms(result.TranslateTime)}" + (result.EmitTime > TimeSpan.Zero ? $", C# → IL {Ms(result.EmitTime)}" : "");
+            if (!result.Success)
+            {
+                int errors = result.Diagnostics.Count(d => d.IsError);
+                SetStatus($"{errors} error{(errors == 1 ? "" : "s")} ({compiled})", error: true);
+                return;
+            }
+
+            await ShowStatusAsync("Running...");
+            var capture = new OutputCapture();
+            var run = await runner.RunAsync(result, capture.Out, capture.Err, _stdin);
+            _output = capture;
+            _exitCode = run.ExitCode;
+            SetStatus($"{compiled}, ran in {Ms(run.Elapsed)}", error: run.ExitCode != 0);
+        }
+        catch (Exception e)
+        {
+            Console.Error.WriteLine(e); // the stack trace, in the browser's console
+            SetStatus($"{e.GetType().Name}: {e.Message}", error: true);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    /// <summary>Shows the status, then lets the browser paint before the (synchronous) next step blocks the one thread.</summary>
+    async Task ShowStatusAsync(string text)
+    {
+        SetStatus(text);
+        StateHasChanged();
+        await CallJsAsync("playground.nextFrame");
+    }
+
+    void SetStatus(string text, bool error = false) { _status = text; _statusIsError = error; }
+
+    void ShowCSharp(string? code)
+    {
+        _csharp = code;
+        _csharpLines = code?.Replace("\r\n", "\n").TrimEnd('\n').Split('\n') ?? [];
+        _csharpLineNumbers = string.Join('\n', Enumerable.Range(1, _csharpLines.Length));
+        _csharpHighlight = 0;
+    }
+
+    async Task ShowCSharpLine(int line)
+    {
+        _tab = 1;
+        _csharpHighlight = line;
+        StateHasChanged();
+        await CallJsAsync("playground.nextFrame");
+        await CallJsAsync("playground.scrollToLine", _codeView, line);
+    }
+
+    async Task GoToAsync(PlaygroundDiagnostic d)
+    {
+        if (d.Line > 0) await CallJsAsync("playground.goTo", _editor, d.Line, d.Column);
+    }
+
+    async Task CallJsAsync(string identifier, params object?[] args)
+    {
+        try { await JS.InvokeVoidAsync(identifier, args); }
+        catch (JSException e) { Console.Error.WriteLine($"{identifier}: {e.Message}"); }
+    }
+
+    static string Where(PlaygroundDiagnostic d) =>
+        d.Line > 0 ? $"line {d.Line}, col {d.Column}" : d.CSharpLine > 0 ? "generated C#" : PlaygroundCompiler.FileName;
+
+    static string Ms(TimeSpan t) => t.TotalMilliseconds >= 10_000 ? $"{t.TotalSeconds:0.0} s" : $"{t.TotalMilliseconds:0} ms";
+
+    // sharing: the program travels in the URL's fragment, which never reaches a server
+    async Task ShareAsync()
+    {
+        string url = Navigation.Uri.Split('#')[0] + "#code=" + Base64Url(System.Text.Encoding.UTF8.GetBytes(_source));
+        bool copied;
+        try { copied = await JS.InvokeAsync<bool>("playground.share", url); }
+        catch (JSException) { copied = false; }
+        SetStatus(copied ? "Link copied: it holds the whole program." : "The link to this program is in the address bar.");
+    }
+
+    string? ProgramFromUrl()
+    {
+        int at = Navigation.Uri.IndexOf("#code=", StringComparison.Ordinal);
+        if (at < 0) return null;
+        try { return System.Text.Encoding.UTF8.GetString(FromBase64Url(Navigation.Uri[(at + 6)..])); }
+        catch (FormatException) { return null; }
+    }
+
+    static string Base64Url(byte[] bytes) => Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+
+    static byte[] FromBase64Url(string text)
+    {
+        string s = Uri.UnescapeDataString(text).Replace('-', '+').Replace('_', '/');
+        return Convert.FromBase64String(s.PadRight(s.Length + (4 - s.Length % 4) % 4, '='));
+    }
+
+    public void Dispose()
+    {
+        Loader.Progress -= OnLoaderProgress;
+        _self?.Dispose();
+    }
+}

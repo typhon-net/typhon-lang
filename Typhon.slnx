@@ -13,6 +13,8 @@
     <Project Path="samples/BlazorApp/BlazorApp.csproj" />
     <Project Path="samples/XunitTests/XunitTests.csproj" />
     <Project Path="samples/WasmLife/WasmLife.csproj" />
+    <Project Path="samples/Playground/Playground.csproj" />
+    <Project Path="samples/Playground/Core/Playground.Core.csproj" />
   </Folder>
   <!-- WinUI 3 (samples/Desktop/WinUI) is not in the solution: it needs the Windows App SDK's Windows-only build tools. -->
   <Folder Name="/samples/Desktop/">
@@ -22,6 +24,7 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Typhon.Conformance.Tests/Typhon.Conformance.Tests.csproj" />
+    <Project Path="tests/Typhon.Playground.Tests/Typhon.Playground.Tests.csproj" />
   </Folder>
   <Folder Name="/benchmarks/">
     <File Path="benchmarks/run.ps1" />

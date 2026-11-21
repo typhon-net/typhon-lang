@@ -1,0 +1,7 @@
+<Project>
+  <!--
+    The playground compiles Typhon at run time, in the browser: it references the compiler like a library and does not
+    use the build-time wiring of samples/Directory.Build.props (the source generator that compiles *.ty files).
+  -->
+  <Import Project="$(MSBuildThisFileDirectory)../../Directory.Build.props" />
+</Project>

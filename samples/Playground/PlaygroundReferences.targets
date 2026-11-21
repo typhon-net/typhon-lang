@@ -1,0 +1,42 @@
+<Project>
+  <!--
+    The assemblies Typhon programs compile against in the playground, imported by the Blazor app (which serves them as
+    static files under refs/) and by tests/Typhon.Playground.Tests (which copies them next to the tests):
+
+      * Typhon.Runtime.dll, built by src/Typhon.Runtime (programs reference it and run against a fresh copy of it);
+      * the reference assemblies of the .NET targeting pack (Microsoft.NETCore.App.Ref: the public API, no code) for the
+        framework assemblies Typhon.Runtime references, plus a few more that Typhon programs import from.
+
+    The list must cover every assembly Typhon.Runtime references (Typhon.Playground.Tests checks it), or Roslyn reports
+    CS0012 for members whose signatures use types from a missing one.
+  -->
+  <ItemGroup>
+    <PlaygroundFrameworkReference Include="System.Runtime;System.Collections;System.Linq;System.Console;Microsoft.CSharp;System.Linq.Expressions" />
+    <PlaygroundFrameworkReference Include="System.Runtime.Numerics;System.Text.RegularExpressions;System.Collections.Concurrent;System.Collections.Immutable" />
+    <PlaygroundFrameworkReference Include="System.Memory;System.Threading;System.Threading.Thread;System.Threading.ThreadPool;System.Runtime.InteropServices" />
+    <PlaygroundFrameworkReference Include="System.Text.Encoding.Extensions;System.Security.Cryptography;System.Diagnostics.StackTrace" />
+    <PlaygroundFrameworkReference Include="System.IO.FileSystem.DriveInfo;System.Net.NetworkInformation;System.Numerics.Vectors;System.ObjectModel" />
+
+    <!-- built first; its assembly is shipped as a reference file, not referenced by the project -->
+    <ProjectReference Include="$(MSBuildThisFileDirectory)../../src/Typhon.Runtime/Typhon.Runtime.csproj" ReferenceOutputAssembly="false" Private="false" />
+  </ItemGroup>
+
+  <!-- PlaygroundReferenceFile: the full paths of the reference files (targeting pack assemblies and Typhon.Runtime.dll) -->
+  <Target Name="ResolvePlaygroundReferences" DependsOnTargets="ResolveReferences">
+    <MSBuild Projects="$(MSBuildThisFileDirectory)../../src/Typhon.Runtime/Typhon.Runtime.csproj" Targets="GetTargetPath"
+             RemoveProperties="TargetFramework;RuntimeIdentifier;SelfContained">
+      <Output TaskParameter="TargetOutputs" ItemName="_PlaygroundRuntimeAssembly" />
+    </MSBuild>
+    <ItemGroup>
+      <_PlaygroundCandidate Include="@(ReferencePath->'%(Filename)')" Condition="'%(ReferencePath.FrameworkReferenceName)' == 'Microsoft.NETCore.App'">
+        <SourcePath>%(ReferencePath.FullPath)</SourcePath>
+      </_PlaygroundCandidate>
+      <_PlaygroundUnwanted Include="@(_PlaygroundCandidate)" Exclude="@(PlaygroundFrameworkReference)" />
+      <_PlaygroundWanted Include="@(_PlaygroundCandidate)" Exclude="@(_PlaygroundUnwanted)" />
+      <_PlaygroundMissing Include="@(PlaygroundFrameworkReference)" Exclude="@(_PlaygroundWanted)" />
+      <PlaygroundReferenceFile Include="@(_PlaygroundWanted->'%(SourcePath)')" />
+      <PlaygroundReferenceFile Include="@(_PlaygroundRuntimeAssembly->'%(FullPath)')" />
+    </ItemGroup>
+    <Error Condition="'@(_PlaygroundMissing)' != ''" Text="Playground: no reference assembly in the targeting pack for @(_PlaygroundMissing)" />
+  </Target>
+</Project>

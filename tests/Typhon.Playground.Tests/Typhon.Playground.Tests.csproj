@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The playground's compile-and-run code (samples/Playground/Core) on regular .NET: Typhon programs compiled from
+    source strings against references created from byte arrays (the same reference files the browser fetches, copied
+    to refs/ next to the tests), then run with their output captured.
+  -->
+  <PropertyGroup>
+    <TargetFramework>$(TyphonTargetFramework)</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.9.0" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\samples\Playground\Core\Playground.Core.csproj" />
+  </ItemGroup>
+
+  <Import Project="..\..\samples\Playground\PlaygroundReferences.targets" />
+
+  <Target Name="CopyPlaygroundReferences" AfterTargets="CopyFilesToOutputDirectory" DependsOnTargets="ResolvePlaygroundReferences">
+    <Copy SourceFiles="@(PlaygroundReferenceFile)" DestinationFolder="$(OutDir)refs" SkipUnchangedFiles="true">
+      <Output TaskParameter="DestinationFiles" ItemName="FileWrites" />
+    </Copy>
+  </Target>
+
+</Project>

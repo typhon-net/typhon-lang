@@ -1,0 +1,92 @@
+<Project Sdk="Microsoft.NET.Sdk.BlazorWebAssembly">
+
+  <!--
+    The Typhon playground: a Blazor WebAssembly app that compiles Typhon (Typhon → C# → Roslyn → IL) and runs the
+    program in the browser. Core/ holds the compile-and-run logic; the reference assemblies are served as static files
+    (PlaygroundReferences.targets). No workload is needed: `dotnet run`, `dotnet publish -c Release` (see README.md).
+  -->
+  <PropertyGroup>
+    <TargetFramework>$(TyphonTargetFramework)</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Typhon.Playground</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <OverrideHtmlAssetPlaceholders>true</OverrideHtmlAssetPlaceholders>
+    <StaticWebAssetSpaFallbackEnabled>true</StaticWebAssetSpaFallbackEnabled>
+    <!-- Core/ is a project of its own -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);Core/**</DefaultItemExcludes>
+
+    <!-- Exception messages as .NET writes them (Blazor's default, true, leaves only resource keys: "Arg_KeyNotFoundWithKey") -->
+    <UseSystemResourceKeys>false</UseSystemResourceKeys>
+    <!-- Python's str methods and formatting do not depend on a culture: no ICU data to download -->
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- Roslyn's resources only in English -->
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" Version="11.0.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Components.Gateway" Version="11.0.0" PrivateAssets="all" />
+    <ProjectReference Include="Core/Playground.Core.csproj" />
+  </ItemGroup>
+
+  <Import Project="PlaygroundReferences.targets" />
+
+  <ItemGroup>
+    <!--
+      A published app is trimmed, but the trimmer never sees the code that runs against the framework: Typhon.Runtime.dll
+      (loaded from refs/ for each run) and the programs, which compile against the full public API of the reference
+      assemblies. So the implementation of each is kept whole (System.Runtime's types live in System.Private.CoreLib
+      and System.Private.Uri); without this, programs fail with MissingMethodException. It costs 5 MB (1.3 MB brotli).
+    -->
+    <TrimmerRootAssembly Include="System.Private.CoreLib;System.Private.Uri" />
+    <TrimmerRootAssembly Include="@(PlaygroundFrameworkReference)" />
+  </ItemGroup>
+
+  <!-- the names and hashes of the reference files, embedded in the app: it fetches refs/<name>?v=<hash>, so a browser
+       never takes a file of an older build from its cache -->
+  <Target Name="EmbedPlaygroundReferenceIndex" BeforeTargets="AssignTargetPaths" DependsOnTargets="ResolvePlaygroundReferences">
+    <GetFileHash Files="@(PlaygroundReferenceFile)" Algorithm="SHA256" HashEncoding="hex">
+      <Output TaskParameter="Items" ItemName="_PlaygroundHashedReference" />
+    </GetFileHash>
+    <WriteLinesToFile File="$(IntermediateOutputPath)playground-refs.txt" Lines="@(_PlaygroundHashedReference->'%(Filename)%(Extension) %(FileHash)')"
+                      Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <ItemGroup>
+      <EmbeddedResource Include="$(IntermediateOutputPath)playground-refs.txt" LogicalName="playground-refs.txt" />
+      <FileWrites Include="$(IntermediateOutputPath)playground-refs.txt" />
+    </ItemGroup>
+  </Target>
+
+  <!-- the reference files as static web assets under refs/: served by `dotnet run`, copied by `dotnet publish` -->
+  <PropertyGroup>
+    <ResolveStaticWebAssetsInputsDependsOn>$(ResolveStaticWebAssetsInputsDependsOn);AddPlaygroundReferenceAssets</ResolveStaticWebAssetsInputsDependsOn>
+  </PropertyGroup>
+
+  <Target Name="AddPlaygroundReferenceAssets" DependsOnTargets="ResolvePlaygroundReferences;ResolveStaticWebAssetsConfiguration">
+    <PropertyGroup>
+      <_PlaygroundRefsRoot>$(IntermediateOutputPath)playground-refs\</_PlaygroundRefsRoot>
+    </PropertyGroup>
+    <Copy SourceFiles="@(PlaygroundReferenceFile)" DestinationFolder="$(_PlaygroundRefsRoot)refs" SkipUnchangedFiles="true">
+      <Output TaskParameter="DestinationFiles" ItemName="FileWrites" />
+    </Copy>
+    <ItemGroup>
+      <_PlaygroundRefAssetCandidate Include="@(PlaygroundReferenceFile->'$(_PlaygroundRefsRoot)refs\%(Filename)%(Extension)')"
+                                    RelativePath="refs/%(Filename)%(Extension)" />
+    </ItemGroup>
+    <DefineStaticWebAssets CandidateAssets="@(_PlaygroundRefAssetCandidate)" SourceType="Computed" SourceId="$(PackageId)"
+                           ContentRoot="$(_PlaygroundRefsRoot)" BasePath="$(StaticWebAssetBasePath)" AssetKind="All" AssetMode="All"
+                           AssetRole="Primary" AssetMergeSource="$(StaticWebAssetMergeTarget)"
+                           CopyToOutputDirectory="Never" CopyToPublishDirectory="PreserveNewest">
+      <Output TaskParameter="Assets" ItemName="_PlaygroundRefAsset" />
+    </DefineStaticWebAssets>
+    <DefineStaticWebAssetEndpoints CandidateAssets="@(_PlaygroundRefAsset)" ExistingEndpoints="@(StaticWebAssetEndpoint)"
+                                   ContentTypeMappings="@(StaticWebAssetContentTypeMapping)">
+      <Output TaskParameter="Endpoints" ItemName="_PlaygroundRefAssetEndpoint" />
+    </DefineStaticWebAssetEndpoints>
+    <ItemGroup>
+      <StaticWebAsset Include="@(_PlaygroundRefAsset)" />
+      <StaticWebAssetEndpoint Include="@(_PlaygroundRefAssetEndpoint)" />
+    </ItemGroup>
+  </Target>
+
+</Project>

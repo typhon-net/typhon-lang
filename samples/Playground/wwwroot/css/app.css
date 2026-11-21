@@ -1,0 +1,348 @@
+/* Copyright (c) 2026 The Typhon contributors. Licensed under the MIT License. */
+
+:root {
+    color-scheme: light dark;
+    --bg: #f6f6f9;
+    --panel: #ffffff;
+    --border: #d9d9e3;
+    --text: #1f2030;
+    --muted: #6b6d80;
+    --accent: #6a55e0;
+    --accent-text: #ffffff;
+    --gold: #a77a1f;
+    --code-bg: #ffffff;
+    --gutter: #9a9cb0;
+    --error: #c62828;
+    --warning: #9a6700;
+    --ok: #2e7d32;
+    --highlight: #fff3c4;
+    --mono: ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --code-size: 14px;
+    --code-line: 20px;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg: #14141c;
+        --panel: #1c1c27;
+        --border: #30303f;
+        --text: #e4e4ee;
+        --muted: #9597ab;
+        --accent: #8e7cf0;
+        --accent-text: #14141c;
+        --gold: #e3b45f;
+        --code-bg: #181822;
+        --gutter: #5c5e73;
+        --error: #ff7b72;
+        --warning: #e3b45f;
+        --ok: #7ee787;
+        --highlight: #3b3420;
+    }
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+    margin: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 14px;
+}
+
+#app { height: 100%; }
+
+.loading {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    color: var(--muted);
+    text-align: center;
+    padding: 16px;
+}
+
+.loading-progress-text::after { content: var(--blazor-load-percentage-text, "starting"); }
+
+.shell {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+/* toolbar */
+.toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 14px;
+    padding: 8px 16px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+}
+
+.brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 650;
+    font-size: 17px;
+    color: var(--text);
+    text-decoration: none;
+    margin-right: 8px;
+}
+
+.brand span { color: var(--gold); font-weight: 500; }
+
+.field { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+.field.check { gap: 4px; }
+
+select, button, input[type=checkbox] { font: inherit; }
+
+select {
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 6px;
+}
+
+button {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 5px 12px;
+    background: var(--bg);
+    color: var(--text);
+    cursor: pointer;
+}
+
+button.run {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-text);
+    font-weight: 600;
+    padding: 5px 16px;
+}
+
+button:disabled, select:disabled { opacity: 0.6; cursor: progress; }
+
+.status {
+    flex: 1 1 260px;
+    color: var(--muted);
+    text-align: right;
+    font-size: 13px;
+}
+
+.status.error { color: var(--error); }
+
+/* panes */
+.panes {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 1px;
+    background: var(--border);
+}
+
+.pane {
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--panel);
+}
+
+.pane-title, .tabs {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-height: 36px;
+    padding: 0 12px;
+    border-bottom: 1px solid var(--border);
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 13px;
+}
+
+.tabs { padding: 0 6px; font-family: inherit; }
+
+.tabs button {
+    border: none;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+    background: none;
+    color: var(--muted);
+    padding: 8px 10px 6px;
+}
+
+.tabs button.active { color: var(--text); border-bottom-color: var(--accent); }
+
+/* editor: a textarea with line numbers beside it */
+.editor {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    background: var(--code-bg);
+}
+
+.gutter {
+    margin: 0;
+    padding: 10px 10px 10px 12px;
+    min-width: 48px;
+    text-align: right;
+    color: var(--gutter);
+    font-family: var(--mono);
+    font-size: var(--code-size);
+    line-height: var(--code-line);
+    user-select: none;
+    overflow: hidden;
+}
+
+.editor textarea {
+    flex: 1;
+    margin: 0;
+    padding: 10px 12px 10px 4px;
+    border: none;
+    outline: none;
+    resize: none;
+    background: transparent;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: var(--code-size);
+    line-height: var(--code-line);
+    tab-size: 4;
+    white-space: pre;
+    overflow: auto;
+}
+
+.stdin { border-top: 1px solid var(--border); }
+
+.stdin summary {
+    padding: 8px 12px;
+    color: var(--muted);
+    cursor: pointer;
+    font-family: var(--mono);
+    font-size: 13px;
+}
+
+.stdin .hint { font-family: system-ui, sans-serif; }
+
+.stdin textarea {
+    display: block;
+    width: 100%;
+    height: 90px;
+    margin: 0;
+    padding: 8px 12px;
+    border: none;
+    border-top: 1px solid var(--border);
+    outline: none;
+    resize: vertical;
+    background: var(--code-bg);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: var(--code-size);
+}
+
+/* output */
+.output {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    padding: 10px 0;
+    font-family: var(--mono);
+    font-size: var(--code-size);
+    line-height: var(--code-line);
+}
+
+.diagnostic {
+    padding: 2px 14px;
+    white-space: pre-wrap;
+    border-left: 3px solid transparent;
+    cursor: pointer;
+}
+
+.diagnostic.error { color: var(--error); border-left-color: var(--error); }
+.diagnostic.warning { color: var(--warning); border-left-color: var(--warning); }
+.diagnostic .where { font-weight: 600; }
+
+.diagnostic .csharp-line {
+    margin-left: 6px;
+    color: var(--accent);
+    text-decoration: underline;
+    white-space: nowrap;
+}
+
+.console {
+    margin: 0;
+    padding: 4px 14px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: inherit;
+}
+
+.console .stderr { color: var(--error); }
+
+.exit, .note {
+    margin: 6px 14px 0;
+    font-size: 12px;
+    color: var(--muted);
+}
+
+.exit.failed { color: var(--error); }
+
+.placeholder {
+    padding: 4px 14px;
+    color: var(--muted);
+    font-family: system-ui, sans-serif;
+    line-height: 1.5;
+    max-width: 60ch;
+}
+
+/* the generated C#: line numbers and code in one scrolling box */
+.code-view {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    align-items: flex-start;
+    overflow: auto;
+    background: var(--code-bg);
+}
+
+.code-view .placeholder { padding-top: 10px; }
+
+.code-view .gutter { position: sticky; left: 0; background: var(--code-bg); overflow: visible; }
+
+.code-view .code {
+    margin: 0;
+    padding: 10px 12px 10px 4px;
+    font-family: var(--mono);
+    font-size: var(--code-size);
+    line-height: var(--code-line);
+}
+
+.code-view .code .highlight { background: var(--highlight); }
+
+/* narrow screens: the panes stack */
+@media (max-width: 800px) {
+    .panes { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(300px, 1fr) minmax(240px, 1fr); }
+    .shell { height: auto; min-height: 100%; }
+    .status { text-align: left; flex-basis: 100%; }
+}
+
+#blazor-error-ui {
+    background: lightyellow;
+    color: #1f2030;
+    bottom: 0;
+    box-shadow: 0 -1px 2px rgba(0, 0, 0, 0.2);
+    display: none;
+    left: 0;
+    padding: 0.6rem 1.25rem 0.7rem 1.25rem;
+    position: fixed;
+    width: 100%;
+    z-index: 1000;
+}
+
+#blazor-error-ui .dismiss { cursor: pointer; position: absolute; right: 0.75rem; top: 0.5rem; }

@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The playground's compile-and-run logic, independent of the browser: Typhon → C# → IL in memory against references
+    created from byte arrays, then the program run with its output captured. The Blazor app (one folder up) and
+    tests/Typhon.Playground.Tests use it.
+  -->
+  <PropertyGroup>
+    <TargetFramework>$(TyphonTargetFramework)</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Typhon.Playground</RootNamespace>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Typhon.Runtime is not referenced: the host passes its image (a compile reference, and loaded by every run) -->
+    <ProjectReference Include="$(TyphonRepoRoot)src/Typhon.Compiler/Typhon.Compiler.csproj" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.0.0" />
+  </ItemGroup>
+
+</Project>
