@@ -1,0 +1,117 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+"""Size sweep of dense linear algebra: matmul and numpy.linalg, best-of-N per size (valid Python and Typhon).
+
+Run it with CPython + NumPy and with Typhon; set OPENBLAS_NUM_THREADS=1 / TYPHON_NUMPY_THREADS=1 for one thread.
+Prints one line per measurement: `<op> <n> <best ms> <GFLOP/s> <check>`; check is a checksum that both sides print alike.
+"""
+import sys
+import time
+import numpy as np
+
+
+def reps_for(flops: float) -> int:
+    # about 1.5 s of work at 10 GFLOP/s, at least 3 and at most 50 runs
+    r = int(1.5e10 / max(flops, 1.0))
+    return max(3, min(50, r))
+
+
+def report(op: str, n: int, best: float, flops: float, check: float) -> None:
+    gf = flops / best / 1e9 if best > 0 else 0.0
+    print(f"{op:<12} {n:>5} {best * 1000.0:>10.3f} ms {gf:>8.2f} GFLOP/s  check={check:.6e}")
+
+
+def bench_matmul(n: int) -> None:
+    a = np.arange(n * n).reshape(n, n) / float(n * n) - 0.5
+    b = np.ones((n, n)) * 0.25 + np.eye(n)
+    flops = 2.0 * n * n * n
+    reps = reps_for(flops)
+    c = a @ b  # warm-up
+    best = 1e30
+    for _ in range(reps):
+        t0 = time.perf_counter()
+        c = a @ b
+        t = time.perf_counter() - t0
+        if t < best:
+            best = t
+    report("matmul", n, best, flops, float(c.sum()))
+
+
+def system(n: int) -> np.ndarray:
+    # well-conditioned, not symmetric, deterministic
+    x = np.arange(n * n).reshape(n, n) / float(n * n)
+    return np.sin(x * 37.0) + np.eye(n) * float(n)
+
+
+def spd(n: int) -> np.ndarray:
+    x = np.sin(np.arange(n * n).reshape(n, n) * 0.37)
+    return x @ x.T + np.eye(n) * float(n)
+
+
+def bench_linalg(n: int) -> None:
+    a = system(n)
+    b = np.cos(np.arange(n) * 0.1)
+    bm = np.cos(np.arange(n * n).reshape(n, n) * 0.01)
+    lu_flops = 2.0 * n * n * n / 3.0
+    reps = reps_for(lu_flops)
+
+    x = np.linalg.solve(a, b)
+    best = 1e30
+    for _ in range(reps):
+        t0 = time.perf_counter()
+        x = np.linalg.solve(a, b)
+        t = time.perf_counter() - t0
+        if t < best:
+            best = t
+    report("solve", n, best, lu_flops + 2.0 * n * n, float(x.sum()))
+
+    xm = np.linalg.solve(a, bm)
+    best = 1e30
+    for _ in range(reps):
+        t0 = time.perf_counter()
+        xm = np.linalg.solve(a, bm)
+        t = time.perf_counter() - t0
+        if t < best:
+            best = t
+    report("solve_nxn", n, best, lu_flops + 2.0 * n * n * n, float(xm.sum()))
+
+    inv = np.linalg.inv(a)
+    best = 1e30
+    for _ in range(reps):
+        t0 = time.perf_counter()
+        inv = np.linalg.inv(a)
+        t = time.perf_counter() - t0
+        if t < best:
+            best = t
+    report("inv", n, best, 2.0 * n * n * n, float(np.trace(inv)))
+
+    d = np.linalg.det(a / float(n))
+    best = 1e30
+    for _ in range(reps):
+        t0 = time.perf_counter()
+        d = np.linalg.det(a / float(n))
+        t = time.perf_counter() - t0
+        if t < best:
+            best = t
+    report("det", n, best, lu_flops, float(d))
+
+    nr = np.linalg.norm(a)
+    best = 1e30
+    for _ in range(reps_for(2.0 * n * n * 100)):
+        t0 = time.perf_counter()
+        nr = np.linalg.norm(a)
+        t = time.perf_counter() - t0
+        if t < best:
+            best = t
+    report("norm", n, best, 2.0 * n * n, float(nr))
+
+
+if __name__ == "__main__":
+    what = sys.argv[1] if len(sys.argv) > 1 else "all"
+    if what == "all" or what == "matmul":
+        for n in [64, 128, 256, 512, 1000, 1024, 2048]:
+            bench_matmul(n)
+    if what == "all" or what == "linalg":
+        for n in [100, 300, 1000]:
+            bench_linalg(n)

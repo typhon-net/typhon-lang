@@ -57,6 +57,10 @@ compiled). Each side in its faster thread setting.
 | Matmul 1000 x 1000 | 17.4 ms | 24.4 ms | 40.3 ms | **NumPy 1.4x faster** | 64 MB | 89 MB | 56 MB |
 | `linalg.solve` + `inv` 300 x 300 | 31.7 ms | 325 ms | 159 ms | **NumPy 5.0x faster** | 37 MB | 37 MB | 16 MB |
 
+The last two rows predate the blocked GEMM and LAPACK-style factorizations in Typhon.NumPy: on Linux (i7-10700K) a
+1000 x 1000 matmul now runs at 74–86 % of OpenBLAS's speed on one thread and on par with it on all cores, `inv` of
+1000 x 1000 went from 1.5 s to 91 ms (NumPy: 63 ms). Details: [REPORT.md, section 9](../benchmarks/REPORT.md).
+
 ## Startup and footprint
 
 A tiny program (`bench_startup.ty`), measured from start to exit:

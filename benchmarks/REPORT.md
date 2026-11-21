@@ -32,6 +32,8 @@ and with whole-program type inference) and [`RESULTS_LINUX.md`](RESULTS_LINUX.md
   because it infers types for the whole program; Typhon does too now (74x, section 7), the Linux run predates it.
 * **NumPy code is at rough parity** with real NumPy (geometric mean 1.04x with the JIT, 1.13x with Native AOT). Typhon
   wins element loops and broadcasting, NumPy wins dense linear algebra (LAPACK) by 5x (Native AOT) to 10x (JIT).
+  Since then Typhon.NumPy has a blocked GEMM and LAPACK-style factorizations: matmul, `solve`, `inv` and `det` take
+  0.8–1.4x NumPy's time on one thread and 0.8–2.5x on all cores (section 9).
 * **You often don't need NumPy on Typhon**: plain loops compiled by Typhon beat the vectorized NumPy code on 3 of 6
   problems (Mandelbrot 29x, pairwise distances 7.8x, π 3.6x).
 * **Memory is mixed.** With the JIT, Typhon has a ~8 MB higher floor and a garbage collector that trades memory for
@@ -132,7 +134,8 @@ numpy program*, against Typhon.NumPy, a numpy-compatible library written in C# f
 * Native AOT roughly halves the time of ufuncs, reductions and linear algebra compared with the JIT here.
 * NumPy keeps the lead where it calls tuned native libraries: OpenBLAS for matrix multiply, LAPACK for `solve`/`inv`.
   Typhon's AOT matmul is slower than its JIT one, presumably because Native AOT targets a portable instruction set by
-  default, so the AVX2/FMA kernel path is not taken (not verified).
+  default, so the AVX2/FMA kernel path is not taken (verified since: section 9). The matmul and linalg rows predate
+  the rewrite of Typhon.NumPy's dense linear algebra; section 9 has the new numbers.
 * Three NumPy programs can't be compiled with Native AOT (`a[i]`, `np.dot` and slicing return `dynamic` in
   Typhon.NumPy). `typhon build --aot` reports the exact lines (TY2001).
 
@@ -329,6 +332,135 @@ includes whole-program type inference (only `nbody_untyped` changes) and the fas
   lower clocks and core scheduling weigh more than in CPython's multi-second loops. The ranking does not change.
 * Battery runs vary: an earlier battery run on the same day measured process starts about twice as slow as plugged in.
 * Every program printed the same result as CPython in both runs.
+
+## 9. Dense linear algebra: matmul and `numpy.linalg` (Linux)
+
+Sections 3 and 5 show NumPy 1.4–20x ahead on matrix multiply and `solve`/`inv`. This section explains that gap and
+measures Typhon.NumPy after a rewrite of its dense linear algebra.
+
+**Why NumPy was faster.** NumPy hands both to OpenBLAS (here scipy-openblas 0.3.34, Haswell kernels, 16 threads by
+default). Typhon.NumPy had:
+
+* **matmul**: B transposed once, then every element a dot product of two contiguous rows (2 x 4 tiles, 8 Vector256
+  FMA accumulators). Without packing, from k ≈ 1000 on the two rows of A and four of Bᵀ (48 KB) no longer fit in L1,
+  every step streams from L2, and four horizontal sums end every tile: 18–20 GFLOP/s up to n = 512, **10–11 GFLOP/s
+  from n = 1000**, one thread. OpenBLAS packs A and B into cache-sized panels and keeps a block of C in registers:
+  55–60 GFLOP/s, which is close to this core's AVX2/FMA peak.
+* **solve / inv / det**: an unblocked LU (one row axpy per element below the pivot, memory-bound once the matrix
+  leaves L2) and scalar forward/back substitution, column by column through strided reads; `inv` solved against the
+  identity that way. 1–10 GFLOP/s: `inv` of 1000 x 1000 took **1.5 s, NumPy 63 ms**.
+* Not the cause: `dynamic` or boxing (the calls are statically typed), bounds checks, allocation, or the algorithm for
+  `inv` (NumPy's is also LU plus two triangular solves on the identity). Memory layout neither: Typhon.NumPy arrays
+  are always contiguous (slices and `.T` are copies).
+
+**What changed** (`src/Typhon.NumPy/MatMul.cs`, `LinAlg.cs`, `LinAlgEigen.cs`):
+
+* **GEMM structured like GotoBLAS/BLIS**: A and B packed per 256-deep panel into 6-row and 8-column slivers, a 6 x 8
+  micro-kernel holding C in 12 Vector256 registers (one broadcast and two FMAs per element of A; a Vector128 variant
+  for Arm64 and for Native AOT builds without AVX), 72 x 256 blocks of A in L2, the C tile and the next B sliver
+  prefetched (power-of-two sizes lost 20–30 % without), C tiles spread over threads. Every element is summed in the
+  same order whatever the thread count, so results are identical on 1 or 16 threads. Packing reads any strides, so
+  the factorizations multiply sub-matrices and transposes without copying.
+* **LAPACK's algorithms on that GEMM**: recursive LU with partial pivoting (most of the work becomes a few large
+  products; 8-column leaves with vectorized row updates), recursive triangular solves and Cholesky, blocked
+  Householder QR (compact WY, LAPACK's sign convention), `solve`/`inv` as LAPACK's `gesv`, `det` through `slogdet`
+  as NumPy computes it. New functions: `slogdet`, `cholesky`, `qr`, `eigh`/`eigvalsh` (Householder tridiagonalization
+  + implicit QL), `svd`/`svdvals` (Golub-Kahan-Reinsch), `lstsq`, `pinv`, `matrix_rank`, `cond`, `LinAlgError`; `@`
+  broadcasts batch dimensions. Methods with hot loops are `AggressiveOptimization`: tier-0 code made 100 x 100 solves
+  5x slower in short programs.
+
+**Before and after.** i7-10700K (8 cores / 16 threads, AVX2 + FMA, no AVX-512) on WSL2, .NET 11.0.100, CPython 3.14.4,
+NumPy 2.5.5 + scipy-openblas 0.3.34. Program: [`linalg/sweep.ty`](linalg/sweep.ty) (valid Python and Typhon; Typhon
+via `typhon build` + `dotnet`). Other builds were running on the machine (load average 4–25), so each cell is the
+best of N calls in a process (N = 3–50 by size) and of 3 process runs interleaved across configurations; treat
+differences below ~15 % as noise. Milliseconds; GFLOP/s in parentheses (2n³ for matmul, ⅔n³ for an LU, 2n³ for inv).
+
+| | n | Typhon before, 1 thread | Typhon after, 1 thread | NumPy, 1 thread | Typhon before, 16 threads | Typhon after, 16 threads | NumPy, 8 threads | NumPy, 16 threads (default) |
+|---|---|---|---|---|---|---|---|---|
+| matmul | 64 | 0.048 | 0.020 (26) | 0.013 (40) | 0.093 | 0.021 (25) | 0.013 (40) | 0.013 (40) |
+| matmul | 128 | 0.153 | 0.092 (46) | 0.079 (53) | 0.129 | 0.070 (60) | 0.029 (145) | 0.027 (155) |
+| matmul | 256 | 1.36 | 0.678 (49) | 0.562 (60) | 0.586 | 0.321 (105) | 0.197 (170) | 1.78 (19) |
+| matmul | 512 | 9.75 | 5.78 (46) | 4.66 (58) | 2.75 | 1.71 (157) | 1.46 (184) | 2.19 (122) |
+| matmul | 1000 | 100 | 44.9 (45) | 33.7 (59) | 19.7 | 11.9 (169) | 12.2 (163) | 25.5 (79) |
+| matmul | 1024 | 125 | 48.9 (44) | 36.4 (59) | 21.6 | 13.6 (157) | 10.7 (201) | 19.0 (113) |
+| matmul | 2048 | 1,055 | 413 (42) | 315 (55) | 287 | 94.4 (182) | 115 (149) | 148 (116) |
+| solve (vector) | 100 | 1.11 | 0.067 | 0.054 | 0.966 | 0.067 | 0.075 | |
+| solve (vector) | 300 | 1.95 | 0.671 | 0.597 | 1.97 | 0.830 | 0.388 | |
+| solve (vector) | 1000 | 80.8 | 22.5 (30) | 18.5 (36) | 426 | 16.1 (41) | 8.86 (75) | |
+| inv | 100 | 1.53 | 0.132 | 0.141 | 1.49 | 0.130 | 0.100 | |
+| inv | 300 | 25.8 | 2.28 (24) | 2.73 (20) | 26.2 | 2.81 (19) | 1.12 (48) | |
+| inv | 1000 | 1,478 | 90.8 (22) | 63.3 (32) | 1,530 | 38.7 (52) | 30.8 (65) | |
+| det | 100 | 0.106 | 0.069 | 0.055 | 0.107 | 0.071 | 0.056 | |
+| det | 300 | 1.88 | 0.770 (23) | 0.615 (29) | 2.27 | 0.966 (19) | 0.390 (46) | |
+| det | 1000 | 84.1 | 23.1 (29) | 20.2 (33) | 120 | 16.7 (40) | 10.2 (66) | |
+| solve (1000 right-hand sides) | 1000 | 1,529 | 86.0 | 64.4 | 1,424 | 41.9 | 31.1 | |
+
+NumPy's default 16 threads is shown for matmul only: on this busy machine OpenBLAS's spinning threads slow `solve`
+and `inv` down by orders of magnitude (the threading table of the Linux run: 20 s instead of 57 ms for
+`bench_np_linalg`). Every result checksum matched NumPy's in every configuration.
+
+* **One thread**: matmul went from 10–20 to 42–49 GFLOP/s, **74–86 % of OpenBLAS's speed** from n = 128 on. `solve`,
+  `inv` and `det` take 0.8–1.4x NumPy's time at every size; before, they took 2–23x.
+* **All cores**: matmul from n = 512 on runs at 0.8–1.2x OpenBLAS's 8-thread speed (and ahead of its default 16
+  threads), the n = 1000 factorizations at 0.55–0.8x. Small products and LU around n = 300 gain little from threads
+  (0.4–0.6x); see below. `norm` of a 1000 x 1000 matrix: 0.38 → 0.22 ms on one thread, 0.044 ms on all (NumPy 0.21 /
+  0.042 ms).
+
+The functions that did not exist before (best of 2 runs; `cholesky` and `eigh` on a symmetric positive-definite
+matrix, `qr` and `svd` on a random square one; full `U` and `Vh`):
+
+| | n | Typhon, 1 thread | NumPy, 1 thread | Typhon, 16 threads | NumPy, 8 threads |
+|---|---|---|---|---|---|
+| qr | 100 | 0.301 | 0.368 | 0.302 | 0.403 |
+| qr | 300 | 3.85 | 4.79 | 5.88 | 4.90 |
+| qr | 1000 | 130 | 93.2 | 121 | 52.7 |
+| cholesky | 100 | 0.077 | 0.055 | 0.076 | 0.033 |
+| cholesky | 300 | 0.663 | 0.714 | 0.917 | 0.908 |
+| cholesky | 1000 | 16.3 | 17.1 | 17.8 | 13.3 |
+| eigh | 100 | 0.933 | 0.663 | 0.944 | 0.725 |
+| eigh | 300 | 23.9 | 6.79 | 24.1 | 5.10 |
+| eigh | 1000 | 996 | 170 | 1,135 | 88.9 |
+| svd | 100 | 2.07 | 1.36 | 2.12 | 1.73 |
+| svd | 300 | 42.3 | 14.8 | 43.7 | 14.3 |
+| svd | 1000 | 2,924 | 465 | 2,299 | 313 |
+
+The two NumPy benchmark programs of sections 3 and 5 (hot section, median of 5 runs, same session):
+
+| Program | Typhon before: 16 threads / 1 | Typhon after: 16 threads / 1 | NumPy: 8 threads / 1 / 16 (default) |
+|---|---|---|---|
+| `bench_np_matmul` (two 1000 x 1000 products) | 55.5 / 351 ms | **39.9** / 165 ms | 40.6 / 105 / 115 ms |
+| `bench_np_linalg` (10 x `solve` + `inv`, 300 x 300) | 867 / 809 ms | 130 / **98.0** ms | 38.9 / 53.6 ms / – |
+
+Both hot sections include the first call, and with it the JIT compilation of the kernels (~25 ms: methods marked
+`AggressiveOptimization` are compiled on first use, ReadyToRun code does not cover them). That is why the short
+`bench_np_linalg` takes 1.8x NumPy's single-thread time while the sweep's steady state is 0.8–1.4x.
+
+**What is still slower, and why.**
+
+* **Single-threaded GEMM, ~20 % behind**: OpenBLAS's hand-scheduled assembly against RyuJIT's code. The micro-kernel
+  alone reaches 60–66 GFLOP/s on cache-resident panels; the whole product loses another ~25 % to packing (memory
+  bound) and to streaming C through the cache once per 256-deep panel. An AVX-512 machine would want a wider kernel
+  (not written: no hardware here to tune it on).
+* **Threads on small problems**: a `Parallel.For` dispatch costs 10–20 µs, OpenBLAS keeps spinning workers that start
+  in about a microsecond (which is also why its default thread count collapses on a loaded machine). LU is threaded
+  only inside its GEMMs (its 8-column panels are serial); OpenBLAS has a parallel recursive `getrf`. Hence 128 x 128
+  products and LU/`inv` around n = 300 gain little from threads.
+* **eigh and svd** use unblocked Householder reductions (tridiagonal, bidiagonal: memory-bound row operations) and QR
+  iterations, where LAPACK uses blocked reductions and divide and conquer (`syevd`, `gesdd`): 1.4–3.5x slower at
+  n = 100–300, 6–13x at n = 1000. QR's panels are unthreaded level-2 code, so it barely gains from threads.
+* **Native AOT** uses the default x64 baseline (no AVX), so it runs the Vector128 kernel without FMA: 14–15 GFLOP/s on
+  one thread (`bench_np_matmul` AOT: 126 → 67 ms). Building with `IlcInstructionSet` (e.g. `x86-64-v3`) would give it
+  the AVX2 kernel; that is a `typhon build --aot` option, not part of this change.
+
+**A native BLAS?** An optional P/Invoke backend (OpenBLAS or MKL found at run time, managed code as the fallback)
+would close the remaining single-thread GEMM gap (~1.25x) and most of the eigh/svd gap. It was not added: neither
+Linux CI nor Windows ships a BLAS (this machine has none either, only NumPy's private copy with renamed ILP64 symbols),
+LP64/ILP64 and symbol names differ between distributions, and OpenBLAS's spinning threads would compete with the .NET
+thread pool, as the NumPy default-thread column shows.
+
+Reproduce: `typhon build benchmarks/linalg/sweep.ty -o out && dotnet out/typhon_sweep.dll matmul` (or `linalg`) and
+`python benchmarks/linalg/sweep.ty matmul`; one thread: `TYPHON_NUMPY_THREADS=1` / `OPENBLAS_NUM_THREADS=1`. Kernel
+tests: `dotnet test tests/Typhon.NumPy.Tests`.
 
 ## Limitations
 
