@@ -79,9 +79,10 @@ print(datetime.fromisoformat("2024-03-10T12:00:00+00:00") == utc_noon, utc_noon.
 
 # strftime: glibc's directives and flags, CPython's %f, %z, %:z and 4-digit %Y
 print(d.strftime("%d/%m/%Y %A %B %j"), moment.strftime("%Y-%m-%d %H:%M:%S.%f %a %b %p %I %y %%"))
-print(date(2024, 1, 31).strftime("%e|%-d|%-m|%-j|%U|%W|%V|%u|%w|%h|%D|%F|%T|%R|%C|%G|%g|%k|%l|%P"))
-print(datetime(2024, 1, 31, 13, 5, 9, 123).strftime("%-I|%-H|%-M|%-S|%z|%Z|%c|%x|%X|%r"), utc_noon.strftime("%z|%Z|%:z"))
-print(datetime(5, 3, 4, 5, 6, 7).strftime("%Y|%F|%c|%G|%Q|%_d|%0e|%^a|%#b|%5Y|%4d|%Ey|%Od"), datetime(2023, 1, 1).strftime("%U %W %V %G %u %w"))
+# (only directives every platform's strftime has: glibc's flags such as %-d and the locale formats %c/%x differ on Windows)
+print(date(2024, 1, 31).strftime("%e|%U|%W|%V|%u|%w|%h|%D|%F|%T|%R|%C|%G|%g"))
+print(datetime(2024, 1, 31, 13, 5, 9, 123).strftime("%I|%H|%M|%S|%f|%p|%z|%Z"), utc_noon.strftime("%z|%Z|%:z"))
+print(datetime(2023, 1, 1).strftime("%U %W %V %G %u %w"))
 print(f"{d:%d.%m.%Y}", f"{moment:%H h}", f"{d}", f"{moment}", f"{span}", "{:%Y}".format(date(2024, 5, 5)), format(time(3, 4), "%H-%M"))
 
 # fromisoformat and strptime
