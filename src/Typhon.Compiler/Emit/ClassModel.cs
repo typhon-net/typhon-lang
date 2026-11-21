@@ -25,7 +25,7 @@ namespace Typhon.Compiler.Emit
         public static void Complete(ProjectContext p)
         {
             foreach (var m in p.Modules.Values)
-                if (m.Ast != null && m.ParseDiagnostics.Count == 0) { HoistLocalClasses(m); SynthesizeNamedTuples(m); }
+                if (m.Ast != null && m.ParseDiagnostics.Count == 0) { HoistBlockClasses(m); HoistLocalClasses(m); SynthesizeNamedTuples(m); }
             // several bases: one stays the C# base, the others' members are copied in, in MRO order
             MultipleInheritance.Apply(p);
             foreach (var m in p.Modules.Values)
@@ -40,6 +40,62 @@ namespace Typhon.Compiler.Emit
         /// A class defined inside a function that uses none of the function's variables is the same class at module level
         /// (a CLR class cannot be local): it moves there, renamed only if the module already has that name.
         /// </summary>
+        /// <summary>
+        /// class C: ... in a module-level if / try block (if HAVE_SSL: class IMAP4_SSL(IMAP4), try: ... else: class
+        /// ABCMeta): a class of the module, defined before the block, when nothing else at module level binds its name
+        /// (Typhon's classes exist from the start; the block's other statements stay where they are).
+        /// </summary>
+        static void HoistBlockClasses(ModuleInfo m)
+        {
+            var body = m.Ast.Body;
+            for (int i = 0; i < body.Count; i++)
+            {
+                if (!(body[i] is IfStmt || body[i] is TryStmt)) continue;
+                var found = new List<(List<Stmt> Owner, ClassDef Cls)>();
+                CollectBlockClasses(body[i], found);
+                foreach (var (owner, cls) in found)
+                {
+                    if (m.Classes.ContainsKey(cls.Name) || m.Functions.Contains(cls.Name) || found.Count(x => x.Cls.Name == cls.Name) > 1 ||
+                        BoundElsewhere(body, cls)) continue;
+                    owner.Remove(cls);
+                    if (owner.Count == 0) owner.Add(new PassStmt { Line = cls.Line, Col = cls.Col });
+                    body.Insert(i, cls);
+                    i++;
+                    m.Classes[cls.Name] = cls;
+                }
+            }
+        }
+
+        static void CollectBlockClasses(Stmt s, List<(List<Stmt> Owner, ClassDef Cls)> into)
+        {
+            void Scan(List<Stmt> block)
+            {
+                foreach (var st in block)
+                    if (st is ClassDef c) into.Add((block, c));
+                    else if (st is IfStmt || st is TryStmt) CollectBlockClasses(st, into);
+            }
+            if (s is IfStmt i) { Scan(i.Body); Scan(i.OrElse); }
+            else if (s is TryStmt t) { Scan(t.Body); foreach (var h in t.Handlers) Scan(h.Body); Scan(t.OrElse); Scan(t.FinalBody); }
+        }
+
+        /// <summary>Is the class's name bound by anything else in the module (an assignment, an import, a def, another class)?</summary>
+        static bool BoundElsewhere(List<Stmt> body, ClassDef cls)
+        {
+            bool bound = false;
+            AstWalker.VisitAll(body, n =>
+            {
+                switch (n)
+                {
+                    case ClassDef c when c != cls && c.Name == cls.Name: bound = true; break;
+                    case FunctionDef f when f.Name == cls.Name: bound = true; break;
+                    case ImportFromStmt imf when imf.Names.Any(a => (a.AsName ?? a.Name) == cls.Name): bound = true; break;
+                    case ImportStmt im when im.Names.Any(a => (a.AsName ?? a.Name.Split('.')[0]) == cls.Name): bound = true; break;
+                    case AssignStmt a when a.Targets.Any(t => t is NameExpr tn && tn.Id == cls.Name): bound = true; break;
+                }
+            });
+            return bound;
+        }
+
         static void HoistLocalClasses(ModuleInfo m)
         {
             var body = m.Ast.Body;

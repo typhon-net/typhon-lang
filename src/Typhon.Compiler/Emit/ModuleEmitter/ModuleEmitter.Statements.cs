@@ -146,8 +146,10 @@ namespace Typhon.Compiler.Emit
                     return;
                 // Mapping.register(Context) / _collections_abc.Sequence.register(X): a virtual subclass of an ABC of the typing-only
                 // modules; nothing at run time in Typhon
-                case CallExpr rc when rc.Func is AttributeExpr ra && ra.Name == "register" && DottedName(ra.Target) is string rdn &&
-                                      _typingOnlyNames.Contains(rdn.Split('.')[0]) && !IsLocal(rdn.Split('.')[0]):
+                case CallExpr rc when rc.Func is AttributeExpr ra && ra.Name == "register" && DottedName(ra.Target) is string rdn && !IsLocal(rdn.Split('.')[0]) &&
+                                      (_typingOnlyNames.Contains(rdn.Split('.')[0]) ||
+                                       // (Complex.register(complex) on a Typhon ABC that defines no register of its own)
+                                       TryResolveType(rdn, 0, out _, out var regClass) && regClass != null && !DefinesInHierarchy(regClass, "register")):
                     return;
                 case CallExpr _:
                 case AwaitExpr _:

@@ -197,6 +197,21 @@ namespace Typhon.Compiler.Emit
             return PrivateModuleAliases.TryGetValue(parts[0], out var pub) ? pub + dotted.Substring(parts[0].Length) : dotted;
         }
 
+        /// <summary>from m import a, b: m exists and has each name (a function, value, class or submodule), or is a typing-only module.</summary>
+        bool ImportFromResolves(ImportFromStmt imf)
+        {
+            if (!ModuleExists(imf.Module)) return false;
+            string name = PublicModule(imf.Module);
+            if (IgnoredModules.Contains(name)) return true;
+            if (ResolvePsModule(name) is ModuleInfo mod)
+                return imf.Names.All(a => a.Name == "*" || mod.Functions.Contains(a.Name) || mod.Classes.ContainsKey(a.Name) || mod.Globals.Contains(a.Name) ||
+                                          ResolvePsModule(name + "." + a.Name) != null);
+            if (StdlibType(name) is string meta)
+                return imf.Names.All(a => a.Name == "*" || _r.GetMembers(meta, a.Name).Count > 0 || AnyArity(meta + "+" + a.Name, out _) ||
+                                          StdlibType(name + "." + a.Name) != null);
+            return true; // (a .NET namespace or type: its members are checked where they are used)
+        }
+
         /// <summary>Does the import name a module Typhon can bind (a Typhon module, a standard module, a .NET namespace or type)?</summary>
         bool ModuleExists(string name)
         {
@@ -220,7 +235,20 @@ namespace Typhon.Compiler.Emit
                         var handler = t.Handlers.FirstOrDefault(h => h.Type == null ||
                             (h.Type is TupleExpr tt ? tt.Elts : new List<Expr> { h.Type }).Any(e => e is NameExpr en && en.Id is "ImportError" or "ModuleNotFoundError" or "Exception"));
                         int failing = t.Body.FindIndex(st => st is ImportStmt im && im.Names.Any(a => !ModuleExists(a.Name)) ||
-                                                             st is ImportFromStmt imf && imf.Level == 0 && !ModuleExists(imf.Module));
+                                                             st is ImportFromStmt imf && imf.Level == 0 && !ImportFromResolves(imf));
+                        // try: from _queue import Empty / except ImportError: class Empty...: the imports all succeed, so
+                        // the handler never runs (Typhon resolves imports when it compiles)
+                        if (failing < 0 && t.Handlers.Count > 0 && t.FinalBody.Count == 0 &&
+                            t.Handlers.All(h => h.Type != null && h.Name == null &&
+                                (h.Type is TupleExpr ht ? ht.Elts : new List<Expr> { h.Type }).All(e => e is NameExpr en && en.Id is "ImportError" or "ModuleNotFoundError")) &&
+                            t.Body.Count > 0 && t.Body.All(st => st is ImportStmt || st is ImportFromStmt imp && imp.Level == 0 || st is PassStmt))
+                        {
+                            var kept = t.Body.Concat(t.OrElse).ToList();
+                            body.RemoveAt(i);
+                            body.InsertRange(i, kept);
+                            i += kept.Count - 1;
+                            continue;
+                        }
                         if (handler != null && failing >= 0 && handler.Name == null &&
                             !t.Body.Take(failing).Any(st => st is ImportStmt || st is ImportFromStmt || st is FunctionDef || st is ClassDef))
                         {

@@ -1,0 +1,56 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+"""Conformance: classes defined in module-level if/try blocks, try/except ImportError whose imports Typhon resolves (the
+handler never runs) or does not (the handler runs), ABC.register on a Typhon class."""
+
+import sys
+from abc import ABC
+
+HAVE_FEATURE = True
+
+if HAVE_FEATURE:
+    class Fancy:
+        def hello(self) -> str:
+            return "fancy"
+    flag = "on"
+else:
+    flag = "off"
+
+try:
+    import _no_such_thing_here
+except ImportError:
+    class Fallback:
+        kind = "fallback"
+
+if sys.version_info >= (3, 0):
+    class Modern(Fancy):
+        def hello(self) -> str:
+            return "modern " + super().hello()
+
+print(Fancy().hello(), flag, Fallback.kind, Modern().hello())
+
+
+try:
+    from _queue import Empty
+except ImportError:
+    class Empty(Exception):
+        pass
+
+try:
+    from heapq import _no_such_private_helper
+except ImportError:
+    def _no_such_private_helper(x: int) -> int:
+        return -x
+
+
+class Shape(ABC):
+    pass
+
+
+class Square:
+    pass
+
+
+Shape.register(Square)
+print(Empty.__name__, _no_such_private_helper(3))
