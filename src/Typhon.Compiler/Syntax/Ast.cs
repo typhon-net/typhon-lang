@@ -69,7 +69,19 @@ namespace Typhon.Compiler.Syntax
 
     public sealed class IfExpr : Expr { public Expr Test, Body, OrElse; }
 
-    public sealed class LambdaExpr : Expr { public List<string> Params = new List<string>(); public Expr Body; }
+    public sealed class LambdaExpr : Expr
+    {
+        public List<string> Params = new List<string>();
+        public string VarArgs, KwArgs;
+        public Expr Body;
+        public bool IsVariadic => VarArgs != null || KwArgs != null;
+        public IEnumerable<string> ParameterNames()
+        {
+            foreach (var p in Params) yield return p;
+            if (VarArgs != null) yield return VarArgs;
+            if (KwArgs != null) yield return KwArgs;
+        }
+    }
 
     public sealed class TupleExpr : Expr { public List<Expr> Elts = new List<Expr>(); public bool Parenthesized; }
 

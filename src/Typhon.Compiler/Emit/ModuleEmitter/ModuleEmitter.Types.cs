@@ -88,6 +88,7 @@ namespace Typhon.Compiler.Emit
                     }
                 case FStringExpr tf when tf.IsTemplate: return TemplateType;
                 case FStringExpr _: return "string";
+                case LambdaExpr l when l.IsVariadic: return "dynamic";
                 case YieldExpr _ when _scope != null && _scope.AsyncForm: return "dynamic";
                 case NamedExpr ne: return InferType(ne.Value);
                 case ComprehensionExpr comp: return ComprehensionType(comp);
@@ -271,7 +272,7 @@ namespace Typhon.Compiler.Emit
                         if (its.Count == 1 && its[0] != null && its[0] != TypeInference.Pending) return PyTuplePrefix + its[0] + ">";
                         if (its.All(x => x == "long" || x == "double")) return PyTuplePrefix + "double>";
                     }
-                    var ts = t.Elts.Select(InferType).ToList();
+                    var ts = t.Elts.Select(e => InferType(e) ?? (e is ListExpr { Elts.Count: 0 } ? "List<dynamic>" : null)).ToList();
                     return ts.All(x => x != null) ? "(" + string.Join(", ", ts) + ")" : null;
                 }
                 default: return null;
@@ -341,6 +342,8 @@ namespace Typhon.Compiler.Emit
                     case "int": return IntT;
                     case "len": case "ord": case "hash": return "long";
                     case "float": return "double";
+                    case "complex": return "global::System.Numerics.Complex";
+                    case "dict" when HasDictKeywords(call): return KeywordDictType(call);
                     case "bool": case "isinstance": case "any": case "all": return "bool";
                     case "cast": return call.Args.Count == 2 ? MapType(call.Args[0].Value, call) : null;   // typing.cast(T, x) is a C# cast to T
                     case "round": return call.Args.Count == 1 ? "long" : "double";

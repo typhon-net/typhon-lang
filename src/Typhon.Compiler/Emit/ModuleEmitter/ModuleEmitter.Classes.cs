@@ -181,7 +181,7 @@ namespace Typhon.Compiler.Emit
                 if (fn.Id == "float") return "0.0";
                 if (fn.Id == "str") return "\"\"";
             }
-            if (factory is LambdaExpr lf && lf.Params.Count == 0) return Checked(EmitExpr(lf.Body, targetTyped: true));
+            if (factory is LambdaExpr { IsVariadic: false } lf && lf.Params.Count == 0) return Checked(EmitExpr(lf.Body, targetTyped: true));
             return Checked(EmitExpr(new CallExpr { Func = factory, Line = factory.Line, Col = factory.Col }, targetTyped: true));
         }
 
@@ -426,11 +426,11 @@ namespace Typhon.Compiler.Emit
                     type = candidates.Count == 1 ? candidates.First() : null;
                     if (TypeInference.IsUnknown(type) || type == TypeInference.Pending) type = null;
                     type = type ?? ImplicitDynamic(method, $"attribute 'self.{name}'");
-                    // assignments from outside the class (obj.attr = v) count too: an int field that gets floats is a float
-                    if (type != "dynamic" && Ti != null && _m.Classes.TryGetValue(c.Name, out var wcls) && wcls == c &&
-                        Ti.ExternalFields.TryGetValue(TypeInference.ClassKey(_m, c.Name) + "|" + name, out var outside) && outside != type)
-                        type = (type == "long" || type == "double") && (outside == "long" || outside == "double") ? "double" : ImplicitDynamic(method, $"attribute 'self.{name}'");
                 }
+                // A subclass or an external assignment can store a different type in an inferred field.
+                if (ann == null && type != "dynamic" && Ti != null && _m.Classes.TryGetValue(c.Name, out var wcls) && wcls == c &&
+                    Ti.ExternalFields.TryGetValue(TypeInference.ClassKey(_m, c.Name) + "|" + name, out var outside) && outside != type)
+                    type = (type == "long" || type == "double") && (outside == "long" || outside == "double") ? "double" : ImplicitDynamic(method, $"attribute 'self.{name}'");
                 declared.Add(name);
                 ctx.Members.Add(name);
                 ctx.FieldTypes[name] = type;

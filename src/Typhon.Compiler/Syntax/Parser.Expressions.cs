@@ -95,7 +95,11 @@ namespace Typhon.Compiler.Syntax
             var l = At(new LambdaExpr(), tok);
             while (!IsOp(":"))
             {
-                l.Params.Add(ExpectName());
+                if (l.KwArgs != null) throw Err("**kwargs must be the last lambda parameter");
+                if (AcceptOp("**")) l.KwArgs = ExpectName();
+                else if (l.VarArgs != null) throw Err("keyword-only lambda parameters are not supported in Typhon");
+                else if (AcceptOp("*")) l.VarArgs = ExpectName();
+                else l.Params.Add(ExpectName());
                 if (IsOp("=")) throw Err("default values for lambda parameters are not supported in Typhon");
                 if (!AcceptOp(",")) break;
             }

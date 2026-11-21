@@ -1,0 +1,140 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import os
+import tokenize
+from collections import deque
+from heapq import heappop, heappush
+from importlib.util import decode_source
+from typing import Any
+
+
+class Box:
+    def __init__(self, value: int):
+        self.value = value
+
+    def copy(self):
+        return self.__class__(self.value)
+
+
+print([box.value for box in map(Box, (2, 4, 6))])
+print(Box(9).copy().value)
+
+
+class Hooks:
+    def __init__(self):
+        self.callback: Any = None
+
+
+hooks = Hooks()
+hooks.callback = lambda *args, **kwargs: (args, kwargs)
+print(hooks.callback(), hooks.callback(1, 2, enabled=True))
+print((lambda first, *rest, **opts: (first, rest, opts))(3, 4, flag=True))
+print(list(map(lambda *args: args[0] + 1, [10, 20])))
+
+
+class Real:
+    def __float__(self) -> float:
+        return 1.5
+
+    def as_complex(self) -> complex:
+        return complex(float(self))
+
+    def __pos__(self) -> int:
+        return 3
+
+    def as_positive(self) -> int:
+        return +self
+
+
+print(Real().as_complex(), Real().as_positive())
+
+
+class BaseQueue:
+    def __init__(self):
+        self.setup()
+
+    def setup(self):
+        self.items = deque()
+
+    def put(self, value: int) -> None:
+        self.items.append(value)
+
+    def put_nowait(self, value: int):
+        return self.put(value)
+
+
+class HeapQueue(BaseQueue):
+    def setup(self):
+        self.items = []
+
+    def put(self, value: int) -> None:
+        heappush(self.items, value)
+
+    def get(self):
+        return heappop(self.items)
+
+
+q = HeapQueue()
+print(q.put_nowait(3), q.put_nowait(1), q.get(), q.get())
+
+
+class ByteHolder:
+    def __init__(self, data: Any):
+        self.data = data
+
+
+class ByteEditor(ByteHolder):
+    def replaced(self, old: Any):
+        return self.data.replace(old, b"b")
+
+
+print(ByteEditor(b"a").replaced(b"a"))
+
+
+class Actions:
+    def double(self, n: int) -> int:
+        return n * 2
+
+    methods = dict(double=double)
+
+    def run(self, action: str, n: int) -> int:
+        return self.methods[action](self, n)
+
+
+def group(i: Any, magnitude=abs):
+    groups = ([], [], [])
+    groups[i].append(magnitude(-4))
+    return dict(groups=groups, value=Actions().run("double", 3))
+
+
+print(group(True))
+print(int in {int, str}, str in {int, str})
+
+
+def counters() -> dict[str, int]:
+    return dict(success=2, failure=1)
+
+
+print(counters())
+
+
+def same_type(value: Any, example: Any) -> bool:
+    return isinstance(value, type(example))
+
+
+print(same_type("x", ""), same_type(1, ""))
+print(decode_source(b"\xef\xbb\xbffirst\r\nsecond\rthird\n").splitlines())
+try:
+    decode_source(b"\xef\xbb\xbf# coding: latin-1\n")
+except SyntaxError:
+    print("conflicting source encoding")
+
+path = "typhon_conformance_source_encoding.txt"
+try:
+    with open(path, "wb") as stream:
+        stream.write(b"# a comment\r\n# coding: latin-1\r\nword = 'caf\xe9'\r\n")
+    with tokenize.open(path) as stream:
+        print(stream.encoding, stream.readlines()[2].strip())
+finally:
+    os.remove(path)

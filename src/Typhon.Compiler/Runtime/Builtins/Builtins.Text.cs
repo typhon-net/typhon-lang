@@ -51,6 +51,7 @@ namespace Typhon.Runtime
                 case bool b: return b ? "True" : "False";
                 case double d: return FormatFloat(d);
                 case float f: return FormatFloat(f);
+                case Complex c: return FormatComplex(c);
                 case char c: return c.ToString();
                 // an IntEnum (long-based) prints as its int value, like Python 3.11+
                 case Enum en when Enum.GetUnderlyingType(en.GetType()) == typeof(long): return Convert.ToInt64(en, Inv).ToString(Inv);
@@ -87,6 +88,18 @@ namespace Typhon.Runtime
                 }
             }
             return sb.Append(q).ToString();
+        }
+
+        static string FormatComplex(Complex c)
+        {
+            static string Component(double n)
+            {
+                string s = FormatFloat(n);
+                return s.EndsWith(".0", StringComparison.Ordinal) ? s[..^2] : s;
+            }
+            string imag = Component(c.Imaginary);
+            if (BitConverter.DoubleToInt64Bits(c.Real) == 0) return imag + "j";
+            return $"({Component(c.Real)}{(imag.StartsWith('-') ? "" : "+")}{imag}j)";
         }
 
         /// <summary>CPython's float repr: shortest round-trip digits, exponent form when the decimal exponent is &lt; -4 or &gt;= 16.</summary>

@@ -51,6 +51,26 @@ namespace Typhon.Compiler.Emit
         void RecordExternalAttribute(AttributeExpr at, Expr value)
         {
             string vt = value is ConstExpr nc && nc.Kind == ConstKind.None ? TypeInference.NoneType : PyType(InferType(value)) ?? TypeInference.Unknown;
+            if (at.Target is NameExpr self && self.Id == "self")
+            {
+                if (_cls == null) return;
+                foreach (var parent in TyphonBases(_cls.Def))
+                {
+                    if (ImplicitFieldOwner(parent, at.Name) is ClassDef declared &&
+                        _p.TryFindClass(_m, declared.Name, out var found, out var baseModule) && found == declared)
+                    {
+                        // An empty literal can reuse a field of the same kind, even before its element type is known.
+                        if (TypeInference.IsUnknown(vt) && TypeInference.IsEmptyContainer(value))
+                        {
+                            var fieldValue = CollectImplicitFields(declared)[at.Name].Value.Value;
+                            if (TypeInference.ContainerKind(value) == TypeInference.ContainerKind(fieldValue)) continue;
+                            vt = "dynamic";
+                        }
+                        Obs.AddExternal(TypeInference.ClassKey(baseModule, declared.Name) + "|" + at.Name, vt);
+                    }
+                }
+                return;
+            }
             if (at.Target is NameExpr cn && !IsLocal(cn.Id) && cn.Id != "self" && TryResolveType(cn.Id, 0, out _, out var pyClass) && pyClass != null &&
                 _p.TryFindClass(_m, pyClass.Name, out var cls, out var owner) && cls == pyClass)
             {
@@ -59,10 +79,24 @@ namespace Typhon.Compiler.Emit
                 if (declaredNone || !DeclaresMember(cls, at.Name)) Obs.AddExternal(TypeInference.ClassKey(owner, cls.Name) + "|static|" + at.Name, vt);
                 return;
             }
-            if (at.Target is NameExpr self && self.Id == "self") return;
             if (ClassKeyOfType(InferType(at.Target), out _) is string ck && ClassDefOfKey(ck) is ClassDef cd &&
                 (!DeclaresMember(cd, at.Name) || CollectImplicitFields(cd).ContainsKey(at.Name)))
                 Obs.AddExternal(ck + "|" + at.Name, vt);
+        }
+
+        ClassDef ImplicitFieldOwner(ClassDef c, string name, int depth = 0)
+        {
+            if (depth > 20) return null;
+            foreach (var parent in TyphonBases(c))
+                if (ImplicitFieldOwner(parent, name, depth + 1) is ClassDef inherited) return inherited;
+            return CollectImplicitFields(c).TryGetValue(name, out var field) && field.Key == null ? c : null;
+        }
+
+        FunctionDef MethodInHierarchy(ClassDef c, string name, int depth = 0)
+        {
+            if (depth > 20) return null;
+            return c.Body.OfType<FunctionDef>().FirstOrDefault(f => f.Name == name) ??
+                   TyphonBases(c).Select(b => MethodInHierarchy(b, name, depth + 1)).FirstOrDefault(f => f != null);
         }
 
         string ExternalType(string key) =>

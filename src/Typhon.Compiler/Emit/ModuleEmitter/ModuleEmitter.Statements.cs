@@ -196,6 +196,16 @@ namespace Typhon.Compiler.Emit
                 Obs.AddReturn(_retKey, r.Value == null || (r.Value is ConstExpr rc && rc.Kind == ConstKind.None) ? TypeInference.NoneType : (PyType(InferType(r.Value)) ?? TypeInference.Unknown));
             if (r.Value == null) { _w.Line("return;"); return; }
             string rt = _scope?.ReturnType;
+            if (r.Value is CallExpr { Func: AttributeExpr { Target: NameExpr { Id: "self" } } callee } call &&
+                _cls != null && MethodInHierarchy(_cls.Def, callee.Name) is FunctionDef method && !method.IsAsync &&
+                !_m.Ast.MethodDecorators.ContainsKey(method) &&
+                (IsNone(method.Returns) || method.Returns == null && !FamilyReturnsValue(_cls.Def, method.Name) &&
+                    (CanFallThrough(method.Body) || AstWalker.ContainsOutsideNestedScopes(method.Body, n => n is ReturnStmt { Value: null }))))
+            {
+                _w.Line($"{EmitExpr(call)};");
+                _w.Line(rt == "void" ? "return;" : "return null;");
+                return;
+            }
             _w.Line($"return {EmitExpr(r.Value, targetTyped: rt != null && rt != "dynamic" && rt != "void")};");
         }
 

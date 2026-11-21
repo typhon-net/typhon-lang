@@ -66,6 +66,9 @@ namespace Typhon.Runtime
         /// <summary>The items of a tuple of fixed shape (a C# ValueTuple), for iteration and `in`.</summary>
         public static IEnumerable<T> tuple_items<T>(ITuple t) { for (int i = 0; i < t.Length; i++) yield return (T)t[i]!; }
         public static T tuple_at<T>(ITuple t, long i) => (T)t[checked((int)(i < 0 ? i + t.Length : i))]!;
+        public static T tuple_at<T>(ITuple t, object? i) => IsIndex(i)
+            ? (T)t[__pos(i!, t.Length)]!
+            : throw new InvalidCastException("tuple indices must be integers");
         public static bool contains(ITuple t, object? x) { for (int i = 0; i < t.Length; i++) if (eq(t[i], x)) return true; return false; }
         public static bool contains(object c, object x)
         {

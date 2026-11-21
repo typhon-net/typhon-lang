@@ -250,6 +250,7 @@ namespace Typhon.Runtime
         {
             if (t == typeof(long) || t == typeof(int) || t == typeof(short) || t == typeof(byte) || t == typeof(System.Numerics.BigInteger)) return "int";
             if (t == typeof(double) || t == typeof(float)) return "float";
+            if (t == typeof(Complex)) return "complex";
             if (t == typeof(string)) return "str";
             if (t == typeof(bool)) return "bool";
             if (t == typeof(PyBytes)) return "bytes";

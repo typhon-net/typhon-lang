@@ -66,7 +66,7 @@ namespace Typhon.Compiler.Emit
                 case NameExpr n when n.Id == "float": return "double";
                 case NameExpr n when n.Id == "str": return "string";
                 case NameExpr n when n.Id == "bool": return "bool";
-                case LambdaExpr l when l.Params.Count == 0: return PyType(InferType(l.Body));
+                case LambdaExpr l when !l.IsVariadic && l.Params.Count == 0: return PyType(InferType(l.Body));
                 default: return null;
             }
         }
@@ -87,7 +87,8 @@ namespace Typhon.Compiler.Emit
                     var kv = SplitTypeArgs(GenericArg(type));
                     var factory = (value as CallExpr)?.Args.FirstOrDefault(a => a.Name == null)?.Value;
                     string name = factory is NameExpr fn ? fn.Id : "function";
-                    string make = factory == null ? "null" : factory is LambdaExpr fl ? $"() => {EmitValue(fl.Body)}"
+                    string make = factory == null ? "null" : factory is LambdaExpr fl
+                        ? fl.IsVariadic ? $"() => {FactoryCall(fl, kv[1])}" : $"() => {EmitValue(fl.Body)}"
                         : name == "int" ? (_big ? "() => global::System.Numerics.BigInteger.Zero" : "() => 0L") : name == "float" ? "() => 0.0" : name == "str" ? "() => \"\"" : name == "bool" ? "() => false"
                         : $"() => new {kv[1]}()";
                     return $"new {type}({make}, {CsString(name)})";
@@ -313,9 +314,14 @@ namespace Typhon.Compiler.Emit
             if (depth > 20 || Ti == null) return null;
             foreach (var b in TyphonBases(c))
             {
-                if (_p.TryFindClass(_m, b.Name, out var bc, out var owner) && bc == b && Ti.Fields.TryGetValue(TypeInference.ClassKey(owner, bc.Name), out var fs) &&
-                    fs.TryGetValue(name, out var t) && t != "dynamic" && t != "void")
-                    return t;
+                if (_p.TryFindClass(_m, b.Name, out var bc, out var owner) && bc == b)
+                {
+                    string key = TypeInference.ClassKey(owner, bc.Name);
+                    // A widened slot can now receive a different Python type from a subclass.
+                    if (Ti.Fields.TryGetValue(key, out var fields) && fields.TryGetValue(name, out var type) &&
+                        type != "void" && (type != "dynamic" || Ti.ExternalFields.ContainsKey(key + "|" + name)))
+                        return type;
+                }
                 if (InheritedFieldType(b, name, depth + 1) is string deeper) return deeper;
             }
             return null;

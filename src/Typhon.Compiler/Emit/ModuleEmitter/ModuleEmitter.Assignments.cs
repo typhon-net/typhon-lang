@@ -128,13 +128,16 @@ namespace Typhon.Compiler.Emit
             return members.Count > 0 && members.All(m => m.IsMethod && !m.IsStatic);
         }
 
+        string EmitBoundMethod(AttributeExpr a) =>
+            $"new global::Typhon.Runtime.PyBoundMethod((object){Paren(EmitExpr(a.Target))}, {CsString(a.Name)})";
+
         /// <summary>A function name being assigned to a variable (its function type is kept).</summary>
         bool _fnTypedUse;
 
         void EmitAssignToName(NameExpr n, Expr value, Stmt stmt, string rawValue)
         {
             // f = obj.method of a .NET object: a callable bound method (a method group has no type C# can store here)
-            if (rawValue == null && value is AttributeExpr bm && IsDotNetMethod(bm)) rawValue = $"(dynamic)new global::Typhon.Runtime.PyBoundMethod((object){Paren(EmitExpr(bm.Target))}, {CsString(bm.Name)})";
+            if (rawValue == null && value is AttributeExpr bm && IsDotNetMethod(bm)) rawValue = $"(dynamic){EmitBoundMethod(bm)}";
             if (rawValue == null && RegexLiteral(value, out var rxPattern, out var rxFlags)) _regexLocals[n.Id] = (rxPattern, rxFlags);
             else _regexLocals.Remove(n.Id);
             {
@@ -346,7 +349,7 @@ namespace Typhon.Compiler.Emit
                 {
                     if (Obs != null && rawValue == null) RecordExternalAttribute(at, value);
                     string ft = null;
-                    if (at.Target is NameExpr tn && tn.Id == "self" && _cls != null) _cls.FieldTypes.TryGetValue(at.Name, out ft);
+                    if (at.Target is NameExpr tn && tn.Id == "self" && _cls != null) ft = InferType(at);
                     string code = rawValue ?? (TypeInference.IsNonePlaceholder(value) && ft != null && ft.StartsWith("List<")
                         ? EmitNonePlaceholder(value, ft) : EmitExpr(value, targetTyped: ft != null && ft != "dynamic"));
                     if (rawValue == null && NarrowingForMember(at, value) is string narrowTo) code = $"checked(({narrowTo})({code}))";

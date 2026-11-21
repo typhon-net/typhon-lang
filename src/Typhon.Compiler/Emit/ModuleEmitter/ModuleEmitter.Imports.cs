@@ -54,7 +54,8 @@ namespace Typhon.Compiler.Emit
                 if (stdlib != null)
                 {
                     string l = local ?? name.Split('.')[0];
-                    if (local == null && name.Contains(".")) { Unsupported(s, "'import a.b' of a Typhon standard module (use 'from a import b')"); continue; }
+                    // import a.b binds a. The standard library represents b as a nested type.
+                    if (local == null && name.Contains(".")) stdlib = StdlibType(l);
                     _usingLines.Add($"using {Esc(l)} = global::{string.Join(".", stdlib.Replace('+', '.').Split('.').Select(Esc))};");
                     _dotnetAliases[l] = stdlib;
                     continue;

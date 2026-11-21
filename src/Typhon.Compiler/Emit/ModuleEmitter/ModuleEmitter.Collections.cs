@@ -70,7 +70,7 @@ namespace Typhon.Compiler.Emit
                         case "abs": return arg;
                         default: return null;
                     }
-                case LambdaExpr l when l.Params.Count == 1 && arg != null:
+                case LambdaExpr l when !l.IsVariadic && l.Params.Count == 1 && arg != null:
                 {
                     var bindings = new Scope();
                     bindings.Types[l.Params[0]] = arg;

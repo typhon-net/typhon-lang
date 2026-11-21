@@ -281,7 +281,7 @@ namespace Typhon.Compiler.Emit
             foreach (var t in _staticTypes) yield return t + "+" + dotted;
         }
 
-        static readonly HashSet<string> BuiltinConversionNames = new HashSet<string> { "int", "float", "str", "bool", "list", "dict", "set", "tuple", "bytes", "bytearray", "object", "frozenset" };
+        static readonly HashSet<string> BuiltinConversionNames = new HashSet<string> { "int", "float", "complex", "str", "bool", "list", "dict", "set", "tuple", "bytes", "bytearray", "object", "frozenset" };
 
         const string PyBytesType = "global::Typhon.Runtime.PyBytes", PyByteArrayType = "global::Typhon.Runtime.PyByteArray";
         static bool IsBytesType(string t) => t == PyBytesType || t == PyByteArrayType;
@@ -289,6 +289,7 @@ namespace Typhon.Compiler.Emit
         static readonly Dictionary<string, string> PrimitiveTypes = new Dictionary<string, string>
         {
             ["int"] = "long", ["float"] = "double", ["str"] = "string", ["bool"] = "bool", ["object"] = "object", ["type"] = "global::System.Type",
+            ["complex"] = "global::System.Numerics.Complex",
             ["bytes"] = "global::Typhon.Runtime.PyBytes", ["bytearray"] = "global::Typhon.Runtime.PyByteArray",
             ["Any"] = "dynamic", ["typing.Any"] = "dynamic",
             ["float32"] = "float", ["float64"] = "double", ["int8"] = "sbyte", ["int16"] = "short", ["int32"] = "int", ["int64"] = "long",

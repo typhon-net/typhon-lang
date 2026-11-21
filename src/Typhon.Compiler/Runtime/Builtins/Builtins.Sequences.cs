@@ -219,7 +219,9 @@ namespace Typhon.Runtime
         public static bool all<T>(IEnumerable<T> xs) => xs.All(x => truthy(x));
 
         public static IEnumerable<R> map<T, R>(Func<T, R> f, IEnumerable<T> xs) => xs.Select(f);
+        public static IEnumerable<dynamic?> map<T>(PyClosure f, IEnumerable<T> xs) => xs.Select(x => f.__call__([x]));
         public static IEnumerable<T> filter<T>(Func<T, bool> f, IEnumerable<T> xs) => xs.Where(f);
+        public static IEnumerable<T> filter<T>(PyClosure f, IEnumerable<T> xs) => xs.Where(x => truthy(f.__call__([x])));
 
         public static List<T> list<T>(IEnumerable<T> xs) => new List<T>(xs);
         public static PyTuple<T> tuple<T>(IEnumerable<T> xs) => xs as PyTuple<T> ?? new PyTuple<T>(xs);

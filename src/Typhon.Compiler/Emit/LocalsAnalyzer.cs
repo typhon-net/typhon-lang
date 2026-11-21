@@ -291,7 +291,7 @@ namespace Typhon.Compiler.Emit
             {
                 case NameExpr n: Add(n.Id, path, Kind.Load, null); return;
                 case LambdaExpr l:
-                    _shadow.Push(new HashSet<string>(l.Params));
+                    _shadow.Push(new HashSet<string>(l.ParameterNames()));
                     Loads(l.Body, path);
                     _shadow.Pop();
                     return;

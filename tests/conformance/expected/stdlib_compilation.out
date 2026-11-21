@@ -1,0 +1,15 @@
+[2, 4, 6]
+9
+((), {}) ((1, 2), {'enabled': True})
+(3, (4,), {'flag': True})
+[11, 21]
+(1.5+0j) 3
+None None 1 3
+b'b'
+{'groups': ([], [4], []), 'value': 6}
+True True
+{'success': 2, 'failure': 1}
+True False
+['first', 'second', 'third']
+conflicting source encoding
+iso-8859-1 word = 'café'

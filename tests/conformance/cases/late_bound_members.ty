@@ -4,7 +4,7 @@
 """Conformance: what graphlib (compiled from CPython's source) needs: a list method on an attribute of a value whose type
 is not known, and bound methods of late-bound values taken as values (it.__next__)."""
 
-from typing import Any
+from typing import Any, Callable
 
 
 class _NodeInfo:
@@ -44,3 +44,17 @@ def drain(items: Any):
 
 
 print(drain(["x", "y", "z"]))
+
+
+def apply_next(method: Callable[[], int]) -> int:
+    return method()
+
+
+def drain_typed(items: list[int]) -> None:
+    stack: list[Any] = []
+    iterator = iter(items)
+    stack.append(iterator.__next__)
+    print(stack[0](), apply_next(iterator.__next__), stack[0]())
+
+
+drain_typed([5, 7, 9])

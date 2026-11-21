@@ -124,6 +124,7 @@ namespace Typhon.Compiler.Emit
                 case CompareExpr c: return EmitCompare(c);
                 case IfExpr i when ConditionalNeedsDynamic(i): return $"({Cond(i.Test)} ? (dynamic?){Paren(EmitExpr(i.Body))} : (dynamic?){Paren(EmitExpr(i.OrElse))})";
                 case IfExpr i: return $"({Cond(i.Test)} ? {EmitExpr(i.Body, targetTyped)} : {EmitExpr(i.OrElse, targetTyped)})";
+                case LambdaExpr l when l.IsVariadic: return EmitVariadicLambda(l);
                 case LambdaExpr l:
                 {
                     _lambdaParams.Push(new HashSet<string>(l.Params));
@@ -178,6 +179,10 @@ namespace Typhon.Compiler.Emit
             if (ModuleOrClassValue(e) is string objectValue) return objectValue;
             switch (e)
             {
+                case NameExpr n when ValueBuiltins.Contains(n.Id) && !BuiltinTypeValues.ContainsKey(n.Id) &&
+                    !IsShadowed(n.Id) && StdlibOwner(n.Id) == null &&
+                    _r.GetMembers("Typhon.Stdlib.builtins", n.Id).Any(m => m.IsMethod && m.IsStatic):
+                    return $"(dynamic)new global::Typhon.Runtime.PyBoundMethod(typeof(global::Typhon.Stdlib.builtins), {CsString(n.Id)})";
                 case ConstExpr c when c.Kind == ConstKind.Int: return IntLiteral(EmitConst(c));
                 case UnaryExpr u when u.Op == "-" && u.Operand is ConstExpr uc && uc.Kind == ConstKind.Int: return "-" + IntLiteral(EmitConst(uc));
                 case IfExpr i when ConditionalNeedsDynamic(i): return EmitExpr(i);

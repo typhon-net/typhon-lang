@@ -60,7 +60,11 @@ namespace Typhon.Compiler.Emit
             {
                 if (ConstIntValue(s.Index) is long k && k >= -tupleItems.Count && k < tupleItems.Count) return $"{target}.Item{(k < 0 ? k + tupleItems.Count : k) + 1}";
                 string common = tupleItems.Distinct().Count() == 1 ? tupleItems[0] : "object";
-                return $"{Rt("tuple_at")}<{common}>({target}, {SliceBound(s.Index)})";
+                string indexType = InferType(s.Index);
+                string index = indexType != null && IsIntegral(indexType) && !IsDynamicallyDispatched(s.Index)
+                    ? indexType == "bool" ? EmitIndex(s.Index) : SliceBound(s.Index)
+                    : $"(object?){Paren(EmitValue(s.Index))}";
+                return $"{Rt("tuple_at")}<{common}>({target}, {index})";
             }
             if (s.Index is TupleExpr dt && IsDictType(targetType)) return $"{target}[{EmitExpr(dt)}]"; // d[a, b]: the key is the tuple (a, b)
             // d[k] with a late-bound k on a typed dict: the key converted, so the lookup (and its result) stays static

@@ -409,9 +409,51 @@ namespace Typhon.Compiler.Emit
         /// <summary>Lambdas bound to local names in this function (calls through them type their parameters).</summary>
         readonly Dictionary<string, LambdaExpr> _lambdaLocals = new Dictionary<string, LambdaExpr>();
 
+        string EmitVariadicLambda(LambdaExpr lambda)
+        {
+            const string closure = "global::Typhon.Runtime.PyClosure";
+            const string name = "\"<lambda>\"";
+            string args = NewTmp("args"), kwargs = NewTmp("kwargs"), names = NewTmp("params");
+            string bound = NewTmp("bound");
+            int count = lambda.Params.Count;
+            var bindings = new Scope();
+            var code = new StringBuilder();
+            code.Append($"new {closure}({name}, ({args}, {kwargs}) => {{ ");
+            code.Append($"string[] {names} = [{string.Join(", ", lambda.Params.Select(CsString))}]; ");
+            code.Append($"var {bound} = {closure}.Args({name}, {names}, {args}, {kwargs}, {(lambda.KwArgs != null ? "true" : "false")}); ");
+            string condition = lambda.VarArgs == null ? "!=" : "<";
+            string max = lambda.VarArgs == null ? count.ToString() : "int.MaxValue";
+            code.Append($"if ({bound}.Length {condition} {count}) throw {closure}.ArgCountError({name}, {count}, {max}, {bound}.Length); ");
+            for (int i = 0; i < count; i++)
+            {
+                bindings.Types[lambda.Params[i]] = "dynamic";
+                code.Append($"dynamic {Esc(lambda.Params[i])} = {bound}[{i}]; ");
+            }
+            if (lambda.VarArgs != null)
+            {
+                string tuple = PyTuplePrefix + "dynamic>";
+                bindings.Types[lambda.VarArgs] = tuple;
+                code.Append($"var {Esc(lambda.VarArgs)} = new {tuple}({bound}[{count}..]); ");
+            }
+            if (lambda.KwArgs != null)
+            {
+                bindings.Types[lambda.KwArgs] = "OrderedDictionary<string, dynamic>";
+                code.Append($"OrderedDictionary<string, dynamic> {Esc(lambda.KwArgs)} = {closure}.Kw({kwargs}, {names}); ");
+            }
+            _comprehensionTypes.Add(bindings);
+            _lambdaParams.Push(new HashSet<string>(lambda.ParameterNames()));
+            try { return code.Append($"return {EmitValue(lambda.Body)}; }})").ToString(); }
+            finally { _lambdaParams.Pop(); _comprehensionTypes.Remove(bindings); }
+        }
+
         /// <summary>A lambda bound to a local name: Func&lt;T..., R&gt; when its calls give the parameter types, else a delegate of dynamic values.</summary>
         string EmitLambdaLocal(LambdaExpr lam, string key, out string code)
         {
+            if (lam.IsVariadic)
+            {
+                code = EmitVariadicLambda(lam);
+                return "dynamic";
+            }
             string[] sig = key != null && Ti != null && Ti.LambdaSigs.TryGetValue(key, out var ls) && ls.Length == lam.Params.Count ? ls : null;
             var bindings = new Scope();
             for (int i = 0; i < lam.Params.Count; i++) bindings.Types[lam.Params[i]] = sig?[i] ?? "dynamic";

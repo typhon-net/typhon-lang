@@ -32,6 +32,7 @@ namespace Typhon.Runtime
         {
             null => false,
             bool b => b,
+            Complex c => c != Complex.Zero,
             string s => s.Length > 0,
             int i => i != 0,
             long l => l != 0,
@@ -81,7 +82,17 @@ namespace Typhon.Runtime
             }
         }
         public static double @float(double d) => d;
-        public static double @float(object o) => o is BigInteger b ? (double)b : Convert.ToDouble(o, Inv); // (no BigInteger overload: float(1) would be ambiguous)
+        public static double @float(object o)
+        {
+            if (o is BigInteger b) return (double)b;
+            if (TryGetAttr(o, "__float__", out var convert))
+                return (object?)__invoke(convert, []) is double result ? result
+                    : throw new InvalidCastException("__float__ returned a non-float");
+            return Convert.ToDouble(o, Inv);
+        }
+
+        public static Complex complex(double real = 0, double imag = 0) => new Complex(real, imag);
+        public static Complex complex(Complex real) => real;
 
         public static bool @bool(object? o) => truthy(o);
 
@@ -298,6 +309,7 @@ namespace Typhon.Runtime
         public static int __hash32(object? h) => h is long l ? __hash32(l) : h is int i ? i : h?.GetHashCode() ?? 0;
 
         public static int abs(int x) => Math.Abs(x);
+        public static long abs(bool x) => x ? 1 : 0;
         public static long abs(long x) => Math.Abs(x);
         public static double abs(double x) => Math.Abs(x);
         public static decimal abs(decimal x) => Math.Abs(x);

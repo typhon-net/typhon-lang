@@ -145,6 +145,7 @@ namespace Typhon.Compiler.Emit
                         break;
                     }
                     case "__neg__": _w.Line($"public static {RetType(f)} operator -({self} self) => self.__neg__();"); break;
+                    case "__pos__": _w.Line($"public static {RetType(f)} operator +({self} self) => self.__pos__();"); break;
                     case "__getitem__":
                     {
                         string kt = ParamType(f, 1);
