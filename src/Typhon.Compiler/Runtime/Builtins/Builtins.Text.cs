@@ -191,6 +191,12 @@ namespace Typhon.Runtime
                 var items = CPythonSetOrder(e.Cast<object?>().ToList()).Select(repr).ToList();
                 return items.Count == 0 ? "set()" : "{" + string.Join(", ", items) + "}";
             }
+            // an array is a tuple: *args, a .NET method's fixed-size result (ndarray.shape)
+            if (o is Array arr && arr.Rank == 1 && !(o is byte[]))
+            {
+                var items = arr.Cast<object?>().Select(repr).ToList();
+                return "(" + string.Join(", ", items) + (items.Count == 1 ? ",)" : ")");
+            }
             if (o is IList list) return "[" + string.Join(", ", list.Cast<object?>().Select(repr)) + "]";
             return null;
         }

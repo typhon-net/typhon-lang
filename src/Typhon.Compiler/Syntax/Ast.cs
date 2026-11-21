@@ -230,5 +230,7 @@ namespace Typhon.Compiler.Syntax
         public List<Stmt> Body = new List<Stmt>();
         /// <summary>Decorators that name Python callables but stand where Typhon does not apply them (methods, classes).</summary>
         public HashSet<Expr> UnappliedDecorators = new HashSet<Expr>();
+        /// <summary>Methods decorated in Python: their decorators, outermost first (the class emits the decorated method).</summary>
+        public Dictionary<FunctionDef, List<Expr>> MethodDecorators = new Dictionary<FunctionDef, List<Expr>>();
     }
 }

@@ -18,8 +18,9 @@ python tests/conformance/update_expected.py                                  # r
 * CI ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)) runs the suite on Windows and Linux. The Native AOT pass
   can be started by hand.
 
-Status: 29 of 31 cases match CPython under `typhon run`, among them `decorators_and_context` (decorators written in
-Python, `functools.wraps`/`partial`, the `with` protocol, `contextlib`, `enum.auto`/`IntEnum`, `dataclasses.field`/
+Status: 30 of 32 cases match CPython under `typhon run`, among them `runtime_attributes` (getattr, setattr, hasattr,
+delattr), `decorators_and_context` (decorators written in
+Python on functions, methods and classes, `total_ordering`, `functools.wraps`/`partial`, the `with` protocol, `contextlib`, `enum.auto`/`IntEnum`, `dataclasses.field`/
 `asdict`/`replace`), `generator_forms` (yields in try/except/finally and inside expressions, `close()` running
 finally), `dynamic_programs` (callable objects, class values,
 function aliases, Python dict keys, mixed lists, seeded `random`), `binary_data` (bytes, bytearray, struct,

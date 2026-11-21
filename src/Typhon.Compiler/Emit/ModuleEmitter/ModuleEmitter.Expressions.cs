@@ -302,9 +302,13 @@ namespace Typhon.Compiler.Emit
             if (a.Name == "__class__") return Paren(EmitExpr(a.Target)) + ".GetType()";
             if (a.Name == "__name__")
             {
-                if (a.Target is CallExpr tc && tc.Func is NameExpr tn && tn.Id == "type" && !IsShadowed("type")) return EmitExpr(a.Target) + ".Name";
-                if (a.Target is AttributeExpr ca && ca.Name == "__class__") return EmitExpr(a.Target) + ".Name";
+                if (a.Target is CallExpr tc && tc.Func is NameExpr tn && tn.Id == "type" && !IsShadowed("type")) return $"{Rt("__name_of")}({EmitExpr(a.Target)})";
+                if (a.Target is AttributeExpr ca && ca.Name == "__class__") return $"{Rt("__name_of")}({EmitExpr(a.Target)})";
                 if (DottedName(a.Target) is string tdn && TryTypeExpr(a.Target, out _)) return CsString(tdn.Split('.').Last());
+                // a class or function known only at run time (cls.__name__ in a class decorator, f.__name__ of a callable)
+                string nt = InferType(a.Target);
+                if (nt == null || nt == "dynamic" || nt == "object" || nt == "object?" || nt == "global::System.Type" || nt == "System.Type")
+                    return $"{Rt("__name_of")}((object?){Paren(EmitExpr(a.Target))})";
             }
             // obj.__dict__: a live view of its attributes
             if (a.Name == "__dict__" && !(a.Target is NameExpr dn0 && TryResolveType(dn0.Id, 0, out _, out _)))
@@ -315,6 +319,9 @@ namespace Typhon.Compiler.Emit
                              a.Target is CallExpr stc && stc.Func is NameExpr stn && stn.Id == "type" && stc.Args.Count == 1 && stc.Args[0].Value is NameExpr sts && sts.Id == "self";
             if (selfClass && HasSelfInScope() && _cls != null && StaticOwner(_cls.Def, a.Name, 0) is string owner)
                 return owner + "." + Esc(a.Name);
+            // f.attr on a module function: its function value (attributes set on it, f.calls += 1, are late-bound)
+            if (a.Target is NameExpr fa && FunctionValue(fa, typed: false) is string fav)
+                return a.Name is "__name__" or "__doc__" or "__wrapped__" or "__module__" or "__qualname__" ? $"{fav}.{a.Name}" : $"((dynamic){fav}).{Esc(a.Name)}";
             string target = a.Target is ConstExpr ic && ic.Kind == ConstKind.Int ? EmitValue(a.Target) : a.Target is NameExpr tn0 ? EmitName(tn0) : EmitExpr(a.Target);
             if (a.Target is ConstExpr || a.Target is UnaryExpr || a.Target is BinOpExpr || a.Target is AwaitExpr) target = Paren(target);
             return target + "." + Esc(a.Name);

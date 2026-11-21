@@ -1,0 +1,10 @@
+app default True False True
+renamed 42 True
+renamed greets bob 1.0 False
+True Config
+ABC 1
+3 handler False
+False
+name renamed
+debug True
+AttributeError: 'Config' object has no attribute 'nothing'

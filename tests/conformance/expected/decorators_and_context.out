@@ -34,3 +34,15 @@ caught boom
 Color.RED 2 True 2
 Item(name='a', tags=['x'], qty=1) {'name': 'a', 'tags': ['x'], 'qty': 1} Item(name='a', tags=['x'], qty=5)
 49
+-> deposit (5,) {}
+-> deposit (7,) {'note': 'check'}
+-> deposit () {'amount': 1}
+15 22 23 23
+-> rate () {}
+-> rate () {}
+['ann:x', 'ann:x'] 3 1
+['Account', 'Other'] True
+True True False False True True
+(1, 2, 3) (2, 3) 3 1
+(1, 2, 3) tuple
+(1, 'a') {'k': 2}

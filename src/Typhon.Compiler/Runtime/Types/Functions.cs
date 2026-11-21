@@ -31,7 +31,13 @@ namespace Typhon.Runtime
         public PyBoundMethod(object target, string name) { _target = target; _name = name; }
         public dynamic? __call__(object?[] args)
         {
-            foreach (var m in _target.GetType().GetMethods(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public))
+            // a class's method (getattr(Cls, "m")): a static method, or an instance method with self as the first argument
+            var type = _target as Type ?? _target.GetType();
+            var flags = _target is Type ? System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public : System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public;
+            if (_target is Type && args.Length > 0 && args[0] != null && type.IsInstanceOfType(args[0]) &&
+                !type.GetMethods(flags).Any(m => m.Name == _name))
+                return new PyBoundMethod(args[0]!, _name).__call__(args.Skip(1).ToArray());
+            foreach (var m in type.GetMethods(flags))
             {
                 if (m.Name != _name) continue;
                 var ps = m.GetParameters();
@@ -48,7 +54,12 @@ namespace Typhon.Runtime
                     for (int i = fixedCount; i < args.Length; i++) rest.SetValue(Convert(args[i], elem), i - fixedCount);
                     call[^1] = rest;
                 }
-                return m.Invoke(_target, call);
+                try { return m.Invoke(_target is Type ? null : _target, call); }
+                catch (System.Reflection.TargetInvocationException tie) when (tie.InnerException != null)
+                {
+                    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
+                    throw;
+                }
             }
             throw new InvalidCastException($"{_name}() does not take {args.Length} arguments");
         }
@@ -100,12 +111,65 @@ namespace Typhon.Runtime
         /// f(*args) on a late-bound callable: a Typhon function value, a bound method, a .NET delegate, or an object with
         /// __call__ (the arguments are known only as a sequence, so the call is made at run time).
         /// </summary>
+        /// <summary>x.__name__ of a class, function or other object known only at run time.</summary>
+        public static string __name_of(object? o) => o switch
+        {
+            Type t => PyTypeName(t),
+            PyFunction f => f.__name__,
+            Delegate d => d.Method.Name,
+            null => throw new MissingMemberException("'NoneType' object has no attribute '__name__'"),
+            _ => (string)((dynamic)o).__name__,
+        };
+
+        /// <summary>A type's Python name: int for long, str for string, list for List&lt;T&gt;, a Typhon class's own name.</summary>
+        public static string PyTypeName(Type t)
+        {
+            if (t == typeof(long) || t == typeof(int) || t == typeof(short) || t == typeof(byte) || t == typeof(System.Numerics.BigInteger)) return "int";
+            if (t == typeof(double) || t == typeof(float)) return "float";
+            if (t == typeof(string)) return "str";
+            if (t == typeof(bool)) return "bool";
+            if (t == typeof(PyBytes)) return "bytes";
+            if (t == typeof(PyByteArray)) return "bytearray";
+            if (typeof(PyFunction).IsAssignableFrom(t)) return "function";
+            if (t.IsArray && t != typeof(byte[])) return "tuple";
+            if (t.IsGenericType)
+            {
+                var g = t.GetGenericTypeDefinition();
+                if (g == typeof(List<>)) return "list";
+                if (g == typeof(OrderedDictionary<,>) || g == typeof(Dictionary<,>)) return "dict";
+                if (g == typeof(HashSet<>)) return "set";
+                if (g == typeof(PyTuple<>) || t.FullName?.StartsWith("System.ValueTuple") == true) return "tuple";
+            }
+            int tick = t.Name.IndexOf('`');
+            return tick < 0 ? t.Name : t.Name.Substring(0, tick);
+        }
+
         /// <summary>f(*args, **kwargs) / f(x, key=v) on a late-bound callable: keyword arguments by name.</summary>
         public static dynamic? __invoke_kw(object? f, object?[] args, IDictionary<string, object?>? kw)
         {
             if (kw == null || kw.Count == 0) return __invoke(f, args);
             if (f is PyFunction pf) return pf.__call_kw__(args, kw);
             throw new ArgumentException($"keyword arguments to a {f?.GetType().Name ?? "None"} value are not supported");
+        }
+
+        /// <summary>
+        /// A decorated method's call: the decorators' result called with the instance (when there is one), the arguments
+        /// given (an optional parameter left out, Type.Missing, is not passed; later ones then go by name), *args and **kwargs.
+        /// </summary>
+        public static dynamic? __forward(object? f, object?[] leading, object?[] values, string[] names, object?[]? rest, IDictionary? kwargs)
+        {
+            var positional = new List<object?>(leading);
+            Dictionary<string, object?>? kw = null;
+            bool skipped = false;
+            for (int i = 0; i < values.Length; i++)
+            {
+                if (values[i] == System.Type.Missing) { skipped = true; continue; }
+                if (!skipped) positional.Add(values[i]);
+                else (kw ??= new Dictionary<string, object?>())[names[i]] = values[i];
+            }
+            if (rest != null) positional.AddRange(rest);
+            if (kwargs != null) foreach (DictionaryEntry e in kwargs) (kw ??= new Dictionary<string, object?>())[(string)e.Key] = e.Value;
+            return __invoke_kw(f, positional.ToArray(), kw);
         }
 
         /// <summary>The keyword arguments of a late-bound call: name=value pairs and **mappings, in order.</summary>
@@ -158,7 +222,7 @@ namespace Typhon.Runtime
         public object? __wrapped__;
         public string __module__ = "__main__";
         public string __qualname__ { get => __name__; set => __name__ = value; }
-        Dictionary<string, object?>? _attrs;
+        internal Dictionary<string, object?>? _attrs;
         protected PyFunction(string name) { __name__ = name; }
         /// <summary>Calls the function with arguments of any type (dynamic overload resolution).</summary>
         public abstract object? __call__(object?[] args);

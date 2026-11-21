@@ -30,6 +30,7 @@ namespace Typhon.Compiler.Syntax
             "staticmethod", "classmethod", "property", "abstractmethod", "override", "final", "dataclass", "overload",
             "cache", "lru_cache", "functools.cache", "functools.lru_cache",
             "typing.override", "typing.final", "typing.overload", "abc.abstractmethod", "dataclasses.dataclass",
+            "total_ordering", "functools.total_ordering",
         };
 
         public static void Apply(ModuleAst module)
@@ -84,14 +85,43 @@ namespace Typhon.Compiler.Syntax
                         }
                         break;
                     case ClassDef c:
-                        foreach (var d in c.Decorators.Where(d => IsPythonDecorator(d, names))) module.UnappliedDecorators.Add(d);
+                    {
+                        if (c.Decorators.Any(d => Name(d) is "total_ordering" or "functools.total_ordering"))
+                        {
+                            TotalOrdering(c);
+                            c.Decorators.RemoveAll(d => Name(d) is "total_ordering" or "functools.total_ordering");
+                        }
                         foreach (var m in c.Body.OfType<FunctionDef>())
                         {
-                            foreach (var d in m.Decorators.Where(d => IsPythonDecorator(d, names))) module.UnappliedDecorators.Add(d);
                             Rewrite(m.Body, names, module);
+                            var python = m.Decorators.Where(d => IsPythonDecorator(d, names)).ToList();
+                            if (python.Count == 0) continue;
+                            // @deco on a method, or @staticmethod above it: the class emits the decorated method;
+                            // mixed with @classmethod / @property / Typhon's other decorators: not supported yet
+                            var rest = m.Decorators.Where(d => !python.Contains(d)).ToList();
+                            bool staticOutside = rest.Count == 1 && Name(rest[0]) == "staticmethod" && m.Decorators.IndexOf(rest[0]) == 0;
+                            if (rest.Count == 0 || staticOutside)
+                            {
+                                module.MethodDecorators[m] = python;
+                                m.Decorators = rest;
+                            }
+                            else foreach (var d in python) module.UnappliedDecorators.Add(d);
                         }
                         foreach (var nested in c.Body.OfType<ClassDef>()) Rewrite(new List<Stmt> { nested }, names, module);
+                        // a class decorator runs where the class is defined, with the class (registries, markers); its result
+                        // must be the class itself (Typhon classes are not rebound)
+                        var classPython = c.Decorators.Where(d => IsPythonDecorator(d, names)).ToList();
+                        if (classPython.Count > 0)
+                        {
+                            Expr applied = new NameExpr { Id = c.Name, Line = c.Line, Col = c.Col };
+                            for (int k = classPython.Count - 1; k >= 0; k--)
+                                applied = new CallExpr { Func = classPython[k], Args = { new Arg { Value = applied } }, Line = classPython[k].Line, Col = classPython[k].Col };
+                            c.Decorators.RemoveAll(classPython.Contains);
+                            body.Insert(i + 1, new ExprStmt { Value = applied, Line = c.Line, Col = c.Col });
+                            i++;
+                        }
                         break;
+                    }
                     case IfStmt s: Rewrite(s.Body, names, module); Rewrite(s.OrElse, names, module); break;
                     case WhileStmt s: Rewrite(s.Body, names, module); Rewrite(s.OrElse, names, module); break;
                     case ForStmt s: Rewrite(s.Body, names, module); Rewrite(s.OrElse, names, module); break;
@@ -105,6 +135,56 @@ namespace Typhon.Compiler.Syntax
                     case MatchStmt s: foreach (var mc in s.Cases) Rewrite(mc.Body, names, module); break;
                 }
             }
+        }
+
+        /// <summary>
+        /// @functools.total_ordering: the comparison methods the class lacks, from the one it defines (__lt__, __le__, __gt__
+        /// or __ge__, in that preference, as functools picks its root) and __eq__.
+        /// </summary>
+        static void TotalOrdering(ClassDef c)
+        {
+            var defined = new HashSet<string>(c.Body.OfType<FunctionDef>().Select(f => f.Name));
+            string root = new[] { "__lt__", "__le__", "__gt__", "__ge__" }.FirstOrDefault(defined.Contains);
+            if (root == null) return;
+            var derived = new Dictionary<string, Dictionary<string, string>>
+            {
+                ["__lt__"] = new Dictionary<string, string> { ["__gt__"] = "not r and not (self == other)", ["__le__"] = "r or self == other", ["__ge__"] = "not r" },
+                ["__le__"] = new Dictionary<string, string> { ["__ge__"] = "not r or self == other", ["__lt__"] = "r and not (self == other)", ["__gt__"] = "not r" },
+                ["__gt__"] = new Dictionary<string, string> { ["__lt__"] = "not r and not (self == other)", ["__ge__"] = "r or self == other", ["__le__"] = "not r" },
+                ["__ge__"] = new Dictionary<string, string> { ["__le__"] = "not r or self == other", ["__gt__"] = "r and not (self == other)", ["__lt__"] = "not r" },
+            };
+            var rootDef = c.Body.OfType<FunctionDef>().First(f => f.Name == root);
+            var other = rootDef.Params.Skip(1).FirstOrDefault()?.Annotation;
+            foreach (var kv in derived[root])
+            {
+                if (defined.Contains(kv.Key)) continue;
+                string src = $"def {kv.Key}(self, other):\n    r = self.{root}(other)\n    return {kv.Value}\n";
+                var f = (FunctionDef)Parser.ParseModule(src, "<total_ordering>").Body[0];
+                f.Params[1].Annotation = other;
+                f.Returns = rootDef.Returns; // (C# pairs < with > only when they return the same type)
+                SetPosition(f, c.Line, c.Col);
+                c.Body.Add(f);
+            }
+        }
+
+        static void SetPosition(Node root, int line, int col)
+        {
+            void Visit(object o)
+            {
+                switch (o)
+                {
+                    case null: return;
+                    case Node n:
+                        n.Line = line; n.Col = col;
+                        foreach (var fi in n.GetType().GetFields())
+                            if (fi.FieldType != typeof(string) && !fi.FieldType.IsPrimitive) Visit(fi.GetValue(n));
+                        return;
+                    case System.Collections.IEnumerable list when !(o is string):
+                        foreach (var x in list) Visit(x);
+                        return;
+                }
+            }
+            Visit(root);
         }
 
         /// <summary>

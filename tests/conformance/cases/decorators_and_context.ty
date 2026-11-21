@@ -143,3 +143,75 @@ it = Item("a")
 it.tags.append("x")
 print(it, asdict(it), replace(it, qty=5))
 print(square(7))
+
+# decorators on methods and classes, functools.total_ordering, static methods through an instance
+
+def logged_m(f):
+    @functools.wraps(f)
+    def wrapper(*args, **kwargs):
+        print("->", f.__name__, args[1:], kwargs)
+        return f(*args, **kwargs)
+    return wrapper
+
+def times(n):
+    def deco(f):
+        def inner(*args):
+            return [f(*args) for _ in range(n)]
+        return inner
+    return deco
+
+CLASSES = {}
+def register_cls(cls):
+    CLASSES[cls.__name__] = cls
+    return cls
+
+@register_cls
+class Account:
+    def __init__(self, owner: str, balance: int = 0):
+        self.owner = owner
+        self.balance = balance
+
+    @logged_m
+    def deposit(self, amount, note="cash"):
+        self.balance += amount
+        return self.balance
+
+    @times(2)
+    def tag(self, label):
+        return f"{self.owner}:{label}"
+
+    @staticmethod
+    @logged_m
+    def rate(kind):
+        return {"basic": 1, "gold": 3}[kind]
+
+@register_cls
+class Other:
+    pass
+
+@functools.total_ordering
+class Version:
+    def __init__(self, major: int, minor: int):
+        self.major = major
+        self.minor = minor
+    def __eq__(self, other):
+        return (self.major, self.minor) == (other.major, other.minor)
+    def __lt__(self, other):
+        return (self.major, self.minor) < (other.major, other.minor)
+
+a = Account("ann", 10)
+print(a.deposit(5), a.deposit(7, note="check"), a.deposit(amount=1), a.balance)
+print(a.tag("x"), Account.rate("gold"), a.rate("basic"))
+print(sorted(CLASSES), CLASSES["Account"] is Account)
+v1, v2 = Version(1, 2), Version(1, 10)
+print(v1 < v2, v1 <= v2, v1 > v2, v1 >= v2, v1 == Version(1, 2), v2 >= v1)
+
+# *args is a tuple
+def star_f(*args):
+    print(args, args[1:], len(args), args[0])
+    return args
+def star_g(*args, **kw):
+    print(args, kw)
+r = star_f(1, 2, 3)
+print(r, type(r).__name__)
+star_g(1, "a", k=2)

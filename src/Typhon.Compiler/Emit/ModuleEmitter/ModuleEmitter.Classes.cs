@@ -290,6 +290,8 @@ namespace Typhon.Compiler.Emit
                 if (m.Returns == null && TargetOf(_m, c, m.Name) is InferenceTarget mt && mt.Class == c && !mt.InferParams &&
                     Ti.Returns.TryGetValue(TypeInference.ReturnKey(mt.Key, ""), out var mrt) && mrt != "dynamic")
                     ctx.MethodReturnTypes[m.Name] = mrt;
+            // a method decorated in Python returns whatever its decorator's result returns
+            foreach (var m in methods) if (_m.Ast.MethodDecorators.ContainsKey(m)) ctx.MethodReturnTypes[m.Name] = "dynamic";
             if (Obs != null && _m.Classes.TryGetValue(c.Name, out var topCls) && topCls == c)
                 Obs.MethodReturns[TypeInference.ClassKey(_m, c.Name)] = new Dictionary<string, string>(ctx.MethodReturnTypes);
             bool isDataclass = HasDecorator(c.Decorators, "dataclass");
@@ -536,11 +538,59 @@ namespace Typhon.Compiler.Emit
             LineDirective(f);
             EmitAttributes(f.Decorators);
             if (mods.StartsWith("public ") && SurfaceVisibility("public", sig.ReturnType, sig.Params) == "internal") mods = "internal " + mods.Substring("public ".Length);
-            string header = $"{mods} {sig.ReturnType} {Esc(f.Name)}{TypeParamList(f.TypeParams)}({sig.Params}){TypeParamConstraints(f.TypeParams, f)}";
+            bool decorated = _m.Ast.MethodDecorators.TryGetValue(f, out var decorators);
+            if (decorated) { mods = isStatic ? "internal static" : "internal"; if (f.IsAsync) mods += " async"; }
+            string methodName = decorated ? Decorators.UndecoratedPrefix + f.Name : f.Name;
+            string header = $"{mods} {sig.ReturnType} {Esc(methodName)}{TypeParamList(f.TypeParams)}({sig.Params}){TypeParamConstraints(f.TypeParams, f)}";
             if (isAbstract) { _w.Line(header + ";"); return; }
             _w.Line(header);
             EmitSignatureBody(f.Body, sig);
+            if (decorated) EmitDecoratedMethod(f, ctx, sig, decorators, isStatic);
         }
+
+        /// <summary>
+        /// A method decorated in Python: the class keeps the decorators' result (applied to the undecorated method once, when
+        /// the class is first used), and the method under its own name calls that result with self and its arguments, so
+        /// obj.m(x) behaves as in Python (the decorator's wrapper gets self first) and C# callers still see a method.
+        /// </summary>
+        void EmitDecoratedMethod(FunctionDef f, ClassContext ctx, Signature sig, List<Expr> decorators, bool isStatic)
+        {
+            string field = "__decorated_" + f.Name;
+            string undecorated = ClosureCode(f, sig, Esc(Decorators.UndecoratedPrefix + f.Name), isStatic ? null : ctx.CsSelfType);
+            string value = undecorated;
+            for (int k = decorators.Count - 1; k >= 0; k--)
+                value = $"{Rt("__invoke")}((object?){Paren(EmitDecoratorCallee(decorators[k]))}, [(object?){value}])";
+            _w.Line($"internal static readonly dynamic {field} = {value};");
+            // the method under its own name: Python's parameters, each any value; an optional one left out is not passed
+            var ps = new List<string>();
+            var values = new List<string>();
+            var names = new List<string>();
+            string rest = "null", kw = "null";
+            bool hasKw = f.Params.Any(p => p.Kind == ParamKind.KwArgs);
+            foreach (var p in f.Params.Skip(isStatic ? 0 : 1))
+                switch (p.Kind)
+                {
+                    case ParamKind.Normal:
+                        ps.Add(p.Default == null ? $"object? {Esc(p.Name)}" : $"[global::System.Runtime.InteropServices.Optional] object? {Esc(p.Name)}");
+                        values.Add($"{Esc(p.Name)}");
+                        names.Add(CsString(p.Name));
+                        break;
+                    case ParamKind.VarArgs:
+                        ps.Add(hasKw ? $"object?[]? {Esc(p.Name)} = null" : $"params object?[] {Esc(p.Name)}");
+                        rest = Esc(p.Name);
+                        break;
+                    case ParamKind.KwArgs:
+                        ps.Add($"OrderedDictionary<string, dynamic>? {Esc(p.Name)} = null");
+                        kw = Esc(p.Name);
+                        break;
+                }
+            string leading = isStatic ? "[]" : "[this]";
+            string mods = isStatic ? "public static" : "public";
+            _w.Line($"{mods} dynamic {Esc(f.Name)}({string.Join(", ", ps)}) => {Rt("__forward")}((object?){field}, {leading}, [{string.Join(", ", values)}], [{string.Join(", ", names)}], {rest}, {kw});");
+        }
+
+        /// <summary>A decorator expression as a callee value (a module function as a function value).</summary>
+        string EmitDecoratorCallee(Expr d) => d is NameExpr dn && FunctionValue(dn, typed: false) is string fv ? fv : EmitExpr(d);
 
         void EmitProperty(List<FunctionDef> defs, ClassContext ctx, List<Expr> bases)
         {

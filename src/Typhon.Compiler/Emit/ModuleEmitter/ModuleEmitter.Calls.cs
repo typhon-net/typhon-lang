@@ -429,7 +429,7 @@ namespace Typhon.Compiler.Emit
             if (SpecialFormCall(c, targetTyped) is string special) return special;
             if (PythonCall(c, targetTyped) is string python) return python;
             // a call that is none of those: a Typhon function or class, a .NET method or constructor, typed by its arguments
-            string func = c.Func is NameExpr cfn ? EmitName(cfn) : EmitExpr(c.Func);
+            string func = c.Func is NameExpr cfn ? EmitName(cfn) : StaticThroughInstance(c.Func) ?? EmitExpr(c.Func);
             if (c.Func is LambdaExpr || c.Func is IfExpr) func = Paren(func);
             var typedAt = TypedParamPositions(c);
             if (typedAt == null && c.Func is AttributeExpr pm && RuntimeExtensionMethods.Contains(pm.Name) && IsPythonContainer(InferType(pm.Target)) &&
@@ -575,6 +575,66 @@ namespace Typhon.Compiler.Emit
             return null;
         }
 
+        /// <summary>
+        /// obj.m(...) / Cls.m(...) of a method decorated in Python, where the class is known: the decorators' result called
+        /// with the instance and the arguments as written (keyword arguments stay keyword arguments, as the wrapper sees them
+        /// in Python). Null for anything else (the method under its own name forwards then).
+        /// </summary>
+        string DecoratedMethodCall(CallExpr c)
+        {
+            if (!(c.Func is AttributeExpr a)) return null;
+            ClassDef cd; string type; string receiver = null;
+            if (a.Target is NameExpr tn && !IsLocal(tn.Id) && TryResolveType(tn.Id, 0, out _, out var pyCls) && pyCls != null)
+            {
+                if (!TryTypeExpr(a.Target, out type)) return null;
+                cd = pyCls;
+            }
+            else
+            {
+                bool self = a.Target is NameExpr sn && sn.Id == "self" && _cls != null && HasSelfInScope();
+                type = self ? _cls.CsSelfType : InferType(a.Target);
+                cd = self ? _cls.Def : type != null && ClassKeyOfType(type, out _) is string key ? ClassDefOfKey(key) : null;
+                receiver = self ? "this" : EmitExpr(a.Target);
+            }
+            for (var k = cd; k != null; )
+            {
+                var m = k.Body.OfType<FunctionDef>().FirstOrDefault(f => f.Name == a.Name);
+                if (m != null)
+                {
+                    if (k.TypeParams.Count > 0 || !_p.Modules.Values.Any(mi => mi.Ast != null && mi.Ast.MethodDecorators.ContainsKey(m))) return null;
+                    bool isStatic = HasDecorator(m.Decorators, "staticmethod");
+                    var positional = new List<string>();
+                    if (receiver != null && !isStatic) positional.Add($"(object?){Paren(receiver)}");
+                    positional.AddRange(c.Args.Where(x => x.Name == null && !x.DoubleStar)
+                        .Select(x => x.Star ? $".. {Rt("__iter_dyn")}((object){Paren(EmitExpr(x.Value))})" : $"(object?){Paren(EmitLooseValue(x.Value))}"));
+                    bool keywords = c.Args.Any(x => x.Name != null || x.DoubleStar);
+                    return $"{Rt("__invoke_kw")}((object?){type}.__decorated_{a.Name}, [{string.Join(", ", positional)}], {(keywords ? KeywordArgs(c.Args) : "null")})";
+                }
+                if (k.Bases.Count == 0 || !ResolveBase(k.Bases[0], out var bpy, out _) || !TryTypeExpr(k.Bases[0] is SubscriptExpr bs ? bs.Target : k.Bases[0], out type)) return null;
+                k = bpy;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// obj.m(...) / self.m(...) where m is a @staticmethod or @classmethod of obj's Typhon class: C# calls static methods
+        /// through the type (the receiver, a name or self, has no side effects to keep). Null for anything else.
+        /// </summary>
+        string StaticThroughInstance(Expr func)
+        {
+            if (!(func is AttributeExpr a) || !(a.Target is NameExpr tn)) return null;
+            if (TryResolveType(tn.Id, 0, out _, out _) && !IsLocal(tn.Id)) return null; // already through the class
+            string t = tn.Id == "self" && _cls != null && HasSelfInScope() ? _cls.CsSelfType : InferType(a.Target);
+            ClassDef cd = _cls != null && t == _cls.CsSelfType ? _cls.Def : t != null && ClassKeyOfType(t, out _) is string key ? ClassDefOfKey(key) : null;
+            for (var k = cd; k != null; k = k.Bases.Count > 0 && ResolveBase(k.Bases[0], out var bpy, out _) ? bpy : null)
+            {
+                var m = k.Body.OfType<FunctionDef>().FirstOrDefault(f => f.Name == a.Name);
+                if (m == null) continue;
+                return HasDecorator(m.Decorators, "staticmethod") || HasDecorator(m.Decorators, "classmethod") ? $"{t}.{Esc(a.Name)}" : null;
+            }
+            return null;
+        }
+
         /// <summary>The keyword arguments of a late-bound call as a dict: name=value pairs and **mappings.</summary>
         string KeywordArgs(List<Arg> args)
         {
@@ -629,6 +689,7 @@ namespace Typhon.Compiler.Emit
             }
             if (PartialCall(c) is string partialCall) return partialCall;
             if (DataclassReplaceCall(c) is string replaceCall) return replaceCall;
+            if (DecoratedMethodCall(c) is string decoratedCall) return decoratedCall;
             if (ExpandStarArgs(c) is string expanded) return expanded;
             // table[name](x, *rest) / cls(n, n) with cls a late-bound parameter: the callable is known only at run time (a
             // function value, a bound method, a delegate or a class), so the call is made there

@@ -85,6 +85,13 @@ namespace Typhon.Runtime
                     if (p.GetIndexParameters().Length == 0 && p.CanRead && p.CanWrite && seen.Add(p.Name)) _props.Add(p);
         }
         OrderedDictionary<string, object?> Extras => Extra.GetValue(_o, _ => new OrderedDictionary<string, object?>());
+        /// <summary>An attribute set on the object that its class does not declare (setattr, __dict__[k] = v).</summary>
+        internal static bool TryGetExtra(object o, string name, out object? value)
+        {
+            value = null;
+            return Extra.TryGetValue(o, out var d) && d.TryGetValue(name, out value);
+        }
+        internal static bool RemoveExtra(object o, string name) => Extra.TryGetValue(o, out var d) && d.Remove(name);
         System.Reflection.PropertyInfo? Prop(string k) => _props.Find(p => p.Name == k);
 
         public object? this[string key]

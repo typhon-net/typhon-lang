@@ -124,10 +124,20 @@ namespace Typhon.Compiler.Emit
         string LocalFunctionValue(NameExpr n)
         {
             if (!_localFunctionSigs.TryGetValue(n.Id, out var lf) || !IsLocalFunctionName(n.Id) || lf.Def.TypeParams.Count > 0) return null;
-            var (f, sig) = lf;
+            return ClosureCode(lf.Def, lf.Sig, Esc(lf.Def.Name), null);
+        }
+
+        /// <summary>
+        /// A PyClosure calling a function or method with any arguments: keyword arguments go to their parameters by name,
+        /// the rest to **kwargs; typed parameters get the arguments converted. With <paramref name="selfType"/>, the first
+        /// argument is the instance the method <paramref name="callee"/> is called on.
+        /// </summary>
+        string ClosureCode(FunctionDef f, Signature sig, string callee, string selfType)
+        {
             string name = CsString(f.PyName ?? f.Name);
-            var normal = f.Params.Where(p => p.Kind == ParamKind.Normal).ToList();
-            bool varargs = f.Params.Any(p => p.Kind == ParamKind.VarArgs), kwargs = f.Params.Any(p => p.Kind == ParamKind.KwArgs);
+            var all = selfType != null ? f.Params.Skip(1).ToList() : f.Params;
+            var normal = all.Where(p => p.Kind == ParamKind.Normal).ToList();
+            bool varargs = all.Any(p => p.Kind == ParamKind.VarArgs), kwargs = all.Any(p => p.Kind == ParamKind.KwArgs);
             int required = normal.Count(p => p.Default == null);
             string names = $"new string[] {{ {string.Join(", ", normal.Select(p => CsString(p.Name)))} }}";
             string Conv(Param p, string x)
@@ -140,15 +150,16 @@ namespace Typhon.Compiler.Emit
                 var args = normal.Take(count).Select((p, i) => Conv(p, $"__p[{i}]")).ToList();
                 if (varargs)
                 {
-                    var vp = f.Params.First(p => p.Kind == ParamKind.VarArgs);
+                    var vp = all.First(p => p.Kind == ParamKind.VarArgs);
                     string vt = sig.Scope.Types.TryGetValue(vp.Name, out var t) && t.EndsWith("[]") ? t.Substring(0, t.Length - 2) : "object";
                     args.Add(vt == "object" || vt == "dynamic" ? $"__p[{normal.Count}..]" : $"global::System.Linq.Enumerable.ToArray(global::System.Linq.Enumerable.Select(__p[{normal.Count}..], __x => ({vt})(dynamic?)__x))");
                 }
                 if (kwargs) args.Add($"global::Typhon.Runtime.PyClosure.Kw(__kw, {names})");
-                string call = $"{Esc(f.Name)}({string.Join(", ", args)})";
+                string call = $"{(selfType != null ? "__self." : "")}{callee}({string.Join(", ", args)})";
                 return sig.ReturnType == "void" ? $"{{ {call}; return null; }}" : $"return {call};";
             }
             var body = new StringBuilder();
+            if (selfType != null) body.Append($"var __self = ({selfType})__a[0]!; __a = __a[1..]; ");
             body.Append($"var __p = global::Typhon.Runtime.PyClosure.Args({name}, {names}, __a, __kw, {(kwargs ? "true" : "false")}); ");
             if (varargs) body.Append($"if (__p.Length >= {normal.Count}) {Call(normal.Count)} ");
             else for (int k = required; k <= normal.Count; k++) body.Append($"if (__p.Length == {k}) {Call(k)} ");

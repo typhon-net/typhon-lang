@@ -120,7 +120,11 @@ classes with inheritance, `super()`, properties (+setters), `@staticmethod`/`@cl
 `__post_init__`, `asdict`, `astuple`, `fields`, `replace`), `Enum` and `IntEnum` (with `auto()`), `Protocol` (→ interface,
 implemented structurally *or* explicitly), operator overloading, docstrings → XML docs,
 decorators written in Python on functions (module-level and nested: `@trace`, `@repeat(3)`, stacked decorators,
-`@functools.wraps(f)`; `f = d(f)` is applied where the def runs, so a memoizing decorator also sees recursive calls),
+`@functools.wraps(f)`; `f = d(f)` is applied where the def runs, so a memoizing decorator also sees recursive calls), on
+methods (also below `@staticmethod`; the wrapper gets `self` first and the arguments as written, and C# callers still
+see a method) and on classes (run where the class is defined, with the class: registries; the result must be the class
+itself), `@functools.total_ordering`, `*args` as a tuple, `getattr`/`setattr`/`hasattr`/`delattr` (properties,
+class variables, methods as bound methods, attributes added at run time, Python methods of built-in values),
 function values called with `*args`, `**kwargs` and keyword arguments, attributes set on functions (`wrapper.calls = 0`),
 `functools.partial`, a decorator that names no Python callable → .NET attribute (`@Obsolete("...")`, `@Fact`),
 `if/elif/else`, `while`, `for` (counting loops over `range` compile to plain `for` loops; iterating a dict yields its
@@ -139,8 +143,8 @@ entry point, `asyncio.run(...)` to call async code from synchronous code.
 
 ## Not supported yet / known gaps
 
-`del` of names/attributes, complex, metaclasses, `decimal`, decorators written in Python on methods and classes (planned),
-enums with non-int values, `eval`/`exec`/`setattr` and other runtime
+`del` of names/attributes, complex, metaclasses, `decimal`, a Python decorator combined with `@classmethod` or
+`@property` on the same method, a class decorator that returns something other than the class, enums with non-int values, `eval`/`exec` and other runtime
 reflection on Python objects, multiple inheritance of classes, static methods
 on generic classes need explicit type arguments (`Stack[int].of(...)`), .NET `out`/`ref` parameters (planned: tuple
 returns like IronPython), ints beyond 64 bits outside big-int mode (`OverflowError`), exact comparison of an int with a

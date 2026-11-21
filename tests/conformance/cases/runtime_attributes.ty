@@ -1,0 +1,39 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+"""Conformance: attributes by name at run time (getattr, setattr, hasattr, delattr) on objects, classes, functions and built-in values."""
+
+class Config:
+    debug = False
+    def __init__(self, name: str):
+        self.name = name
+        self._hidden = 1
+    def greet(self, other):
+        return f"{self.name} greets {other}"
+    @staticmethod
+    def version():
+        return "1.0"
+
+def handler(x):
+    return x + 1
+
+c = Config("app")
+print(getattr(c, "name"), getattr(c, "missing", "default"), hasattr(c, "name"), hasattr(c, "nope"), hasattr(c, "_hidden"))
+setattr(c, "name", "renamed")
+setattr(c, "extra", 42)
+print(c.name, getattr(c, "extra"), hasattr(c, "extra"))
+m = getattr(c, "greet")
+print(m("bob"), getattr(Config, "version")(), getattr(Config, "debug"))
+setattr(Config, "debug", True)
+print(Config.debug, getattr(Config, "__name__"))
+print(getattr("abc", "upper")(), getattr([3, 1, 2], "count")(1))
+handler.calls = 3
+print(getattr(handler, "calls"), getattr(handler, "__name__"), hasattr(handler, "zzz"))
+delattr(c, "extra")
+print(hasattr(c, "extra"))
+for attr in ["name", "debug"]:
+    print(attr, getattr(c, attr))
+try:
+    getattr(c, "nothing")
+except AttributeError as e:
+    print("AttributeError:", e)
