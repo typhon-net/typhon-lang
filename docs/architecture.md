@@ -55,7 +55,9 @@
   `AssemblyLoadContext` resolving handler; the script cache records the framework folder (an update recompiles), and
   the compile server reports the frameworks with each build.
 * **numpy** (`src/Typhon.NumPy`): a numpy-compatible API (float64 `ndarray`, ufuncs, `@`, `linalg`, `random`) written
-  in C# on top of `System.Numerics.Tensors.TensorPrimitives` (SIMD).
+  in C# on top of `System.Numerics.Tensors.TensorPrimitives` (SIMD). `@` is a packed, cache-blocked, threaded GEMM with
+  a 6 x 8 AVX2/FMA micro-kernel (`MatMul.cs`); `linalg` uses LAPACK's algorithms (recursive LU and Cholesky, blocked
+  Householder QR, tridiagonal QL, Jacobi SVD) built on that GEMM (`LinAlg*.cs`). No native BLAS is needed.
 
 
 ## Design notes and important decisions

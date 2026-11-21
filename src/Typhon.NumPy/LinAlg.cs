@@ -16,7 +16,7 @@ namespace Typhon.Stdlib;
 /// They are recursive, so most of the work is in a few large matrix products (<see cref="Gemm"/>, threaded);
 /// what remains is narrow panels and small triangles, done with vector loops.
 /// </summary>
-internal static class Lapack
+internal static partial class Lapack
 {
     /// <summary>Panels this narrow are factored column by column (8 doubles = two Vector256 per row).</summary>
     private const int LuBase = 8;
@@ -332,10 +332,34 @@ internal static class Lapack
         }
     }
 
-    /// <summary>sqrt(x . x) over the whole array.</summary>
+    /// <summary>
+    /// sqrt(x . x) over the whole array. Large arrays are summed in fixed 64K-element chunks (in parallel when allowed),
+    /// whose partial sums are added in order, so the result does not depend on the thread count.
+    /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    internal static double Norm2(double[] x) =>
-        x.Length == 0 ? 0.0 : Math.Sqrt(Dot(ref MemoryMarshal.GetArrayDataReference(x), ref MemoryMarshal.GetArrayDataReference(x), x.Length));
+    internal static double Norm2(double[] x)
+    {
+        const int Chunk = 1 << 16;
+        int n = x.Length;
+        if (n == 0) return 0.0;
+        if (n < 4 * Chunk) return Math.Sqrt(Dot(ref MemoryMarshal.GetArrayDataReference(x), ref MemoryMarshal.GetArrayDataReference(x), n));
+        int chunks = (n + Chunk - 1) / Chunk;
+        var partial = new double[chunks];
+        Kernels.ChunkedItems(chunks, Chunk, (c0, cnt) => SumSquares(x, Chunk, c0, cnt, partial));
+        double sum = 0;
+        foreach (double p in partial) sum += p;
+        return Math.Sqrt(sum);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static void SumSquares(double[] x, int chunk, int c0, int cnt, double[] partial)
+    {
+        for (int c = c0; c < c0 + cnt; c++)
+        {
+            int s = c * chunk, len = Math.Min(chunk, x.Length - s);
+            partial[c] = Dot(ref x[s], ref x[s], len);
+        }
+    }
 
     /// <summary>Whether a small triangular solve (m x m triangle, `cols` columns) is worth splitting across threads.</summary>
     private static bool Wide(int m, int cols) =>
@@ -364,6 +388,12 @@ internal static class Lapack
                 (Fma.IsSupported ? Fma.MultiplyAddNegated(va, vx, vy) : vy - va * vx).StoreUnsafe(ref y, (nuint)j);
             }
         }
+        else if (Vector128.IsHardwareAccelerated && n >= 2)
+        {
+            var va = Vector128.Create(a);
+            for (; j + 2 <= n; j += 2)
+                (Vector128.LoadUnsafe(ref y, (nuint)j) - va * Vector128.LoadUnsafe(ref x, (nuint)j)).StoreUnsafe(ref y, (nuint)j);
+        }
         for (; j < n; j++) Unsafe.Add(ref y, j) -= a * Unsafe.Add(ref x, j);
     }
 
@@ -387,6 +417,19 @@ internal static class Lapack
             for (; j + 4 <= n; j += 4)
                 s0 = Fma256(Vector256.LoadUnsafe(ref x, (nuint)j), Vector256.LoadUnsafe(ref y, (nuint)j), s0);
             s = Vector256.Sum((s0 + s1) + (s2 + s3));
+        }
+        else if (Vector128.IsHardwareAccelerated && n >= 8)
+        {
+            Vector128<double> s0 = default, s1 = default, s2 = default, s3 = default;
+            for (; j + 8 <= n; j += 8)
+            {
+                nuint u = (nuint)j;
+                s0 += Vector128.LoadUnsafe(ref x, u) * Vector128.LoadUnsafe(ref y, u);
+                s1 += Vector128.LoadUnsafe(ref x, u + 2) * Vector128.LoadUnsafe(ref y, u + 2);
+                s2 += Vector128.LoadUnsafe(ref x, u + 4) * Vector128.LoadUnsafe(ref y, u + 4);
+                s3 += Vector128.LoadUnsafe(ref x, u + 6) * Vector128.LoadUnsafe(ref y, u + 6);
+            }
+            s = Vector128.Sum((s0 + s1) + (s2 + s3));
         }
         for (; j < n; j++) s += Unsafe.Add(ref x, j) * Unsafe.Add(ref y, j);
         return s;

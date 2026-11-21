@@ -184,8 +184,12 @@ source generator acts on, such as `@JSExport` (the attribute is emitted, but Ros
 output; declare such methods in C#, as [`samples/WasmLife`](../samples/WasmLife) does). Union types other than
 `X | None` are `object` for now (see [roadmap](roadmap.md)). The [conformance suite](conformance.md) tracks the differences that are known.
 
-**numpy (Typhon.NumPy)** covers the common API (creation, ufuncs with broadcasting, reductions with `axis`, `@`,
-`linalg`, `random`, slicing/masks) but: float64 only, slices and `.T` are copies (`reshape`/`ravel` are views),
+**numpy (Typhon.NumPy)** covers the common API (creation, ufuncs with broadcasting, reductions with `axis`, `@` with
+broadcast batch dimensions, `random`, slicing/masks) and 2-D `linalg`: `solve`, `inv`, `det`, `slogdet`, `norm`
+(Frobenius / 2-norm, `axis`), `matrix_power`, `cholesky`, `qr` (`"reduced"`/`"complete"`), `eigh`, `eigvalsh`, `svd`
+(not `compute_uv=False`: use `svdvals`), `svdvals`, `lstsq`, `pinv`, `matrix_rank`, `cond`, `LinAlgError` (not: `eig`,
+`eigvals`, stacked matrices, `ord=`). Matrix products and factorizations use all cores (`TYPHON_NUMPY_THREADS=1` for
+one) and give the same result for any thread count. But: float64 only, slices and `.T` are copies (`reshape`/`ravel` are views),
 `a[i]` returns `dynamic` (annotate the target, `v: float = a[i]`, to get back to static code), `==` compares references
 (use `np.equal`), random streams are deterministic per seed but differ from NumPy's.
 

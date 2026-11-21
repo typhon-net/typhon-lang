@@ -510,10 +510,20 @@ internal static class Gemm
         c50.StoreUnsafe(ref r5); c51.StoreUnsafe(ref r5, 4);
     }
 
-    /// <summary>The 6 x 8 micro-kernel with Vector128 (Arm64 NEON has 32 registers: 24 accumulators fit).</summary>
+    /// <summary>
+    /// The 6 x 8 micro-kernel with Vector128. Arm64 NEON has 32 registers, so all 24 accumulators fit; x64 without AVX
+    /// (16 xmm registers, e.g. a Native AOT build for the default baseline ISA) computes the tile as two 6 x 4 halves.
+    /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     private static void Kernel128(int kc, ref double a, ref double b, ref double c, nint ldc, bool acc)
     {
+        if (!AdvSimd.Arm64.IsSupported)
+        {
+            PrefetchTile(ref c, ldc);
+            Kernel128Half(kc, ref a, ref b, ref c, ldc, acc);
+            Kernel128Half(kc, ref a, ref Unsafe.Add(ref b, 4), ref Unsafe.Add(ref c, 4), ldc, acc);
+            return;
+        }
         PrefetchTile(ref c, ldc);
         Vector128<double> c00 = default, c01 = default, c02 = default, c03 = default;
         Vector128<double> c10 = default, c11 = default, c12 = default, c13 = default;
@@ -548,6 +558,51 @@ internal static class Gemm
         Store128(ref Unsafe.Add(ref c, 3 * ldc), c30, c31, c32, c33, acc);
         Store128(ref Unsafe.Add(ref c, 4 * ldc), c40, c41, c42, c43, acc);
         Store128(ref Unsafe.Add(ref c, 5 * ldc), c50, c51, c52, c53, acc);
+    }
+
+    /// <summary>Columns 0..3 of a 6 x 8 tile (b and c already offset to the half): 12 Vector128 accumulators.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static void Kernel128Half(int kc, ref double a, ref double b, ref double c, nint ldc, bool acc)
+    {
+        Vector128<double> c00 = default, c01 = default, c10 = default, c11 = default, c20 = default, c21 = default;
+        Vector128<double> c30 = default, c31 = default, c40 = default, c41 = default, c50 = default, c51 = default;
+        for (int p = 0; p < kc; p++)
+        {
+            var b0 = Vector128.LoadUnsafe(ref b);
+            var b1 = Vector128.LoadUnsafe(ref b, 2);
+            var x = Vector128.Create(a);
+            c00 = Fma128(x, b0, c00); c01 = Fma128(x, b1, c01);
+            x = Vector128.Create(Unsafe.Add(ref a, 1));
+            c10 = Fma128(x, b0, c10); c11 = Fma128(x, b1, c11);
+            x = Vector128.Create(Unsafe.Add(ref a, 2));
+            c20 = Fma128(x, b0, c20); c21 = Fma128(x, b1, c21);
+            x = Vector128.Create(Unsafe.Add(ref a, 3));
+            c30 = Fma128(x, b0, c30); c31 = Fma128(x, b1, c31);
+            x = Vector128.Create(Unsafe.Add(ref a, 4));
+            c40 = Fma128(x, b0, c40); c41 = Fma128(x, b1, c41);
+            x = Vector128.Create(Unsafe.Add(ref a, 5));
+            c50 = Fma128(x, b0, c50); c51 = Fma128(x, b1, c51);
+            a = ref Unsafe.Add(ref a, MR);
+            b = ref Unsafe.Add(ref b, NR);
+        }
+        Store128Half(ref c, c00, c01, acc);
+        Store128Half(ref Unsafe.Add(ref c, ldc), c10, c11, acc);
+        Store128Half(ref Unsafe.Add(ref c, 2 * ldc), c20, c21, acc);
+        Store128Half(ref Unsafe.Add(ref c, 3 * ldc), c30, c31, acc);
+        Store128Half(ref Unsafe.Add(ref c, 4 * ldc), c40, c41, acc);
+        Store128Half(ref Unsafe.Add(ref c, 5 * ldc), c50, c51, acc);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void Store128Half(ref double r, Vector128<double> v0, Vector128<double> v1, bool acc)
+    {
+        if (acc)
+        {
+            v0 += Vector128.LoadUnsafe(ref r);
+            v1 += Vector128.LoadUnsafe(ref r, 2);
+        }
+        v0.StoreUnsafe(ref r);
+        v1.StoreUnsafe(ref r, 2);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
