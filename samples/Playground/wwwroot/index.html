@@ -30,7 +30,8 @@
     </div>
     <script src="js/highlight.js"></script>
     <script src="js/playground.js"></script>
-    <script src="_framework/blazor.webassembly#[.{fingerprint}].js"></script>
+    <!-- crossorigin: served in a sandbox (an opaque origin), a script without it may not import() dotnet.js -->
+    <script src="_framework/blazor.webassembly#[.{fingerprint}].js" crossorigin="anonymous"></script>
 </body>
 
 </html>

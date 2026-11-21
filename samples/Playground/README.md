@@ -118,7 +118,9 @@ contents of `wwwroot/` to the published branch or folder, and add an empty `.noj
 
 The page requests nothing but its own files and stores nothing in the browser (no `localStorage`, no cookies), so it
 also works served in a sandbox (`Content-Security-Policy: sandbox allow-scripts`: an opaque origin, where
-`localStorage` throws), as typhon-lang.com serves it.
+`localStorage` throws), as typhon-lang.com serves it. In an opaque origin every request for the app's own files is a
+cross-origin one, so the server sends `Access-Control-Allow-Origin` (`*` will do) with them, and `index.html` loads
+`blazor.webassembly.js` with `crossorigin`: without it, the script's `import()` of `dotnet.js` fails.
 
 ## Tests
 
