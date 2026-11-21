@@ -57,7 +57,7 @@ namespace Typhon.Compiler.Emit
                 }
                 if (meta != null) RenameOverrides(cls, meta, r);
             }
-            if (godot) RouteToGodot(m.Ast);
+            if (godot) RouteToGodot(m.Ast.Body);
         }
 
         /// <summary>The metadata name of the .NET class a GDScript class derives from (through classes of its file), or null.</summary>
@@ -158,9 +158,9 @@ namespace Typhon.Compiler.Emit
         };
 
         /// <summary>Inside a Godot project: printing, random numbers and loading go through Godot (GD.*), like GDScript's.</summary>
-        static void RouteToGodot(ModuleAst ast)
+        static void RouteToGodot(List<Stmt> body)
         {
-            AstWalker.VisitAll(ast, n =>
+            AstWalker.VisitAll(body, n =>
             {
                 if (!(n is CallExpr c) || !(c.Func is AttributeExpr a) || !(a.Target is NameExpr t) || t.Id != Rt) return;
                 Expr Gd(string member) => new AttributeExpr { Target = new NameExpr { Id = "GD", Line = a.Line, Col = a.Col }, Name = member, Line = a.Line, Col = a.Col };

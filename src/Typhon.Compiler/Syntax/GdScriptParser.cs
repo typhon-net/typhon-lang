@@ -19,6 +19,14 @@ namespace Typhon.Compiler.Syntax
         public readonly Dictionary<ClassDef, HashSet<string>> Exports = new Dictionary<ClassDef, HashSet<string>>();
         /// <summary>The GDScript classes of this module (the script class and its inner classes).</summary>
         public readonly List<ClassDef> AllClasses = new List<ClassDef>();
+        /// <summary>Names declared with const (and enum values), per class: they are never assigned.</summary>
+        public readonly Dictionary<ClassDef, HashSet<string>> Constants = new Dictionary<ClassDef, HashSet<string>>();
+
+        internal void AddConstant(ClassDef c, string name)
+        {
+            if (!Constants.TryGetValue(c, out var set)) Constants[c] = set = new HashSet<string>();
+            set.Add(name);
+        }
     }
 
     /// <summary>
@@ -433,6 +441,11 @@ namespace Typhon.Compiler.Syntax
                 set.Add(name);
             }
             var annotation = typeRef != null ? MapType(typeRef) : null;
+            if (typeRef != null && value != null && NeedsDowncast(value, typeRef)) value = Call(Name("cast", nameTok), nameTok, MapType(typeRef), value);
+            // @export var speed := 100.0: an exported member is declared with its type (for Godot's [Export])
+            bool exported = annotations.Any(a => a.Name.StartsWith("export"));
+            if (annotation == null && exported && !isStatic && gdType != null && !gdType.StartsWith("Array") && !gdType.StartsWith("Dictionary") && !gdType.StartsWith("Packed"))
+                annotation = TypeAnnotationFor(gdType, nameTok) ?? (char.IsUpper(gdType[0]) ? MapType(Name(gdType, nameTok)) : null);
 
             // a property: set(value): / get: accessors (or set = f, get = g)
             FunctionDef getter = null, setter = null;
@@ -575,6 +588,7 @@ namespace Typhon.Compiler.Syntax
             string t = typeRef != null ? TypeString(typeRef) : TypeOf(value);
             if (t != null) cls.Types[name] = t;
             if (IsLoad(value, out var preloaded)) { cls.Types[name] = "Resource"; }
+            _info.AddConstant(cls.Def, name);
             if (typeRef != null)
                 cls.Def.Body.Add(At(new AnnAssignStmt { Target = Name(name, nameTok), Annotation = At(new SubscriptExpr { Target = Name("ClassVar", nameTok), Index = MapType(typeRef) }, nameTok), Value = value }, nameTok));
             else cls.Def.Body.Add(At(new AssignStmt { Targets = { Name(name, nameTok) }, Value = value }, nameTok));
@@ -637,6 +651,7 @@ namespace Typhon.Compiler.Syntax
                 else value = Int(next++, vt);
                 var target = holder ?? cls.Def;
                 target.Body.Add(At(new AssignStmt { Targets = { Name(vn, vt) }, Value = value }, vt));
+                _info.AddConstant(target, vn);
                 if (!AcceptOp(",")) break;
             }
             while (Cur.Kind == TokenKind.Newline) _i++;

@@ -317,9 +317,10 @@ namespace Typhon.Compiler.Emit
                         string init = fieldSpec != null ? (fieldSpec.Default != null ? " = " + Checked(EmitExpr(fieldSpec.Default, targetTyped: true)) + ";"
                                                            : fieldSpec.Factory != null ? " = " + FactoryCall(fieldSpec.Factory, type) + ";" : "")
                             : a.Value != null ? " = " + Checked(EmitExpr(a.Value, targetTyped: true)) + ";" : "";
-                        if (isClassVar) _w.Line($"{SurfaceVisibility(Visibility(n.Id, false), type)} static {type} {Esc(n.Id)}{(init.Length > 0 ? init : ";")}");
+                        if (isClassVar) _w.Line($"{SurfaceVisibility(Visibility(n.Id, false), type)} {GdStaticKeyword(c, n.Id, a.Value, type)} {type} {Esc(n.Id)}{(init.Length > 0 ? init : ";")}");
                         else
                         {
+                            if (_m.IsGdScript) GdFieldAttributes(c, n.Id, type);
                             _w.Line($"{SurfaceVisibility(Visibility(n.Id, false), type)} {type} {Esc(n.Id)} {{ get; set; }}{init}");
                             if (isDataclass) dataFields.Add(a);
                         }
@@ -336,7 +337,7 @@ namespace Typhon.Compiler.Emit
                         ctx.Members.Add(n.Id);
                         ctx.FieldTypes[n.Id] = type; // read as self.name too (through the class)
                         LineDirective(s);
-                        _w.Line($"{SurfaceVisibility(Visibility(n.Id, false), type)} static {type} {Esc(n.Id)} = {Checked(type != "dynamic" ? EmitExpr(a.Value, targetTyped: true) : EmitValue(a.Value))};");
+                        _w.Line($"{SurfaceVisibility(Visibility(n.Id, false), type)} {GdStaticKeyword(c, n.Id, a.Value, type)} {type} {Esc(n.Id)} = {Checked(type != "dynamic" ? EmitExpr(a.Value, targetTyped: true) : EmitValue(a.Value))};");
                         break;
                     }
                     case FunctionDef f: ctx.Members.Add(f.Name); break;

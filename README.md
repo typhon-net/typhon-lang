@@ -111,6 +111,8 @@ Pythran; [benchmarks/REPORT.md](benchmarks/REPORT.md) has the method and analysi
 
 * [The language](docs/language.md): type mapping, inference, Python semantics, what is supported and the known gaps
 * [Conformance tests](docs/conformance.md): how the output is checked against CPython, and the current status
+* [GDScript](docs/gdscript.md): compiling Godot's GDScript with Typhon, and [a Godot benchmark](samples/GodotBench/README.md) of the same
+  script run by Godot and compiled by Typhon
 * [Roadmap ideas](docs/roadmap.md)
 * [typhon-lang.com/docs](https://typhon-lang.com/docs)
 

@@ -1,0 +1,35 @@
+<Project Sdk="Godot.NET.Sdk/4.7.2">
+
+  <!--
+    A Godot 4 C# project whose assembly also contains sim/boids.gd compiled by Typhon.
+    Not part of Typhon.slnx: it needs Godot's SDK (Godot.NET.Sdk from nuget.org) and is built by Godot or `dotnet build`.
+  -->
+  <PropertyGroup>
+    <!-- Typhon's runtime needs .NET 9+ (OrderedDictionary<K, V>); Godot 4.7 runs any .NET 8+ it finds -->
+    <TargetFramework>net10.0</TargetFramework>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <RootNamespace>GodotBench</RootNamespace>
+
+    <!--
+      Typhon compiles the .gd files listed below to C# files before the C# compiler runs (TyphonEmitToDisk), so Godot's
+      source generators see the script classes and generate their glue (method lists, properties, script paths).
+      .gd files are opt-in: the project's other GDScript scripts stay GDScript.
+    -->
+    <TyphonEmitToDisk>true</TyphonEmitToDisk>
+    <EnableDefaultTyphonItems>false</EnableDefaultTyphonItems>
+    <!-- a fixed folder, so the compiled script has the same path in every configuration: res://.godot/typhon/Boids.cs -->
+    <TyphonEmitDir>$(MSBuildProjectDirectory)/.godot/typhon/</TyphonEmitDir>
+    <TyphonTypeMode>warn</TyphonTypeMode>
+
+    <!--
+      `godot path/project.godot` and the editor load the Debug build of the assembly, which Godot.NET.Sdk compiles
+      without optimizations: optimize it as a release build would be, so the benchmark measures optimized code.
+    -->
+    <Optimize>true</Optimize>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <TyphonCompile Include="sim/boids.gd" />
+  </ItemGroup>
+
+</Project>

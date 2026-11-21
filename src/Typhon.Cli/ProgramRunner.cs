@@ -50,7 +50,7 @@ internal static class ProgramRunner
         foreach (var frame in new StackTrace(ex, true).GetFrames().Reverse())
         {
             string? file = frame.GetFileName();
-            if (file == null || !file.EndsWith(".ty")) continue;
+            if (file == null || !(file.EndsWith(".ty") || file.EndsWith(".gd"))) continue;
             var method = frame.GetMethod();
             string fn = method?.Name ?? "?";
             // async/iterator state machines: <Main>d__12.MoveNext → Main

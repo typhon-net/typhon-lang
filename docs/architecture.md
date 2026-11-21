@@ -9,7 +9,8 @@
 
 * **Front end** (`src/Typhon.Compiler/Syntax`): a hand-written tokenizer and recursive-descent parser for the Python
   subset (`Parser.cs` with `Parser.Statements.cs`, `Parser.Expressions.cs` and `Parser.Match.cs`). No dependency on
-  CPython.
+  CPython. A second front end parses GDScript (`GdScriptLexer.cs`, `GdScriptParser.cs`) into the same AST; see
+  [GDScript](gdscript.md).
 * **Lowering** (`src/Typhon.Compiler/Emit`): Typhon → C#. `ClassModel` normalizes classes before emission,
   `TypeInference` runs the whole-program fixpoint, and `ModuleEmitter` writes the C#: one partial class split by concern
   under `Emit/ModuleEmitter/` (module and imports, functions and function values, classes, construction and dunder

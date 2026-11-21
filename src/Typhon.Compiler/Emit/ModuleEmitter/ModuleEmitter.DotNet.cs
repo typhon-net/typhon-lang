@@ -204,6 +204,7 @@ namespace Typhon.Compiler.Emit
             // a method declared to return dynamic (argparse's parse_args): late-bound, like such module functions (json.loads)
             if (call != null && ms.All(m => m.ReturnsDynamic)) return "dynamic";
             string t = ms[0].Type;
+            if (_m.IsGdScript && call != null && !ms.All(m => m.Type == t)) return GdOverloadType(ms, call);
             return t != null && ms.All(m => m.Type == t) ? t : null;
         }
 

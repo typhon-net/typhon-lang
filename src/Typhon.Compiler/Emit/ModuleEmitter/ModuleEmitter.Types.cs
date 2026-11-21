@@ -329,8 +329,7 @@ namespace Typhon.Compiler.Emit
             }
             if (call.Func is AttributeExpr ma && ma.Target is NameExpr ms && ms.Id == "self" && _cls != null && _cls.MethodReturnTypes.TryGetValue(ma.Name, out var mrt))
                 return mrt == "void" ? null : mrt;
-            // a GDScript method call on self that the native base declares (get_viewport_rect())
-            if (_m.IsGdScript && call.Func is AttributeExpr gm && gm.Target is NameExpr gs && gs.Id == "self" && DotNetResultType(gm.Target, gm.Name, call) is string gdRet) return gdRet;
+            if (_m.IsGdScript && GdCallType(call) is string gdRet) return gdRet;
             if (StdlibCallType(call) is string stdlibRet) return stdlibRet;
             if (call.Func is NameExpr fn && !IsShadowed(fn.Id))
             {

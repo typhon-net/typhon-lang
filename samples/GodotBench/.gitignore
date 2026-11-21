@@ -1,0 +1,3 @@
+# Godot's caches and build output (also the C# Typhon writes for sim/boids.gd: .godot/typhon/)
+.godot/
+*.user

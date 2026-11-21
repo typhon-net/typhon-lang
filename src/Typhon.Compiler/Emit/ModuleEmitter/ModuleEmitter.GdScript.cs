@@ -64,8 +64,19 @@ namespace Typhon.Compiler.Emit
             {
                 var ms = _r.GetMembers(metadataName, Map(metadataName, memberName));
                 if (ms.Count == 0 && ColorConstant(metadataName, memberName) is string named) return _r.GetMembers("Godot.Colors", named);
+                // a Godot method returning an unsigned int (Time.get_ticks_usec, randi) gives GDScript an int: the call is
+                // converted to long where it is emitted (GdUnsignedCall)
+                if (metadataName.StartsWith("Godot.") && ms.Any(m => m.IsMethod && (m.Type == "ulong" || m.Type == "uint")))
+                    return ms.Select(m => m.IsMethod && (m.Type == "ulong" || m.Type == "uint") ? Signed(m) : m).ToList();
                 return ms;
             }
+
+            static MemberSig Signed(MemberSig m) => new MemberSig
+            {
+                IsMethod = m.IsMethod, IsStatic = m.IsStatic, Type = "long", ValueFit = m.ValueFit, ValueNarrowTo = m.ValueNarrowTo,
+                ValueBigNarrowTo = m.ValueBigNarrowTo, Parameters = m.Parameters, TypeParams = m.TypeParams, GenericType = m.GenericType,
+                ReturnsDynamic = m.ReturnsDynamic,
+            };
 
             /// <summary>Color.RED: Godot's C# API has the named colors in a class of their own (Colors.Red).</summary>
             public string ColorConstant(string meta, string member)
@@ -77,6 +88,30 @@ namespace Typhon.Compiler.Emit
         }
 
         GdScriptResolver GdResolver => _r as GdScriptResolver;
+
+        /// <summary>
+        /// @export var x: T: Godot's [Export] on the property (with Godot referenced, for the types Godot can export: numbers,
+        /// bool, String, its math structs and objects), so the inspector shows it.
+        /// </summary>
+        void GdFieldAttributes(ClassDef c, string name, string type)
+        {
+            if (_m.GdScript == null || !_m.GdScript.Exports.TryGetValue(c, out var exports) || !exports.Contains(name) || !_r.TypeExists("Godot.ExportAttribute")) return;
+            bool exportable = type is "long" or "double" or "bool" or "string" or "int" or "float" ||
+                              DotNetMeta(type) is string meta && meta.StartsWith("Godot.") && !meta.StartsWith("Godot.Collections.");
+            if (exportable) _w.Line("[global::Godot.Export]");
+        }
+
+        /// <summary>
+        /// A class variable's modifier: "static", or "const" for a GDScript const (or enum value) with a literal number, bool or
+        /// string value, which C# then folds where it is used.
+        /// </summary>
+        string GdStaticKeyword(ClassDef c, string name, Expr value, string type)
+        {
+            if (!_m.IsGdScript || _m.GdScript == null || !_m.GdScript.Constants.TryGetValue(c, out var consts) || !consts.Contains(name)) return "static";
+            bool literal = value is ConstExpr k && k.Kind != ConstKind.None && k.Kind != ConstKind.Ellipsis && k.Kind != ConstKind.Bytes ||
+                           value is UnaryExpr u && u.Op == "-" && u.Operand is ConstExpr n && (n.Kind == ConstKind.Int || n.Kind == ConstKind.Float);
+            return literal && (type == "long" || type == "double" || type == "bool" || type == "string") ? "const" : "static";
+        }
 
         /// <summary>The .NET class this class derives from through Typhon classes (Godot.Node2D for a script that extends Node2D), or null.</summary>
         string GdNativeBase(ClassDef c, int depth = 0)
@@ -91,22 +126,27 @@ namespace Typhon.Compiler.Emit
             return null;
         }
 
-        /// <summary>Is the member declared by the current Typhon class or a Typhon base (then it is not the native base's)?</summary>
+        /// <summary>
+        /// Is the member the current Typhon class's (or a Typhon base's), not the native base's? Declared members are; a
+        /// member that is only assigned (self.velocity = v, also from position.x = 1 rewritten as a copy) is the native
+        /// base's when the base has it, as GDScript does not let a script redeclare an inherited member.
+        /// </summary>
         bool GdTyphonMember(string name)
         {
             if (_cls == null) return false;
-            if (_cls.Members.Contains(name) || _cls.FieldTypes.ContainsKey(name)) return true;
-            return BaseHasMemberTyphonOnly(_cls.Def, name, 0);
+            if (DeclaredInTyphonClasses(_cls.Def, name, 0)) return true;
+            string meta = GdNativeBase(_cls.Def);
+            if (meta != null && _r.HasMember(meta, name)) return false;
+            return _cls.Members.Contains(name) || _cls.FieldTypes.ContainsKey(name);
         }
 
-        bool BaseHasMemberTyphonOnly(ClassDef c, string name, int depth)
+        bool DeclaredInTyphonClasses(ClassDef c, string name, int depth)
         {
             if (depth > 20) return false;
             if (c.Body.Any(s => s is FunctionDef f && f.Name == name || s is AnnAssignStmt a && a.Target is NameExpr n && n.Id == name || s is AssignStmt asg && asg.Targets.Any(t => t is NameExpr tn && tn.Id == name)))
                 return true;
-            if (CollectImplicitFields(c).ContainsKey(name)) return true;
             foreach (var b in c.Bases)
-                if (ResolveBase(b, out var py, out _) && py != null && BaseHasMemberTyphonOnly(py, name, depth + 1)) return true;
+                if (ResolveBase(b, out var py, out _) && py != null && DeclaredInTyphonClasses(py, name, depth + 1)) return true;
             return false;
         }
 
@@ -147,27 +187,81 @@ namespace Typhon.Compiler.Emit
             if (meta == null) return null;
             if (gr.ColorConstant(meta, a.Name) is string color && DotNetStaticMeta(a.Target) != null) return "global::Godot.Colors." + color;
             string cs = gr.CsName(meta, a.Name);
+            // a member the static type does not have, on a Godot object (var s := $Sprite2D is a Node; s.flip_h): GDScript
+            // looks it up at run time ("unsafe access"), so does C#'s binder, by the C# spelling
+            if (cs == null && meta.StartsWith("Godot.") && !GodotFloatStructs.Contains(meta) && !GodotIntStructs.Contains(meta) && !(a.Target is NameExpr st && DotNetStaticMeta(st) != null))
+                return $"((dynamic){Paren(target)}).{Esc(GdScriptLowering.Pascal(a.Name))}";
             return cs != null && cs != a.Name ? target + "." + Esc(cs) : null;
+        }
+
+        /// <summary>A call of a Godot method that returns an unsigned int (Time.get_ticks_usec()): its value is a GDScript int (long).</summary>
+        bool GdUnsignedCall(CallExpr c)
+        {
+            if (!(c.Func is AttributeExpr fa) || GdResolver == null) return false;
+            string meta = GdReceiverMeta(fa.Target, fa.Name);
+            if (meta == null || !meta.StartsWith("Godot.")) return false;
+            string cs = GdResolver.CsName(meta, fa.Name);
+            var ms = cs == null ? null : _p.Resolver.GetMembers(meta, cs).Where(m => m.IsMethod).ToList();
+            return ms != null && ms.Count > 0 && ms.All(m => m.Type == "ulong" || m.Type == "uint");
+        }
+
+        static readonly HashSet<string> IntegerParams = new HashSet<string> { "int", "long", "short", "byte", "sbyte", "uint", "ulong", "ushort" };
+
+        /// <summary>
+        /// The result type of a call of overloads that return different types (GD.RandRange(double, double) / (int, int)):
+        /// the overloads a GDScript float argument cannot reach (an integer parameter) are left out, as C# leaves them out.
+        /// </summary>
+        string GdOverloadType(List<MemberSig> overloads, CallExpr call)
+        {
+            var positional = call.Args.Where(x => x.Name == null && !x.Star && !x.DoubleStar).ToList();
+            if (overloads.Any(m => m.TypeParams == null)) overloads = overloads.Where(m => m.TypeParams == null).ToList();
+            var fitting = overloads.Where(m =>
+            {
+                for (int i = 0; i < positional.Count; i++)
+                {
+                    var p = ParamAt(m, i);
+                    if (p == null) return false;
+                    string at = InferType(positional[i].Value);
+                    if ((at == "double" || at == "float") && IntegerParams.Contains(p.GenericType ?? "")) return false;
+                }
+                return true;
+            }).ToList();
+            if (fitting.Count == 0) return null;
+            string t = fitting[0].Type;
+            return t != null && fitting.All(m => m.Type == t) ? t : null;
+        }
+
+        /// <summary>
+        /// The type of a call in a GDScript module where Typhon's own rules do not give one: x as T (cast(T, x)) is a T, a
+        /// method of the native base called on self (get_parent()) returns what the C# method returns.
+        /// </summary>
+        string GdCallType(CallExpr call)
+        {
+            if (call.Func is NameExpr cn && cn.Id == "cast" && !IsShadowed("cast") && call.Args.Count == 2) return MapType(call.Args[0].Value, call);
+            if (call.Func is AttributeExpr gm && gm.Target is NameExpr gs && gs.Id == "self") return DotNetResultType(gm.Target, gm.Name, call);
+            return null;
         }
 
         // ───────────────────────────── operators ─────────────────────────────
 
         static readonly HashSet<string> GodotFloatStructs = new HashSet<string>
         {
-            "global::Godot.Vector2", "global::Godot.Vector3", "global::Godot.Vector4", "global::Godot.Color", "global::Godot.Quaternion",
-            "global::Godot.Basis", "global::Godot.Transform2D", "global::Godot.Transform3D", "global::Godot.Rect2", "global::Godot.Plane",
-            "global::Godot.Aabb", "global::Godot.Projection",
+            "Godot.Vector2", "Godot.Vector3", "Godot.Vector4", "Godot.Color", "Godot.Quaternion", "Godot.Basis", "Godot.Transform2D",
+            "Godot.Transform3D", "Godot.Rect2", "Godot.Plane", "Godot.Aabb", "Godot.Projection",
         };
 
-        static readonly HashSet<string> GodotIntStructs = new HashSet<string> { "global::Godot.Vector2I", "global::Godot.Vector3I", "global::Godot.Vector4I", "global::Godot.Rect2I" };
+        static readonly HashSet<string> GodotIntStructs = new HashSet<string> { "Godot.Vector2I", "Godot.Vector3I", "Godot.Vector4I", "Godot.Rect2I" };
 
-        static bool IsGodotStruct(string t) => t != null && (GodotFloatStructs.Contains(t) || GodotIntStructs.Contains(t));
+        /// <summary>Is the C# type (as the inference spells it: Vector2 or global::Godot.Vector2) one of Godot's math structs?</summary>
+        bool IsGodotStruct(string t) => t != null && t != "dynamic" && DotNetMeta(t) is string m && (GodotFloatStructs.Contains(m) || GodotIntStructs.Contains(m));
+        bool IsGodotFloatStruct(string t) => t != null && t != "dynamic" && DotNetMeta(t) is string m && GodotFloatStructs.Contains(m);
 
         /// <summary>A scalar operand next to a Godot struct, converted to what the struct's operators take (float32, or int32 for Vector2I).</summary>
         string GdStructScalar(string structType, string scalarType, string code)
         {
-            if (GodotFloatStructs.Contains(structType) && (scalarType == "double" || scalarType == "dynamic")) return $"((float){Paren(code)})";
-            if (GodotIntStructs.Contains(structType) && (scalarType == "long" || scalarType == "double" || scalarType == "dynamic")) return $"checked((int){Paren(code)})";
+            bool isFloat = IsGodotFloatStruct(structType);
+            if (isFloat && (scalarType == "double" || scalarType == "dynamic")) return $"((float){Paren(code)})";
+            if (!isFloat && (scalarType == "long" || scalarType == "double" || scalarType == "dynamic")) return $"checked((int){Paren(code)})";
             return code;
         }
 
@@ -185,7 +279,7 @@ namespace Typhon.Compiler.Emit
                 string s = structLeft ? l : r, scalar = structLeft ? r : l;
                 if (IsNumeric(scalar) || scalar == "dynamic")
                 {
-                    string asScalar = GodotIntStructs.Contains(s) ? "int" : "float";
+                    string asScalar = IsGodotFloatStruct(s) ? "float" : "int";
                     return DotNetOperatorType(b.Op, structLeft ? s : asScalar, structLeft ? asScalar : s) ?? s;
                 }
             }

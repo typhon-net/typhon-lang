@@ -83,6 +83,7 @@ namespace Typhon.Compiler.Emit
                 case NameExpr n: return EmitName(n);
                 case FStringExpr f: return EmitFString(f);
                 case AttributeExpr a: return EmitAttribute(a);
+                case CallExpr gu when _m.IsGdScript && GdUnsignedCall(gu): return $"((long){EmitCall(gu, targetTyped)})";
                 case CallExpr c: return EmitCall(c, targetTyped);
                 case SubscriptExpr s: return EmitSubscript(s);
                 case BinOpExpr b: return EmitBinOp(b);
