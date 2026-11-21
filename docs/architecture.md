@@ -40,6 +40,11 @@
   and CLI build, reachable only by that user, exits after 10 idle minutes). The very first run compiles in the
   process and starts the server. Switch them off with `TYPHON_CACHE=0` / `--no-cache` and `TYPHON_SERVER=0` /
   `--no-server`; `--time` shows which path was taken and how long it took.
+  The CLI references the base shared framework, plus ASP.NET Core (Microsoft.AspNetCore.App, located next to the
+  running runtime) when a module imports `Microsoft.AspNetCore.*` / `Microsoft.Extensions.*` or has
+  `#:sdk Microsoft.NET.Sdk.Web`. A program run in the CLI's process loads that framework's assemblies through an
+  `AssemblyLoadContext` resolving handler; the script cache records the framework folder (an update recompiles), and
+  the compile server reports the frameworks with each build.
 * **numpy** (`src/Typhon.NumPy`): a numpy-compatible API (float64 `ndarray`, ufuncs, `@`, `linalg`, `random`) written
   in C# on top of `System.Numerics.Tensors.TensorPrimitives` (SIMD).
 

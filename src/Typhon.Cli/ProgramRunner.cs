@@ -10,8 +10,11 @@ namespace Typhon.Cli;
 /// <summary>Runs a compiled Typhon program in this process and prints Python-style tracebacks (no Roslyn needed).</summary>
 internal static class ProgramRunner
 {
-    public static int Run(byte[] pe, byte[]? pdb, string[] programArgs, bool timing)
+    public static int Run(byte[] pe, byte[]? pdb, string[] programArgs, bool timing, IReadOnlyCollection<string> frameworks)
     {
+        // ASP.NET Core and the like are not on this process's list of platform assemblies: they load from their folder
+        try { SharedFrameworks.EnableAtRunTime(frameworks); }
+        catch (InvalidOperationException e) { Console.Error.WriteLine(e.Message); return 1; }
         var asm = AssemblyLoadContext.Default.LoadFromStream(new MemoryStream(pe), pdb == null ? null : new MemoryStream(pdb));
         var entry = asm.EntryPoint;
         if (entry == null) { Console.Error.WriteLine("typhon: no entry point (add top-level statements or an `if __name__ == \"__main__\":` block)"); return 1; }

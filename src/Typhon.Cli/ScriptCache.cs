@@ -32,10 +32,10 @@ internal static class BuildStamp
 /// </summary>
 internal static class ScriptCache
 {
-    const string Header = "typhon-cache 1";
+    const string Header = "typhon-cache 2";
     static readonly TimeSpan MaxUnused = TimeSpan.FromDays(30);
 
-    public sealed record Entry(byte[] Pe, byte[]? Pdb, List<string> Messages);
+    public sealed record Entry(byte[] Pe, byte[]? Pdb, List<string> Messages, List<string> Frameworks);
 
     public static bool Enabled => Environment.GetEnvironmentVariable("TYPHON_CACHE") != "0";
 
@@ -68,8 +68,18 @@ internal static class ScriptCache
             var lines = File.ReadAllLines(manifest);
             if (lines.Length < 2 || lines[0] != Header || lines[1] != "build " + BuildStamp.Value) return null;
             var messages = new List<string>();
+            var frameworks = new List<string>();
             foreach (var line in lines.Skip(2))
             {
+                // "framework <name> <folder>": built against that framework folder; another one (an update) recompiles
+                if (line.StartsWith("framework "))
+                {
+                    int space = line.IndexOf(' ', 10);
+                    string name = line[10..space], folder = line[(space + 1)..];
+                    if (SharedFrameworks.Directory(name) != folder) return null;
+                    frameworks.Add(name);
+                    continue;
+                }
                 if (line.StartsWith("file "))
                 {
                     // "file <sha256 | -> <path>"
@@ -81,7 +91,7 @@ internal static class ScriptCache
                 else if (line.StartsWith("message ")) messages.Add(Encoding.UTF8.GetString(Convert.FromBase64String(line[8..])));
             }
             string pdb = Path.Combine(dir, "program.pdb");
-            var entry = new Entry(File.ReadAllBytes(Path.Combine(dir, "program.dll")), File.Exists(pdb) ? File.ReadAllBytes(pdb) : null, messages);
+            var entry = new Entry(File.ReadAllBytes(Path.Combine(dir, "program.dll")), File.Exists(pdb) ? File.ReadAllBytes(pdb) : null, messages, frameworks);
             File.SetLastWriteTimeUtc(manifest, DateTime.UtcNow); // last use, for pruning
             return entry;
         }
@@ -91,7 +101,8 @@ internal static class ScriptCache
     }
 
     /// <summary>Stores a successful build, replacing whatever this script's slot held before. Best effort: errors are ignored.</summary>
-    public static void Store(string entryPath, string mode, byte[] pe, byte[]? pdb, IEnumerable<SourceProbe> probes, IEnumerable<string> messages)
+    public static void Store(string entryPath, string mode, byte[] pe, byte[]? pdb, IEnumerable<SourceProbe> probes, IEnumerable<string> messages,
+                             IEnumerable<string> frameworks)
     {
         string dir = SlotDir(entryPath, mode);
         string tmp = dir + ".tmp-" + Guid.NewGuid().ToString("N")[..8];
@@ -102,6 +113,7 @@ internal static class ScriptCache
             if (pdb != null) File.WriteAllBytes(Path.Combine(tmp, "program.pdb"), pdb);
             var sb = new StringBuilder().AppendLine(Header).AppendLine("build " + BuildStamp.Value);
             foreach (var p in probes) sb.Append("file ").Append(p.Sha256 ?? "-").Append(' ').AppendLine(p.Path);
+            foreach (var f in frameworks) sb.Append("framework ").Append(f).Append(' ').AppendLine(SharedFrameworks.Directory(f));
             foreach (var m in messages) sb.Append("message ").AppendLine(Convert.ToBase64String(Encoding.UTF8.GetBytes(m)));
             File.WriteAllText(Path.Combine(tmp, "manifest.txt"), sb.ToString());
             if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); // the stale version of this script

@@ -54,7 +54,7 @@ if (command == "run" && useCache && ScriptCache.TryLoad(entryPath, modeName) is 
 {
     foreach (var m in cached.Messages) Console.Error.WriteLine(m);
     if (timing) Console.Error.WriteLine($"[typhon] cached build, ready in {total.ElapsedMilliseconds} ms");
-    return ProgramRunner.Run(cached.Pe, cached.Pdb, programArgs, timing);
+    return ProgramRunner.Run(cached.Pe, cached.Pdb, programArgs, timing, cached.Frameworks);
 }
 
 // 2. the warm compile server
@@ -64,8 +64,8 @@ if (command is "run" or "check" && useServer && CompileServer.TryCompile(entryPa
     if (!reply.Success) return 1;
     if (timing) Console.Error.WriteLine($"[typhon] compiled by the compile server in {reply.CompileMs} ms, ready in {total.ElapsedMilliseconds} ms");
     if (command == "check") return 0;
-    if (useCache) ScriptCache.Store(entryPath, modeName, reply.Pe!, reply.Pdb, reply.Probes, reply.Messages);
-    return ProgramRunner.Run(reply.Pe!, reply.Pdb, programArgs, timing);
+    if (useCache) ScriptCache.Store(entryPath, modeName, reply.Pe!, reply.Pdb, reply.Probes, reply.Messages, reply.Frameworks);
+    return ProgramRunner.Run(reply.Pe!, reply.Pdb, programArgs, timing, reply.Frameworks);
 }
 
 // 3. compile in this process

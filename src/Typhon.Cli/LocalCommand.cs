@@ -31,11 +31,18 @@ internal static class LocalCommand
                                     $"(process start before Main: {(DateTime.Now - Process.GetCurrentProcess().StartTime).TotalMilliseconds - total.ElapsedMilliseconds:F0} ms)");
         if (command == "check") return 0;
 
+        if (command == "build" && aot && output.Frameworks.Count > 0)
+        {
+            // Native AOT for ASP.NET Core needs the request delegate generator and trimming annotations of a full project
+            Console.Error.WriteLine($"typhon: build --aot does not support programs that use {string.Join(", ", output.Frameworks)}; " +
+                                    "build without --aot (a framework-dependent app), or publish a project with PublishAot");
+            return 1;
+        }
         if (command == "build" && aot) return NativeAotBuilder.Build(output.Compilation!, output.Trees, entryPath, outDir);
         if (command == "build") return WriteBuild(output, entryPath, outDir);
 
-        if (useCache) ScriptCache.Store(entryPath, modeName, output.Pe!, output.Pdb, output.Probes, output.Messages);
-        return ProgramRunner.Run(output.Pe!, output.Pdb, programArgs, timing);
+        if (useCache) ScriptCache.Store(entryPath, modeName, output.Pe!, output.Pdb, output.Probes, output.Messages, output.Frameworks);
+        return ProgramRunner.Run(output.Pe!, output.Pdb, programArgs, timing, output.Frameworks);
     }
 
     /// <summary>A framework-dependent app: name.dll + .pdb + .runtimeconfig.json + the Typhon libraries it may use.</summary>
@@ -48,11 +55,16 @@ internal static class LocalCommand
         File.WriteAllBytes(dllPath, output.Pe!);
         File.WriteAllBytes(Path.Combine(outDir, asmName + ".pdb"), output.Pdb!);
         var v = Environment.Version;
+        // the base framework, plus ASP.NET Core when the program uses it
+        var frameworks = new[] { "Microsoft.NETCore.App" }.Concat(output.Frameworks)
+            .Select(f => $$"""      { "name": "{{f}}", "version": "{{v.Major}}.{{v.Minor}}.0" }""");
         File.WriteAllText(Path.Combine(outDir, asmName + ".runtimeconfig.json"), $$"""
             {
               "runtimeOptions": {
                 "tfm": "net{{v.Major}}.{{v.Minor}}",
-                "framework": { "name": "Microsoft.NETCore.App", "version": "{{v.Major}}.{{v.Minor}}.0" }
+                "frameworks": [
+            {{string.Join(",\n", frameworks)}}
+                ]
               }
             }
             """);

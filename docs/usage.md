@@ -30,6 +30,24 @@ python -m venv .venv; .venv\Scripts\pip install numpy     # once, for the CPytho
 ./benchmarks/run.ps1
 ```
 
+## Frameworks the typhon command can use
+
+`typhon run`, `typhon check` and `typhon build` compile against the .NET runtime the CLI runs on
+(Microsoft.NETCore.App). A program that imports `Microsoft.AspNetCore.*` or `Microsoft.Extensions.*` also gets the
+ASP.NET Core shared framework (Microsoft.AspNetCore.App) of the same major and minor version, so a web app needs no
+project file:
+
+```sh
+typhon run samples/MinimalApi/main.ty --urls http://localhost:5000
+typhon build samples/MinimalApi/main.ty -o out/api && dotnet out/api/typhon_main.dll --urls http://localhost:5000
+```
+
+Programs that use it the other way can ask for it like a .NET file-based app does, with a `#:sdk Microsoft.NET.Sdk.Web`
+line (a comment to Python). Other programs never reference it, so they compile as fast as before. A built app's
+`.runtimeconfig.json` lists both frameworks. When the ASP.NET Core runtime is not installed, the CLI says so.
+`typhon build --aot` does not support ASP.NET Core programs (Native AOT for minimal APIs needs the request delegate
+generator of a full project): build without `--aot`, or publish a project with `PublishAot`.
+
 ## Adding Typhon to any C# project
 
 `.ty` files are compiled like `.cs` files — just put them in the project. In this repo the wiring lives in

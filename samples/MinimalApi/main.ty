@@ -5,6 +5,7 @@
 An ASP.NET Core minimal API written in Typhon: routes, route parameters, JSON bodies and dependency injection.
 
     dotnet run --project samples/MinimalApi -- --urls http://localhost:5000
+    typhon run samples/MinimalApi/main.ty --urls http://localhost:5000      (no project needed)
     curl localhost:5000/todos
     curl -X POST -H "Content-Type: application/json" -d '{"title": "Ship it"}' localhost:5000/todos
     curl -X PUT localhost:5000/todos/2/done

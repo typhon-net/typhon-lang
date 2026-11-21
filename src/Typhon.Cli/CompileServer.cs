@@ -19,7 +19,7 @@ namespace Typhon.Cli;
 internal static class CompileServer
 {
     const int Magic = 0x54595048; // "TYPH"
-    const int ProtocolVersion = 2;
+    const int ProtocolVersion = 3;
     const byte KindCompile = 1, KindPing = 2, KindStop = 3;
 
     public static bool Enabled => Environment.GetEnvironmentVariable("TYPHON_SERVER") != "0";
@@ -36,6 +36,7 @@ internal static class CompileServer
         public List<string> Messages = new();
         public byte[]? Pe, Pdb;
         public List<SourceProbe> Probes = new();
+        public List<string> Frameworks = new();
         public long CompileMs;
     }
 
@@ -57,6 +58,7 @@ internal static class CompileServer
             int peLen = r.ReadInt32(); if (peLen > 0) reply.Pe = r.ReadBytes(peLen);
             int pdbLen = r.ReadInt32(); if (pdbLen > 0) reply.Pdb = r.ReadBytes(pdbLen);
             for (int i = r.ReadInt32(); i > 0; i--) { string path = r.ReadString(); string sha = r.ReadString(); reply.Probes.Add(new SourceProbe(path, sha.Length == 0 ? null : sha)); }
+            for (int i = r.ReadInt32(); i > 0; i--) reply.Frameworks.Add(r.ReadString());
             reply.CompileMs = r.ReadInt64();
             return reply;
         }
@@ -208,6 +210,24 @@ internal static class CompileServer
     static long _lastActivityTicks = DateTime.UtcNow.Ticks;
     static readonly Stopwatch Uptime = Stopwatch.StartNew();
 
+    static bool _staleRemoved;
+
+    /// <summary>Removes this build's socket file once (on Unix a named pipe is a socket file in the temp folder).</summary>
+    static bool TryRemoveStaleSocket()
+    {
+        if (_staleRemoved) return false;
+        _staleRemoved = true;
+        try
+        {
+            string socket = Path.Combine(Path.GetTempPath(), "CoreFxPipe_" + PipeName);
+            if (!File.Exists(socket)) return false;
+            File.Delete(socket);
+            return true;
+        }
+        catch (IOException) { return false; }
+        catch (UnauthorizedAccessException) { return false; }
+    }
+
     static int Serve()
     {
         var idle = TimeSpan.FromSeconds(int.TryParse(Environment.GetEnvironmentVariable("TYPHON_SERVER_IDLE_SECONDS"), out var s) && s > 0 ? s : 600);
@@ -238,7 +258,10 @@ internal static class CompileServer
             }
             catch (Exception e) when (first && e is IOException or UnauthorizedAccessException)
             {
-                return 0; // another server already serves this build
+                // another server already serves this build, or a dead one left its socket file behind (Unix: a server
+                // stopped with Environment.Exit, or killed): if nothing answers, the file is stale and is removed
+                if (OperatingSystem.IsWindows() || Ping() != null || !TryRemoveStaleSocket()) return 0;
+                continue;
             }
             first = false;
             try { pipe.WaitForConnectionAsync(shutdown.Token).GetAwaiter().GetResult(); }
@@ -283,6 +306,8 @@ internal static class CompileServer
                 w.Write(output.Pdb?.Length ?? 0); if (output.Pdb != null) w.Write(output.Pdb);
                 w.Write(output.Probes.Count);
                 foreach (var p in output.Probes) { w.Write(p.Path); w.Write(p.Sha256 ?? ""); }
+                w.Write(output.Frameworks.Count);
+                foreach (var f in output.Frameworks) w.Write(f);
                 w.Write(sw.ElapsedMilliseconds);
                 break;
             }

@@ -32,6 +32,8 @@ internal sealed class CompileOutput
     public readonly List<SourceProbe> Probes = new();
     public CSharpCompilation? Compilation;
     public readonly List<SyntaxTree> Trees = new();
+    /// <summary>Shared frameworks besides Microsoft.NETCore.App the program references (Microsoft.AspNetCore.App).</summary>
+    public readonly List<string> Frameworks = new();
     public long ReferencesMs, FrontMs, RoslynMs;
 }
 
@@ -60,6 +62,27 @@ internal sealed class ReferenceSet
             // a built program carries its own (embedded) copy of the runtime
             if (!name.Equals("Typhon.Runtime.dll", StringComparison.OrdinalIgnoreCase)) Build.Add(reference);
         }
+        _baseNames = seen;
+    }
+
+    readonly HashSet<string> _baseNames;
+    readonly Dictionary<string, List<MetadataReference>> _frameworks = new();
+
+    /// <summary>The references for a target, plus those of the shared frameworks the program uses (created once per set).</summary>
+    public List<MetadataReference> For(CompileTarget target, IReadOnlyCollection<string> frameworks)
+    {
+        var refs = target == CompileTarget.Script ? Script : Build;
+        if (frameworks.Count == 0) return refs;
+        var all = new List<MetadataReference>(refs);
+        lock (_frameworks)
+            foreach (var name in frameworks)
+            {
+                if (!_frameworks.TryGetValue(name, out var extra))
+                    _frameworks[name] = extra = SharedFrameworks.Assemblies(name).Where(p => !_baseNames.Contains(Path.GetFileName(p)))
+                                                                              .Select(p => (MetadataReference)MetadataReference.CreateFromFile(p)).ToList();
+                all.AddRange(extra);
+            }
+        return all;
     }
 }
 
@@ -81,39 +104,54 @@ internal static class CliCompiler
         refs ??= new ReferenceSet();
         output.ReferencesMs = sw.ElapsedMilliseconds;
 
-        var trees = new List<SyntaxTree>();
-        if (target == CompileTarget.Build)
-            trees.Add(CSharpSyntaxTree.ParseText(TyphonCompiler.RuntimeSource, ParseOptions, path: "Typhon.Runtime.g.cs", encoding: Encoding.UTF8));
-        var compilation = CSharpCompilation.Create(
-            target == CompileTarget.Script ? ScriptAssemblyName : "typhon_" + Path.GetFileNameWithoutExtension(entryPath),
-            trees,
-            target == CompileTarget.Script ? refs.Script : refs.Build,
-            new CSharpCompilationOptions(OutputKind.ConsoleApplication, optimizationLevel: OptimizationLevel.Release, allowUnsafe: true,
-                nullableContextOptions: NullableContextOptions.Disable));
-
         // The entry file is the __main__ module; sibling .ty files it imports (transitively) are compiled with it.
         // Every path probed is recorded, so a cached build can tell when any of them changes or appears.
         sw.Restart();
-        var project = new ProjectContext { TypeMode = mode, BigInts = bigInts, Resolver = new RoslynTypeResolver(compilation), MainModule = "__main__" };
+        var project = new ProjectContext { TypeMode = mode, BigInts = bigInts, MainModule = "__main__" };
         string dir = Path.GetDirectoryName(entryPath)!;
         var modules = new List<ModuleInfo>();
         var pending = new Queue<(string Path, string Name)>();
         pending.Enqueue((entryPath, "__main__"));
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { entryPath };
+        string? aspNetReason = null;
         while (pending.Count > 0)
         {
             var (path, name) = pending.Dequeue();
-            var m = TyphonCompiler.Parse(path, ReadSource(path, output.Probes), name, "");
+            string source = ReadSource(path, output.Probes);
+            if (aspNetReason == null && SharedFrameworks.HasWebSdkDirective(source)) aspNetReason = $"{Path.GetFileName(path)} has #:sdk Microsoft.NET.Sdk.Web";
+            var m = TyphonCompiler.Parse(path, source, name, "");
             project.Modules[name] = m;
             modules.Add(m);
             foreach (var imported in ImportedModuleNames(m))
             {
+                if (aspNetReason == null && SharedFrameworks.IsAspNetCoreNamespace(imported)) aspNetReason = $"{Path.GetFileName(path)} imports {imported}";
                 string candidate = Path.GetFullPath(Path.Combine(dir, imported.Replace('.', Path.DirectorySeparatorChar) + TyphonCompiler.FileExtension));
                 if (!seen.Add(candidate)) continue;
                 if (File.Exists(candidate)) pending.Enqueue((candidate, imported));
                 else output.Probes.Add(new SourceProbe(candidate, null));
             }
         }
+
+        // the shared frameworks the imports need (decided before the compilation: they are its references)
+        if (aspNetReason != null)
+        {
+            if (SharedFrameworks.Directory(SharedFrameworks.AspNetCore) == null)
+            {
+                output.Messages.Add(SharedFrameworks.NotInstalled(SharedFrameworks.AspNetCore, aspNetReason));
+                return output;
+            }
+            output.Frameworks.Add(SharedFrameworks.AspNetCore);
+        }
+        var trees = new List<SyntaxTree>();
+        if (target == CompileTarget.Build)
+            trees.Add(CSharpSyntaxTree.ParseText(TyphonCompiler.RuntimeSource, ParseOptions, path: "Typhon.Runtime.g.cs", encoding: Encoding.UTF8));
+        var compilation = CSharpCompilation.Create(
+            target == CompileTarget.Script ? ScriptAssemblyName : "typhon_" + Path.GetFileNameWithoutExtension(entryPath),
+            trees,
+            refs.For(target, output.Frameworks),
+            new CSharpCompilationOptions(OutputKind.ConsoleApplication, optimizationLevel: OptimizationLevel.Release, allowUnsafe: true,
+                nullableContextOptions: NullableContextOptions.Disable));
+        project.Resolver = new RoslynTypeResolver(compilation);
 
         var diagnostics = new List<TyDiagnostic>();
         foreach (var m in modules) diagnostics.AddRange(m.ParseDiagnostics);
