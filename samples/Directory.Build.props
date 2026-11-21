@@ -6,10 +6,16 @@
     Outside this repo the whole block is a single line:  <PackageReference Include="Typhon" Version="0.1.0" />
   -->
   <Import Project="$(TyphonRepoRoot)src/Typhon.Compiler/build/Typhon.props" />
-  <ItemGroup>
+  <ItemGroup Condition="'$(TyphonEmitToDisk)' != 'true'">
     <ProjectReference Include="$(TyphonRepoRoot)src/Typhon.Compiler/Typhon.Compiler.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
+  <!-- TyphonEmitToDisk=true (see build/Typhon.targets): the typhon-emit tool, built from source (always in Release) -->
+  <ItemGroup Condition="'$(TyphonEmitToDisk)' == 'true'">
+    <ProjectReference Include="$(TyphonRepoRoot)src/Typhon.Emit/Typhon.Emit.csproj" ReferenceOutputAssembly="false" SkipGetTargetFrameworkProperties="true"
+                      SetConfiguration="Configuration=Release" SetTargetFramework="TargetFramework=net8.0" Private="false" />
+  </ItemGroup>
   <PropertyGroup>
+    <TyphonEmitToolPath Condition="'$(TyphonEmitToolPath)' == ''">$(TyphonRepoRoot)src/Typhon.Emit/bin/Release/net8.0/Typhon.Emit.dll</TyphonEmitToolPath>
     <!-- The compiler server caches analyzer DLLs; disable it so edits to the Typhon compiler are picked up on every build. -->
     <UseSharedCompilation>false</UseSharedCompilation>
     <!-- Write the generated C# to obj/…/generated so you can inspect what Typhon produced. -->

@@ -5,7 +5,50 @@
   </ItemGroup>
 
   <ItemGroup>
-    <AdditionalFiles Include="@(TyphonCompile)" />
+    <AdditionalFiles Include="@(TyphonCompile)" Condition="'$(TyphonEmitToDisk)' != 'true'" />
     <None Remove="@(TyphonCompile)" />
   </ItemGroup>
+
+  <!--
+    TyphonEmitToDisk=true: instead of the source generator, the typhon-emit tool compiles the TyphonCompile items to C#
+    files in $(TyphonEmitDir) before CoreCompile, and they are compiled as ordinary Compile items. Roslyn runs all source
+    generators on the same input, so other generators never see what Typhon's generator produces; with the C# on disk they
+    do: Godot's script glue for script classes written in Typhon or GDScript, [JSExport], XAML code-behind, ...
+    The generated files carry #line directives, so errors still point at the .ty / .gd sources.
+  -->
+  <PropertyGroup>
+    <TyphonEmitDir Condition="'$(TyphonEmitDir)' == ''">$(IntermediateOutputPath)typhon\</TyphonEmitDir>
+    <TyphonEmitToolPath Condition="'$(TyphonEmitToolPath)' == ''">$(MSBuildThisFileDirectory)../tools/emit/Typhon.Emit.dll</TyphonEmitToolPath>
+    <_TyphonDotnet>$(DOTNET_HOST_PATH)</_TyphonDotnet>
+    <_TyphonDotnet Condition="'$(_TyphonDotnet)' == ''">dotnet</_TyphonDotnet>
+  </PropertyGroup>
+
+  <Target Name="TyphonEmitToDisk" BeforeTargets="CoreCompile" DependsOnTargets="ResolveAssemblyReferences"
+          Condition="'$(TyphonEmitToDisk)' == 'true' and '@(TyphonCompile)' != ''">
+    <PropertyGroup>
+      <!-- (one kind of slash: Windows does not find \\server\share\dir/file.dll) -->
+      <_TyphonEmitTool>$([MSBuild]::NormalizePath('$(TyphonEmitToolPath)'))</_TyphonEmitTool>
+    </PropertyGroup>
+    <ItemGroup>
+      <_TyphonEmitArg Include="out=$(TyphonEmitDir)" />
+      <_TyphonEmitArg Include="project-dir=$(MSBuildProjectDirectory)" />
+      <_TyphonEmitArg Include="root-namespace=$(RootNamespace)" />
+      <_TyphonEmitArg Include="type-mode=$(TyphonTypeMode)" />
+      <_TyphonEmitArg Include="int-mode=$(TyphonIntMode)" />
+      <_TyphonEmitArg Include="main-module=$(TyphonMainModule)" Condition="'$(TyphonMainModule)' != ''" />
+      <_TyphonEmitArg Include="define=$([MSBuild]::Escape($(DefineConstants)))" />
+      <_TyphonEmitArg Include="@(TyphonCompile->'source=%(FullPath)')" />
+      <_TyphonEmitArg Include="@(Compile->'cs=%(FullPath)')" />
+      <_TyphonEmitArg Include="@(ReferencePath->'ref=%(FullPath)')" />
+    </ItemGroup>
+    <WriteLinesToFile File="$(IntermediateOutputPath)typhon-emit.rsp" Lines="@(_TyphonEmitArg)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <Error Condition="!Exists('$(_TyphonEmitTool)')" Text="Typhon: the emit tool was not found at $(_TyphonEmitTool) (TyphonEmitToDisk=true needs it; set TyphonEmitToolPath)." />
+    <Exec Command="&quot;$(_TyphonDotnet)&quot; &quot;$(_TyphonEmitTool)&quot; &quot;@$(IntermediateOutputPath)typhon-emit.rsp&quot;" />
+    <ItemGroup>
+      <Compile Include="$(TyphonEmitDir)*.cs" />
+      <FileWrites Include="$(TyphonEmitDir)*.cs" />
+      <!-- the source generator would compile the same modules a second time -->
+      <Analyzer Remove="@(Analyzer)" Condition="'%(Analyzer.Filename)' == 'Typhon.Compiler'" />
+    </ItemGroup>
+  </Target>
 </Project>

@@ -21,12 +21,18 @@
   <ItemGroup>
     <!-- Build the CLI first, but do not reference its assembly: the tests start it as a process. -->
     <ProjectReference Include="..\..\src\Typhon.Cli\Typhon.Cli.csproj" ReferenceOutputAssembly="false" />
+    <!-- the emit tool of TyphonEmitToDisk builds (GdScriptTests.EmitToDisk runs it) -->
+    <ProjectReference Include="..\..\src\Typhon.Emit\Typhon.Emit.csproj" ReferenceOutputAssembly="false" SkipGetTargetFrameworkProperties="true" SetTargetFramework="TargetFramework=net8.0" />
   </ItemGroup>
 
   <ItemGroup>
     <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
       <_Parameter1>TyphonRepoRoot</_Parameter1>
       <_Parameter2>$(TyphonRepoRoot)</_Parameter2>
+    </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>TyphonEmit</_Parameter1>
+      <_Parameter2>$(TyphonRepoRoot)src/Typhon.Emit/bin/$(Configuration)/net8.0/Typhon.Emit.dll</_Parameter2>
     </AssemblyAttribute>
     <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
       <_Parameter1>TyphonCli</_Parameter1>

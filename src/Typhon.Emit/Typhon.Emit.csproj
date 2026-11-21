@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    typhon-emit: compiles a project's Typhon sources (.ty, and .gd GDScript files listed as TyphonCompile items) to C#
+    files on disk, for builds with TyphonEmitToDisk=true (see src/Typhon.Compiler/build/Typhon.targets). Then other source
+    generators of the project see Typhon's classes as ordinary C# (Godot's script glue, [JSExport], XAML code-behind);
+    output of Typhon's source generator is invisible to them.
+    net8.0 with roll-forward: it runs on whatever .NET the build machine has (Godot builds with the user's SDK).
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RollForward>LatestMajor</RollForward>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>Typhon.Emit</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Typhon.Compiler\Typhon.Compiler.csproj" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.12.0" />
+  </ItemGroup>
+
+</Project>

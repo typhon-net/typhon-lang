@@ -154,4 +154,15 @@ dotnet publish samples/BlazorWasm -c Release   # static files in samples/BlazorW
 ```
 
 `**/*.ty` is included automatically (set `EnableDefaultTyphonItems=false` and add `<TyphonCompile Include="..." />`
-items to control it yourself). Nothing in the .NET SDK, MSBuild or Roslyn is modified.
+items to control it yourself). Nothing in the .NET SDK, MSBuild or Roslyn is modified. GDScript files (`.gd`) are
+compiled when they are listed as `TyphonCompile` items (see [GDScript](gdscript.md)).
+
+**Other source generators.** Roslyn runs all source generators on the same input, so no other generator sees the C#
+that Typhon's generator produces: Godot's script glue, `[JSExport]`, XAML code-behind and the like do not apply to Typhon
+classes. With `<TyphonEmitToDisk>true</TyphonEmitToDisk>` the project does not use Typhon's generator; instead a build
+step before the C# compiler runs `typhon-emit` (`src/Typhon.Emit`, a small net8.0 tool that runs on any .NET 8+), which
+writes the C# of the `TyphonCompile` items and Typhon's runtime into `$(TyphonEmitDir)` (default
+`$(IntermediateOutputPath)typhon/`), and those files are compiled as ordinary `Compile` items that every generator sees.
+They keep `#line` directives, so errors point at the Typhon sources; unchanged files are not rewritten. The tool is found
+at `$(TyphonEmitToolPath)` (in this repo, `samples/Directory.Build.props` builds it from source;
+[samples/GodotBench](../samples/GodotBench) uses this).

@@ -224,6 +224,7 @@ static class Suite
 
     public static readonly string RepoRoot = Path.GetFullPath(Metadata("TyphonRepoRoot"));
     public static readonly string Cli = Path.GetFullPath(Metadata("TyphonCli"));
+    public static readonly string Emit = Path.GetFullPath(Metadata("TyphonEmit"));
     static readonly string ConformanceDir = Path.Combine(RepoRoot, "tests", "conformance");
 
     public static IEnumerable<string> CaseNames() =>

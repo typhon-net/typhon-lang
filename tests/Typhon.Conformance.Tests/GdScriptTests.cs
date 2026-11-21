@@ -36,4 +36,47 @@ public sealed class GdScriptTests(ITestOutputHelper output)
         string actual = Suite.Normalize(run.StdOut);
         Assert.True(actual == expected, Suite.Diff(expected, actual).Replace("CPython", "Godot"));
     }
+
+    /// <summary>
+    /// TyphonEmitToDisk's tool (what a Godot project's build runs): a .gd module's C# goes to a file named after its script
+    /// class, as a top-level partial class (Godot's generators need both), next to the runtime; an unchanged second run
+    /// rewrites nothing, and a file no longer produced is deleted.
+    /// </summary>
+    [Fact]
+    public void EmitToDisk()
+    {
+        string dir = Path.Combine(Suite.RepoRoot, "artifacts", "gdscript-emit", Guid.NewGuid().ToString("N")[..8]);
+        string outDir = Path.Combine(dir, "out");
+        Directory.CreateDirectory(outDir);
+        try
+        {
+            File.WriteAllText(Path.Combine(dir, "player.gd"),
+                "extends RefCounted\nclass_name Player\n\nvar hp := 3\n\nfunc hit(n: int) -> int:\n\thp -= n\n\treturn hp\n");
+            File.WriteAllText(Path.Combine(outDir, "Stale.cs"), "// from an earlier build\n");
+            var refs = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator).Where(p => p.EndsWith(".dll"));
+            string rsp = Path.Combine(dir, "emit.rsp");
+            File.WriteAllLines(rsp, new[] { "out=" + outDir, "project-dir=" + dir, "root-namespace=Game", "source=" + Path.Combine(dir, "player.gd") }
+                .Concat(refs.Select(r => "ref=" + r)));
+
+            var first = Suite.Run("dotnet", [Suite.Emit, "@" + rsp], TimeSpan.FromMinutes(2));
+            Assert.True(first.ExitCode == 0, $"typhon-emit failed\n{first.StdOut}{first.StdErr}");
+            string player = Path.Combine(outDir, "Player.cs");
+            Assert.True(File.Exists(player) && File.Exists(Path.Combine(outDir, "Typhon.Runtime.g.cs")), string.Join(", ", Directory.GetFiles(outDir)));
+            Assert.False(File.Exists(Path.Combine(outDir, "Stale.cs")));
+            string code = File.ReadAllText(player);
+            Assert.Contains("namespace Game", code);
+            Assert.Contains("public partial class Player", code);
+            Assert.Contains("public static partial class player_gd", code);
+            Assert.Contains("player.gd", code); // #line directives point at the GDScript source
+
+            var stamp = File.GetLastWriteTimeUtc(player);
+            var second = Suite.Run("dotnet", [Suite.Emit, "@" + rsp], TimeSpan.FromMinutes(2));
+            Assert.True(second.ExitCode == 0, second.StdOut + second.StdErr);
+            Assert.Equal(stamp, File.GetLastWriteTimeUtc(player));
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch (IOException) { }
+        }
+    }
 }

@@ -4,6 +4,7 @@
     <Project Path="src/Typhon.Cli/Typhon.Cli.csproj" />
     <Project Path="src/Typhon.NumPy/Typhon.NumPy.csproj" />
     <Project Path="src/Typhon.Runtime/Typhon.Runtime.csproj" />
+    <Project Path="src/Typhon.Emit/Typhon.Emit.csproj" />
   </Folder>
   <Folder Name="/samples/">
     <Project Path="samples/HelloTyphon/HelloTyphon.csproj" />
