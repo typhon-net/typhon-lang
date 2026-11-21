@@ -1,0 +1,72 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+"""Conformance: public classes deriving from the runtime's classes (threading.Thread, UserWarning, io.RawIOBase), and
+overrides without annotations taking the base method's signature (readinto(self, b), run(self))."""
+
+import io
+import threading
+import warnings
+
+
+class MyWarning(UserWarning):
+    pass
+
+
+class Worker(threading.Thread):
+    def __init__(self, n: int):
+        super().__init__()
+        self.n = n
+        self.result = 0
+
+    def run(self) -> None:
+        self.result = sum(range(self.n))
+
+
+w = Worker(10)
+w.start()
+w.join()
+print(w.result)
+with warnings.catch_warnings(record=True) as caught:
+    warnings.simplefilter("always")
+    warnings.warn("careful", MyWarning)
+print(len(caught), caught[0].category.__name__, str(caught[0].message))
+try:
+    raise MyWarning("boom")
+except UserWarning as e:
+    print("caught", e)
+
+
+
+
+class Source(io.RawIOBase):
+    def __init__(self, data: bytes):
+        super().__init__()
+        self.data = data
+        self.pos = 0
+
+    def readable(self) -> bool:
+        return True
+
+    def readinto(self, b):
+        n = min(len(b), len(self.data) - self.pos)
+        b[:n] = self.data[self.pos:self.pos + n]
+        self.pos += n
+        return n
+
+
+class Counter(threading.Thread):
+    total = 0
+
+    def run(self):
+        Counter.total += 1
+
+
+r = io.BufferedReader(Source(b"hello world\nsecond line\n"))
+print(r.readline(), r.read())
+ts = [Counter() for _ in range(4)]
+for t in ts:
+    t.start()
+for t in ts:
+    t.join()
+print(Counter.total)

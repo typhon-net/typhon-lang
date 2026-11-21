@@ -359,6 +359,8 @@ namespace Typhon.Runtime
         /// </summary>
         public static void setslice(object l, long? start, long? stop, long step, object values)
         {
+            // ba[a:b] = data: any bytes-like value (bytes, bytearray, memoryview, a list of ints)
+            if (l is PyByteArray ba) { setslice(ba.Buffer, start, stop, step, ByteOps.From(values)); return; }
             var itemType = EnumerableItemType(l.GetType());
             if (itemType == null || l is not IList) throw new InvalidCastException($"'{l.GetType().Name}' object does not support slice assignment");
             var typed = (IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(itemType))!;

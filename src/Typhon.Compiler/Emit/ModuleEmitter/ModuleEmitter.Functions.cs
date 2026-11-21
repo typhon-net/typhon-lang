@@ -86,7 +86,7 @@ namespace Typhon.Compiler.Emit
         System.Text.RegularExpressions.Regex _internalClassNames;
         System.Text.RegularExpressions.Regex BuildInternalClassNames()
         {
-            var names = AllClasses().Select(c => c.Name).Where(n => Visibility(n, topLevel: true) != "public").Distinct().ToList();
+            var names = AllClasses().Where(c => Visibility(c.Name, topLevel: true) != "public" || DerivesFromRuntime(c)).Select(c => c.Name).Distinct().ToList();
             // a type position: after a dot, a bracket, a comma or the start, followed by a non-identifier character or the end
             return names.Count == 0 ? new System.Text.RegularExpressions.Regex("(?!)")
                 : new System.Text.RegularExpressions.Regex(@"(^|[.<(,\s])(" + string.Join("|", names.Select(System.Text.RegularExpressions.Regex.Escape)) + @")(?=[>),?\[\s]|$)");
@@ -98,6 +98,31 @@ namespace Typhon.Compiler.Emit
             if (name.StartsWith("__") && !name.EndsWith("__")) return "private";
             if (name.StartsWith("_") && !name.EndsWith("__")) return topLevel ? "internal" : "protected internal";
             return "public";
+        }
+
+        /// <summary>
+        /// The .NET or runtime base method a method overrides (as many parameters, not generic, all of them typed), or null:
+        /// none, or a Typhon class in between defines the method (its own signature applies then).
+        /// </summary>
+        Semantics.MemberSig DotNetBaseMethod(ClassDef c, FunctionDef f, int depth = 0)
+        {
+            if (depth > 20 || f.Params.Any(x => x.Kind != ParamKind.Normal)) return null;
+            int n = f.Params.Count - 1;
+            foreach (var b in c.Bases)
+            {
+                if (!ResolveBase(b, out var py, out var meta)) continue;
+                if (py != null)
+                {
+                    if (py == c || py.Body.OfType<FunctionDef>().Any(x => x.Name == f.Name)) return null;
+                    if (DotNetBaseMethod(py, f, depth + 1) is Semantics.MemberSig inherited) return inherited;
+                    continue;
+                }
+                if (meta == null || !_r.IsOverridable(meta, f.Name)) continue;
+                // (of overloads, the first declared that takes as many arguments: the virtual one comes first in the runtime)
+                var m = _r.GetMembers(meta, f.Name).FirstOrDefault(x => x.IsMethod && !x.IsStatic && x.TypeParams == null && x.Parameters.Count == n);
+                if (m != null && m.Parameters.All(x => x.GenericType != null && !x.IsParams)) return m;
+            }
+            return null;
         }
 
         string TypeParamList(List<TypeParam> tps) => tps.Count == 0 ? "" : "<" + string.Join(", ", tps.Select(t => Esc(t.Name))) + ">";
@@ -253,6 +278,9 @@ namespace Typhon.Compiler.Emit
             var ps = new List<string>();
             var defaults = new List<string>();
             int pi = 0;
+            // an override of a .NET or runtime class's method: unannotated parameters take the base method's types
+            var baseMethod = dropFirst && _cls != null && !_cls.IsInterface && _cls.Def.Body.Contains(f) ? DotNetBaseMethod(_cls.Def, f) : null;
+            string[] baseTypes = baseMethod?.Parameters.Select(x => x.GenericType).ToArray();
             for (int i = 0; i < f.Params.Count; i++)
             {
                 var p = f.Params[i];
@@ -269,6 +297,7 @@ namespace Typhon.Compiler.Emit
                     continue;
                 }
                 string inferred = paramTypes != null && pi < paramTypes.Length ? paramTypes[pi] : null;
+                if (inferred == null && p.Annotation == null && baseTypes != null && pi < baseTypes.Length) inferred = baseTypes[pi];
                 pi++;
                 // def f(..., bisect=bisect) that callers never pass: the name stands for the function (calls go to it directly)
                 if (IsParamAlias(f, p))
@@ -374,6 +403,8 @@ namespace Typhon.Compiler.Emit
                 }
             }
             else if (sig.IsGenerator) elem = ImplicitDynamic(f, $"the values yielded by '{f.Name}'");
+            // (an override of a .NET or runtime method: the base method's return type)
+            else if (locals.HasValueReturn && !f.IsAsync && baseMethod?.Type != null) elem = baseMethod.Type;
             else if (locals.HasValueReturn)
                 elem = retKey != null && Ti != null && Ti.Returns.TryGetValue(retKey, out var inferredReturn) && inferredReturn != "dynamic" ? inferredReturn
                      : ImplicitDynamic(f, $"the return type of '{f.Name}'");

@@ -53,6 +53,8 @@ namespace Typhon.Compiler.Emit
             LineDirective(c);
             EmitAttributes(c.Decorators);
             string vis = Visibility(c.Name, topLevel: true);
+            // a class deriving from one of the runtime's types (threading.Thread, UserWarning, io.RawIOBase) is internal like it
+            if (vis == "public" && DerivesFromRuntime(c)) vis = "internal";
             string kind = isInterface ? "partial interface" : (isAbstract ? "abstract partial class" : (ctx.IsSealed ? "sealed partial class" : "partial class"));
             var baseTypes = bases.Select(b => MapType(b, c)).ToList();
             if (!isInterface) baseTypes.AddRange(StructuralProtocols(c, bases));
@@ -214,6 +216,38 @@ namespace Typhon.Compiler.Emit
         }
 
         /// <summary>Resolves a base class expression to a Typhon class, or a .NET metadata name.</summary>
+        static bool IsRuntimeType(string meta) =>
+            meta != null && (meta.StartsWith("Typhon.Runtime.") || meta.StartsWith("Typhon.Stdlib.") || meta == "memoryview");
+
+        /// <summary>Does the class derive, directly or through Typhon classes, from one of the runtime's (internal) types?</summary>
+        bool DerivesFromRuntime(ClassDef c, int depth = 0)
+        {
+            if (depth > 20) return false;
+            foreach (var b in c.Bases)
+            {
+                if (!ResolveBase(b, out var py, out var meta)) continue;
+                if (py != null ? py != c && DerivesFromRuntime(py, depth + 1) : IsRuntimeType(meta)) return true;
+            }
+            return false;
+        }
+
+        /// <summary>Is the member a runtime base class declares (and no Typhon class between them)?</summary>
+        bool OverridesRuntimeMember(ClassDef c, string name, int depth = 0)
+        {
+            if (depth > 20) return false;
+            foreach (var b in c.Bases)
+            {
+                if (!ResolveBase(b, out var py, out var meta)) continue;
+                if (py != null)
+                {
+                    if (py.Body.OfType<FunctionDef>().Any(f => f.Name == name)) return false;
+                    if (py != c && OverridesRuntimeMember(py, name, depth + 1)) return true;
+                }
+                else if (IsRuntimeType(meta)) return true;
+            }
+            return false;
+        }
+
         bool ResolveBase(Expr b, out ClassDef pyClass, out string meta)
         {
             pyClass = null; meta = null;
@@ -577,7 +611,11 @@ namespace Typhon.Compiler.Emit
             EmitDocComment(f.Body);
             LineDirective(f);
             EmitAttributes(f.Decorators);
-            if (mods.StartsWith("public ") && SurfaceVisibility("public", sig.ReturnType, sig.Params) == "internal") mods = "internal " + mods.Substring("public ".Length);
+            // (an override of a runtime class's public method stays public: the class is internal anyway, and an override may not
+            // change the base's access)
+            if (mods.StartsWith("public ") && SurfaceVisibility("public", sig.ReturnType, sig.Params) == "internal" &&
+                !(mods.Contains(" override") && OverridesRuntimeMember(ctx.Def, f.Name)))
+                mods = "internal " + mods.Substring("public ".Length);
             bool decorated = _m.Ast.MethodDecorators.TryGetValue(f, out var decorators);
             if (decorated) { mods = isStatic ? "internal static" : "internal"; if (f.IsAsync) mods += " async"; }
             string methodName = decorated ? Decorators.UndecoratedPrefix + f.Name : f.Name;
