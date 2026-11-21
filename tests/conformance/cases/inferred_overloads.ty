@@ -1,0 +1,48 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+"""Conformance: unannotated parameters typed from their calls, with None and match patterns in the late-bound version."""
+
+def kind(v) -> str:
+    if v is None:
+        return "none"
+    if isinstance(v, str):
+        return "str"
+    return "list"
+
+
+def first(v) -> str:
+    match v:
+        case 1 | 2:
+            return "small"
+        case [x, *_]:
+            return "starts " + str(x)
+        case _:
+            return "other"
+
+
+print(kind("s"), kind([1]), kind(None))
+print(first(1), first([5, 6]), first("q"))
+
+
+class K:
+    def kind(self, v) -> str:
+        if v is None:
+            return "none"
+        if isinstance(v, str):
+            return "str"
+        return "list"
+
+    def first(self, v) -> str:
+        match v:
+            case 1 | 2:
+                return "small"
+            case [x, *_]:
+                return "starts " + str(x)
+            case _:
+                return "other"
+
+
+k = K()
+print(k.kind("s"), k.kind([1]), k.kind(None))
+print(k.first(1), k.first([5, 6]), k.first("q"))

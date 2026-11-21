@@ -85,6 +85,8 @@ namespace Typhon.Compiler.Emit
             int n = sq.Items.Count;
             bool star = sq.StarIndex >= 0;
             if (vt == "string" || vt != null && PrimitiveCsTypes.Contains(vt)) return "false"; // a str is not a sequence for patterns
+            if (vt != null && (vt.StartsWith("OrderedDictionary<") || vt.StartsWith("Dictionary<") || vt.StartsWith("IDictionary<") || vt.StartsWith("HashSet<") || vt.StartsWith("frozenset<")))
+                return "false"; // nor is a mapping or a set
             var tupleTypes = TupleElementTypes(vt);
             if (tupleTypes != null && !star)
                 return tupleTypes.Count != n ? "false" : Conj(sq.Items.Select((it, i) => PatternTest(it, $"{v}.Item{i + 1}", tupleTypes[i])).ToArray());
@@ -99,7 +101,7 @@ namespace Typhon.Compiler.Emit
             else
             {
                 seqVar = NewTmp("seq");
-                parts.Add($"{Rt("__match_seq")}({v}, out var {seqVar})");
+                parts.Add($"{Rt("__match_seq")}((object?){Paren(v)}, out var {seqVar})"); // (object: out var needs a static call)
                 count = $"{seqVar}.Count";
             }
             parts.Add(star ? $"{count} >= {n}" : $"{count} == {n}");
@@ -115,7 +117,7 @@ namespace Typhon.Compiler.Emit
             bool typed = IsDictType(vt);
             string map = v, valueType = typed ? SplitTypeArgs(GenericArg(vt))[1] : null;
             if (typed) parts.Add($"{v} is not null");
-            else { map = NewTmp("map"); parts.Add($"{Rt("__match_map")}({v}, out var {map})"); }
+            else { map = NewTmp("map"); parts.Add($"{Rt("__match_map")}((object?){Paren(v)}, out var {map})"); }
             for (int i = 0; i < mp.Keys.Count; i++)
             {
                 string key = typed ? EmitExpr(mp.Keys[i]) : EmitValue(mp.Keys[i]);

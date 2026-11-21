@@ -301,6 +301,9 @@ namespace Typhon.Compiler.Emit
                     InferType(a.Value) is string lat && lat.StartsWith("List<"))
                     v = $"{Paren(v)}.ToArray()";
                 if (partlyDynamic && !a.Star && !a.DoubleStar && InferType(a.Value) == "dynamic") v = $"(object?){Paren(v)}";
+                // None for an inferred parameter: the call runs the function's dynamic version (null alone would be ambiguous
+                // between its typed overloads for string and List<long>)
+                else if (typhonCallee && !a.Star && IsNone(a.Value) && paramTypeAt != null && paramTypeAt(argPos, a.Name) == null) v = "(object?)null";
                 // *xs into a params array (print(*xs), .NET params methods): spread into an array of the parameter's element type
                 if (a.Star && !(InferType(a.Value) is string at && at.EndsWith("[]"))) v = $"[.. {EmitIterable(a.Value)}]";
                 parts.Add(a.Name != null ? $"{Esc(a.Name)}: {v}" : v);
