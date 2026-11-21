@@ -45,12 +45,14 @@ fi
 out=$("$dotnet" test tests/Typhon.Conformance.Tests -c Release --no-build -nologo 2>&1)
 status=$?
 echo "$out" | grep -E 'Passed!|Failed!' | tail -1
-# (CI's other test project: the playground's compiler core)
-if [ $status -eq 0 ] && [ -d tests/Typhon.Playground.Tests ]; then
-    out=$("$dotnet" test tests/Typhon.Playground.Tests -c Release --no-build -nologo 2>&1)
-    status=$?
-    echo "$out" | grep -E 'Passed!|Failed!' | tail -1
-fi
+# (CI's other test projects: the playground's compiler core, the NumPy kernels)
+for project in tests/Typhon.Playground.Tests tests/Typhon.NumPy.Tests; do
+    if [ $status -eq 0 ] && [ -d "$project" ]; then
+        out=$("$dotnet" test "$project" -c Release --no-build -nologo 2>&1)
+        status=$?
+        echo "$out" | grep -E 'Passed!|Failed!' | tail -1
+    fi
+done
 if [ $status -ne 0 ]; then
     echo "$out" | grep -E '^\s+Failed |line [0-9]+ [-+]' | head -40
     echo "pre-push: conformance tests fail; the push is stopped" >&2

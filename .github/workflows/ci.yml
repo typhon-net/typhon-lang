@@ -54,6 +54,9 @@ jobs:
       - name: Playground tests (its compile-and-run code on .NET; the Blazor app is built above)
         run: dotnet test tests/Typhon.Playground.Tests -c Release --no-build --logger "console;verbosity=normal"
 
+      - name: NumPy kernel tests (matmul and linalg against reference results, 1 and 4 threads)
+        run: dotnet test tests/Typhon.NumPy.Tests -c Release --no-build --logger "console;verbosity=normal"
+
       - name: Native AOT conformance
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.aot }}
         env:
