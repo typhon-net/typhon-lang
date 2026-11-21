@@ -24,6 +24,18 @@ var total = Stopwatch.StartNew();
 var argList = args.ToList();
 if (argList.Count >= 1 && argList[0] == "server") return CompileServer.Command(argList.Skip(1).ToArray());
 
+// `typhon run file.ty [typhon flags] args...`: from the first argument after the script that is not one of typhon's flags,
+// the arguments are the program's own, even where they look like typhon's (a program's -o or --time)
+var passThrough = new List<string>();
+if (argList.Count >= 2 && argList[0] == "run")
+{
+    string[] flags = { "--strict", "--permissive", "--bigint", "--time", "--aot", "--no-cache", "--no-server" };
+    int k = 1;
+    while (k < argList.Count && flags.Contains(argList[k])) k++;
+    for (k++; k < argList.Count && flags.Contains(argList[k]); k++) { }
+    if (k < argList.Count) { passThrough = argList.GetRange(k, argList.Count - k); argList.RemoveRange(k, argList.Count - k); }
+}
+
 int mode = 1; // Typhon.Compiler.TypeMode: 0 = Strict, 1 = Warn, 2 = Permissive
 string modeName = "warn";
 if (argList.Remove("--strict")) { mode = 0; modeName = "strict"; }
@@ -83,8 +95,10 @@ if (argList.Count < 2 || argList[0] is not ("run" or "emit" or "check" or "build
 
 string command = argList[0];
 string entryPath = Path.GetFullPath(argList[1]);
-string[] programArgs = argList.Skip(2).ToArray();
+string[] programArgs = argList.Skip(2).Concat(passThrough).ToArray();
 if (!File.Exists(entryPath)) { Console.Error.WriteLine($"typhon: can't open file '{entryPath}'"); return 2; }
+// the program's sys.argv[0] is the script as given on the command line, like `python file.py` (not this executable)
+AppContext.SetData("Typhon.Argv0", argList[1]);
 
 // 1. an unchanged script that was compiled before: run the cached assembly
 if (command == "run" && useCache && ScriptCache.TryLoad(entryPath, modeName) is { } cached)

@@ -200,6 +200,8 @@ namespace Typhon.Compiler.Emit
                 ms = ms.Where(m => Applicable(m, positional, named)).ToList();
             }
             if (ms.Count == 0) return null;
+            // a method declared to return dynamic (argparse's parse_args): late-bound, like such module functions (json.loads)
+            if (call != null && ms.All(m => m.ReturnsDynamic)) return "dynamic";
             string t = ms[0].Type;
             return t != null && ms.All(m => m.Type == t) ? t : null;
         }

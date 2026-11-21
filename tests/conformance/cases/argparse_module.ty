@@ -1,0 +1,110 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+"""Conformance: argparse (parsing, Namespace, help and usage text, errors as ArgumentError with exit_on_error=False)."""
+
+import argparse
+
+
+def positive(text: str) -> int:
+    n = int(text)
+    if n <= 0:
+        raise argparse.ArgumentTypeError(f"{text} is not positive")
+    return n
+
+
+def report(args: argparse.Namespace) -> None:
+    # attributes are bound at run time, also through an annotated parameter
+    print("verbose:", args.verbose, "count:", args.count, "files:", args.files)
+
+
+def try_parse(parser: argparse.ArgumentParser, argv: list[str]) -> None:
+    try:
+        print(parser.parse_args(argv))
+    except argparse.ArgumentError as e:
+        print("error:", e)
+
+
+def defaults_parser(prog: str) -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog=prog, formatter_class=argparse.ArgumentDefaultsHelpFormatter, color=False)
+    parser.add_argument("--size", type=int, default=10, help="the size")
+    parser.add_argument("--unit", default="cm", help="the unit")
+    return parser
+
+
+parser = argparse.ArgumentParser(prog="demo", description="Process some files.", epilog="Have fun.", exit_on_error=False, color=False)
+parser.add_argument("-v", "--verbose", action="count", default=0, help="more output")
+parser.add_argument("-n", "--count", type=positive, default=1, help="repetitions (default: %(default)s)")
+parser.add_argument("--ratio", type=float, metavar="R", help="a ratio")
+parser.add_argument("--mode", choices=["fast", "slow"], default="fast", help="speed")
+parser.add_argument("-q", "--quiet", action="store_true", help="no output")
+parser.add_argument("--tag", action="append", dest="tags", help="add a tag")
+parser.add_argument("--point", nargs=2, type=int, metavar=("X", "Y"), help="a point")
+parser.add_argument("name", help="the name")
+parser.add_argument("files", nargs="*", help="input files")
+
+print(parser.format_usage(), end="")
+print(parser.format_help(), end="")
+
+args = parser.parse_args(["-vv", "--count", "3", "--tag", "a", "--tag=b", "--point", "1", "2", "alice", "x.txt", "y.txt"])
+print(args)
+report(args)
+total: int = args.count * 10
+print(total, args.point[0] + args.point[1], args.name.upper(), len(args.files))
+print(vars(args)["mode"], sorted(vars(args).keys()))
+
+argvs = [
+    ["bob"],
+    ["-qv", "--ratio", "0.5", "--mode", "slow", "carol"],
+    ["--mode", "medium", "dave"],
+    ["--count", "0", "erin"],
+    ["--count", "many", "erin"],
+    ["-v"],
+    ["--point", "1", "frank"],
+    ["--bogus", "gina"],
+    ["--verb", "--", "-h"],
+]
+for argv in argvs:
+    try:
+        print(parser.parse_args(argv))
+    except argparse.ArgumentError as e:
+        print("error:", e)
+
+ns, rest = parser.parse_known_args(["hal", "--extra", "1", "-z"])
+print(ns.name, rest)
+
+# subcommands
+tool = argparse.ArgumentParser(prog="tool", exit_on_error=False, color=False)
+tool.add_argument("--debug", action="store_true")
+sub = tool.add_subparsers(dest="command", help="what to do")
+add = sub.add_parser("add", help="add numbers")
+add.add_argument("numbers", type=int, nargs="+")
+rm = sub.add_parser("remove", aliases=["rm"], help="remove paths")
+rm.add_argument("-f", "--force", action="store_true")
+rm.add_argument("paths", nargs="+")
+print(tool.format_help(), end="")
+print(add.format_usage(), end="")
+cmd = tool.parse_args(["add", "1", "2", "3"])
+print(cmd, sum(cmd.numbers))
+print(tool.parse_args(["--debug", "rm", "-f", "a", "b"]))
+try_parse(tool, ["frobnicate"])
+
+# groups, constants, toggles, optional values
+cfg = argparse.ArgumentParser(prog="cfg", exit_on_error=False, color=False)
+fmt = cfg.add_mutually_exclusive_group(required=True)
+fmt.add_argument("--json", action="store_const", const="json", dest="format")
+fmt.add_argument("--xml", action="store_const", const="xml", dest="format")
+io = cfg.add_argument_group("I/O", "Where data goes.")
+io.add_argument("-o", "--output", default="-", help="output file")
+cfg.add_argument("--color", action=argparse.BooleanOptionalAction, default=True, help="colored output")
+cfg.add_argument("--level", nargs="?", const="high", default="low")
+cfg.add_argument("--ids", action="extend", nargs="+", type=int)
+cfg.add_argument("--mark", action="append_const", const=1, dest="marks")
+cfg.add_argument("--secret", help=argparse.SUPPRESS)
+print(cfg.format_help(), end="")
+print(cfg.parse_args(["--json", "--no-color", "--level", "--ids", "1", "2", "--ids", "3", "--mark", "--mark"]))
+print(cfg.parse_args(["--xml", "-ofile.txt", "--level=mid"]))
+try_parse(cfg, ["--json", "--xml"])
+try_parse(cfg, ["--output", "x"])
+
+print(defaults_parser("defaults").format_help(), end="")

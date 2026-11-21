@@ -295,6 +295,21 @@ namespace Typhon.Compiler.Emit
 
         readonly HashSet<string> _currentFuncTypeParams = new HashSet<string>();
 
+        /// <summary>
+        /// A .NET type whose attributes are bound at run time (a System.Dynamic.DynamicObject such as argparse.Namespace): an
+        /// annotation naming it is dynamic, so attribute access on the annotated value stays late-bound as in Python.
+        /// </summary>
+        bool IsLateBoundDotNetType(string dotted) =>
+            TryResolveType(dotted, 0, out var meta, out var pyClass) && pyClass == null && meta != null && _r.HasMember(meta, "TryGetMember");
+
+        /// <summary>
+        /// A type of a Typhon standard module (argparse.ArgumentParser, logging.Logger, re.Pattern) as fully qualified C#, so
+        /// that a function, field or property using it is internal like the runtime's own types (see SurfaceVisibility).
+        /// </summary>
+        static string StdlibTypeCode(string meta, ClassDef pyClass) =>
+            pyClass == null && meta != null && meta.StartsWith("Typhon.Stdlib.") && !meta.Contains('`')
+                ? "global::" + string.Join(".", meta.Replace('+', '.').Split('.').Select(Esc)) : null;
+
         /// <summary>Maps a Python type annotation to a C# type.</summary>
         string MapType(Expr e, Node at, bool isReturn = false)
         {
@@ -316,6 +331,8 @@ namespace Typhon.Compiler.Emit
                     if (_big && n.Id == "int" && !IsShadowed("int")) return IntT;
                     if (!IsShadowed(n.Id) && PrimitiveTypes.TryGetValue(n.Id, out var prim)) return prim;
                     if (ExceptionMap.TryGetValue(n.Id, out var ex) && !IsShadowed(n.Id)) return ex;
+                    if (IsLateBoundDotNetType(n.Id)) return "dynamic";
+                    if (TryResolveType(n.Id, 0, out var stdMeta, out var stdPy) && StdlibTypeCode(stdMeta, stdPy) is string stdName) return stdName;
                     return Esc(n.Id);
                 }
                 case AttributeExpr a:
@@ -324,6 +341,8 @@ namespace Typhon.Compiler.Emit
                     if (dotted == null) { Error(at, "invalid type annotation"); return "dynamic"; }
                     string stripped = StripTypingPrefix(dotted);
                     if (stripped != dotted) return MapType(new NameExpr { Id = stripped, Line = a.Line, Col = a.Col }, at, isReturn);
+                    if (IsLateBoundDotNetType(dotted)) return "dynamic";
+                    if (TryResolveType(dotted, 0, out var stdMeta, out var stdPy) && StdlibTypeCode(stdMeta, stdPy) is string stdName) return stdName;
                     return StdlibNestedType(dotted) ?? string.Join(".", dotted.Split('.').Select(Esc));
                 }
                 case SubscriptExpr s:
@@ -426,14 +445,14 @@ namespace Typhon.Compiler.Emit
             {
                 case NameExpr n:
                     if (BuiltinConversionNames.Contains(n.Id) && !IsShadowed(n.Id)) return false;
-                    if (!TryResolveType(n.Id, 0, out _, out _)) return false;
-                    code = ExceptionMap.TryGetValue(n.Id, out var ex) && !IsShadowed(n.Id) ? ex : (_cls != null && _cls.Name == n.Id ? _cls.CsSelfType : StdlibNestedType(n.Id) ?? Esc(n.Id));
+                    if (!TryResolveType(n.Id, 0, out var nameMeta, out var namePy)) return false;
+                    code = ExceptionMap.TryGetValue(n.Id, out var ex) && !IsShadowed(n.Id) ? ex : (_cls != null && _cls.Name == n.Id ? _cls.CsSelfType : StdlibTypeCode(nameMeta, namePy) ?? StdlibNestedType(n.Id) ?? Esc(n.Id));
                     return true;
                 case AttributeExpr a:
                 {
                     string dotted = DottedName(a);
-                    if (dotted == null || !TryResolveType(dotted, 0, out _, out _)) return false;
-                    code = StdlibNestedType(dotted) ?? string.Join(".", dotted.Split('.').Select(Esc));
+                    if (dotted == null || !TryResolveType(dotted, 0, out var attrMeta, out var attrPy)) return false;
+                    code = StdlibTypeCode(attrMeta, attrPy) ?? StdlibNestedType(dotted) ?? string.Join(".", dotted.Split('.').Select(Esc));
                     return true;
                 }
                 case SubscriptExpr s:

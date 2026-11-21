@@ -45,7 +45,8 @@ namespace Typhon.Stdlib
         {
             // Like CPython 3.15 (UTF-8 mode by default), Typhon programs write UTF-8 regardless of the console code page.
             try { Console.OutputEncoding = new UTF8Encoding(false); } catch (System.IO.IOException) { }
-            argv = new List<string> { Environment.GetCommandLineArgs().FirstOrDefault() ?? "" };
+            // under `typhon run file.ty` the script (set by the CLI), like CPython's sys.argv[0]; else this executable
+            argv = new List<string> { AppContext.GetData("Typhon.Argv0") as string ?? Environment.GetCommandLineArgs().FirstOrDefault() ?? "" };
             argv.AddRange(args);
         }
         public static void exit(long code = 0) => Environment.Exit(checked((int)code));

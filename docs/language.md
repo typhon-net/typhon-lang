@@ -155,3 +155,19 @@ float past 2**53 (they compare as floats), `doctest` examples (`testmod()` runs 
 `linalg`, `random`, slicing/masks) but: float64 only, slices and `.T` are copies (`reshape`/`ravel` are views),
 `a[i]` returns `dynamic` (annotate the target, `v: float = a[i]`, to get back to static code), `==` compares references
 (use `np.equal`), random streams are deterministic per seed but differ from NumPy's.
+
+**argparse** is CPython 3.14's (parsing, subcommands, groups, help and usage layout, colors on a terminal, messages).
+`parse_args()` returns a late-bound `Namespace` (`args.verbose`; an `argparse.Namespace` annotation keeps it late-bound);
+list values are typed lists (`list[int]` for `type=int`). An error, `-h` and `--version` print what CPython prints and
+exit with its status, but Typhon has no `SystemExit` to catch (use `exit_on_error=False` and `except
+argparse.ArgumentError`). Not supported: the `**kwargs` forms `set_defaults(func=...)` and `Namespace(a=1)`, and
+custom `Action` or `HelpFormatter` subclasses. (Functions and fields annotated with a standard module's type, such as
+`argparse.ArgumentParser`, `logging.Logger` or `re.Pattern`, are internal to the program, like the runtime's types.)
+
+**logging** covers loggers and their hierarchy, levels, `basicConfig`, `StreamHandler`/`FileHandler`/`NullHandler`,
+`Formatter` (`%`, `{` and `$` styles), filters (`Filter` or a function of the record), `extra=` and the last-resort
+handler. Approximations: `exc_info=True` and `logging.exception()` show the last exception raised on the thread, as a
+traceback of the `.ty` frames without CPython's `~~^^` markers; `%(lineno)d` of a call inside an `except`/`finally`
+block is the line in the `try` block that raised (a .NET stack-walk limit); keyword arguments (`exc_info=`, `extra=`)
+take at most two message arguments; `%(thread)d` is the managed thread id. Handler, Formatter and Filter cannot be
+subclassed; `logging.config`, `logging.handlers` and `LoggerAdapter` are not provided.

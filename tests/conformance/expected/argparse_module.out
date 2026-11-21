@@ -1,0 +1,78 @@
+usage: demo [-h] [-v] [-n COUNT] [--ratio R] [--mode {fast,slow}] [-q]
+            [--tag TAGS] [--point X Y]
+            name [files ...]
+usage: demo [-h] [-v] [-n COUNT] [--ratio R] [--mode {fast,slow}] [-q]
+            [--tag TAGS] [--point X Y]
+            name [files ...]
+
+Process some files.
+
+positional arguments:
+  name                the name
+  files               input files
+
+options:
+  -h, --help          show this help message and exit
+  -v, --verbose       more output
+  -n, --count COUNT   repetitions (default: 1)
+  --ratio R           a ratio
+  --mode {fast,slow}  speed
+  -q, --quiet         no output
+  --tag TAGS          add a tag
+  --point X Y         a point
+
+Have fun.
+Namespace(verbose=2, count=3, ratio=None, mode='fast', quiet=False, tags=['a', 'b'], point=[1, 2], name='alice', files=['x.txt', 'y.txt'])
+verbose: 2 count: 3 files: ['x.txt', 'y.txt']
+30 3 ALICE 2
+fast ['count', 'files', 'mode', 'name', 'point', 'quiet', 'ratio', 'tags', 'verbose']
+Namespace(verbose=0, count=1, ratio=None, mode='fast', quiet=False, tags=None, point=None, name='bob', files=[])
+Namespace(verbose=1, count=1, ratio=0.5, mode='slow', quiet=True, tags=None, point=None, name='carol', files=[])
+error: argument --mode: invalid choice: 'medium' (choose from fast, slow)
+error: argument -n/--count: 0 is not positive
+error: argument -n/--count: invalid positive value: 'many'
+error: the following arguments are required: name
+error: argument --point: invalid int value: 'frank'
+error: unrecognized arguments: --bogus
+Namespace(verbose=1, count=1, ratio=None, mode='fast', quiet=False, tags=None, point=None, name='-h', files=[])
+hal ['--extra', '-z']
+usage: tool [-h] [--debug] {add,remove,rm} ...
+
+positional arguments:
+  {add,remove,rm}  what to do
+    add            add numbers
+    remove (rm)    remove paths
+
+options:
+  -h, --help       show this help message and exit
+  --debug
+usage: tool add [-h] numbers [numbers ...]
+Namespace(debug=False, command='add', numbers=[1, 2, 3]) 6
+Namespace(debug=True, command='rm', force=True, paths=['a', 'b'])
+error: argument command: invalid choice: 'frobnicate' (choose from add, remove, rm)
+usage: cfg [-h] (--json | --xml) [-o OUTPUT] [--color | --no-color]
+           [--level [LEVEL]] [--ids IDS [IDS ...]] [--mark]
+
+options:
+  -h, --help           show this help message and exit
+  --json
+  --xml
+  --color, --no-color  colored output
+  --level [LEVEL]
+  --ids IDS [IDS ...]
+  --mark
+
+I/O:
+  Where data goes.
+
+  -o, --output OUTPUT  output file
+Namespace(format='json', output='-', color=False, level='high', ids=[1, 2, 3], marks=[1, 1], secret=None)
+Namespace(format='xml', output='file.txt', color=True, level='mid', ids=None, marks=None, secret=None)
+error: argument --xml: not allowed with argument --json
+error: one of the arguments --json --xml is required
+usage: defaults [-h] [--size SIZE] [--unit UNIT]
+
+options:
+  -h, --help   show this help message and exit
+  --size SIZE  the size (default: 10)
+  --unit UNIT  the unit (default: cm)

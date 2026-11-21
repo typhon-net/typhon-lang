@@ -1,0 +1,35 @@
+INFO:root:started with 4 workers
+WARNING:root:disk at 93.5%
+ERROR:root:job failed after 3 tries: ('a', 1)
+CRITICAL:root:values X and 00042
+WARNING:root:via log()
+<Logger app (INFO)> <RootLogger root (INFO)> True
+20 False True
+INFO:app:propagates to the root handler
+<Logger app.db (DEBUG)> True <StreamHandler <stdout> (NOTSET)>
+[DEBUG   ] app.db (10): query SELECT 1 took 12 ms
+[INFO    ] app.db (20): connected
+[WARNING ] app.db (30): slow query
+[ERROR   ] app.db (40): lost connection
+ERROR Level 15 50
+True 40 True
+ERROR:svc.api.v1:shown through the root handler
+WARNING|styled|'brace style'
+WARNING/styled: dollar style
+alice did a thing
+logging_module.ty logging_module work: inside a function
+logging_module.ty logging_module <module>: at module level
+a public message
+styled.child True
+styled.child.x True
+styled.other False
+ERROR:root:still logged
+WARNING:root:enabled again
+x=7 mod.py mod 42 INFO 20
+rec:42:x=7
+<LogRecord: rec, 20, /src/pkg/mod.py, 42, "%s=%d">
+True True
+0 False
+root> after force
+root> the root level is still INFO
+root> done

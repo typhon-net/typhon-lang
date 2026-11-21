@@ -1,0 +1,114 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+"""Conformance: logging (loggers, levels, handlers, formatters, filters, basicConfig) written to sys.stdout."""
+
+import logging
+import sys
+
+# basicConfig: one handler on the root logger, the given format and level
+logging.basicConfig(stream=sys.stdout, level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
+logging.debug("hidden: below INFO")
+logging.info("started with %d workers", 4)
+logging.warning("disk at %.1f%%", 93.456)
+logging.error("%s failed after %d tries: %r", "job", 3, ("a", 1))
+logging.critical("values %(x)s and %(y)05d", {"x": "X", "y": 42})
+logging.log(logging.WARNING, "via log()")
+logging.basicConfig(level=logging.DEBUG)  # ignored: the root logger has a handler already
+
+log: logging.Logger = logging.getLogger("app")
+
+
+def lookup(name: str) -> logging.Logger:
+    return logging.getLogger(name)
+
+
+print(log, logging.getLogger(), lookup("app") is log)
+print(log.getEffectiveLevel(), log.isEnabledFor(logging.DEBUG), log.isEnabledFor(logging.INFO))
+log.info("propagates to the root handler")
+
+# a logger of its own with a handler and formatter, not propagating
+db = logging.getLogger("app.db")
+handler = logging.StreamHandler(sys.stdout)
+handler.setFormatter(logging.Formatter("[%(levelname)-8s] %(name)s (%(levelno)d): %(message)s"))
+db.addHandler(handler)
+db.setLevel(logging.DEBUG)
+db.propagate = False
+print(db, db.parent is log, repr(handler))
+db.debug("query %s took %d ms", "SELECT 1", 12)
+db.info("connected")
+handler.setLevel(logging.WARNING)
+db.info("dropped by the handler's level")
+db.warning("slow query")
+db.setLevel("ERROR")
+db.warning("dropped by the logger's level")
+db.error("lost connection")
+print(logging.getLevelName(logging.ERROR), logging.getLevelName(15), logging.getLevelName("CRITICAL"))
+
+# the hierarchy: a child created before its parent, effective levels
+deep = logging.getLogger("svc.api.v1")
+svc = logging.getLogger("svc")
+svc.setLevel(logging.ERROR)
+print(deep.parent is svc, deep.getEffectiveLevel(), logging.getLogger("svc.api").parent is svc)
+deep.warning("hidden by svc's level")
+deep.error("shown through the root handler")
+
+# formatter styles, filters, extra fields, caller information
+styled = logging.getLogger("styled")
+styled.propagate = False
+out = logging.StreamHandler(sys.stdout)
+styled.addHandler(out)
+out.setFormatter(logging.Formatter("{levelname}|{name}|{message!r}", style="{"))
+styled.warning("brace %s", "style")
+out.setFormatter(logging.Formatter("$levelname/${name}: $message", style="$"))
+styled.warning("dollar style")
+out.setFormatter(logging.Formatter("%(user)s did %(message)s"))
+styled.warning("a thing", extra={"user": "alice"})
+out.setFormatter(logging.Formatter("%(filename)s %(module)s %(funcName)s: %(message)s"))
+
+
+def work() -> None:
+    styled.warning("inside a function")
+
+
+work()
+styled.warning("at module level")
+out.setFormatter(logging.Formatter("%(message)s"))
+styled.addFilter(lambda record: "secret" not in record.getMessage())
+styled.warning("a secret message")
+styled.warning("a public message")
+
+
+short = logging.Filter("styled.child")
+child = logging.getLogger("styled.child")
+grandchild = logging.getLogger("styled.child.x")
+other = logging.getLogger("styled.other")
+for lg in [child, grandchild, other]:
+    rec = lg.makeRecord(lg.name, logging.INFO, "f.py", 1, "m", (), None)
+    print(lg.name, bool(short.filter(rec)))
+
+# disable() and the module-level helpers
+logging.disable(logging.WARNING)
+logging.warning("disabled")
+logging.error("still logged")
+logging.disable(logging.NOTSET)
+logging.warning("enabled again")
+
+# records and formatters directly
+record = logging.LogRecord("rec", logging.INFO, "/src/pkg/mod.py", 42, "%s=%d", ("x", 7), None)
+print(record.getMessage(), record.filename, record.module, record.lineno, record.levelname, record.levelno)
+print(logging.Formatter("%(name)s:%(lineno)d:%(message)s").format(record))
+print(record)
+
+# a handler's own logger list: hasHandlers, removeHandler
+print(styled.hasHandlers(), logging.getLogger("nothing.here").hasHandlers())
+styled.removeHandler(out)
+print(len(styled.handlers), styled.hasHandlers())
+
+# force=True replaces the root handler
+logging.basicConfig(stream=sys.stdout, format="root> %(message)s", force=True)
+logging.warning("after force")
+logging.info("the root level is still INFO")
+logging.root.setLevel(logging.WARNING)
+logging.info("hidden now")
+logging.warning("done")
