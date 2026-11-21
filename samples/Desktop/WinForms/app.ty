@@ -1,0 +1,90 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+"""
+A to-do list in Windows Forms, written in Typhon. This module is the entry point, like Program.cs in a C# WinForms app.
+
+    dotnet run --project samples/Desktop/WinForms                 (Windows)
+    dotnet run --project samples/Desktop/WinForms -- --smoke      (scripted: clicks through the window, prints, exits)
+"""
+import sys
+import time
+from System import Environment, EventArgs, STAThread
+from System.Drawing import Point
+from System.Threading import Thread
+from System.Threading.Tasks import Task
+from System.Windows.Forms import Application, FormStartPosition, HighDpiMode, UnhandledExceptionMode
+from todo_form import TodoForm
+
+
+@STAThread
+def main(args: list[str]) -> None:
+    # @STAThread puts [STAThread] on the Main that Typhon generates: the UI thread must be a single-threaded apartment
+    Application.SetHighDpiMode(HighDpiMode.SystemAware)
+    Application.EnableVisualStyles()
+    Application.SetCompatibleTextRenderingDefault(False)
+    smoke = "--smoke" in args
+    if smoke:
+        # an exception in a handler ends the program instead of showing the "unhandled exception" dialog
+        Application.SetUnhandledExceptionMode(UnhandledExceptionMode.ThrowException)
+    form = TodoForm()
+    if smoke:
+        SmokeTest(form)
+    Application.Run(form)
+
+
+class SmokeTest:
+    """--smoke: runs the real message loop, drives the window as a user would, prints what it shows and closes it."""
+
+    def __init__(self, form: TodoForm) -> None:
+        self.form = form
+        self.running = Task.CompletedTask
+        # a safety net: a window nobody can see must not outlive a run that got stuck
+        watchdog = Thread(lambda: exit_if_stuck(60.0))
+        watchdog.IsBackground = True
+        watchdog.Start()
+        # the window exists and handles messages, but nobody should see it
+        form.Opacity = 0.0
+        form.ShowInTaskbar = False
+        form.StartPosition = FormStartPosition.Manual
+        form.Location = Point(-32000, -32000)
+        form.Shown += self.on_shown
+
+    def on_shown(self, sender: object, e: EventArgs) -> None:
+        self.running = self.run()
+
+    async def run(self) -> None:
+        form = self.form
+        try:
+            ui_thread = Thread.CurrentThread.ManagedThreadId
+            print(f"Windows Forms on .NET {Environment.Version}, UI thread: {Thread.CurrentThread.GetApartmentState()}")
+            for title in ["Buy milk", "Write a Typhon sample"]:
+                form.input.Text = title
+                form.add_button.PerformClick()
+            print("added two:", form.shown_items(), "-", form.status.Text)
+            form.input.Text = "   "
+            print("Add enabled for a blank title:", form.add_button.Enabled)
+            form.list.SetItemChecked(0, True)
+            print("ticked the first:", form.shown_items(), "-", form.status.Text)
+            form.remove_button.PerformClick()
+            print("removed done:", form.shown_items(), "-", form.status.Text)
+            form.load_button.PerformClick()
+            print("loading:", form.status.Text, "- Load enabled:", form.load_button.Enabled)
+            await form.loading
+            print("loaded examples:", form.shown_items(), "-", form.status.Text)
+            print("back on the UI thread after await:", Thread.CurrentThread.ManagedThreadId == ui_thread)
+        except Exception as e:
+            print("smoke test failed:", e)
+            Environment.ExitCode = 1
+        finally:
+            form.Close()
+
+
+def exit_if_stuck(seconds: float) -> None:
+    time.sleep(seconds)
+    print(f"smoke test: no result after {seconds:.0f} s")
+    Environment.Exit(2)
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

@@ -23,6 +23,9 @@ dotnet test samples/XunitTests
 # A browser app on .NET WebAssembly: the Game of Life in plain Python, drawn by JavaScript (http://localhost:5080)
 dotnet run --project samples/WasmLife
 
+# Desktop apps written in Typhon, run on Windows: the same to-do app in Windows Forms, WPF and WinUI 3
+dotnet run --project samples/Desktop/WinForms             # or Wpf, WinUI; see samples/Desktop/README.md
+
 # 3. Python-style scripting with the typhon CLI (published with ReadyToRun: compiles about twice as fast)
 dotnet publish src/Typhon.Cli -c Release -r win-x64 -o tools/typhon    # linux-x64, osx-arm64, ...
 tools/typhon/typhon run samples/scripts/tour.ty          # compile in memory and run, like `python tour.py`

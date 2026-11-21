@@ -1,0 +1,37 @@
+<!--
+  The content of the window, loaded at run time with XamlReader.Load (the project embeds it as a resource instead of
+  compiling it): the WinUI XAML compiler would generate C# code-behind and type metadata, and only runs on Windows.
+  Only built-in types, no x:Class and no event handlers in the markup; todo_window.ty finds the named elements.
+-->
+<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      Padding="12" RowSpacing="8" ColumnSpacing="8" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+  <Grid.ColumnDefinitions>
+    <ColumnDefinition Width="*" />
+    <ColumnDefinition Width="Auto" />
+  </Grid.ColumnDefinitions>
+  <Grid.RowDefinitions>
+    <RowDefinition Height="Auto" />
+    <RowDefinition Height="*" />
+    <RowDefinition Height="Auto" />
+  </Grid.RowDefinitions>
+
+  <TextBox x:Name="Input" Grid.Row="0" Grid.Column="0" PlaceholderText="What needs doing?" />
+  <Button x:Name="AddButton" Grid.Row="0" Grid.Column="1" MinWidth="80" Content="Add" IsEnabled="False"
+          Style="{StaticResource AccentButtonStyle}" />
+
+  <!-- The items are CheckBoxes made in code, which subscribes to their Checked events: unlike WPF's, they do not bubble
+       up to the list, so an item template would leave nowhere to handle them -->
+  <ListView x:Name="List" Grid.Row="1" Grid.ColumnSpan="2" SelectionMode="None" />
+
+  <Grid Grid.Row="2" Grid.ColumnSpan="2" ColumnSpacing="8">
+    <Grid.ColumnDefinitions>
+      <ColumnDefinition Width="*" />
+      <ColumnDefinition Width="Auto" />
+      <ColumnDefinition Width="Auto" />
+    </Grid.ColumnDefinitions>
+    <TextBlock x:Name="Status" Grid.Column="0" VerticalAlignment="Center" />
+    <Button x:Name="LoadButton" Grid.Column="1" Content="Load examples" />
+    <Button x:Name="RemoveButton" Grid.Column="2" Content="Remove done" />
+  </Grid>
+</Grid>

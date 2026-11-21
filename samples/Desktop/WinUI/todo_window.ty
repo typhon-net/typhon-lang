@@ -1,0 +1,118 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+"""
+The window: a Window subclass whose content is TodoView.xaml, parsed at run time by XamlReader. This class looks up the
+named elements, creates the list's items and handles the events, which run on the UI thread (the DispatcherQueue's).
+"""
+from typing import cast
+from System.IO import StreamReader
+from System.Reflection import Assembly
+from System.Threading.Tasks import Task
+from Microsoft.UI.Xaml import FrameworkElement, RoutedEventArgs, Window
+from Microsoft.UI.Xaml.Controls import Button, CheckBox, ListView, TextBlock, TextBox, TextChangedEventArgs
+from Microsoft.UI.Xaml.Input import KeyRoutedEventArgs
+from Microsoft.UI.Xaml.Markup import XamlReader
+from Windows.Graphics import SizeInt32
+from Windows.System import VirtualKey
+from todos import TodoList, example_titles
+
+
+def load_view(name: str) -> FrameworkElement:
+    """Parses a XAML file the project embeds as a resource."""
+    with StreamReader(Assembly.GetExecutingAssembly().GetManifestResourceStream(name)) as reader:
+        return cast(FrameworkElement, XamlReader.Load(reader.ReadToEnd()))
+
+
+class TodoWindow(Window):
+    def __init__(self) -> None:
+        super().__init__()
+        self.todos = TodoList()
+        self.Title = "Typhon To-Do (WinUI 3)"
+        self.AppWindow.Resize(SizeInt32(460, 420))
+
+        view = load_view("TodoView.xaml")
+        self.Content = view
+        self.input = cast(TextBox, view.FindName("Input"))
+        self.add_button = cast(Button, view.FindName("AddButton"))
+        self.list = cast(ListView, view.FindName("List"))
+        self.status = cast(TextBlock, view.FindName("Status"))
+        self.load_button = cast(Button, view.FindName("LoadButton"))
+        self.remove_button = cast(Button, view.FindName("RemoveButton"))
+        self.loading = Task.CompletedTask
+
+        self.input.TextChanged += self.on_text_changed
+        self.input.KeyDown += self.on_input_key
+        self.add_button.Click += self.on_add
+        self.load_button.Click += self.on_load
+        self.remove_button.Click += self.on_remove_done
+        self.refresh()
+
+    def on_text_changed(self, sender: object, e: TextChangedEventArgs) -> None:
+        self.add_button.IsEnabled = self.input.Text.strip() != ""
+
+    def on_input_key(self, sender: object, e: KeyRoutedEventArgs) -> None:
+        # WinUI has no default button: Enter in the text box adds the item
+        if e.Key == VirtualKey.Enter and self.add_button.IsEnabled:
+            self.add()
+            e.Handled = True
+
+    def on_add(self, sender: object, e: RoutedEventArgs) -> None:
+        self.add()
+
+    def add(self) -> None:
+        self.todos.add(self.input.Text)
+        self.input.Text = ""
+        self.refresh()
+
+    def on_toggled(self, sender: object, e: RoutedEventArgs) -> None:
+        box = cast(CheckBox, sender)
+        self.todos.set_done(self.list.Items.IndexOf(box), box.IsChecked == True)
+        self.update_status()
+
+    def on_remove_done(self, sender: object, e: RoutedEventArgs) -> None:
+        self.todos.remove_done()
+        self.refresh()
+
+    def on_load(self, sender: object, e: RoutedEventArgs) -> None:
+        # an async method is a .NET Task method: calling it starts it, and it returns at its first await
+        self.loading = self.load_examples()
+
+    async def load_examples(self) -> None:
+        self.load_button.IsEnabled = False
+        self.status.Text = "Loading…"
+        # the slow call runs on a thread-pool thread, so the window keeps rendering and reacting meanwhile
+        titles = await Task.Run(example_titles)
+        # await comes back to the UI thread (app.ty installs the DispatcherQueue's SynchronizationContext)
+        for title in titles:
+            self.todos.add(title)
+        self.load_button.IsEnabled = True
+        self.refresh()
+
+    def refresh(self) -> None:
+        """Rebuilds the list's items from the model: one CheckBox per to-do."""
+        self.list.Items.Clear()
+        for todo in self.todos.items:
+            box = CheckBox()
+            box.Content = todo.title
+            box.IsChecked = todo.done
+            box.Checked += self.on_toggled
+            box.Unchecked += self.on_toggled
+            self.list.Items.Add(box)
+        self.update_status()
+
+    def update_status(self) -> None:
+        self.status.Text = self.todos.summary()
+        self.remove_button.IsEnabled = self.todos.any_done()
+
+    def item_box(self, index: int) -> CheckBox:
+        return cast(CheckBox, self.list.Items[index])
+
+    def shown_items(self) -> list[str]:
+        """What the list shows, as `[x] title` lines (for the smoke test)."""
+        shown: list[str] = []
+        for i in range(self.list.Items.Count):
+            box = self.item_box(i)
+            mark = "x" if box.IsChecked == True else " "
+            shown.append(f"[{mark}] {box.Content}")
+        return shown

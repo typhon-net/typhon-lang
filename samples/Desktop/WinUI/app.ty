@@ -1,0 +1,142 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+"""
+A to-do list in WinUI 3 (Windows App SDK), written in Typhon. This module is the entry point: what App.xaml, App.xaml.cs
+and the Main the XAML compiler generates are in a C# WinUI app.
+
+    dotnet run --project samples/Desktop/WinUI                 (Windows)
+    dotnet run --project samples/Desktop/WinUI -- --smoke      (scripted: clicks through the window, prints, exits)
+"""
+import sys
+import time
+from typing import cast
+from System import Environment, STAThread
+from System.Threading import SynchronizationContext, Thread
+from System.Threading.Tasks import Task
+from Microsoft.UI.Dispatching import DispatcherQueue, DispatcherQueueSynchronizationContext
+from Microsoft.UI.Xaml import Application, FrameworkElement, LaunchActivatedEventArgs, RoutedEventArgs
+from Microsoft.UI.Xaml.Automation.Peers import ButtonAutomationPeer
+from Microsoft.UI.Xaml.Controls import Button, TextChangedEventArgs, XamlControlsResources
+from Windows.Graphics import PointInt32
+from WinRT import ComWrappersSupport
+from WinUITodo import XamlApplication
+from todo_window import TodoWindow
+
+
+class App(XamlApplication):
+    """
+    The application object (App.xaml and App.xaml.cs of a C# app). XamlApplication, the sample's one C# class, makes WinUI's
+    control library known to XAML, which the XAML compiler would do for App.xaml.
+    """
+
+    def __init__(self, smoke: bool) -> None:
+        super().__init__()
+        self.smoke = smoke
+        self.window: TodoWindow | None = None
+        if smoke:
+            # an exception in a handler ends the app (WinUI's default), with a message first
+            self.UnhandledException += lambda sender, e: print("unhandled exception:", e.Message)
+
+    def OnLaunched(self, args: LaunchActivatedEventArgs) -> None:
+        # WinUI calls it once the XAML framework runs; a protected .NET method, so Typhon overrides it as protected
+        # <Application.Resources><XamlControlsResources /></Application.Resources>: the Fluent styles of the controls
+        self.Resources.MergedDictionaries.Add(XamlControlsResources())
+        window = TodoWindow()
+        self.window = window
+        if self.smoke:
+            SmokeTest(window)
+        else:
+            window.Activate()
+
+
+@STAThread
+def main(args: list[str]) -> None:
+    # @STAThread puts [STAThread] on the Main that Typhon generates: the XAML thread must be a single-threaded apartment
+    ComWrappersSupport.InitializeComWrappers()
+    smoke = "--smoke" in args
+    # Start runs the XAML message loop on this thread and calls back once the framework is ready; it returns at exit
+    Application.Start(lambda p: start(smoke))
+
+
+def start(smoke: bool) -> None:
+    # awaits in event handlers come back to the UI thread through this context (C# WinUI's generated Main does the same)
+    SynchronizationContext.SetSynchronizationContext(DispatcherQueueSynchronizationContext(DispatcherQueue.GetForCurrentThread()))
+    App(smoke)
+
+
+class SmokeTest:
+    """--smoke: runs the real XAML loop, drives the window as a user would, prints what it shows and closes it."""
+
+    def __init__(self, window: TodoWindow) -> None:
+        self.window = window
+        self.running = Task.CompletedTask
+        # a safety net: a window nobody can see must not outlive a run that got stuck
+        watchdog = Thread(lambda: exit_if_stuck(60.0))
+        watchdog.IsBackground = True
+        watchdog.Start()
+        # the window is shown and laid out, but off-screen, without a taskbar button and without taking the focus
+        window.AppWindow.IsShownInSwitchers = False
+        window.AppWindow.Move(PointInt32(-32000, -32000))
+        cast(FrameworkElement, window.Content).Loaded += self.on_loaded
+        window.input.TextChanged += self.on_text_changed
+        self.text_changed = False
+        window.AppWindow.Show(False)
+
+    def on_loaded(self, sender: object, e: RoutedEventArgs) -> None:
+        self.running = self.run()
+
+    def on_text_changed(self, sender: object, e: TextChangedEventArgs) -> None:
+        self.text_changed = True
+
+    async def type_text(self, text: str) -> None:
+        """Types into the text box. WinUI raises TextChanged later, from the message loop, so this waits for it."""
+        self.text_changed = False
+        self.window.input.Text = text
+        for _ in range(500):
+            if self.text_changed:
+                return
+            await Task.Delay(10)
+        raise TimeoutError(f"no TextChanged for {text!r}")
+
+    async def run(self) -> None:
+        window = self.window
+        try:
+            ui_thread = Thread.CurrentThread.ManagedThreadId
+            print(f"WinUI 3 on .NET {Environment.Version}, UI thread: {Thread.CurrentThread.GetApartmentState()}")
+            for title in ["Buy milk", "Write a Typhon sample"]:
+                await self.type_text(title)
+                click(window.add_button)
+            print("added two:", window.shown_items(), "-", window.status.Text)
+            await self.type_text("   ")
+            print("Add enabled for a blank title:", window.add_button.IsEnabled)
+            window.item_box(0).IsChecked = True
+            print("ticked the first:", window.shown_items(), "-", window.status.Text)
+            click(window.remove_button)
+            print("removed done:", window.shown_items(), "-", window.status.Text)
+            click(window.load_button)
+            print("loading:", window.status.Text, "- Load enabled:", window.load_button.IsEnabled)
+            await window.loading
+            print("loaded examples:", window.shown_items(), "-", window.status.Text)
+            print("back on the UI thread after await:", Thread.CurrentThread.ManagedThreadId == ui_thread)
+        except Exception as e:
+            print("smoke test failed:", e)
+            Environment.ExitCode = 1
+        finally:
+            window.Close()
+
+
+def click(button: Button) -> None:
+    """What a mouse click does: nothing on a disabled button, else the Click event (through UI Automation)."""
+    if button.IsEnabled:
+        ButtonAutomationPeer(button).Invoke()
+
+
+def exit_if_stuck(seconds: float) -> None:
+    time.sleep(seconds)
+    print(f"smoke test: no result after {seconds:.0f} s")
+    Environment.Exit(2)
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

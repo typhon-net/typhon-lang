@@ -1,0 +1,52 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+"""
+The to-do list behind the three desktop samples: plain Typhon with no UI framework in it. Each app compiles this file
+along with its own (`<TyphonCompile Include="../Shared/todos.ty" />`) and only adds the window around it.
+"""
+import time
+from dataclasses import dataclass
+
+
+@dataclass
+class Todo:
+    title: str
+    done: bool = False
+
+
+class TodoList:
+    def __init__(self) -> None:
+        self.items: list[Todo] = []
+
+    def add(self, title: str) -> Todo:
+        title = title.strip()
+        if not title:
+            raise ValueError("a to-do needs a title")
+        todo = Todo(title)
+        self.items.append(todo)
+        return todo
+
+    def set_done(self, index: int, done: bool) -> None:
+        self.items[index].done = done
+
+    def remove_done(self) -> int:
+        """Removes the finished items and returns how many there were."""
+        before = len(self.items)
+        self.items = [todo for todo in self.items if not todo.done]
+        return before - len(self.items)
+
+    def any_done(self) -> bool:
+        return any(todo.done for todo in self.items)
+
+    def summary(self) -> str:
+        if not self.items:
+            return "Nothing to do"
+        done = sum(1 for todo in self.items if todo.done)
+        return f"{done} of {len(self.items)} done"
+
+
+def example_titles() -> list[str]:
+    """Slow on purpose, like a file or a web request: the apps call it on a worker thread so the window stays responsive."""
+    time.sleep(0.3)
+    return ["Read docs/language.md", "Try typhon run", "Port a script"]

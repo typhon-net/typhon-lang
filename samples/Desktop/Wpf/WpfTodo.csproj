@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    A WPF app whose sources are *.ty files. The layout is XAML without x:Class: the build compiles it to BAML (checking the
+    markup), and the Typhon code loads it with Application.LoadComponent and wires the events.
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>$(TyphonTargetFramework)-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <!-- Lets `dotnet build` on Linux and macOS compile it too (it runs only on Windows). -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <TyphonTypeMode>strict</TyphonTypeMode>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The to-do model the three desktop samples share. -->
+    <TyphonCompile Include="../Shared/todos.ty" />
+  </ItemGroup>
+
+</Project>

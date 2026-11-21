@@ -1,0 +1,38 @@
+<!--
+  The content of the window. There is no x:Class: XAML with one generates a C# partial class, while this file is only
+  compiled to BAML and loaded by todo_window.ty, which finds the named elements and subscribes to their events.
+-->
+<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      Margin="8">
+  <Grid.ColumnDefinitions>
+    <ColumnDefinition Width="*" />
+    <ColumnDefinition Width="Auto" />
+  </Grid.ColumnDefinitions>
+  <Grid.RowDefinitions>
+    <RowDefinition Height="Auto" />
+    <RowDefinition Height="*" />
+    <RowDefinition Height="Auto" />
+  </Grid.RowDefinitions>
+
+  <TextBox x:Name="Input" Grid.Row="0" Grid.Column="0" Margin="0,0,8,8" VerticalContentAlignment="Center"
+           ToolTip="What needs doing?" />
+  <!-- IsDefault: Enter anywhere in the window clicks Add -->
+  <Button x:Name="AddButton" Grid.Row="0" Grid.Column="1" Margin="0,0,0,8" Padding="12,2" MinWidth="80" Content="_Add"
+          IsDefault="True" IsEnabled="False" />
+
+  <!-- The items are the model's Todo objects: Typhon fields are .NET properties, so bindings can read them -->
+  <ListBox x:Name="List" Grid.Row="1" Grid.ColumnSpan="2">
+    <ListBox.ItemTemplate>
+      <DataTemplate>
+        <CheckBox Content="{Binding title}" IsChecked="{Binding done, Mode=OneWay}" />
+      </DataTemplate>
+    </ListBox.ItemTemplate>
+  </ListBox>
+
+  <DockPanel Grid.Row="2" Grid.ColumnSpan="2" Margin="0,8,0,0">
+    <Button x:Name="RemoveButton" DockPanel.Dock="Right" Padding="12,2" Content="_Remove done" />
+    <Button x:Name="LoadButton" DockPanel.Dock="Right" Margin="0,0,8,0" Padding="12,2" Content="_Load examples" />
+    <TextBlock x:Name="Status" VerticalAlignment="Center" />
+  </DockPanel>
+</Grid>

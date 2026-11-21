@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- A Windows Forms app whose sources are *.ty files. -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>$(TyphonTargetFramework)-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <!-- Lets `dotnet build` on Linux and macOS compile it too (it runs only on Windows). -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <TyphonTypeMode>strict</TyphonTypeMode>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The to-do model the three desktop samples share. -->
+    <TyphonCompile Include="../Shared/todos.ty" />
+  </ItemGroup>
+
+</Project>

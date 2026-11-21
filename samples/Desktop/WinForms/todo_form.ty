@@ -1,0 +1,143 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+"""
+The window: a Form subclass that builds its controls in code, as the Windows Forms designer would in Form1.Designer.cs.
+Event handlers are bound methods (`button.Click += self.on_add`); they run on the UI thread.
+"""
+from System import EventArgs
+from System.Drawing import Size
+from System.Threading.Tasks import Task
+from System.Windows.Forms import (AnchorStyles, Button, CheckedListBox, CheckState, ColumnStyle, DockStyle,
+                                  Form, FormStartPosition, ItemCheckEventArgs, Label, Padding, RowStyle, SizeType,
+                                  TableLayoutPanel, TextBox)
+from todos import TodoList, example_titles
+
+
+class TodoForm(Form):
+    def __init__(self) -> None:
+        super().__init__()
+        self.todos = TodoList()
+        self.Text = "Typhon To-Do (Windows Forms)"
+        self.ClientSize = Size(420, 360)
+        self.MinimumSize = Size(340, 260)
+        self.StartPosition = FormStartPosition.CenterScreen
+
+        self.input = TextBox()
+        self.input.PlaceholderText = "What needs doing?"
+        self.input.Anchor = AnchorStyles.Left | AnchorStyles.Right   # fills the column, centred in the row
+        self.input.TextChanged += self.on_text_changed
+
+        self.add_button = Button()
+        self.add_button.Text = "Add"
+        self.add_button.AutoSize = True
+        self.add_button.Enabled = False
+        self.add_button.Click += self.on_add
+        self.AcceptButton = self.add_button          # Enter in the text box clicks Add
+
+        self.list = CheckedListBox()
+        self.list.Dock = DockStyle.Fill
+        self.list.CheckOnClick = True
+        self.list.IntegralHeight = False
+        self.list.ItemCheck += self.on_item_check
+
+        self.status = Label()
+        self.status.AutoSize = True
+        self.status.Anchor = AnchorStyles.Left
+
+        self.load_button = Button()
+        self.load_button.Text = "Load examples"
+        self.load_button.AutoSize = True
+        self.load_button.Click += self.on_load
+        self.loading = Task.CompletedTask
+
+        self.remove_button = Button()
+        self.remove_button.Text = "Remove done"
+        self.remove_button.AutoSize = True
+        self.remove_button.Click += self.on_remove_done
+
+        # the bottom row: the status on the left, the buttons as wide as their text on the right
+        bottom = TableLayoutPanel()
+        bottom.Dock = DockStyle.Fill
+        bottom.AutoSize = True
+        bottom.Margin = Padding(0)
+        bottom.ColumnCount = 3
+        bottom.ColumnStyles.Add(ColumnStyle(SizeType.Percent, 100))
+        bottom.ColumnStyles.Add(ColumnStyle(SizeType.AutoSize))
+        bottom.ColumnStyles.Add(ColumnStyle(SizeType.AutoSize))
+        bottom.Controls.Add(self.status, 0, 0)
+        bottom.Controls.Add(self.load_button, 1, 0)
+        bottom.Controls.Add(self.remove_button, 2, 0)
+
+        # the window: two columns (the second as wide as the Add button), three rows (the list takes the remaining height)
+        layout = TableLayoutPanel()
+        layout.Dock = DockStyle.Fill
+        layout.Padding = Padding(8)
+        layout.ColumnCount = 2
+        layout.ColumnStyles.Add(ColumnStyle(SizeType.Percent, 100))
+        layout.ColumnStyles.Add(ColumnStyle(SizeType.AutoSize))
+        layout.RowCount = 3
+        layout.RowStyles.Add(RowStyle(SizeType.AutoSize))
+        layout.RowStyles.Add(RowStyle(SizeType.Percent, 100))
+        layout.RowStyles.Add(RowStyle(SizeType.AutoSize))
+        layout.Controls.Add(self.input, 0, 0)
+        layout.Controls.Add(self.add_button, 1, 0)
+        layout.Controls.Add(self.list, 0, 1)
+        layout.SetColumnSpan(self.list, 2)
+        layout.Controls.Add(bottom, 0, 2)
+        layout.SetColumnSpan(bottom, 2)
+        self.Controls.Add(layout)
+        self.refresh()
+
+    def on_text_changed(self, sender: object, e: EventArgs) -> None:
+        self.add_button.Enabled = self.input.Text.strip() != ""
+
+    def on_add(self, sender: object, e: EventArgs) -> None:
+        self.todos.add(self.input.Text)
+        self.input.Clear()
+        self.refresh()
+
+    def on_item_check(self, sender: object, e: ItemCheckEventArgs) -> None:
+        # ItemCheck comes before the box changes: NewValue is the state it is about to get
+        self.todos.set_done(e.Index, e.NewValue == CheckState.Checked)
+        self.update_status()
+
+    def on_remove_done(self, sender: object, e: EventArgs) -> None:
+        self.todos.remove_done()
+        self.refresh()
+
+    def on_load(self, sender: object, e: EventArgs) -> None:
+        # an async method is a .NET Task method: calling it starts it, and it returns at its first await
+        self.loading = self.load_examples()
+
+    async def load_examples(self) -> None:
+        self.load_button.Enabled = False
+        self.status.Text = "Loading…"
+        # the slow call runs on a thread-pool thread, so the window keeps painting and reacting meanwhile
+        titles = await Task.Run(example_titles)
+        # await comes back to the UI thread (Windows Forms installs a SynchronizationContext), so controls may be used again
+        for title in titles:
+            self.todos.add(title)
+        self.load_button.Enabled = True
+        self.refresh()
+
+    def refresh(self) -> None:
+        """Rebuilds the list from the model."""
+        self.list.BeginUpdate()
+        self.list.Items.Clear()
+        for todo in self.todos.items:
+            self.list.Items.Add(todo.title, todo.done)
+        self.list.EndUpdate()
+        self.update_status()
+
+    def update_status(self) -> None:
+        self.status.Text = self.todos.summary()
+        self.remove_button.Enabled = self.todos.any_done()
+
+    def shown_items(self) -> list[str]:
+        """What the list shows, as `[x] title` lines (for the smoke test)."""
+        shown: list[str] = []
+        for i in range(self.list.Items.Count):
+            mark = "x" if self.list.GetItemChecked(i) else " "
+            shown.append(f"[{mark}] {self.list.Items[i]}")
+        return shown
