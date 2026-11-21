@@ -29,7 +29,13 @@ namespace Typhon.Runtime
     internal static class PyExc
     {
         /// <summary>The args of X(*args): a params array that is null came from X(None).</summary>
-        public static object?[] Norm(object?[]? args) => args ?? new object?[] { null };
+        public static object?[] Norm(object?[]? args)
+        {
+            if (args == null) return new object?[] { null };
+            // a literal passed as object arrives as a C# int: Python's ints are longs
+            for (int i = 0; i < args.Length; i++) if (args[i] is int or short or byte or sbyte) args[i] = Convert.ToInt64(args[i]);
+            return args;
+        }
 
         /// <summary>str(e): '' without args, str(arg) for one, the args tuple's repr for several.</summary>
         public static string Text(object?[] args) => args.Length switch

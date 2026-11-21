@@ -52,6 +52,7 @@ namespace Typhon.Compiler.Emit
             ["KeyboardInterrupt"] = "global::Typhon.Runtime.KeyboardInterrupt",
             ["AssertionError"] = "global::Typhon.Runtime.AssertionError",
             // the other builtin exceptions (Runtime/Types/Exceptions.cs)
+            ["Exception"] = "global::System.Exception",
             ["EOFError"] = "global::System.IO.EndOfStreamException",
             ["MemoryError"] = "global::System.OutOfMemoryException",
             ["EnvironmentError"] = "global::System.IO.IOException",

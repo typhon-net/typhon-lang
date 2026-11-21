@@ -234,7 +234,7 @@ namespace Typhon.Stdlib
         /// DynamicClassAttribute(fget=None, fset=None, fdel=None, doc=None): a property whose class-level access is routed
         /// elsewhere (enum uses it). Typhon applies descriptors only where the compiler knows them; this is the object.
         /// </summary>
-        internal sealed class DynamicClassAttribute
+        internal class DynamicClassAttribute
         {
             public readonly object? fget, fset, fdel;
             public object? __doc__;
@@ -244,18 +244,18 @@ namespace Typhon.Stdlib
                 this.fget = fget; this.fset = fset; this.fdel = fdel;
                 __doc__ = doc ?? (fget as PyFunction)?.__doc__;
             }
-            public object? __get__(object? instance, object? ownerclass = null)
+            public virtual object? __get__(object? instance, object? ownerclass = null)
             {
                 if (instance == null) throw new MissingMemberException("attribute is not available on the class");
                 if (fget == null) throw new MissingMemberException("unreadable attribute");
                 return Builtins.__invoke(fget, new[] { instance });
             }
-            public void __set__(object? instance, object? value)
+            public virtual void __set__(object? instance, object? value)
             {
                 if (fset == null) throw new MissingMemberException("can't set attribute");
                 Builtins.__invoke(fset, new[] { instance, value });
             }
-            public void __delete__(object? instance)
+            public virtual void __delete__(object? instance)
             {
                 if (fdel == null) throw new MissingMemberException("can't delete attribute");
                 Builtins.__invoke(fdel, new[] { instance });
@@ -294,7 +294,14 @@ namespace Typhon.Stdlib
         // ── functions ──
 
         /// <summary>coroutine(func): CPython marks a generator function as a coroutine; Typhon's async functions already are: func itself.</summary>
-        public static dynamic? coroutine(object? func) => func;
+        public static dynamic? coroutine(object? func)
+        {
+            if (func == null || !(func is PyFunction || func is Delegate || func is PyBoundMethod)) throw new InvalidCastException("types.coroutine() expects a callable");
+            // (CPython returns a generator function itself, flagged; any other function is wrapped)
+            var wrapped = new PyClosure((func as PyFunction)?.__name__ ?? "wrapped", (a, kw) => Builtins.__invoke_kw(func, a, kw));
+            wrapped.__wrapped__ = func;
+            return wrapped;
+        }
 
         /// <summary>resolve_bases(bases): the bases with __mro_entries__ applied (Typhon has no such objects: the bases).</summary>
         public static dynamic? resolve_bases(object? bases) => bases;

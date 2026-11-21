@@ -15,6 +15,7 @@
 namespace Typhon.Runtime
 {
     using System;
+    using System.Diagnostics;
     using System.Runtime.CompilerServices;
 
     /// <summary>Records the last exception raised on each thread from the start (format_exc / print_exc in an except block).</summary>
@@ -22,6 +23,22 @@ namespace Typhon.Runtime
     {
         [ModuleInitializer]
         internal static void Init() => PyExcInfo.Install();
+    }
+
+    /// <summary>The frames of a .NET stack that are Python frames of the program (for tracebacks and warnings' stacklevel).</summary>
+    internal static class PyFrames
+    {
+        /// <summary>
+        /// A frame of Typhon code: its .ty file, line and Python function name; null for runtime and .NET frames and for
+        /// the dispatch methods of function values (the call through a function value is one frame in Python).
+        /// </summary>
+        public static (string file, int line, string func)? Of(StackFrame f)
+        {
+            if (PyExcInfo.Caller(f) is not var (file, line, func)) return null;
+            var m = f.GetMethod();
+            if (m != null && m.DeclaringType is Type t && typeof(PyFunction).IsAssignableFrom(t) && m.Name is "__call__" or "__call_kw__" or "TryInvoke") return null;
+            return (file, line, func);
+        }
     }
 }
 
@@ -222,7 +239,7 @@ namespace Typhon.Stdlib
             var s = new StackSummary();
             if (frames == null) return s;
             foreach (var f in frames.Reverse())
-                if (PyExcInfo.Caller(f) is var (file, line, func)) s.Add(new FrameSummary(file, line, func));
+                if (PyFrames.Of(f) is var (file, line, func)) s.Add(new FrameSummary(file, line, func));
             if (limit is long n)
             {
                 // limit >= 0: the first n (oldest) of a traceback; negative: the last |n|

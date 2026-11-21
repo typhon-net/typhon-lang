@@ -286,7 +286,6 @@ namespace Typhon.Stdlib
             public error() : this("", "") { }
             public error(string msg) : this(msg, "") { }
             public error(string msg, string opt) : base(msg) { this.msg = msg; this.opt = opt; args = new PyTuple<object?>(new object?[] { msg, opt }); }
-            public error(string message, Exception innerException) : base(message, innerException) { msg = message; args = new PyTuple<object?>(new object?[] { message, "" }); }
             public string __repr__() => PyExc.Repr(this, args);
         }
 
@@ -296,7 +295,6 @@ namespace Typhon.Stdlib
             public GetoptError() : base() { }
             public GetoptError(string msg) : base(msg) { }
             public GetoptError(string msg, string opt) : base(msg, opt) { }
-            public GetoptError(string message, Exception innerException) : base(message, innerException) { }
         }
 
         static List<string> LongOpts(object? longopts) => longopts switch

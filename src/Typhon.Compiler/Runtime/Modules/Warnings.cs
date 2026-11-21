@@ -160,7 +160,7 @@ namespace Typhon.Stdlib
             int level = (int)Math.Max(1, stacklevel), seen = 0;
             foreach (var f in new StackTrace(1, true).GetFrames())
             {
-                if (PyExcInfo.Caller(f) is not var (file, line, _)) continue;
+                if (PyFrames.Of(f) is not var (file, line, _)) continue;
                 // frames after the first in files with a skipped prefix do not count (skip_file_prefixes)
                 if (seen > 0 && skipPrefixes != null && skipPrefixes.Any(p => file.StartsWith(p, StringComparison.Ordinal))) continue;
                 if (++seen < level) continue;
