@@ -139,7 +139,12 @@ one supports `send`, `throw`, `close` and `StopIteration.value`), `bytes`/`bytea
 with `struct` and `hashlib`, `obj.__dict__` and `vars(obj)` as live views of an object's attributes,
 lambdas, closures, `global`/`nonlocal`, list/dict/set comprehensions and generator expressions (→ LINQ), f-strings with
 the Python format-spec mini-language and `f"{expr = }"`, tuple unpacking, `if __name__ == "__main__":` (or a `__main__.ty` file) as the
-entry point, `asyncio.run(...)` to call async code from synchronous code.
+entry point, `asyncio` on .NET tasks: `asyncio.run(main())` runs the coroutine on a single-threaded event loop, so
+coroutines switch only at `await` as in Python (no races between them, a deterministic order); `gather`, `create_task` (a
+Task with `done`/`result`/`exception`/`add_done_callback`), `wait_for` with `TimeoutError`, `as_completed`, `sleep`,
+`Queue`, `Lock`, `Event`, `Semaphore`, `TaskGroup`, `async with` on classes with `__aenter__`/`__aexit__`, and async
+comprehensions (`[x async for x in agen()]`). A coroutine starts running when it is called (Python starts it at its first
+`await`), and a task cannot be cancelled from outside.
 
 ## Not supported yet / known gaps
 

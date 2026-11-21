@@ -113,6 +113,7 @@ namespace Typhon.Compiler.Emit
         static Semantics.ParamSig ParamAt(Semantics.MemberSig m, int i)
         {
             var ps = m.Parameters;
+            if (i < 0) return null; // a starred argument (f(*xs)) has no single parameter
             if (i < ps.Count && !ps[i].IsParams) return ps[i];
             return ps.Count > 0 && ps[ps.Count - 1].IsParams && i >= ps.Count - 1 ? ps[ps.Count - 1] : null;
         }

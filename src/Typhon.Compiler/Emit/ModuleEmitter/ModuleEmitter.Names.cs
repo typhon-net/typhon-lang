@@ -44,6 +44,7 @@ namespace Typhon.Compiler.Emit
             ["OverflowError"] = "global::System.OverflowException",
             ["ArithmeticError"] = "global::System.ArithmeticException",
             ["TimeoutError"] = "global::System.TimeoutException",
+            ["CancelledError"] = "global::System.OperationCanceledException",
             ["PermissionError"] = "global::System.UnauthorizedAccessException",
             ["StopIteration"] = "global::Typhon.Runtime.StopIteration",
             ["GeneratorExit"] = "global::Typhon.Runtime.GeneratorExit",

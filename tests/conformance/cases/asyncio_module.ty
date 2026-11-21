@@ -1,0 +1,134 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+"""Conformance: asyncio on one event loop (coroutines switch only at await), gather, create_task, wait_for, Queue, Lock,
+Event, Semaphore, TaskGroup, as_completed, async with on Typhon classes, async comprehensions."""
+
+import asyncio
+
+
+async def fetch(name: str, delay: float) -> str:
+    await asyncio.sleep(delay)
+    return f"{name} done"
+
+
+async def producer(q: asyncio.Queue, n: int) -> None:
+    for i in range(n):
+        await q.put(i)
+    await q.put(None)
+
+
+async def consumer(q: asyncio.Queue) -> int:
+    total = 0
+    while True:
+        item = await q.get()
+        if item is None:
+            break
+        total += item
+    return total
+
+
+async def main_one() -> int:
+    results = await asyncio.gather(fetch("a", 0.02), fetch("b", 0.01))
+    print(results)
+    task = asyncio.create_task(fetch("c", 0.01))
+    print(await task)
+    try:
+        await asyncio.wait_for(fetch("slow", 1.0), timeout=0.05)
+    except asyncio.TimeoutError:
+        print("timed out")
+    q = asyncio.Queue()
+    _, total = await asyncio.gather(producer(q, 5), consumer(q))
+    print("total", total)
+    lock = asyncio.Lock()
+    async with lock:
+        print("locked", lock.locked())
+    async def gen():
+        for i in range(3):
+            await asyncio.sleep(0)
+            yield i * 10
+    print([x async for x in gen()])
+    return 42
+
+
+print(asyncio.run(main_one()))
+
+
+
+counter = 0
+log: list[str] = []
+
+
+async def worker2(name: str, steps: int) -> int:
+    global counter
+    for i in range(steps):
+        current = counter
+        await asyncio.sleep(0)
+        counter = current + 1
+        log.append(f"{name}{i}")
+    return steps
+
+
+class Resource:
+    def __init__(self, name: str):
+        self.name = name
+
+    async def __aenter__(self):
+        print("open", self.name)
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        print("close", self.name, exc_type is None)
+        return False
+
+
+async def ticker(event: asyncio.Event, out: list[str]) -> None:
+    await event.wait()
+    out.append("released")
+
+
+async def limited(sem: asyncio.Semaphore, i: int, active: list[int], peak: list[int]) -> int:
+    async with sem:
+        active[0] += 1
+        peak[0] = max(peak[0], active[0])
+        await asyncio.sleep(0.01)
+        active[0] -= 1
+    return i * i
+
+
+async def main_two() -> None:
+    results = await asyncio.gather(worker2("a", 3), worker2("b", 3))
+    print(results, counter, log)
+    async with Resource("db") as r:
+        print("using", r.name)
+    ev = asyncio.Event()
+    out: list[str] = []
+    t = asyncio.create_task(ticker(ev, out))
+    await asyncio.sleep(0.01)
+    print(out, t.done(), ev.is_set())
+    ev.set()
+    await t
+    print(out, t.done())
+    sem = asyncio.Semaphore(2)
+    active = [0]
+    peak = [0]
+    squares = await asyncio.gather(*[limited(sem, i, active, peak) for i in range(5)])
+    print(squares, peak[0])
+    async with asyncio.TaskGroup() as tg:
+        t1 = tg.create_task(worker2("x", 1))
+        t2 = tg.create_task(worker2("y", 2))
+    print(t1.result(), t2.result())
+    order = []
+    async def finish(d: float, tag: str) -> str:
+        await asyncio.sleep(d)
+        return tag
+    for f in asyncio.as_completed([finish(0.03, "slow"), finish(0.01, "fast"), finish(0.02, "mid")]):
+        order.append(await f)
+    print(order)
+    q = asyncio.Queue()
+    for i in range(3):
+        q.put_nowait(i)
+    print(q.qsize(), q.empty(), await q.get(), q.get_nowait(), q.qsize())
+
+
+asyncio.run(main_two())

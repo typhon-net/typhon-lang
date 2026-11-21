@@ -678,6 +678,18 @@ namespace Typhon.Compiler.Emit
             return $"{callee}({args}{(args.Length > 0 ? ", " : "")}__kwargs: {KeywordArgs(extra)})";
         }
 
+        /// <summary>
+        /// asyncio.run(main()): the coroutine is started by the runtime, on the event loop it installs first (a coroutine
+        /// called here would already run its first steps on no loop at all).
+        /// </summary>
+        string AsyncioRunCall(CallExpr c)
+        {
+            bool isRun = c.Func is AttributeExpr ra && ra.Name == "run" && (DottedName(ra.Target) is string rt && (_dotnetAliases.TryGetValue(rt, out var rm) ? rm : null) == "Typhon.Stdlib.asyncio_") ||
+                         c.Func is NameExpr rn && rn.Id == "run" && !IsLocal("run") && StdlibOwner("run") == "Typhon.Stdlib.asyncio_";
+            if (!isRun || c.Args.Count != 1 || c.Args[0].Name != null || c.Args[0].Star || !(c.Args[0].Value is CallExpr)) return null;
+            return $"global::Typhon.Stdlib.asyncio_.run(() => {EmitExpr(c.Args[0].Value)})";
+        }
+
         /// <summary>functools.partial(f, *args, **keywords) with keywords: the keywords go in a dict.</summary>
         string PartialCall(CallExpr c)
         {
@@ -709,6 +721,7 @@ namespace Typhon.Compiler.Emit
                 return $"{(c.Func is NameExpr kfn ? EmitName(kfn) : EmitExpr(c.Func))}({kwArgs})";
             }
             if (PartialCall(c) is string partialCall) return partialCall;
+            if (AsyncioRunCall(c) is string asyncioRun) return asyncioRun;
             if (DataclassReplaceCall(c) is string replaceCall) return replaceCall;
             if (DecoratedMethodCall(c) is string decoratedCall) return decoratedCall;
             if (DotNetKwargsCall(c) is string kwargsCall) return kwargsCall;

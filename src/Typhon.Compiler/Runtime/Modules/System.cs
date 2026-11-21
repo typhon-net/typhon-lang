@@ -57,15 +57,6 @@ namespace Typhon.Stdlib
         public static long getrecursionlimit() => 1000;
     }
 
-    internal static class asyncio_
-    {
-        public static Task sleep(double seconds) => Task.Delay(TimeSpan.FromSeconds(seconds));
-        public static Task<T[]> gather<T>(params Task<T>[] tasks) => Task.WhenAll(tasks);
-        public static Task gather(params Task[] tasks) => Task.WhenAll(tasks);
-        public static void run(Task t) => t.GetAwaiter().GetResult();
-        public static T run<T>(Task<T> t) => t.GetAwaiter().GetResult();
-    }
-
     internal static class os_
     {
         public static string getcwd() => Environment.CurrentDirectory;

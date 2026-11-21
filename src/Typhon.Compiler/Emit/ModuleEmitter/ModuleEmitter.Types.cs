@@ -40,7 +40,7 @@ namespace Typhon.Compiler.Emit
             if (t.StartsWith("(") && t.EndsWith(")") && TupleElementTypes(t) is List<string> items) return items.Distinct().Count() == 1 ? items[0] : "object";
             if (t == "string") return "string"; // a str's elements are strs (one character each)
             if (t.EndsWith("[]")) return t.Substring(0, t.Length - 2);
-            foreach (var g in new[] { "List<", "IList<", "IReadOnlyList<", "IEnumerable<", "HashSet<", "ISet<", "IReadOnlySet<", "IReadOnlyCollection<", "global::Typhon.Runtime.PyIterator<", "global::Typhon.Runtime.PyTuple<", "global::Typhon.Runtime.PyGenerator<" })
+            foreach (var g in new[] { "List<", "IList<", "IReadOnlyList<", "IEnumerable<", "HashSet<", "ISet<", "IReadOnlySet<", "IReadOnlyCollection<", "global::Typhon.Runtime.PyIterator<", "global::Typhon.Runtime.PyTuple<", "global::Typhon.Runtime.PyGenerator<", "IAsyncEnumerable<", "global::System.Collections.Generic.IAsyncEnumerable<" })
                 if (t.StartsWith(g) && t.EndsWith(">")) return GenericArg(t);
             if (DictTypes(t) is List<string> kv0) return kv0[0];
             if (t.StartsWith("global::Typhon.Runtime.deque<") && t.EndsWith(">")) return GenericArg(t);

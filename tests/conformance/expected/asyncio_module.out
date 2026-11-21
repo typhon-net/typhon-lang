@@ -1,0 +1,17 @@
+['a done', 'b done']
+c done
+timed out
+total 10
+locked True
+[0, 10, 20]
+42
+[3, 3] 3 ['a0', 'b0', 'a1', 'b1', 'a2', 'b2']
+open db
+using db
+close db True
+[] False False
+['released'] True
+[0, 1, 4, 9, 16] 2
+1 2
+['fast', 'mid', 'slow']
+3 False 0 1 1

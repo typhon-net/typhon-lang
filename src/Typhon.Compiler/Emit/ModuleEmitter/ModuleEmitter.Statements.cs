@@ -375,7 +375,7 @@ namespace Typhon.Compiler.Emit
         void EmitWith(WithStmt w)
         {
             // context managers with Python's protocol (__enter__ / __exit__): one nested protocol block per item
-            if (!w.IsAsync && w.Items.Any(i => UsesEnterProtocol(i.Context)))
+            if (w.Items.Any(i => UsesEnterProtocol(i.Context, w.IsAsync)))
             {
                 EmitWithProtocol(w, 0);
                 return;
@@ -399,13 +399,14 @@ namespace Typhon.Compiler.Emit
         /// A context manager that has __enter__ / __exit__ (a Typhon class, a runtime type such as contextlib's) or whose type
         /// is not known: Python's protocol. A typed .NET IDisposable (an open() file) keeps C#'s using.
         /// </summary>
-        bool UsesEnterProtocol(Expr ctx)
+        bool UsesEnterProtocol(Expr ctx, bool isAsync = false)
         {
+            string enter = isAsync ? "__aenter__" : "__enter__";
             string t = InferType(ctx);
             if (t == null || t == "dynamic" || t == "object" || t == "object?") return true;
-            if (ClassKeyOfType(t, out _) is string key && ClassDefOfKey(key) is ClassDef cd) return DefinesInHierarchy(cd, "__enter__");
-            if (_cls != null && t == _cls.CsSelfType) return DefinesInHierarchy(_cls.Def, "__enter__");
-            return DotNetMeta(t) is string meta && _r.GetMembers(meta, "__enter__").Count > 0;
+            if (ClassKeyOfType(t, out _) is string key && ClassDefOfKey(key) is ClassDef cd) return DefinesInHierarchy(cd, enter);
+            if (_cls != null && t == _cls.CsSelfType) return DefinesInHierarchy(_cls.Def, enter);
+            return DotNetMeta(t) is string meta && _r.GetMembers(meta, enter).Count > 0;
         }
 
         /// <summary>
@@ -418,16 +419,18 @@ namespace Typhon.Compiler.Emit
             if (index == w.Items.Count) { EmitBlockStatements(w.Body); return; }
             var item = w.Items[index];
             string t = InferType(item.Context);
-            bool typed = t != null && t != "dynamic" && !t.StartsWith("object") && UsesEnterProtocol(item.Context) && !(DotNetMeta(t) is null && ClassKeyOfType(t, out _) == null && !(_cls != null && t == _cls.CsSelfType));
-            bool protocol = UsesEnterProtocol(item.Context);
+            bool isAsync = w.IsAsync;
+            bool typed = t != null && t != "dynamic" && !t.StartsWith("object") && UsesEnterProtocol(item.Context, isAsync) && !(DotNetMeta(t) is null && ClassKeyOfType(t, out _) == null && !(_cls != null && t == _cls.CsSelfType));
+            bool protocol = UsesEnterProtocol(item.Context, isAsync);
             string cm = NewTmp("cm"), raised = NewTmp("raised"), e = NewTmp("e");
             _w.Open();
             if (!protocol)
             {
                 // this item is a plain IDisposable: a using block around the rest
-                if (item.Var is NameExpr un && IsInline(w, un.Id)) { _w.Line($"using (var {Esc(un.Id)} = {EmitExpr(item.Context)})"); SetType(un.Id, t); }
-                else if (item.Var is NameExpr un2) _w.Line($"using ({EmitName(un2)} = {EmitExpr(item.Context)})");
-                else _w.Line($"using ({EmitExpr(item.Context)})");
+                string kw = isAsync ? "await using" : "using";
+                if (item.Var is NameExpr un && IsInline(w, un.Id)) { _w.Line($"{kw} (var {Esc(un.Id)} = {EmitExpr(item.Context)})"); SetType(un.Id, t); }
+                else if (item.Var is NameExpr un2) _w.Line($"{kw} ({EmitName(un2)} = {EmitExpr(item.Context)})");
+                else _w.Line($"{kw} ({EmitExpr(item.Context)})");
                 _w.Open();
                 EmitWithProtocol(w, index + 1);
                 _w.Close();
@@ -435,8 +438,14 @@ namespace Typhon.Compiler.Emit
                 return;
             }
             _w.Line($"var {cm} = {EmitExpr(item.Context)};");
-            string enter = typed ? $"{cm}.__enter__()" : $"{Rt("__enter")}((object?){cm})";
-            string enterType = typed ? (MemberType(t, "__enter__", method: true) ?? "dynamic") : "dynamic";
+            string enter = isAsync ? (typed ? $"(await {cm}.__aenter__())" : $"(await {Rt("__aenter")}((object?){cm}))")
+                                   : typed ? $"{cm}.__enter__()" : $"{Rt("__enter")}((object?){cm})";
+            string enterType = "dynamic";
+            string enterName = isAsync ? "__aenter__" : "__enter__";
+            // (a runtime or .NET type's __enter__: its declared result type)
+            string dotnetEnter = typed && DotNetMeta(t) is string em ? _r.GetMembers(em, enterName).FirstOrDefault(x => x.IsMethod && x.Parameters.Count == 0)?.Type : null;
+            if (typed && (MemberType(t, enterName, method: true) ?? dotnetEnter) is string et0)
+                enterType = isAsync ? (et0.StartsWith("global::System.Threading.Tasks.Task<") || et0.StartsWith("Task<") ? GenericArg(et0) : "dynamic") : et0;
             if (item.Var is NameExpr vn)
             {
                 if (IsInline(w, vn.Id)) { _w.Line($"var {Esc(vn.Id)} = {enter};"); SetType(vn.Id, enterType); }
@@ -444,8 +453,10 @@ namespace Typhon.Compiler.Emit
             }
             else if (item.Var == null) _w.Line($"{(typed ? "_ = " : "")}{enter};");
             else Unsupported(item.Var, "this 'with ... as' target");
-            string exitNone = typed ? $"{cm}.__exit__(null, null, null)" : $"{Rt("__exit")}((object?){cm}, null)";
-            string exitExc = typed ? $"{cm}.__exit__((object){e}.GetType(), {e}, null)" : $"{Rt("__exit")}((object?){cm}, {e})";
+            string exitNone = isAsync ? (typed ? $"await {cm}.__aexit__(null, null, null)" : $"await {Rt("__aexit")}((object?){cm}, null)")
+                                      : typed ? $"{cm}.__exit__(null, null, null)" : $"{Rt("__exit")}((object?){cm}, null)";
+            string exitExc = isAsync ? (typed ? $"(await {cm}.__aexit__((object){e}.GetType(), {e}, null))" : $"(await {Rt("__aexit")}((object?){cm}, {e}))")
+                                     : typed ? $"{cm}.__exit__((object){e}.GetType(), {e}, null)" : $"{Rt("__exit")}((object?){cm}, {e})";
             _w.Line($"bool {raised} = false;");
             _w.Line("try");
             _w.Open();

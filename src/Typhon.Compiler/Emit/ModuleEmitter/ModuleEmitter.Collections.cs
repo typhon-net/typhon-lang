@@ -326,8 +326,9 @@ namespace Typhon.Compiler.Emit
             string Gen(int i)
             {
                 var g = c.Generators[i];
-                if (g.IsAsync) Unsupported(c, "async comprehensions");
-                string iter = EmitIterable(g.Iter);
+                // [x async for x in agen()]: one async generator, collected by awaiting (System.Linq's async operators)
+                if (g.IsAsync && c.Generators.Count > 1) Unsupported(c, "an async comprehension with several 'for' clauses");
+                string iter = g.IsAsync ? EmitExpr(g.Iter) : EmitIterable(g.Iter); // (an async iterable stays one)
                 BindTargetTypes(bindings, g.Target, IterElementType(InferType(g.Iter)));
                 string param; string deconstruct = null;
                 var bound = new HashSet<string>();
@@ -349,6 +350,14 @@ namespace Typhon.Compiler.Emit
                 return result;
             }
             string q = Gen(0);
+            if (c.Generators.Count == 1 && c.Generators[0].IsAsync)
+                switch (c.Kind)
+                {
+                    case ComprehensionKind.List: return $"(await {Rt("__alist")}({q}))";
+                    case ComprehensionKind.Set: return $"(await {Rt("__alist")}({q})).ToHashSet()";
+                    case ComprehensionKind.Dict: return $"{Rt("__to_dict")}(await {Rt("__alist")}({q}))";
+                    default: return q; // an async generator expression is an async iterable
+                }
             switch (c.Kind)
             {
                 case ComprehensionKind.List: return q + ".ToList()";
