@@ -12,7 +12,8 @@ python3 -m http.server 8080 -d out/playground/wwwroot          # or any other we
 
 No workload is needed (no `wasm-tools`): the .NET SDK builds and publishes it as it is.
 
-The page has an editor (Tab indents, Enter keeps the indentation and indents after a colon, Ctrl+Enter runs), a few
+The page has an editor (syntax highlighting, Tab indents, Enter keeps the indentation and indents after a colon,
+Ctrl+Enter runs), a few
 example programs (classes, generators, comprehensions, a dataclass, an f-string table, .NET interop, a traceback,
 `dynamic`, big integers, `input()`), the type mode and big-int options of the `typhon` command, an output pane with the
 diagnostics (click one to go to its line, or to its line in the generated C#), stdout, stderr and the exit code, a
@@ -61,6 +62,14 @@ it never reaches a server); a link opens with the program, which runs when you p
 * **The page** (`Home.razor`) shows each step's status and lets the browser paint before the next one, since
   compiling blocks the page's only thread. It compiles and runs the first example as soon as the references are
   loaded: the first compile after loading is the slow one, and the next ones are fast.
+* **Highlighting** ([wwwroot/js/highlight.js](wwwroot/js/highlight.js), a small tokenizer for Python and C# in plain
+  JavaScript, without dependencies or a build step). The editor stays a `<textarea>`: its text is transparent (the
+  caret and the selection are not), and under it a `<pre>` shows the same text highlighted, in the same font, padding
+  and line height, moved with the textarea's scrolling and highlighted again on input (only the lines in view are in
+  it, so typing in a program of thousands of lines stays fast). The generated C# is
+  highlighted once per compile, the whole text at once (a verbatim string or a comment can span lines), then line by
+  line. Code is shown without ligatures: Cascadia Code would draw `->` as an arrow, and the highlighted text lines up
+  with the textarea's only without them.
 
 `dynamic` (from `Any` and implicitly dynamic code) works: the C# runtime binder runs in the WebAssembly runtime.
 
@@ -106,6 +115,10 @@ running programs takes 3 to 4 times longer.
 a relative `<base href="./">`, so the folder works at any path, for example a GitHub Pages project site: copy the
 contents of `wwwroot/` to the published branch or folder, and add an empty `.nojekyll` file, or Jekyll leaves out
 `_framework/`.
+
+The page requests nothing but its own files and stores nothing in the browser (no `localStorage`, no cookies), so it
+also works served in a sandbox (`Content-Security-Policy: sandbox allow-scripts`: an opaque origin, where
+`localStorage` throws), as typhon-lang.com serves it.
 
 ## Tests
 

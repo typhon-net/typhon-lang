@@ -16,9 +16,20 @@
     --warning: #9a6700;
     --ok: #2e7d32;
     --highlight: #fff3c4;
+    --selection: rgba(106, 85, 224, 0.25);
     --mono: ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
     --code-size: 14px;
     --code-line: 20px;
+    /* syntax highlighting (highlight.js): at least 4.5:1 against --code-bg */
+    --t-kw: #a3229f;
+    --t-con: #b0420a;
+    --t-num: #b0420a;
+    --t-str: #2f7a1f;
+    --t-int: #a3229f;
+    --t-bi: #0f7285;
+    --t-fn: #2f5fc4;
+    --t-cls: #9a5b00;
+    --t-com: #6a6e80;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -37,6 +48,16 @@
         --warning: #e3b45f;
         --ok: #7ee787;
         --highlight: #3b3420;
+        --selection: rgba(142, 124, 240, 0.38);
+        --t-kw: #d29bf2;
+        --t-con: #f59e74;
+        --t-num: #f59e74;
+        --t-str: #a6db8a;
+        --t-int: #d29bf2;
+        --t-bi: #6fd3e6;
+        --t-fn: #7fb0ff;
+        --t-cls: #f2c46d;
+        --t-com: #959ab3;
     }
 }
 
@@ -180,7 +201,25 @@ button:disabled, select:disabled { opacity: 0.6; cursor: progress; }
 
 .tabs button.active { color: var(--text); border-bottom-color: var(--accent); }
 
-/* editor: a textarea with line numbers beside it */
+/* code: no ligatures (Cascadia Code draws -> as an arrow, and the highlighting lines up with the textarea only without) */
+.gutter, .editor textarea, .syntax code, .code-view .code, .output, .console, .stdin textarea {
+    font-family: var(--mono);
+    font-variant-ligatures: none;
+    font-feature-settings: "liga" 0, "calt" 0;
+}
+
+/* syntax highlighting (highlight.js), in the editor and the generated C# */
+.t-kw { color: var(--t-kw); }
+.t-con { color: var(--t-con); }
+.t-num { color: var(--t-num); }
+.t-str { color: var(--t-str); }
+.t-int { color: var(--t-int); }
+.t-bi { color: var(--t-bi); }
+.t-fn, .t-dec { color: var(--t-fn); }
+.t-cls { color: var(--t-cls); }
+.t-com, .t-meta { color: var(--t-com); }
+
+/* editor: a textarea with line numbers beside it, and the highlighted code under its transparent text */
 .editor {
     flex: 1;
     min-height: 0;
@@ -194,29 +233,57 @@ button:disabled, select:disabled { opacity: 0.6; cursor: progress; }
     min-width: 48px;
     text-align: right;
     color: var(--gutter);
-    font-family: var(--mono);
     font-size: var(--code-size);
     line-height: var(--code-line);
     user-select: none;
     overflow: hidden;
 }
 
-.editor textarea {
+.editor-text {
     flex: 1;
+    min-width: 0;
+    position: relative;
+    display: flex;
+}
+
+/* the textarea and the highlighted code: the same font, padding, line height, tabs and white space */
+.editor textarea, .syntax code {
     margin: 0;
     padding: 10px 12px 10px 4px;
-    border: none;
-    outline: none;
-    resize: none;
-    background: transparent;
-    color: var(--text);
-    font-family: var(--mono);
     font-size: var(--code-size);
     line-height: var(--code-line);
     tab-size: 4;
     white-space: pre;
+}
+
+.syntax {
+    position: absolute;
+    inset: 0;
+    margin: 0;
+    overflow: hidden;
+    pointer-events: none;
+}
+
+.syntax code {
+    display: block;
+    color: var(--text);
+}
+.editor textarea {
+    position: relative;
+    z-index: 1;
+    flex: 1;
+    min-width: 0;
+    border: none;
+    outline: none;
+    resize: none;
+    background: transparent;
+    color: transparent;
+    caret-color: var(--text);
     overflow: auto;
 }
+
+.editor textarea::selection { color: transparent; background: var(--selection); }
+.editor textarea::placeholder { color: var(--muted); }
 
 .stdin { border-top: 1px solid var(--border); }
 

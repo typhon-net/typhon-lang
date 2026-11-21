@@ -43,8 +43,12 @@
             <div class="pane-title">main.ty</div>
             <div class="editor">
                 <pre class="gutter" aria-hidden="true" @ref="_gutter">@_lineNumbers</pre>
-                <textarea @ref="_editor" spellcheck="false" autocapitalize="off" autocomplete="off" wrap="off"
-                          aria-label="Typhon source" value="@_source" @oninput="OnSourceInput"></textarea>
+                <div class="editor-text">
+                    @* the highlighted code under the textarea's transparent text, filled by playground.initEditor *@
+                    <pre class="syntax" aria-hidden="true" @ref="_syntax"><code></code></pre>
+                    <textarea @ref="_editor" spellcheck="false" autocapitalize="off" autocomplete="off" wrap="off"
+                              aria-label="Typhon source" value="@_source" @oninput="OnSourceInput"></textarea>
+                </div>
             </div>
             <details class="stdin" open="@_stdinOpen">
                 <summary>stdin <span class="hint">(what input() reads)</span></summary>
@@ -100,7 +104,7 @@
                     else
                     {
                         <pre class="gutter" aria-hidden="true">@_csharpLineNumbers</pre>
-                        <pre class="code">@foreach (var (line, i) in _csharpLines.Select((l, i) => (l, i + 1))){<span class="@(i == _csharpHighlight ? "highlight" : null)">@line&#10;</span>}</pre>
+                        <pre class="code">@CSharpCode()</pre>
                     }
                 </div>
             }
@@ -127,10 +131,12 @@
     int? _exitCode;
     string? _csharp;
     string[] _csharpLines = [];
+    string[]? _csharpHtml; // the lines highlighted (highlight.js), once per compile
+    MarkupString? _csharpCode; // the lines in their spans, as markup: built again when the code or the highlighted line changes
     string _csharpLineNumbers = "";
     int _csharpHighlight;
 
-    ElementReference _editor, _gutter, _codeView;
+    ElementReference _editor, _gutter, _syntax, _codeView;
     DotNetObjectReference<Home>? _self;
 
     protected override void OnInitialized()
@@ -147,7 +153,7 @@
     {
         if (!firstRender) return;
         _self = DotNetObjectReference.Create(this);
-        await CallJsAsync("playground.initEditor", _editor, _gutter, _self);
+        await CallJsAsync("playground.initEditor", _editor, _gutter, _syntax, _self);
         try
         {
             await Loader.GetAsync(); // the references download while the page is idle
@@ -221,7 +227,7 @@
 
             await ShowStatusAsync("Typhon → C#...");
             var result = compiler.Translate(_source, new PlaygroundOptions(_typeMode, _bigInts));
-            ShowCSharp(result.CSharp);
+            await ShowCSharpAsync(result.CSharp);
             _diagnostics = result.Diagnostics.ToList();
             if (!result.HasErrors)
             {
@@ -265,18 +271,49 @@
 
     void SetStatus(string text, bool error = false) { _status = text; _statusIsError = error; }
 
-    void ShowCSharp(string? code)
+    async Task ShowCSharpAsync(string? code)
     {
         _csharp = code;
         _csharpLines = code?.Replace("\r\n", "\n").TrimEnd('\n').Split('\n') ?? [];
         _csharpLineNumbers = string.Join('\n', Enumerable.Range(1, _csharpLines.Length));
         _csharpHighlight = 0;
+        _csharpHtml = null;
+        _csharpCode = null;
+        if (code == null) return;
+        // the whole text at once (a verbatim string or a comment can span lines), then line by line into the line spans
+        try
+        {
+            var html = await JS.InvokeAsync<string[]>("highlight.lines", string.Join('\n', _csharpLines), "csharp");
+            if (html.Length == _csharpLines.Length) _csharpHtml = html;
+        }
+        catch (JSException e) { Console.Error.WriteLine($"highlight.lines: {e.Message}"); }
+        _csharpCode = null; // a render while waiting built it without the highlighting
+    }
+
+    /// <summary>
+    /// The generated C#: a span per line (class "highlight" on the line a diagnostic points at), each with the line
+    /// highlighted (as plain text if highlight.js failed). One piece of markup rather than thousands of render frames:
+    /// a large program's C# appears at once.
+    /// </summary>
+    MarkupString CSharpCode()
+    {
+        if (_csharpCode is { } built) return built;
+        var markup = new System.Text.StringBuilder();
+        for (int i = 0; i < _csharpLines.Length; i++)
+        {
+            markup.Append(i + 1 == _csharpHighlight ? "<span class=\"highlight\">" : "<span>");
+            markup.Append(_csharpHtml?[i] ?? System.Net.WebUtility.HtmlEncode(_csharpLines[i]));
+            markup.Append("\n</span>");
+        }
+        _csharpCode = new MarkupString(markup.ToString());
+        return _csharpCode.Value;
     }
 
     async Task ShowCSharpLine(int line)
     {
         _tab = 1;
         _csharpHighlight = line;
+        _csharpCode = null;
         StateHasChanged();
         await CallJsAsync("playground.nextFrame");
         await CallJsAsync("playground.scrollToLine", _codeView, line);
