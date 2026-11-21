@@ -18,7 +18,8 @@ python tests/conformance/update_expected.py                                  # r
 * CI ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)) runs the suite on Windows and Linux. The Native AOT pass
   can be started by hand.
 
-Status: 50 of 52 cases match CPython under `typhon run`, among them `new_syntax` (lazy imports, PEP 701 f-strings,
+Status: 55 of 57 cases match CPython under `typhon run`, among them `small_modules`, `library_methods`,
+`conditional_definitions`, `inherited_defaults`, `late_bound_members` (what the stdlib survey needed), `new_syntax` (lazy imports, PEP 701 f-strings,
 t-strings), `library_forms` (parenthesized with, type aliases, `property()`/`staticmethod()` in a class body, builtin types
 as values), `modules_as_values`, `runtime_subclasses` (classes deriving from `threading.Thread`, `UserWarning`,
 `io.RawIOBase`), `threads_weakrefs` (threading, `_thread`, queue,
