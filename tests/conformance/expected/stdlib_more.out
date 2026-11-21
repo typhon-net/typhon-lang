@@ -87,7 +87,7 @@ dst/b.txt dst/c2.py
 tree
 ['tree', 'tree/[x].txt', 'tree/a.txt', 'tree/b.txt', 'tree/c.py', 'tree/sub', 'tree/sub/deep', 'tree/sub/deep/m.txt', 'tree/sub/n.txt']
 2
-OSError: [Errno 17] File exists: 'BASE/tree'
+OSError: True 'BASE/tree'
 dst/moved.txt False
 dst/sub ['b.txt', 'c2.py', 'moved.txt', 'sub']
 FileNotFoundError: [Errno 2] No such file or directory: 'BASE/src/missing.txt'

@@ -214,7 +214,8 @@ print(len(glob.glob(os.path.join(tree, "*.csv"))))
 try:
     shutil.copytree(src, tree)
 except OSError as e:
-    print("OSError:", slash(str(e)))
+    # (Windows words it "[WinError 183] Cannot create a file when that file already exists": subject and path only)
+    print("OSError:", "exists" in str(e), slash(str(e)).split(": ")[-1])
 moved = shutil.move(os.path.join(dst, "a2.txt"), os.path.join(dst, "moved.txt"))
 print(slash(os.path.relpath(moved, base)), os.path.exists(os.path.join(dst, "a2.txt")))
 print(slash(os.path.relpath(shutil.move(os.path.join(tree, "sub"), dst), base)), sorted(os.listdir(dst)))
