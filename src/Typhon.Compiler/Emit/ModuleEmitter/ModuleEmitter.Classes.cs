@@ -691,6 +691,7 @@ namespace Typhon.Compiler.Emit
             {
                 var ssig = BuildSignature(setter, dropFirst: true);
                 ssig.Scope.HasSelf = true;
+                ssig.Scope.ReturnType = "void"; // (a setter returns nothing, whatever the getter of the same name returns)
                 ssig.Scope.Params.Remove(setter.Params[0].Name);
                 string valueName = setter.Params.Count > 1 ? setter.Params[1].Name : "value";
                 LineDirective(setter);

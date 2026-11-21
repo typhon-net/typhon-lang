@@ -86,6 +86,7 @@ namespace Typhon.Compiler.Syntax
                         break;
                     case ClassDef c:
                     {
+                        DescriptorAssignments(c, module);
                         if (c.Decorators.Any(d => Name(d) is "total_ordering" or "functools.total_ordering"))
                         {
                             TotalOrdering(c);
@@ -141,6 +142,52 @@ namespace Typhon.Compiler.Syntax
         /// @functools.total_ordering: the comparison methods the class lacks, from the one it defines (__lt__, __le__, __gt__
         /// or __ge__, in that preference, as functools picks its root) and __eq__.
         /// </summary>
+        /// <summary>
+        /// In a class body, name = property(getter[, setter]) with methods of the class, and name = staticmethod(function):
+        /// the decorated methods they stand for (@property def name(self): return self.getter() ..., @staticmethod def
+        /// name(*args, **kwargs): return function(*args, **kwargs)).
+        /// </summary>
+        static void DescriptorAssignments(ClassDef c, ModuleAst module)
+        {
+            var methods = new HashSet<string>(c.Body.OfType<FunctionDef>().Select(f => f.Name));
+            for (int i = 0; i < c.Body.Count; i++)
+            {
+                if (!(c.Body[i] is AssignStmt a) || a.Targets.Count != 1 || !(a.Targets[0] is NameExpr target) || !(a.Value is CallExpr call) ||
+                    !(call.Func is NameExpr fn) || call.Args.Any(x => x.Star || x.DoubleStar))
+                    continue;
+                string src = null;
+                var args = call.Args.Where(x => x.Name == null).Select(x => x.Value).ToList();
+                if (fn.Id == "property" && args.Count >= 1 && args.Count <= 2 && args.All(x => x is NameExpr n && methods.Contains(n.Id)) &&
+                    call.Args.All(x => x.Name == null || x.Name == "doc"))
+                {
+                    string get = ((NameExpr)args[0]).Id;
+                    src = $"@property\ndef {target.Id}(self):\n    return self.{get}()\n";
+                    if (args.Count == 2) src += $"@{target.Id}.setter\ndef {target.Id}(self, value):\n    self.{((NameExpr)args[1]).Id}(value)\n";
+                }
+                else if (fn.Id == "staticmethod" && args.Count == 1 && call.Args.Count == 1 && args[0] is NameExpr sfn &&
+                         module.Body.OfType<FunctionDef>().FirstOrDefault(f => f.Name == sfn.Id) is FunctionDef wrapped &&
+                         wrapped.Params.All(x => x.Kind == ParamKind.Normal) && !wrapped.IsAsync)
+                {
+                    // name = staticmethod(f) with f a function of the module: a static method with f's parameters, calling it
+                    var m = new FunctionDef { Name = target.Id, Returns = AstClone.Clone(wrapped.Returns), Line = a.Line, Col = a.Col };
+                    m.Decorators.Add(new NameExpr { Id = "staticmethod", Line = a.Line, Col = a.Col });
+                    foreach (var x in wrapped.Params) m.Params.Add(AstClone.Clone(x));
+                    var fwd = new CallExpr { Func = new NameExpr { Id = sfn.Id, Line = a.Line, Col = a.Col }, Line = a.Line, Col = a.Col };
+                    foreach (var x in wrapped.Params) fwd.Args.Add(new Arg { Value = new NameExpr { Id = x.Name, Line = a.Line, Col = a.Col } });
+                    m.Body.Add(new ReturnStmt { Value = fwd, Line = a.Line, Col = a.Col });
+                    c.Body[i] = m;
+                    methods.Add(m.Name);
+                    continue;
+                }
+                if (src == null) continue;
+                var defs = Parser.ParseModule(src, "<" + fn.Id + ">").Body;
+                foreach (var d in defs) SetPosition(d, a.Line, a.Col);
+                c.Body.RemoveAt(i);
+                c.Body.InsertRange(i, defs);
+                i += defs.Count - 1;
+            }
+        }
+
         static void TotalOrdering(ClassDef c)
         {
             var defined = new HashSet<string>(c.Body.OfType<FunctionDef>().Select(f => f.Name));

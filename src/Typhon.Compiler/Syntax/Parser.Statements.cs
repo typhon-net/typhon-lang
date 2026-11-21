@@ -29,6 +29,25 @@ namespace Typhon.Compiler.Syntax
                 throw Err("expected 'def', 'for' or 'with' after 'async'");
             }
             if (IsKw("match") && StartsMatchStatement()) return new List<Stmt> { ParseMatch() };
+            // type Alias[T] = expression (PEP 695, Python 3.12): a soft keyword; the alias is an ordinary assignment of the type
+            if (IsKw("type") && Peek().Kind == TokenKind.Name && Peek(2).Kind == TokenKind.Op && (Peek(2).Text == "=" || Peek(2).Text == "["))
+            {
+                var ttok = Cur;
+                _i++;
+                var target = At(new NameExpr { Id = ExpectName() }, ttok);
+                if (AcceptOp("["))
+                {
+                    // (the alias's own type parameters: Typhon's generic aliases bind them by use)
+                    int depth = 1;
+                    while (depth > 0 && Cur.Kind != TokenKind.EndOfFile) { if (IsOp("[")) depth++; else if (IsOp("]")) depth--; _i++; }
+                }
+                ExpectOp("=");
+                var a = At(new AssignStmt(), ttok);
+                a.Targets.Add(target);
+                a.Value = ParseTest();
+                ExpectNewline();
+                return new List<Stmt> { a };
+            }
             return ParseSimpleStatements();
         }
 
@@ -355,6 +374,32 @@ namespace Typhon.Compiler.Syntax
             var tok = Cur;
             ExpectKw("with");
             var s = At(new WithStmt { IsAsync = isAsync }, tok);
+            // with (a() as x, b() as y): the items in parentheses (Python 3.10); otherwise (a, b) is an ordinary expression
+            if (IsOp("("))
+            {
+                int save = _i;
+                try
+                {
+                    _i++;
+                    var items = new List<WithItem>();
+                    while (!IsOp(")"))
+                    {
+                        var item = new WithItem { Context = ParseTest() };
+                        if (AcceptKw("as")) item.Var = ParseOrExpr();
+                        items.Add(item);
+                        if (!AcceptOp(",")) break;
+                    }
+                    ExpectOp(")");
+                    if (IsOp(":") && (items.Count > 1 || items.Exists(x => x.Var != null)))
+                    {
+                        s.Items.AddRange(items);
+                        s.Body = ParseBlock();
+                        return s;
+                    }
+                }
+                catch (SyntaxError) { }
+                _i = save;
+            }
             do
             {
                 var item = new WithItem { Context = ParseTest() };

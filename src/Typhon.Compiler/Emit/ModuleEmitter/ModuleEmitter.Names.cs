@@ -288,7 +288,7 @@ namespace Typhon.Compiler.Emit
 
         static readonly Dictionary<string, string> PrimitiveTypes = new Dictionary<string, string>
         {
-            ["int"] = "long", ["float"] = "double", ["str"] = "string", ["bool"] = "bool", ["object"] = "object",
+            ["int"] = "long", ["float"] = "double", ["str"] = "string", ["bool"] = "bool", ["object"] = "object", ["type"] = "global::System.Type",
             ["bytes"] = "global::Typhon.Runtime.PyBytes", ["bytearray"] = "global::Typhon.Runtime.PyByteArray",
             ["Any"] = "dynamic", ["typing.Any"] = "dynamic",
             ["float32"] = "float", ["float64"] = "double", ["int8"] = "sbyte", ["int16"] = "short", ["int32"] = "int", ["int64"] = "long",

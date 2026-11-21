@@ -277,10 +277,13 @@ namespace Typhon.Compiler.Emit
                 }
                 // a builtin passed as a function (map(str, xs), key=len): C# cannot convert an overloaded method group whose
                 // parameter is object/generic to Func<int, string>, but a lambda binds the right overload at the call site
-                string v = a.Value is NameExpr vn && ValueBuiltins.Contains(vn.Id) && !IsShadowed(vn.Id) && !_renames.ContainsKey(vn.Id)
+                // (where the parameter takes no function, issubclass(bool, int), the builtin is its type object: below)
+                string v = a.Value is NameExpr vn && ValueBuiltins.Contains(vn.Id) && !IsShadowed(vn.Id) && !_renames.ContainsKey(vn.Id) &&
+                           !(noDelegateHere && BuiltinTypeValues.ContainsKey(vn.Id) && paramsHere.All(x => x.GenericType == "object" || x.GenericType == "global::System.Type" || x.GenericType == "System.Type"))
                     ? (_big && vn.Id == "int" ? $"(__v => {Rt("__bigint")}(__v))" : $"(__v => {EmitName(vn)}(__v))")
                     // str.upper / str.lower / list.copy passed as a function: a lambda calling the method on its argument
-                    : a.Value is AttributeExpr um && um.Target is NameExpr umt && BuiltinTypeNames.Contains(umt.Id) && !IsShadowed(umt.Id) && !BuiltinClassMethods.Contains(um.Name)
+                    : a.Value is AttributeExpr um && um.Target is NameExpr umt && BuiltinTypeNames.Contains(umt.Id) && !IsShadowed(umt.Id) && !BuiltinClassMethods.Contains(um.Name) &&
+                      !(um.Name.StartsWith("__") && um.Name.EndsWith("__")) // (int.__name__ is a value)
                     ? $"(__v => __v.{Esc(um.Name)}())"
                     // a fully annotated function for a System.Delegate parameter (app.MapGet("/todos/{id}", get_todo)): the method
                     // group itself, so the callee sees its parameter names, defaults and attributes
@@ -553,7 +556,7 @@ namespace Typhon.Compiler.Emit
                         return $"(({MapType(c.Args[0].Value, c)}){Paren(EmitExpr(c.Args[1].Value))})";
                     case "type":
                         if (c.Args.Count != 1) break;
-                        return $"{Paren(ModuleOrClassValue(c.Args[0].Value) ?? EmitExpr(c.Args[0].Value))}.GetType()";
+                        return $"{Paren(EmitValue(c.Args[0].Value))}.GetType()"; // (a value: type(3) is int, the literal a long)
                     case "print":
                         if (c.Args.Any(a => a.Name != null))
                         {

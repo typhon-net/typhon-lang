@@ -1,0 +1,71 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+"""Conformance: more forms of CPython's library: parenthesized with items, type alias statements (PEP 695),
+name = property(getter, setter) and name = staticmethod(f) in a class body, builtin types as values."""
+
+import os
+from contextlib import contextmanager
+from typing import Callable
+
+
+type Pair = tuple[int, int]
+type Func[T] = Callable[[T], T]
+
+
+@contextmanager
+def tag(name: str):
+    print("<" + name + ">")
+    yield name
+    print("</" + name + ">")
+
+
+def swap(p: Pair) -> Pair:
+    return (p[1], p[0])
+
+
+with (
+    tag("a") as a,
+    tag("b") as b,
+):
+    print(a, b)
+with (tag("c")):
+    print("one")
+print(swap((1, 2)))
+
+
+
+def shout(s: str) -> str:
+    return s.upper() + "!"
+
+
+class Calendar:
+    def __init__(self, first: int = 0):
+        self._first = first
+
+    def getfirstweekday(self) -> int:
+        return self._first % 7
+
+    def setfirstweekday(self, value: int) -> None:
+        self._first = value
+
+    firstweekday = property(getfirstweekday, setfirstweekday)
+    loud = staticmethod(shout)
+
+
+
+c = Calendar(3)
+print(c.firstweekday)
+c.firstweekday = 9
+print(c.firstweekday, Calendar.loud("hi"), c.loud("x"))
+
+atomic = frozenset({int, float, bool, str, bytes})
+print(type(3) in atomic, type("s") in atomic, type([1]) in atomic, len(atomic))
+print(issubclass(bool, int), issubclass(type, object))
+fields: dict[str, type] = {"x": int}
+print(fields.get("x", object) is int, fields.get("y", object) is object)
+conv = int
+print(conv("42") + 1)
+kinds = [str, float]
+print([k("2") for k in kinds])
+print(type(5) is int, int.__name__, type.__name__)

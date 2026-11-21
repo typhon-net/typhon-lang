@@ -82,6 +82,10 @@ namespace Typhon.Compiler.Emit
                     return $"typeof({evType})";
                 // one of the runtime's classes imported by name, as a value (type(t) is Template): its type object
                 case NameExpr rc when !Receivers.Contains(rc) && RuntimeClassValue(rc) is string rcValue: return rcValue;
+                // a builtin type as a value (frozenset({int, float}), issubclass(t, type), d.get(k, object)): its type object
+                case NameExpr bt when !Receivers.Contains(bt) && BuiltinTypeValues.TryGetValue(bt.Id, out var btType) && !IsShadowed(bt.Id) && !IsLocal(bt.Id) &&
+                                      !_moduleFieldTypes.ContainsKey(bt.Id) && !_renames.ContainsKey(bt.Id):
+                    return $"typeof({btType})";
                 case NameExpr n: return EmitName(n);
                 case FStringExpr f: return EmitFString(f);
                 // one of the runtime's classes as a value ({weakref.ref: ...}, cls is collections.deque): its type object
@@ -348,6 +352,16 @@ namespace Typhon.Compiler.Emit
             return set;
         }
 
+        /// <summary>The builtin types as values: the C# type each one's values have.</summary>
+        static readonly Dictionary<string, string> BuiltinTypeValues = new Dictionary<string, string>
+        {
+            ["int"] = "long", ["float"] = "double", ["bool"] = "bool", ["str"] = "string", ["object"] = "object", ["type"] = "global::System.Type",
+            ["bytes"] = "global::Typhon.Runtime.PyBytes", ["bytearray"] = "global::Typhon.Runtime.PyByteArray",
+            ["complex"] = "global::System.Numerics.Complex", ["tuple"] = "global::System.Runtime.CompilerServices.ITuple",
+            ["list"] = "global::System.Collections.Generic.List<object>", ["set"] = "global::System.Collections.Generic.HashSet<object>",
+            ["dict"] = "global::System.Collections.Generic.OrderedDictionary<object, object>",
+        };
+
         /// <summary>
         /// Is the runtime type a class (not a module: modules are static classes, named in lower case, without constructors)?
         /// (The resolver leaves out some constructors, a params one among them: a capitalized name is a class too.)
@@ -432,6 +446,7 @@ namespace Typhon.Compiler.Emit
                 if (a.Target is CallExpr tc && tc.Func is NameExpr tn && tn.Id == "type" && !IsShadowed("type")) return $"{Rt("__name_of")}({EmitExpr(a.Target)})";
                 if (a.Target is AttributeExpr ca && ca.Name == "__class__") return $"{Rt("__name_of")}({EmitExpr(a.Target)})";
                 if (DottedName(a.Target) is string tdn && TryTypeExpr(a.Target, out _)) return CsString(tdn.Split('.').Last());
+                if (a.Target is NameExpr btn && BuiltinTypeValues.ContainsKey(btn.Id) && !IsShadowed(btn.Id) && !IsLocal(btn.Id)) return CsString(btn.Id); // int.__name__, type.__name__
                 // a class or function known only at run time (cls.__name__ in a class decorator, f.__name__ of a callable)
                 string nt = InferType(a.Target);
                 if (nt == null || nt == "dynamic" || nt == "object" || nt == "object?" || nt == "global::System.Type" || nt == "System.Type")

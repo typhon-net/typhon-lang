@@ -318,11 +318,29 @@ namespace Typhon.Runtime
             return d;
         }
 
+        /// <summary>int(x), str(x), float(x), bool(x), type(x), object() through the type object of the builtin.</summary>
+        static bool BuiltinTypeCall(Type t, object?[] args, out object? result)
+        {
+            result = null;
+            if (args.Length > 1) return false;
+            object? a = args.Length == 1 ? args[0] : null;
+            if (t == typeof(long)) result = args.Length == 0 ? 0L : @int(a!);
+            else if (t == typeof(double)) result = args.Length == 0 ? 0.0 : @float(a!);
+            else if (t == typeof(string)) result = args.Length == 0 ? "" : str(a);
+            else if (t == typeof(bool)) result = args.Length == 1 && @bool(a);
+            else if (t == typeof(Type) && args.Length == 1) result = a?.GetType();
+            else if (t == typeof(object) && args.Length == 0) result = new object();
+            else return false;
+            return true;
+        }
+
         public static dynamic? __invoke(object? f, object?[] args) => f switch
         {
             PyFunction pf => pf.__call__(args),
             PyBoundMethod bm => bm.__call__(args),
             Delegate d => d.DynamicInvoke(args),
+            // a builtin type as a value (conv = int; conv("5")): the builtin's conversion
+            Type t when BuiltinTypeCall(t, args, out var converted) => converted,
             // a class passed as a value (cls = Array2D; cls(n, n)): constructed with the constructor that fits the arguments
             Type t => Construct(t, args),
             null => throw new NullReferenceException("'NoneType' object is not callable"),
