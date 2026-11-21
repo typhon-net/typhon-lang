@@ -21,7 +21,6 @@ namespace Typhon.Compiler.Emit
             ["uint8"] = "byte", ["uint16"] = "ushort", ["uint32"] = "uint", ["uint64"] = "ulong", ["float32"] = "float", ["float64"] = "double",
         };
 
-
         /// <summary>Metadata name of the .NET type behind a C# type as the inference spells it; null for Typhon classes and unknown types.</summary>
         string DotNetMeta(string cs)
         {

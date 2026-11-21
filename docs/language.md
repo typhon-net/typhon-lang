@@ -160,6 +160,16 @@ Task with `done`/`result`/`exception`/`add_done_callback`), `wait_for` with `Tim
 comprehensions (`[x async for x in agen()]`). A coroutine starts running when it is called (Python starts it at its first
 `await`), and a task cannot be cancelled from outside.
 
+**.NET classes and frameworks** (see [`samples/Desktop`](../samples/Desktop) for Windows Forms, WPF and WinUI 3): a
+Typhon class may derive from a .NET class (`class TodoForm(Form):`, `super().__init__()` calls its constructor), and a
+method named like a virtual .NET member overrides it with the access C# requires (`def OnLaunched(self, args:
+LaunchActivatedEventArgs)` → `protected override`; a .NET `int` parameter needs an `int32` annotation to match).
+`button.Click += self.on_add` and `+= lambda sender, e: ...` subscribe to .NET events, `RoutedEventHandler(self.f)` makes
+a delegate. `typing.cast(T, x)` is a C# cast and has the type `T`, so `self.add_button = cast(Button,
+view.FindName("AddButton"))` gives the field that type. `@STAThread` (or `@MTAThread`) on a function of the module with
+the entry point also marks the `Main` that Typhon generates, since the CLR reads the COM apartment only from the entry
+point: decorate the function that starts the UI, which Windows Forms, WPF and WinUI need on an STA thread.
+
 ## Not supported yet / known gaps
 
 `del` of names/attributes, complex, metaclasses, `decimal`, a Python decorator combined with `@classmethod` or
@@ -167,7 +177,9 @@ comprehensions (`[x async for x in agen()]`). A coroutine starts running when it
 reflection on Python objects, multiple inheritance from two .NET classes, static methods
 on generic classes need explicit type arguments (`Stack[int].of(...)`), .NET `out`/`ref` parameters (planned: tuple
 returns like IronPython), ints beyond 64 bits outside big-int mode (`OverflowError`), exact comparison of an int with a
-float past 2**53 (they compare as floats), `doctest` examples (`testmod()` runs none), .NET attributes that another
+float past 2**53 (they compare as floats), `doctest` examples (`testmod()` runs none), `isinstance()` narrowing to a
+.NET class (it narrows to Typhon classes; use `cast()` in the branch), a module function with the module's own name
+(`def main()` in `main.ty` clashes with the module's C# class), .NET attributes that another
 source generator acts on, such as `@JSExport` (the attribute is emitted, but Roslyn's generators do not see each other's
 output; declare such methods in C#, as [`samples/WasmLife`](../samples/WasmLife) does). Union types other than
 `X | None` are `object` for now (see [roadmap](roadmap.md)). The [conformance suite](conformance.md) tracks the differences that are known.

@@ -104,4 +104,103 @@ public sealed class DotNetInteropTests
             "40 2\n" +
             "guest 3 untitled 0.5\n", stdout);
     }
+
+    static string RunStrict(string source, out int exitCode, out string stdErr)
+    {
+        string dir = Path.Combine(Suite.RepoRoot, "artifacts", "interop-tests", Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(dir);
+        try
+        {
+            string path = Path.Combine(dir, "app.ty");
+            File.WriteAllText(path, source);
+            var env = new Dictionary<string, string> { ["TYPHON_CACHE"] = "0", ["TYPHON_SERVER"] = "0" };
+            var run = Suite.Run("dotnet", [Suite.Cli, "run", "--strict", path], TimeSpan.FromMinutes(2), env);
+            exitCode = run.ExitCode;
+            stdErr = run.StdErr;
+            return Suite.Normalize(run.StdOut);
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    /// <summary>
+    /// Windows Forms and WPF need the UI thread in a single-threaded COM apartment, which the CLR sets up from [STAThread] on
+    /// the entry point. @STAThread on a module function (the one that starts the UI) also marks the generated Main.
+    /// </summary>
+    [Fact]
+    public void StaThreadOnAFunctionMarksTheGeneratedMain()
+    {
+        const string source = """
+            from System import STAThread
+            from System.Reflection import Assembly
+
+
+            def attribute_names(method_name: str) -> list[str]:
+                for method in Assembly.GetExecutingAssembly().EntryPoint.DeclaringType.GetMethods():
+                    if method.Name == method_name:
+                        return sorted(a.GetType().Name for a in method.GetCustomAttributes(False) if a.GetType().Name.endswith("ThreadAttribute"))
+                return []
+
+
+            @STAThread
+            def run() -> None:
+                print("Main:", attribute_names("Main"))
+                print("run:", attribute_names("run"))
+
+
+            if __name__ == "__main__":
+                run()
+            """;
+        string stdout = RunStrict(source, out int exit, out string stderr);
+        Assert.True(exit == 0, stderr);
+        Assert.Equal("Main: ['STAThreadAttribute']\nrun: ['STAThreadAttribute']\n", stdout);
+    }
+
+    /// <summary>Without an apartment attribute Main gets none (the CLR's default, a multi-threaded apartment).</summary>
+    [Fact]
+    public void MainHasNoApartmentAttributeByDefault()
+    {
+        const string source = """
+            from System.Reflection import Assembly
+
+            entry = Assembly.GetExecutingAssembly().EntryPoint
+            print(entry.Name, [a.GetType().Name for a in entry.GetCustomAttributes(False) if a.GetType().Name.endswith("ThreadAttribute")])
+            """;
+        string stdout = RunStrict(source, out int exit, out string stderr);
+        Assert.True(exit == 0, stderr);
+        Assert.Equal("Main []\n", stdout);
+    }
+
+    /// <summary>
+    /// typing.cast(T, x) has the type T, so a field or variable assigned from it is typed too (XAML's FindName returns an
+    /// object: self.input = cast(TextBox, view.FindName("Input"))). Strict mode would reject a field of unknown type.
+    /// </summary>
+    [Fact]
+    public void CastGivesItsTypeToFieldsAndVariables()
+    {
+        const string source = """
+            from typing import cast
+            from System.Text import StringBuilder
+
+
+            def lookup(name: str) -> object:
+                return StringBuilder(name)
+
+
+            class View:
+                def __init__(self) -> None:
+                    self.builder = cast(StringBuilder, lookup("abc"))
+
+
+            view = View()
+            view.builder.Append("def")
+            other = cast(StringBuilder, lookup("xy"))
+            print(view.builder.ToString(), view.builder.Length, other.Insert(0, "-").ToString())
+            """;
+        string stdout = RunStrict(source, out int exit, out string stderr);
+        Assert.True(exit == 0, stderr);
+        Assert.Equal("abcdef 6 -xy\n", stdout);
+    }
 }

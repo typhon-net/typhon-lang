@@ -334,12 +334,31 @@ namespace Typhon.Compiler.Emit
             bool isAsync = locals.HasAwait;
             LineDirective(at);
             _scopeKey = TypeInference.FuncKey(_m, null, "<main>");
+            EmitAttributes(ApartmentAttributes());
             _w.Line(isAsync ? "public static async Task Main(string[] __argv)" : "public static void Main(string[] __argv)");
             scope.IsAsync = isAsync;
             // an uncaught SystemExit (sys.exit) ends the program with its code, without a traceback
             string tests = PytestEpilogue();
             EmitFunctionBody(stmts, scope, moduleFields, locals, prologue: "global::Typhon.Stdlib.sys_.__init__(__argv);\ntry\n{",
                              epilogue: (tests != null ? tests + "\n" : "") + "}\ncatch (global::Typhon.Runtime.SystemExit __exit) { __exit.Exit(); }");
+        }
+
+        /// <summary>
+        /// @STAThread / @MTAThread on a function of the module also mark the generated Main: the CLR reads the COM apartment of
+        /// the main thread only from the entry point, which Typhon writes itself (Windows Forms, WPF and WinUI need an STA thread).
+        /// </summary>
+        List<Expr> ApartmentAttributes()
+        {
+            var seen = new HashSet<string>();
+            var found = new List<Expr>();
+            foreach (var f in _m.Ast.Body.OfType<FunctionDef>())
+                foreach (var d in f.Decorators)
+                {
+                    string name = d is CallExpr ? null : DecoratorName(d)?.Split('.').Last();
+                    if (name == "STAThreadAttribute" || name == "MTAThreadAttribute") name = name.Substring(0, name.Length - "Attribute".Length);
+                    if ((name == "STAThread" || name == "MTAThread") && seen.Add(name)) found.Add(d);
+                }
+            return found;
         }
 
 

@@ -338,6 +338,7 @@ namespace Typhon.Compiler.Emit
                     case "len": case "ord": case "hash": return "long";
                     case "float": return "double";
                     case "bool": case "isinstance": case "any": case "all": return "bool";
+                    case "cast": return call.Args.Count == 2 ? MapType(call.Args[0].Value, call) : null;   // typing.cast(T, x) is a C# cast to T
                     case "round": return call.Args.Count == 1 ? "long" : "double";
                     case "abs": return call.Args.Count == 1 ? (_big && IsIntegral(InferType(call.Args[0].Value)) ? IntT : InferType(call.Args[0].Value)) : null;
                     case "range": return "global::Typhon.Runtime.PyRange";
