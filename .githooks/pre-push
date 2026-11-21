@@ -9,8 +9,10 @@ cd "$(git rev-parse --show-toplevel)" || exit 1
 
 zero=0000000000000000000000000000000000000000
 changed=""
+target=""
 while read -r local_ref local_sha remote_ref remote_sha; do
     [ "$local_sha" = "$zero" ] && continue # a deleted branch
+    target="$local_sha"
     if [ "$remote_sha" = "$zero" ]; then base=$(git merge-base "$local_sha" origin/main 2>/dev/null || echo "")
     else base="$remote_sha"
     fi
@@ -24,7 +26,16 @@ fi
 
 dotnet=$(typhon_dotnet) || exit 1
 python=$(typhon_python)
+case "$python" in /*) ;; */*) python="$PWD/$python" ;; esac
 export TYPHON_CPYTHON="$python"
+# test exactly what is pushed: in place when the working tree is that commit, else in a clean temporary worktree
+if [ "$(git rev-parse HEAD)" != "$target" ] || ! git diff --quiet || ! git diff --cached --quiet || [ -n "$(git ls-files --others --exclude-standard -- src tests samples)" ]; then
+    dir=$(mktemp -d "${TMPDIR:-/tmp}/typhon-prepush.XXXXXX")
+    git worktree add -q --detach "$dir" "$target" || exit 1
+    trap 'cd / && git -C "'"$PWD"'" worktree remove --force "'"$dir"'" >/dev/null 2>&1' EXIT
+    cd "$dir" || exit 1
+    echo "pre-push: testing $(git log --format='%h %s' -1) in a clean worktree"
+fi
 echo "pre-push: building and running the conformance suite as CI does (TYPHON_SKIP_HOOKS=1 or --no-verify skips) ..."
 if ! out=$("$dotnet" build Typhon.slnx -c Release -nologo -v q 2>&1); then
     echo "$out" | grep -E ' error |error\(s\)' | sort -u | head -30
