@@ -452,4 +452,181 @@ internal static class Lapack
         Gemm.Run(n2, n1, k, -1.0, a, aOff + n1 * lda, lda, 1, a, aOff, 1, lda, c, cOff + n1 * ldc, ldc, accumulate: true);
         SyrkLower(n2, k, a, aOff + n1 * lda, lda, c, cOff + n1 * ldc + n1, ldc);
     }
+
+    // ================================================================== Householder QR (geqrf / orgqr)
+
+    /// <summary>Columns per block of the blocked Householder QR.</summary>
+    private const int QrBlock = 32;
+
+    /// <summary>
+    /// In-place QR of the m x n matrix a (row stride lda), LAPACK's dgeqrf: R in the upper triangle, the Householder
+    /// vectors v_j (v_j[j] = 1 implied) below it, tau[j] their scalars (H_j = I - tau_j v_j v_j^T, A = H_1...H_k R).
+    /// Blocked: each 32-column panel is factored on a transposed copy (its columns contiguous), the trailing columns
+    /// are updated with the compact WY form I - V T V^T (three matrix products).
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    internal static void Geqrf(double[] a, int lda, int m, int n, double[] tau)
+    {
+        int k = Math.Min(m, n);
+        for (int j = 0; j < k; j += QrBlock)
+        {
+            int jb = Math.Min(QrBlock, k - j), mp = m - j;
+            // panel rows [j, m) x columns [j, j + jb), transposed: pt[c * mp + r] = a[j + r, j + c]
+            var pt = new double[jb * mp];
+            for (int r = 0; r < mp; r++)
+                for (int c = 0; c < jb; c++) pt[c * mp + r] = a[(j + r) * lda + j + c];
+            Geqr2Transposed(pt, mp, jb, tau, j);
+            for (int r = 0; r < mp; r++)
+                for (int c = 0; c < jb; c++) a[(j + r) * lda + j + c] = pt[c * mp + r];
+            int n2 = n - j - jb;
+            if (n2 > 0)
+            {
+                var vt = VectorsTransposed(pt, mp, jb);
+                var t = Larft(vt, mp, jb, tau, j);
+                ApplyBlockReflector(vt, t, mp, jb, a, j * lda + j + jb, lda, n2, transpose: true);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Unblocked QR (dgeqr2) of a panel stored transposed: column c of the panel is the contiguous row pt[c*mp ..].
+    /// Writes beta (R's diagonal) at the diagonal, R above it and v below it, tau[tauOff + c].
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static void Geqr2Transposed(double[] pt, int mp, int w, double[] tau, int tauOff)
+    {
+        ref double p0 = ref MemoryMarshal.GetArrayDataReference(pt);
+        for (int c = 0; c < w && c < mp; c++)
+        {
+            ref double x = ref Unsafe.Add(ref p0, (nint)c * mp + c); // x[0] = alpha, x[1..len) the rest of the column
+            int len = mp - c;
+            double t = Larfg(ref x, len);
+            tau[tauOff + c] = t;
+            if (t == 0) continue;
+            // apply H = I - t v v^T to the panel columns right of c (v[0] = 1)
+            double beta = x;
+            x = 1.0;
+            for (int d = c + 1; d < w; d++)
+            {
+                ref double y = ref Unsafe.Add(ref p0, (nint)d * mp + c);
+                double s = t * Dot(ref x, ref y, len);
+                AxpyNeg(s, ref x, ref y, len);
+            }
+            x = beta;
+        }
+    }
+
+    /// <summary>
+    /// LAPACK's dlarfg on x[0..n): alpha = x[0]; returns tau and leaves beta in x[0] and v[1..n) in x[1..n), so that
+    /// H [alpha; x] = [beta; 0] with H = I - tau [1; v] [1; v]^T. tau = 0 (H = I) when x[1..n) is zero.
+    /// </summary>
+    private static double Larfg(ref double x, int n)
+    {
+        if (n <= 1) return 0.0;
+        double alpha = x;
+        double xnorm = Nrm2(ref Unsafe.Add(ref x, 1), n - 1);
+        if (xnorm == 0) return 0.0;
+        double beta = -Math.CopySign(double.Hypot(alpha, xnorm), alpha);
+        double t = (beta - alpha) / beta;
+        double scale = 1.0 / (alpha - beta);
+        for (int i = 1; i < n; i++) Unsafe.Add(ref x, i) *= scale;
+        x = beta;
+        return t;
+    }
+
+    /// <summary>2-norm of x[0..n) without overflow or underflow (dnrm2's guarantee), fast path first.</summary>
+    private static double Nrm2(ref double x, int n)
+    {
+        double ss = Dot(ref x, ref x, n);
+        if (ss > 1e-290 && ss < 1e290) return Math.Sqrt(ss);
+        double big = 0;
+        for (int i = 0; i < n; i++) big = Math.Max(big, Math.Abs(Unsafe.Add(ref x, i)));
+        if (big == 0 || double.IsInfinity(big) || double.IsNaN(ss)) return ss == 0 ? 0 : big;
+        double s = 0;
+        for (int i = 0; i < n; i++)
+        {
+            double v = Unsafe.Add(ref x, i) / big;
+            s += v * v;
+        }
+        return big * Math.Sqrt(s);
+    }
+
+    /// <summary>V^T (w x mp) from a factored transposed panel: unit diagonal, zeros left of it, v right of it.</summary>
+    private static double[] VectorsTransposed(double[] pt, int mp, int w)
+    {
+        var vt = new double[w * mp];
+        for (int c = 0; c < w; c++)
+        {
+            if (c >= mp) break;
+            vt[c * mp + c] = 1.0;
+            Array.Copy(pt, c * mp + c + 1, vt, c * mp + c + 1, mp - c - 1);
+        }
+        return vt;
+    }
+
+    /// <summary>LAPACK's dlarft (forward, columnwise): the upper triangular T with H_1...H_w = I - V T V^T.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static double[] Larft(double[] vt, int mp, int w, double[] tau, int tauOff)
+    {
+        var t = new double[w * w];
+        ref double v0 = ref MemoryMarshal.GetArrayDataReference(vt);
+        var col = new double[w];
+        for (int i = 0; i < w; i++)
+        {
+            double ti = tau[tauOff + i];
+            if (ti == 0 || i >= mp) continue; // column i of T stays zero
+            // col[c] = -tau_i * v_c . v_i for c < i (v_i is zero above row i)
+            ref double vi = ref Unsafe.Add(ref v0, (nint)i * mp + i);
+            for (int c = 0; c < i; c++) col[c] = -ti * Dot(ref Unsafe.Add(ref v0, (nint)c * mp + i), ref vi, mp - i);
+            // T[0:i, i] = T[0:i, 0:i] * col (upper triangular)
+            for (int r = 0; r < i; r++)
+            {
+                double s = 0;
+                for (int c = r; c < i; c++) s += t[r * w + c] * col[c];
+                t[r * w + i] = s;
+            }
+            t[i * w + i] = ti;
+        }
+        return t;
+    }
+
+    /// <summary>
+    /// C (mp x nc at c[cOff], row stride ldc) := H C (transpose: false) or H^T C (true), H = I - V T V^T, V = vt^T
+    /// (mp x w). Three products: W = V^T C, W = T W (or T^T W), C -= V W.
+    /// </summary>
+    internal static void ApplyBlockReflector(double[] vt, double[] t, int mp, int w, double[] c, int cOff, int ldc, int nc, bool transpose)
+    {
+        if (nc <= 0 || mp <= 0) return;
+        var wk = new double[w * nc];
+        Gemm.Run(w, nc, mp, 1.0, vt, 0, mp, 1, c, cOff, ldc, 1, wk, 0, nc, accumulate: false);
+        var w2 = new double[w * nc];
+        if (transpose) Gemm.Run(w, nc, w, 1.0, t, 0, 1, w, wk, 0, nc, 1, w2, 0, nc, accumulate: false);
+        else Gemm.Run(w, nc, w, 1.0, t, 0, w, 1, wk, 0, nc, 1, w2, 0, nc, accumulate: false);
+        Gemm.Run(mp, nc, w, -1.0, vt, 0, 1, mp, w2, 0, nc, 1, c, cOff, ldc, accumulate: true);
+    }
+
+    /// <summary>
+    /// LAPACK's dorgqr: the first nq columns (k &lt;= nq &lt;= m) of Q = H_1...H_k from <see cref="Geqrf"/>'s output,
+    /// as an m x nq matrix. Blocks are applied last to first, each to the rows and columns it can reach.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    internal static double[] Orgqr(double[] a, int lda, int m, int k, double[] tau, int nq)
+    {
+        var q = new double[m * nq];
+        for (int i = 0; i < Math.Min(m, nq); i++) q[i * nq + i] = 1.0;
+        int last = (k - 1) / QrBlock * QrBlock;
+        for (int j = last; j >= 0; j -= QrBlock)
+        {
+            int jb = Math.Min(QrBlock, k - j), mp = m - j;
+            var vt = new double[jb * mp];
+            for (int c = 0; c < jb; c++)
+            {
+                vt[c * mp + c] = 1.0;
+                for (int r = c + 1; r < mp; r++) vt[c * mp + r] = a[(j + r) * lda + j + c];
+            }
+            var t = Larft(vt, mp, jb, tau, j);
+            ApplyBlockReflector(vt, t, mp, jb, q, j * nq + j, nq, nq - j, transpose: false);
+        }
+        return q;
+    }
 }

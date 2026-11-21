@@ -115,6 +115,31 @@ public static partial class numpy
             return upper ? r.T : r;
         }
 
+        /// <summary>
+        /// QR decomposition a = Q @ R by Householder reflections (LAPACK's dgeqrf + dorgqr, so the signs match NumPy's).
+        /// mode "reduced" (default): Q m x k, R k x n with k = min(m, n); "complete": Q m x m, R m x n.
+        /// </summary>
+        public static (ndarray Q, ndarray R) qr(ndarray a, string mode = "reduced")
+        {
+            if (a.ndim != 2) throw new NotSupportedException("qr: only 2-D arrays are supported");
+            bool complete = mode switch
+            {
+                "reduced" => false,
+                "complete" => true,
+                "r" or "raw" => throw new NotSupportedException($"qr: mode '{mode}' is not supported; use np.linalg.qr(a)[1] for R"),
+                _ => throw Err.Value($"Unrecognized mode '{mode}'"),
+            };
+            int m = a._shape[0], n = a._shape[1], k = Math.Min(m, n);
+            var f = (double[])a._data.Clone();
+            var tau = new double[k];
+            Lapack.Geqrf(f, n, m, n, tau);
+            int rows = complete ? m : k;
+            var r = new double[rows * n];
+            for (int i = 0; i < k; i++) Array.Copy(f, i * n + i, r, i * n + i, n - i);
+            var q = Lapack.Orgqr(f, n, m, k, tau, complete ? m : k);
+            return (new ndarray(q, new[] { m, complete ? m : k }), new ndarray(r, new[] { rows, n }));
+        }
+
         /// <summary>a raised to an integer power (repeated squaring; negative uses inv).</summary>
         public static ndarray matrix_power(ndarray a, int n)
         {
