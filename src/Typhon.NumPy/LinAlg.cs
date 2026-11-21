@@ -14,7 +14,9 @@ namespace Typhon.Stdlib;
 /// <summary>
 /// LAPACK-style factorizations on row-major float64 matrices (element (i, j) of a matrix at off + i*ld + j).
 /// They are recursive, so most of the work is in a few large matrix products (<see cref="Gemm"/>, threaded);
-/// what remains is narrow panels and small triangles, done with vector loops.
+/// what remains is narrow panels and small triangles, done with vector loops. Methods with such loops are
+/// AggressiveOptimization (tier-0 code made 100 x 100 solves several times slower in short programs); the recursive
+/// drivers that only split and dispatch are not, since compiling them fully at first use costs start-up time.
 /// </summary>
 internal static partial class Lapack
 {
@@ -49,7 +51,6 @@ internal static partial class Lapack
     /// half, then the top right block by a triangular solve, the bottom right block by a matrix product, then the
     /// bottom right block itself. Row swaps exchange whole rows of the matrix, so they reach every column.
     /// </summary>
-    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     private static void GetrfRec(double[] a, int lda, int n, int r0, int w, int[] ipiv, ref int info)
     {
         if (w <= LuBase)
@@ -201,7 +202,6 @@ internal static partial class Lapack
     // ================================================================== triangular solves (trsm / trsv)
 
     /// <summary>B (m x nrhs) := L^-1 * B, L the unit lower triangle of the m x m block at l[lOff] (diagonal not read).</summary>
-    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     internal static void TrsmLowerUnit(int m, int nrhs, double[] l, int lOff, int ldl, double[] b, int bOff, int ldb)
     {
         if (m <= 0 || nrhs <= 0) return;
@@ -234,7 +234,6 @@ internal static partial class Lapack
     }
 
     /// <summary>B (m x nrhs) := U^-1 * B, U the upper triangle (with its diagonal) of the m x m block at u[uOff].</summary>
-    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     internal static void TrsmUpper(int m, int nrhs, double[] u, int uOff, int ldu, double[] b, int bOff, int ldb)
     {
         if (m <= 0 || nrhs <= 0) return;
@@ -272,7 +271,6 @@ internal static partial class Lapack
     /// B (m x n) := B * L^-T, L the lower triangle (with its diagonal) of the n x n block at l[lOff]: solves
     /// X * L^T = B row by row (the off-diagonal blocks of a Cholesky factor).
     /// </summary>
-    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     internal static void TrsmRightLowerTrans(int m, int n, double[] l, int lOff, int ldl, double[] b, int bOff, int ldb)
     {
         if (m <= 0 || n <= 0) return;
@@ -481,7 +479,6 @@ internal static partial class Lapack
     }
 
     /// <summary>C (n x n, lower triangle) -= A * A^T, A n x k. Diagonal blocks are computed in full (their upper parts are scratch).</summary>
-    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     internal static void SyrkLower(int n, int k, double[] a, int aOff, int lda, double[] c, int cOff, int ldc)
     {
         if (n <= 0 || k <= 0) return;

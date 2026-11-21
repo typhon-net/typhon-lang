@@ -2,7 +2,6 @@
 // Licensed under the MIT License. See LICENSE file in the project root for full license information.
 
 using System;
-using System.Numerics.Tensors;
 
 namespace Typhon.Stdlib;
 
@@ -12,9 +11,10 @@ public static partial class numpy
     public static class typing { }
 
     /// <summary>
-    /// numpy.linalg (subset, 2-D float64): norm, det, slogdet, inv, solve, cholesky, matrix_power.
-    /// Factorizations are LAPACK's algorithms (recursive LU with partial pivoting, Cholesky) on top of a blocked,
-    /// threaded matrix product; see Lapack and Gemm.
+    /// numpy.linalg (subset, 2-D float64): norm, det, slogdet, inv, solve, matrix_power, cholesky, qr, eigh, eigvalsh,
+    /// svd, svdvals, lstsq, pinv, matrix_rank, cond. Factorizations are LAPACK's algorithms (recursive LU with partial
+    /// pivoting and Cholesky, blocked Householder QR, tridiagonal QL, Golub-Kahan SVD) on top of a blocked, threaded
+    /// matrix product; see Lapack and Gemm.
     /// </summary>
     public static class linalg
     {

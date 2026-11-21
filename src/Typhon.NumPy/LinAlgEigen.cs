@@ -436,7 +436,6 @@ internal static partial class Lapack
     /// n x n matrix m: (x, y) := (c x - s y, s x + c y), with s negated when negate. Done per chunk of columns, so the
     /// rows of a chunk stay in L1 across the whole sequence (LAPACK's dlasr); chunks are independent (threads).
     /// </summary>
-    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     private static void ApplyRotations(double[] m, int n, int lo, int hi, double[] c, double[] s, bool descending, bool negate)
     {
         const int Chunk = 128;
