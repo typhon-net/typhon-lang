@@ -82,6 +82,8 @@ namespace Typhon.Runtime
         {
             if (of == typeof(object)) return true;
             if (cls == of) return true;
+            // the numbers ABCs: int is an Integral, float a Real, ...
+            if (of.DeclaringType == typeof(Typhon.Stdlib.numbers) && Typhon.Stdlib.numbers.IsNumberType(cls, of)) return true;
             // Python's numeric tower among the builtins: bool is an int; ints are not floats
             if (IsIntType(of)) return IsIntType(cls) || cls == typeof(bool);
             if (of == typeof(double) || of == typeof(float)) return cls == typeof(double) || cls == typeof(float);
