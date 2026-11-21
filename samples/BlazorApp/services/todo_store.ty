@@ -1,0 +1,38 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+"""The to-do list: a service the app registers with dependency injection and the Todos page gets injected."""
+from dataclasses import dataclass
+
+
+@dataclass
+class Todo:
+    id: int
+    title: str
+    urgent: bool = False
+    done: bool = False
+
+
+class TodoStore:
+    """An in-memory list, registered as a singleton: one list for the whole app, kept across page loads."""
+
+    def __init__(self) -> None:
+        self.items: list[Todo] = []
+        self.next_id = 1
+        self.add("Write a Blazor page in Typhon", urgent=True)
+        self.add("Bind the markup to Python fields")
+
+    def add(self, title: str, urgent: bool = False) -> Todo:
+        todo = Todo(self.next_id, title.strip(), urgent)
+        self.next_id += 1
+        self.items.append(todo)
+        return todo
+
+    def remove(self, todo: Todo) -> None:
+        self.items.remove(todo)
+
+    def clear_done(self) -> int:
+        """Removes the finished to-dos; returns how many there were."""
+        before = len(self.items)
+        self.items = [t for t in self.items if not t.done]
+        return before - len(self.items)

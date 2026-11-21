@@ -1,0 +1,52 @@
+@page "/weather"
+@rendermode InteractiveServer
+@attribute [StreamRendering]
+@inherits weather.WeatherBase
+
+<PageTitle>Weather</PageTitle>
+
+<h1>Weather</h1>
+
+<div class="row">
+    <label>
+        Days
+        <select @bind="days" @bind:after="reload">
+            <option value="5">5</option>
+            <option value="7">7</option>
+            <option value="10">10</option>
+            <option value="14">14</option>
+        </select>
+    </label>
+    @if (refreshing)
+    {
+        <span class="muted">Refreshing...</span>
+    }
+</div>
+
+@if (forecasts is null)
+{
+    <p><em>Loading...</em></p>
+}
+else
+{
+    <BarChart values="@temperatures" labels="@labels" unit="°" />
+
+    <p class="muted">@stats</p>
+
+    <table>
+        <thead>
+            <tr><th>Day</th><th>Temp. (C)</th><th>Temp. (F)</th><th>Summary</th></tr>
+        </thead>
+        <tbody>
+            @foreach (var forecast in forecasts)
+            {
+                <tr>
+                    <td>@forecast.label</td>
+                    <td>@forecast.temperature_c</td>
+                    <td>@forecast.temperature_f</td>
+                    <td>@forecast.summary</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}

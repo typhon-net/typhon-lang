@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!--
+    A Blazor Web App (interactive server rendering): the markup in *.razor files, the logic in *.ty files.
+    The Web SDK compiles the Razor components, Typhon is added like in every sample.
+  -->
+  <PropertyGroup>
+    <TargetFramework>$(TyphonTargetFramework)</TargetFramework>
+    <TyphonTypeMode>strict</TyphonTypeMode>
+  </PropertyGroup>
+
+</Project>

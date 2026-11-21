@@ -14,6 +14,9 @@ dotnet run --project samples/CSharpApp
 # An ASP.NET Core minimal API written in Typhon (routes, JSON bodies, dependency injection)
 dotnet run --project samples/MinimalApi -- --urls http://localhost:5000
 
+# A Blazor web app: Razor markup with Typhon code-behind (state, event handlers, DI, async lifecycle methods)
+dotnet run --project samples/BlazorApp                   # http://localhost:5080
+
 # xUnit tests written in Typhon (@Fact, @Theory with @InlineData, Assert.*)
 dotnet test samples/XunitTests
 

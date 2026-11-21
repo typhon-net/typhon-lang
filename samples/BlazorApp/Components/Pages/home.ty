@@ -1,0 +1,32 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+"""The code-behind of Home.razor, a static server-rendered page (no @rendermode): OnInitialized runs once per request."""
+import sys
+from dataclasses import dataclass
+from datetime import datetime
+from Microsoft.AspNetCore.Components import ComponentBase
+
+
+@dataclass
+class Link:
+    href: str
+    title: str
+    text: str
+
+
+class HomeBase(ComponentBase):
+    rendered_at: str = ""
+
+    links = [
+        Link("counter", "Counter", "fields, @onclick handlers, @bind, a route parameter"),
+        Link("todos", "To-do list", "an injected service, a validated form, computed properties"),
+        Link("weather", "Weather", "async lifecycle methods, StateHasChanged, a chart computed in Python"),
+    ]
+
+    def OnInitialized(self) -> None:
+        self.rendered_at = datetime.now().strftime("%H:%M:%S")
+
+    @property
+    def runtime(self) -> str:
+        return sys.version  # "Typhon on .NET 11.0.0"

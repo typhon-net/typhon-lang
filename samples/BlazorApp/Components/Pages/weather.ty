@@ -1,0 +1,47 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+"""The code-behind of Weather.razor: async lifecycle methods, an async event handler and statistics in Python."""
+import statistics
+from typing import Annotated
+from Microsoft.AspNetCore.Components import ComponentBase, Inject
+from services.weather_service import Forecast, WeatherService
+
+
+class WeatherBase(ComponentBase):
+    service: Annotated[WeatherService, Inject()]
+    forecasts: list[Forecast] | None = None  # None until loaded: the markup shows "Loading..."
+    days: int = 7
+    refreshing: bool = False
+
+    async def OnInitializedAsync(self) -> None:
+        """Overrides ComponentBase.OnInitializedAsync (a Task): Blazor renders again when it completes."""
+        self.forecasts = await self.service.forecast(self.days)
+
+    async def reload(self) -> None:
+        """@bind:after of the days selector: an async event handler."""
+        self.refreshing = True
+        self.StateHasChanged()  # render "Refreshing..." now, before the forecast arrives
+        self.forecasts = await self.service.forecast(self.days)
+        self.refreshing = False
+
+    @property
+    def loaded(self) -> list[Forecast]:
+        return self.forecasts if self.forecasts is not None else []
+
+    @property
+    def temperatures(self) -> list[float]:
+        return [float(f.temperature_c) for f in self.loaded]
+
+    @property
+    def labels(self) -> list[str]:
+        return [f.day.strftime("%a") for f in self.loaded]
+
+    @property
+    def stats(self) -> str:
+        temps = [f.temperature_c for f in self.loaded]
+        if not temps:
+            return ""
+        warmest = max(self.loaded, key=lambda f: f.temperature_c)
+        return (f"Mean {statistics.mean(temps):.1f} °C, median {statistics.median(temps):g} °C, "
+                f"spread {max(temps) - min(temps)} °C; warmest on {warmest.label} ({warmest.summary.lower()}).")

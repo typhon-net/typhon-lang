@@ -10,6 +10,7 @@
     <Project Path="samples/TyphonLib/TyphonLib.csproj" />
     <Project Path="samples/CSharpApp/CSharpApp.csproj" />
     <Project Path="samples/MinimalApi/MinimalApi.csproj" />
+    <Project Path="samples/BlazorApp/BlazorApp.csproj" />
     <Project Path="samples/XunitTests/XunitTests.csproj" />
     <Project Path="samples/WasmLife/WasmLife.csproj" />
   </Folder>

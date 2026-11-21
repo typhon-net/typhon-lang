@@ -1,0 +1,17 @@
+@inherits bar_chart.BarChartBase
+@* The Razor compiler cannot see classes Typhon generates, so it would not know that this is a component:
+   @implements IComponent tells it (ComponentBase implements it already, so nothing else changes). *@
+@implements IComponent
+
+<svg class="chart" viewBox="0 0 @WIDTH @HEIGHT" role="img" aria-label="Bar chart">
+    <line class="axis" x1="0" x2="@WIDTH" y1="@baseline" y2="@baseline" />
+    @foreach (var bar in bars)
+    {
+        @* (in a <g>: a <text> tag right inside a C# block would be Razor's own) *@
+        <g>
+            <rect class="@(bar.below_zero ? "bar cold" : "bar")" x="@bar.x" y="@bar.y" width="@bar.width" height="@bar.height" />
+            <text class="value" x="@bar.center" y="@(bar.y - 6)">@bar.value</text>
+            <text class="label" x="@bar.center" y="@(HEIGHT - 6)">@bar.label</text>
+        </g>
+    }
+</svg>

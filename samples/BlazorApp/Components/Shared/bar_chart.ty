@@ -1,0 +1,58 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+"""The code-behind of BarChart.razor: the geometry of an SVG bar chart, computed in Python from the parameters."""
+from dataclasses import dataclass
+from typing import Annotated
+from Microsoft.AspNetCore.Components import ComponentBase, Parameter
+
+
+@dataclass
+class Bar:
+    x: int
+    y: int
+    width: int
+    height: int
+    label: str
+    value: str
+    below_zero: bool
+
+    @property
+    def center(self) -> int:
+        return self.x + self.width // 2
+
+
+class BarChartBase(ComponentBase):
+    # parameters, set from the parent's markup: <BarChart values="@temperatures" labels="@labels" unit="°" />
+    values: Annotated[list[float], Parameter()]
+    labels: Annotated[list[str], Parameter()]
+    unit: Annotated[str, Parameter()] = ""
+
+    WIDTH = 560
+    HEIGHT = 220
+    MARGIN = 26  # room for the value above a bar and the label below the chart
+
+    def y_of(self, value: float) -> int:
+        """The SVG y coordinate of a value: the largest value at the top margin, the smallest (or 0) at the bottom one."""
+        lo = min([0.0, *self.values])
+        hi = max([0.0, *self.values])
+        span = hi - lo if hi > lo else 1.0
+        return self.MARGIN + round((hi - value) / span * (self.HEIGHT - 2 * self.MARGIN))
+
+    @property
+    def baseline(self) -> int:
+        return self.y_of(0.0)
+
+    @property
+    def bars(self) -> list[Bar]:
+        if not self.values:
+            return []
+        slot = self.WIDTH / len(self.values)
+        zero = self.baseline
+        result: list[Bar] = []
+        for i, (value, label) in enumerate(zip(self.values, self.labels)):
+            top = self.y_of(value)
+            result.append(Bar(x=round(i * slot + slot * 0.15), y=min(top, zero), width=round(slot * 0.7),
+                              height=max(1, abs(zero - top)), label=label, value=f"{value:g}{self.unit}",
+                              below_zero=value < 0))
+        return result

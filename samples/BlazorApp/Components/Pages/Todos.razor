@@ -1,0 +1,43 @@
+@page "/todos"
+@rendermode InteractiveServer
+@inherits todos.TodosBase
+
+<PageTitle>To-do list</PageTitle>
+
+<h1>To-do list</h1>
+
+<EditForm Model="form" OnValidSubmit="add" FormName="new-todo" class="row">
+    <DataAnnotationsValidator />
+    <InputText @bind-Value="form.title" placeholder="What needs doing?" />
+    <label><InputCheckbox @bind-Value="form.urgent" /> urgent</label>
+    <button type="submit" class="primary">Add</button>
+    <ValidationMessage For="() => form.title" />
+</EditForm>
+
+<div class="row">
+    <input type="search" placeholder="Search" @bind="search" @bind:event="oninput" />
+    <span class="muted" role="status">@summary</span>
+    <button @onclick="clear_done" disabled="@(finished == 0)">Clear finished</button>
+</div>
+
+<ul class="todos">
+    @foreach (var todo in visible)
+    {
+        <li class="@(todo.done ? "done" : "")">
+            <label>
+                <input type="checkbox" @bind="todo.done" />
+                @todo.title
+            </label>
+            @if (todo.urgent)
+            {
+                <span class="tag">urgent</span>
+            }
+            <button class="link" @onclick="() => remove(todo)" title="Remove">&#x2715;</button>
+        </li>
+    }
+</ul>
+
+@if (message != "")
+{
+    <p class="muted">@message</p>
+}
