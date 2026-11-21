@@ -39,7 +39,9 @@
   Python's syntax, group numbering and `sub`/`split`/`findall` rules), `array`, `struct`, `hashlib`,
   `statistics` (exact fractions like CPython, so results match digit for digit), `textwrap`, `base64`/`binascii`, `csv`
   (ports of CPython's reader state machine and writer quoting), `glob`/`fnmatch`, `shutil`, `uuid`,
-  `tempfile`, `timeit` and `doctest` (`testmod()` runs no examples), plus `bytes`, `bytearray` and binary files, compiled
+  `tempfile`, `timeit` and `doctest` (`testmod()` runs no examples), `warnings` and `traceback` (on .NET stack traces
+  mapped to the `.ty` source), `types`, `stat`/`errno`, `getopt`, `atexit`, `reprlib`, `gc`, `keyword`, `builtins`,
+  the builtin exceptions without a .NET counterpart, plus `bytes`, `bytearray` and binary files, compiled
   *into* every Typhon assembly as internal types — no runtime dependency. Scripts compiled in memory by `typhon run`
   reference a precompiled copy instead (`src/Typhon.Runtime`), which saves recompiling it on every run.
 * **CLI** (`src/Typhon.Cli`): `typhon run` takes the fastest way that is still exact. An unchanged script that ran

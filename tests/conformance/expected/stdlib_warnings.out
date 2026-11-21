@@ -1,0 +1,48 @@
+-- record everything
+42
+5 True True
+  DeprecationWarning old_api() is deprecated; use new_api() 30
+  UserWarning noisy 1 18
+  UserWarning noisy 1 18
+  RuntimeWarning explicit 33
+  _PluginWarning plugin trouble 34
+-- the default action shows a warning once per location
+  UserWarning noisy 7 18
+  UserWarning noisy 8 18
+-- once: once per message, wherever it comes from
+  UserWarning noisy 9 18
+-- filters by message, category, append
+  UserWarning keep this one 62
+  FutureWarning future 65
+-- error raises the warning
+  raised UserWarning('boom') ('boom',)
+  raised DeprecationWarning old_api() is deprecated; use new_api()
+-- ignore, resetwarnings, catch_warnings(action=...)
+1
+2
+-- showwarning and formatwarning
+module.py:12: UserWarning: message text
+  x = compute()
+module.py:3: RuntimeWarning: no source
+['UserWarning: noisy 14 (line 18)', 'SyntaxWarning: custom display (line 110)']
+-- @deprecated and _deprecated
+5
+  DeprecationWarning use add_numbers() instead 127
+  DeprecationWarning 'legacy' is deprecated and slated for removal in Python 3.20 128
+RuntimeError: 'gone' was slated for removal after Python 3.14 alpha
+-- traceback
+Traceback (most recent call last):
+ValueError: invalid literal for int() with base 10: 'x'
+return int(text)
+["KeyError: 'b'\n"]
+KeyError: 'b'
+KeyError ["KeyError: 'b'\n"]
+['ValueError: bad value\n']
+['_PluginWarning\n']
+['ImportError: never raised\n']
+['  File "prog.py", line 2\n', '    print(1 +)\n', '            ^\n', 'SyntaxError: invalid syntax\n']
+[('<module>', 174), ('outer_frame', 171), ('where', 167)]
+[<FrameSummary file app.py, line 10 in main>, <FrameSummary file lib.py, line 3 in run>]
+['  File "app.py", line 10, in main\n    run()\n', '  File "lib.py", line 3, in run\n']
+['  File "app.py", line 10, in main\n    run()\n']
+<FrameSummary file app.py, line 10 in main> app.py 10 main run() True

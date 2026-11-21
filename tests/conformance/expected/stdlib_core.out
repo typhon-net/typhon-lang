@@ -1,0 +1,71 @@
+EOFError: end of input
+DeprecationWarning DeprecationWarning('old api') False True
+_AppWarning _AppWarning('app') True False
+ImportError ImportError('no module named x', name='x', path='x.py') no module named x x x.py True
+ModuleNotFoundError ModuleNotFoundError("No module named 'y'", name='y') No module named 'y' y None True
+FileExistsError: [Errno 17] File exists: 'data.txt' 17 File exists data.txt True
+LookupError: LookupError('nothing there')
+NameError: name 'z' is not defined z
+ConnectionError: [Errno 111] Connection refused 111 Connection refused True
+ValueError: 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte True
+invalid syntax (prog.py, line 3) invalid syntax prog.py 3 5 'x = (\n' 6
+bad (line 7) IndentationError('expected an indented block')
+UserWarning() '' ('a', 2) RuntimeWarning('a', 2)
+'ascii' codec can't encode character '\xe9' in position 3: ordinal not in range(128)
+[Errno 21] Is a directory: 'a' -> 'b' NotADirectoryError(20, 'Not a directory')
+[Errno 11] Resource temporarily unavailable 5
+several (3 sub-exceptions) 3 several
+2 1
+True True True
+True True False
+True True True
+True True False
+MISSING MISSING True
+NotImplemented Ellipsis True True
+['norm1', 'x', 'y']
+['split', 'startswith', 'upper']
+4.0
+ModuleNotFoundError: No module named 'no_such_module_here' no_such_module_here
+frozendict({'a': 1, 'b': 2}) frozendict({'a': 1, 'b': 2}) 2 2 True 0 ['a', 'b']
+True True True
+frozendict({'x': 1, 'y': 2}) frozendict() True
+TypeError: 'frozendict' object does not support item assignment
+frozen keys work
+namespace(name='typhon', version=3, extra=[1, 2]) typhon 3 True
+{'debug': True, 'level': 3} mappingproxy({'debug': True, 'level': 3}) 3 2 True ['debug', 'level']
+TypeError: 'mappingproxy' object does not support item assignment
+<module 'plugins'> plugins 2
+(3, 4) cm
+KeyError[ValueError] False
+True True True False
+-rw-r--r-- drwxr-xr-x lrwxrwxrwx -rwsr-xr-x drwxrwxrwt
+0o644 0o100000 0 8 32768 16
+True True True True
+ENOENT EPERM True
+True True
+True False True True
+35 ['False', 'None', 'True', 'and', 'as'] ['_', 'case', 'lazy', 'match', 'type']
+[('-v', ''), ('-o', 'out.txt'), ('--level', '3'), ('--dry-run', '')] ['input.ty', '-x']
+[('-v', ''), ('--level', '2')] ['input.ty', 'more.ty']
+[('-a', ''), ('-b', 'c')] ['-v']
+GetoptError: option -q not recognized 'q'
+GetoptError: option -o requires argument 'o'
+GetoptError: option --lev not a unique prefix; possible options: level=, levels 'lev'
+GetoptError: option --dry-run must not have an argument 'dry-run'
+[0, 1, 2, 3, 4, 5, ...] (0, 1, 2) (1,)
+'xxxxxxxxxxxx...xxxxxxxxxxxxx'
+{0: '0', 1: '1', 2: '2', 3: '3', ...}
+{0, 1, 2, 3, 4, 5, ...} frozenset({1, 2, 3}) ''
+[[[[[[[...]]]]]]]
+[1, 2, ..] 'ab..nop' 123..1234
+Tree('root', [Tree('leaf', []), ...])
+True True
+False
+True []
+builtins.print | 42
+4 [1] [1, 2, 3] 7 9 True
+SystemExit 0
+'' []
+end of the program
+farewell, Typhon
+registered first, runs last

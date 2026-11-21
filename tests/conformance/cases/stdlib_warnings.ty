@@ -1,0 +1,180 @@
+# The warnings module (filters, catch_warnings, the default action's once-per-location rule, stacklevel, @deprecated)
+# and traceback's formatting. Warnings that are shown go to stderr, which is not compared: the cases record them.
+import traceback
+import warnings
+from typing import Any
+
+
+class _PluginWarning(UserWarning):
+    pass
+
+
+def old_api(x: int) -> int:
+    warnings.warn("old_api() is deprecated; use new_api()", DeprecationWarning, stacklevel=2)
+    return x * 2
+
+
+def noisy(n: int) -> None:
+    warnings.warn(f"noisy {n}")
+
+
+def summary(caught: list[warnings.WarningMessage] | None) -> None:
+    assert caught is not None
+    for m in caught:
+        print(" ", m.category.__name__, str(m.message), m.lineno)
+
+
+print("-- record everything")
+with warnings.catch_warnings(record=True) as caught:
+    warnings.simplefilter("always")
+    print(old_api(21))
+    noisy(1)
+    noisy(1)
+    warnings.warn("explicit", RuntimeWarning)
+    warnings.warn(_PluginWarning("plugin trouble"))
+    print(len(caught), issubclass(caught[0].category, DeprecationWarning), caught[0].category is DeprecationWarning)
+    summary(caught)
+
+print("-- the default action shows a warning once per location")
+with warnings.catch_warnings(record=True) as caught:
+    warnings.simplefilter("default")
+    for i in range(3):
+        noisy(7)
+    noisy(8)
+    summary(caught)
+
+print("-- once: once per message, wherever it comes from")
+with warnings.catch_warnings(record=True) as caught:
+    warnings.simplefilter("once")
+    noisy(9)
+    noisy(9)
+    warnings.warn("noisy 9")
+    summary(caught)
+
+print("-- filters by message, category, append")
+with warnings.catch_warnings(record=True) as caught:
+    warnings.simplefilter("always")
+    warnings.filterwarnings("ignore", message="skip")
+    warnings.filterwarnings("ignore", category=RuntimeWarning)
+    warnings.filterwarnings("error", category=FutureWarning, append=True)
+    warnings.warn("skip this one")
+    warnings.warn("SKIP case-insensitively")
+    warnings.warn("keep this one")
+    warnings.warn("runtime", RuntimeWarning)
+    try:
+        warnings.warn("future", FutureWarning)
+    except FutureWarning as e:
+        print("  appended filter not reached:", repr(e))
+    summary(caught)
+
+print("-- error raises the warning")
+with warnings.catch_warnings():
+    warnings.simplefilter("error")
+    try:
+        warnings.warn("boom", UserWarning)
+    except UserWarning as e:
+        print("  raised", repr(e), e.args)
+    try:
+        old_api(1)
+    except DeprecationWarning as e:
+        print("  raised", type(e).__name__, e)
+
+print("-- ignore, resetwarnings, catch_warnings(action=...)")
+with warnings.catch_warnings(record=True) as caught:
+    warnings.simplefilter("ignore")
+    noisy(10)
+    warnings.resetwarnings()
+    noisy(11)
+    print(len(caught))
+with warnings.catch_warnings(action="ignore"):
+    noisy(12)
+with warnings.catch_warnings(record=True, action="always", category=UserWarning) as caught:
+    noisy(13)
+    noisy(13)
+    print(len(caught))
+
+print("-- showwarning and formatwarning")
+print(warnings.formatwarning("message text", UserWarning, "module.py", 12, "x = compute()"), end="")
+print(warnings.formatwarning("no source", RuntimeWarning, "module.py", 3, ""), end="")
+seen: list[str] = []
+
+
+def my_show(message: Warning, category: Any, filename: str, lineno: int, file: object = None, line: object = None) -> None:
+    seen.append(f"{category.__name__}: {message} (line {lineno})")
+
+
+with warnings.catch_warnings():
+    warnings.simplefilter("always")
+    warnings.showwarning = my_show
+    noisy(14)
+    warnings.warn("custom display", SyntaxWarning)
+print(seen)
+
+print("-- @deprecated and _deprecated")
+
+
+@warnings.deprecated("use add_numbers() instead")
+def add(a: int, b: int) -> int:
+    return a + b
+
+
+def legacy() -> None:
+    warnings._deprecated("legacy", remove=(3, 20))
+
+
+with warnings.catch_warnings(record=True) as caught:
+    warnings.simplefilter("always")
+    print(add(2, 3))
+    legacy()
+    summary(caught)
+try:
+    warnings._deprecated("gone", remove=(3, 14))
+except RuntimeError as e:
+    print("RuntimeError:", e)
+
+print("-- traceback")
+
+
+def parse(text: str) -> int:
+    return int(text)
+
+
+def load(values: list[str]) -> list[int]:
+    return [parse(v) for v in values]
+
+
+try:
+    load(["1", "x"])
+except ValueError:
+    lines = traceback.format_exc().splitlines()
+    print(lines[0])
+    print(lines[-1])
+    print(lines[-2].strip())
+try:
+    {"a": 1}["b"]
+except KeyError as e:
+    print(traceback.format_exception_only(e))
+    print(traceback.format_exception(e)[-1], end="")
+    te = traceback.TracebackException.from_exception(e)
+    print(te.exc_type_str, list(te.format_exception_only()))
+print(traceback.format_exception_only(ValueError("bad value")))
+print(traceback.format_exception_only(_PluginWarning()))
+print(traceback.format_exception(ImportError("never raised", name="mod")))
+print(traceback.format_exception_only(SyntaxError("invalid syntax", ("prog.py", 2, 9, "print(1 +)\n", 2, 10))))
+
+
+def where() -> list[tuple[str, int]]:
+    return [(f.name, f.lineno) for f in traceback.extract_stack()]
+
+
+def outer_frame() -> list[tuple[str, int]]:
+    return where()
+
+
+print(outer_frame())
+frames = traceback.StackSummary.from_list([("app.py", 10, "main", "run()"), ("lib.py", 3, "run", None)])
+print(frames)
+print(frames.format())
+print(traceback.format_list([("app.py", 10, "main", "run()")]))
+fs = traceback.FrameSummary("app.py", 10, "main", line="run()")
+print(repr(fs), fs.filename, fs.lineno, fs.name, fs.line, fs == ("app.py", 10, "main", "run()"))

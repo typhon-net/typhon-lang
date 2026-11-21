@@ -1,0 +1,229 @@
+# The builtin exceptions without a .NET counterpart, the introspection builtins (issubclass, dir, __import__,
+# frozendict, sentinel), and small standard modules: types, stat, errno, keyword, getopt, reprlib, gc,
+# builtins, linecache and atexit (whose functions print after everything else).
+import atexit
+import builtins
+import errno
+import gc
+import getopt
+import keyword
+import linecache
+import reprlib
+import stat
+import types
+from types import MappingProxyType, SimpleNamespace
+
+
+# ── exceptions ──
+
+class _AppWarning(UserWarning):
+    pass
+
+
+def fail(kind: int) -> None:
+    if kind == 0:
+        raise EOFError("end of input")
+    if kind == 1:
+        raise DeprecationWarning("old api")
+    if kind == 2:
+        raise _AppWarning("app")
+    if kind == 3:
+        raise ImportError("no module named x", name="x", path="x.py")
+    if kind == 4:
+        raise ModuleNotFoundError("No module named 'y'", name="y")
+    if kind == 5:
+        raise FileExistsError(17, "File exists", "data.txt")
+    if kind == 6:
+        raise LookupError("nothing there")
+    if kind == 7:
+        raise NameError("name 'z' is not defined", name="z")
+    if kind == 8:
+        raise ConnectionRefusedError(111, "Connection refused")
+    if kind == 9:
+        raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+
+
+for kind in range(10):
+    try:
+        fail(kind)
+    except EOFError as e:
+        print("EOFError:", e)
+    except Warning as w:
+        print(type(w).__name__, repr(w), isinstance(w, UserWarning), isinstance(w, DeprecationWarning))
+    except ImportError as e:
+        print(type(e).__name__, repr(e), e.msg, e.name, e.path, isinstance(e, ImportError))
+    except ConnectionError as e:
+        print("ConnectionError:", e, e.errno, e.strerror, isinstance(e, OSError))
+    except FileExistsError as e:
+        print("FileExistsError:", e, e.errno, e.strerror, e.filename, isinstance(e, OSError))
+    except LookupError as e:
+        print("LookupError:", repr(e))
+    except NameError as e:
+        print("NameError:", e, e.name)
+    except ValueError as e:
+        print("ValueError:", e, isinstance(e, UnicodeError))
+
+s = SyntaxError("invalid syntax", ("prog.py", 3, 5, "x = (\n", 3, 6))
+print(str(s), s.msg, s.filename, s.lineno, s.offset, repr(s.text), s.end_offset)
+print(str(SyntaxError("bad", (None, 7, 1, "y"))), repr(IndentationError("expected an indented block")))
+print(repr(UserWarning()), repr(str(UserWarning())), RuntimeWarning("a", 2).args, repr(RuntimeWarning("a", 2)))
+print(str(UnicodeEncodeError("ascii", "café", 3, 4, "ordinal not in range(128)")))
+print(str(IsADirectoryError(21, "Is a directory", "a", None, "b")), repr(NotADirectoryError(20, "Not a directory")))
+print(str(BlockingIOError(11, "Resource temporarily unavailable", 5)), BlockingIOError(11, "x", 5).characters_written)
+eg = ExceptionGroup("several", [KeyError("k"), TypeError("t"), KeyError("j")])
+print(str(eg), len(eg.exceptions), eg.message)
+match, rest = eg.split(KeyError)
+print(len(match.exceptions) if match is not None else 0, len(rest.exceptions) if rest is not None else 0)
+print(issubclass(DeprecationWarning, Warning), issubclass(ModuleNotFoundError, ImportError), issubclass(TabError, SyntaxError))
+print(issubclass(KeyError, LookupError), issubclass(IndexError, LookupError), issubclass(KeyError, ValueError))
+print(issubclass(UnicodeDecodeError, ValueError), issubclass(BrokenPipeError, OSError), issubclass(RecursionError, RuntimeError))
+print(issubclass(FileExistsError, (KeyError, OSError)), issubclass(Warning, Exception), issubclass(SystemExit, Exception))
+
+# ── introspection builtins ──
+
+MISSING = sentinel("MISSING")
+print(MISSING, repr(MISSING), MISSING is MISSING)
+print(repr(NotImplemented), repr(Ellipsis), isinstance(NotImplemented, types.NotImplementedType), isinstance(Ellipsis, types.EllipsisType))
+
+
+class Point:
+    def __init__(self, x: int, y: int) -> None:
+        self.x = x
+        self.y = y
+
+    def norm1(self) -> int:
+        return abs(self.x) + abs(self.y)
+
+
+print([n for n in dir(Point(1, 2)) if not n.startswith("_")])
+print([n for n in dir("text") if n in ("upper", "split", "startswith")])
+m = __import__("math")
+print(getattr(m, "sqrt")(16.0))
+try:
+    __import__("no_such_module_here")
+except ModuleNotFoundError as e:
+    print("ModuleNotFoundError:", e, e.name)
+
+fd = frozendict({"a": 1, "b": 2})
+print(fd, repr(fd), fd["b"], len(fd), "a" in fd, fd.get("z", 0), list(fd))
+print(fd == {"a": 1, "b": 2}, fd == frozendict({"b": 2, "a": 1}), hash(fd) == hash(frozendict({"b": 2, "a": 1})))
+print(frozendict([("x", 1), ("y", 2)]), frozendict(), fd.copy() is fd)
+try:
+    fd["c"] = 3
+except TypeError as e:
+    print("TypeError:", e)
+cache = {fd: "frozen keys work"}
+print(cache[frozendict({"a": 1, "b": 2})])
+
+# ── types ──
+
+ns = SimpleNamespace(name="typhon", version=3)
+ns.extra = [1, 2]
+print(ns, ns.name, ns.version, ns == SimpleNamespace(name="typhon", version=3, extra=[1, 2]))
+config = {"debug": True, "level": 2}
+view = MappingProxyType(config)
+config["level"] = 3
+print(view, repr(view), view["level"], len(view), "debug" in view, sorted(view))
+try:
+    view["debug"] = False
+except TypeError as e:
+    print("TypeError:", e)
+mod = types.ModuleType("plugins", "Loaded at run time.")
+mod.count = 2
+print(mod, mod.__name__, mod.count)
+
+
+def describe(self: Point, unit: str) -> str:
+    return f"({self.x}, {self.y}) {unit}"
+
+
+bound = types.MethodType(describe, Point(3, 4))
+print(bound("cm"))
+print(types.GenericAlias(KeyError, (ValueError,)), types.coroutine(describe) is describe)
+
+# ── stat and errno ──
+
+print(stat.S_ISDIR(stat.S_IFDIR | 0o755), stat.S_ISREG(0o100644), stat.S_ISLNK(0o120777), stat.S_ISDIR(0o100644))
+print(stat.filemode(0o100644), stat.filemode(0o40755), stat.filemode(0o120777), stat.filemode(0o104755), stat.filemode(0o1777 | stat.S_IFDIR))
+print(oct(stat.S_IMODE(0o100644)), oct(stat.S_IFMT(0o100644)), stat.ST_MODE, stat.ST_MTIME, stat.UF_HIDDEN, stat.FILE_ATTRIBUTE_DIRECTORY)
+print(errno.ENOENT == 2, errno.EEXIST == 17, errno.EACCES == 13, errno.EINVAL == 22)
+print(errno.errorcode[errno.ENOENT], errno.errorcode[errno.EPERM], errno.errorcode[errno.ETIMEDOUT] == "ETIMEDOUT")
+print(errno.EWOULDBLOCK in errno.errorcode, errno.ECONNREFUSED != errno.ECONNRESET)
+
+# ── keyword, getopt ──
+
+print(keyword.iskeyword("lambda"), keyword.iskeyword("match"), keyword.issoftkeyword("match"), keyword.issoftkeyword("lazy"))
+print(len(keyword.kwlist), keyword.kwlist[:5], keyword.softkwlist)
+opts, rest_args = getopt.getopt(["-v", "-o", "out.txt", "--level=3", "--dry", "input.ty", "-x"], "vo:", ["level=", "dry-run"])
+print(opts, rest_args)
+opts, rest_args = getopt.gnu_getopt(["input.ty", "-v", "--level", "2", "more.ty"], "v", ["level="])
+print(opts, rest_args)
+opts, rest_args = getopt.getopt(["-abc", "--", "-v"], "ab:")
+print(opts, rest_args)
+for bad in (["-q"], ["-o"], ["--lev"], ["--dry-run=yes"]):
+    try:
+        getopt.getopt(bad, "o:", ["level=", "levels", "dry-run"])
+    except getopt.GetoptError as err:
+        print("GetoptError:", err, repr(err.opt))
+
+# ── reprlib ──
+
+print(reprlib.repr(list(range(100))), reprlib.repr(tuple(range(3))), reprlib.repr((1,)))
+print(reprlib.repr("x" * 100))
+print(reprlib.repr({i: str(i) for i in range(10)}))
+print(reprlib.repr(set(range(20))), reprlib.repr(frozenset([3, 1, 2])), reprlib.repr(""))
+print(reprlib.repr([[[[[[[["deep"]]]]]]]]))
+short = reprlib.Repr(maxlist=2, maxstring=10, maxlong=10, fillvalue="..")
+print(short.repr([1, 2, 3]), short.repr("abcdefghijklmnop"), short.repr(12345678901234))
+
+
+class Tree:
+    def __init__(self, label: str) -> None:
+        self.label = label
+        self.kids: list[Tree] = []
+
+    @reprlib.recursive_repr()
+    def __repr__(self) -> str:
+        return f"Tree({self.label!r}, {self.kids})"
+
+
+root = Tree("root")
+root.kids.append(Tree("leaf"))
+root.kids.append(root)
+print(repr(root))
+
+# ── gc, builtins, linecache ──
+
+print(gc.collect() >= 0, gc.isenabled())
+gc.disable()
+print(gc.isenabled())
+gc.enable()
+print(gc.isenabled(), gc.garbage)
+builtins.print("builtins.print", 42, sep=" | ")
+print(builtins.len("four"), builtins.repr([1]), builtins.sorted([3, 1, 2]), builtins.abs(-7), builtins.max(4, 9), builtins.isinstance(KeyError("k"), LookupError))
+try:
+    builtins.exit(0)
+except SystemExit as e:
+    print("SystemExit", e.code)
+print(repr(linecache.getline("no-such-file.ty", 1)), linecache.getlines("no-such-file.ty"))
+
+# ── atexit ──
+
+
+def farewell(who: str) -> None:
+    print("farewell,", who)
+
+
+def registered_first() -> None:
+    print("registered first, runs last")
+
+
+def never() -> None:
+    print("unregistered: never runs")
+
+
+atexit.register(registered_first)
+atexit.register(farewell, "Typhon")
+atexit.register(never)
+atexit.unregister(never)
+print("end of the program")

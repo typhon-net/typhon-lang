@@ -112,7 +112,10 @@ reference equality unless `__eq__` is defined) and **Python semantics where it i
   the module's names; a class defined inside a function that uses none of its variables moves to module level
 * `print`/`str`/`repr`/f-strings format like CPython (`True`, `None`, `[1, 2]`, `{'a': 1}`, `1.0`, `Color.RED`)
 * Python exceptions map to .NET ones (`ValueError` → `ArgumentException`/`FormatException`, `KeyError` →
-  `KeyNotFoundException`, ...), so `except ValueError` catches what .NET throws and C# can catch what Typhon raises
+  `KeyNotFoundException`, `EOFError` → `EndOfStreamException`, ...), so `except ValueError` catches what .NET throws and
+  C# can catch what Typhon raises; the builtin exceptions without a .NET counterpart (the warning categories,
+  `ImportError` with `name`/`path`, `SyntaxError` with its location, the `OSError` subclasses with `errno`/`strerror`/
+  `filename`, the Unicode errors, `ExceptionGroup`, ...) are runtime classes with Python's `args`, `str()` and `repr()`
 
 ## Supported (PoC)
 
@@ -238,3 +241,33 @@ function name of each frame; `f_locals` is empty and `f_globals` holds only `__n
 can be called but Typhon's own handler reports uncaught exceptions; `io.BytesIO.getbuffer()` is a copy (a `bytearray`),
 not a view; `io.UnsupportedOperation` is an `OSError` but not a `ValueError`; `open(path, "rb")` is an
 `io.BufferedIOBase` (not specifically a `BufferedReader`).
+
+**warnings** follows CPython 3.15: `warn` (with `stacklevel`, counted in Typhon frames, and `skip_file_prefixes`),
+`warn_explicit`, `filterwarnings`/`simplefilter`/`resetwarnings` over `warnings.filters` with CPython's default filters
+(a `DeprecationWarning` shows only when `__main__` triggers it), the actions `default` (once per location), `once`,
+`module`, `always`, `ignore` and `error`, a shown warning printed to stderr as `file:line: Category: message` plus the
+source line, replaceable `showwarning`/`formatwarning`, `catch_warnings` (`record=True` collects `WarningMessage`
+objects; `action=`), `@deprecated` on functions (a decorated class is returned unchanged) and the stdlib's
+`_deprecated`. **traceback** formats .NET stack traces mapped to the `.ty` source, as the CLI prints an uncaught
+exception: `format_exc`/`print_exc` (the exception being handled is the last one raised on the thread),
+`format_exception`, `format_exception_only`, `print_exception`, `extract_stack`/`format_stack`/`print_stack`,
+`format_list`, `StackSummary`, `FrameSummary`, `TracebackException`; `extract_tb`/`format_tb` take the exception itself
+(Typhon has no `__traceback__` objects). There are no `~~^^` markers, no chained exceptions (`During handling of ...`),
+no frame locals, and a comprehension shows as a frame of its own. **linecache** (`getline`, `getlines`, `clearcache`,
+`checkcache`, `updatecache`; `lazycache` returns False). **types**: `SimpleNamespace`, `MappingProxyType`,
+`GenericAlias`, `MethodType`, `ModuleType`, `DynamicClassAttribute`, `coroutine`, `resolve_bases`, and the names of
+the interpreter's types for annotations; only `NotImplementedType`, `EllipsisType` and the classes the module constructs
+have instances, so `isinstance(f, types.FunctionType)` is False and `types.new_class` raises. **stat** (CPython's
+constants, `S_IS*`, `S_IMODE`, `S_IFMT`, `filemode`) and **errno** (the numbers CPython has on the platform the program
+runs on, and `errorcode`). **getopt** is a port of CPython's (`getopt`, `gnu_getopt`, `GetoptError`). **atexit**
+functions run last-first when the process exits (also after `sys.exit` or an uncaught exception). **gc** offers
+CPython's API over .NET's collector: `collect()` runs a full collection, `disable()` only changes `isenabled()`, and
+`get_objects()`/`get_referrers()` return `[]`. **reprlib** (`Repr`, `repr`, `recursive_repr`), **keyword**,
+**numbers** (the ABCs; `issubclass(int, numbers.Integral)` holds, `isinstance(5, numbers.Integral)` does not yet),
+**copyreg** (the registries) and **builtins** (`builtins.open`, `builtins.print`, ... forward to the builtins; the
+module is not a value, so `getattr(builtins, name)` does not work). The builtins `issubclass`, `dir` (reflection,
+sorted; `dir()` without an argument is `[]`), `__import__` (a standard module, as the class holding its members),
+`frozendict` (CPython 3.15; `frozendict(a=1)` keyword form not yet), `sentinel`, `NotImplemented`, `Ellipsis` and
+`breakpoint` are provided; `compile`, `exec` and `eval` compile but raise `NotImplementedError` when called (there is no
+interpreter at run time). A Typhon class cannot derive from these runtime exception classes or module classes unless its
+name starts with `_` (the runtime's types are internal; a public class may not derive from them).
