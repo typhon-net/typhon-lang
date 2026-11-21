@@ -1,0 +1,28 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+"""Conformance: standard modules and the runtime's classes used as values: hasattr/getattr on a module, a module bound
+to another name (m = math), classes as dict keys and in lists, a class in a variable called to construct."""
+
+import os
+import sys
+import math
+import weakref
+import collections
+
+print(hasattr(os, "sep"), hasattr(os, "no_such_thing"), getattr(sys, "maxsize") > 0)
+print(getattr(math, "sqrt")(16.0))
+m = math
+print(m.floor(2.5))
+kinds = {weakref.ref: "ref", collections.deque: "deque"}
+print(kinds[weakref.ref], len(kinds))
+k = collections.deque
+d = k([1, 2])
+print(len(d))
+print(type(os).__name__, os.__name__)
+
+print(weakref.ref is not None)
+kind_list = [weakref.ref, collections.deque]
+print(len(kind_list))
+table = {weakref.ref: 1}
+print(table[weakref.ref])

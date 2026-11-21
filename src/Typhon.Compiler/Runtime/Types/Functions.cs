@@ -237,6 +237,7 @@ namespace Typhon.Runtime
             if (t == typeof(PyBytes)) return "bytes";
             if (t == typeof(PyByteArray)) return "bytearray";
             if (typeof(PyFunction).IsAssignableFrom(t)) return "function";
+            if (t == typeof(PyModule)) return "module";
             if (t.IsArray && t != typeof(byte[])) return "tuple";
             if (t.IsGenericType)
             {

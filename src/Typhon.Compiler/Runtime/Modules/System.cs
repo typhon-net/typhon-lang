@@ -331,6 +331,9 @@ namespace Typhon.Runtime
         public readonly string __name__;
         readonly Type? _type;
         public PyModule(string name, Type? type) { __name__ = name; _type = type; }
+        static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, PyModule> _of = new();
+        /// <summary>A standard module used as a value (hasattr(os, "sep")): one object per module, like sys.modules' entry.</summary>
+        public static PyModule Of(Type type, string name) => _of.GetOrAdd(type, t => new PyModule(name, t));
         public string? __file__ => null;
         public override bool TryGetMember(GetMemberBinder binder, out object? result) => TryGet(binder.Name, out result);
         bool TryGet(string name, out object? result)

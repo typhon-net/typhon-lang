@@ -160,6 +160,7 @@ namespace Typhon.Compiler
                 info.Ast = new ModuleAst { Path = path };
             }
             Decorators.Apply(info.Ast);
+            ModuleAliases.Apply(info.Ast);
             foreach (var s in info.Ast.Body)
             {
                 if (s is AssignStmt alias && alias.Targets.Count == 1 && alias.Targets[0] is NameExpr an0 && IsTypeAliasValue(alias.Value))

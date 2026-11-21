@@ -48,7 +48,7 @@ namespace Typhon.Compiler.Emit
             // a late-bound container: a position (a Python int, maybe negative) or a key, resolved at run time
             // (also a late-bound key on a container of a type Typhon does not know: C# would bind its indexer at run time to an int)
             if ((targetType == "dynamic" || targetType == null && InferType(s.Index) == "dynamic") && !(s.Index is TupleExpr))
-                return $"{Rt("__getitem")}((object?){target}, (object?){Paren(EmitExpr(s.Index))})";
+                return $"{Rt("__getitem")}((object?){target}, (object?){Paren(ModuleOrClassValue(s.Index) ?? EmitExpr(s.Index))})";
             // a[x, y] on a late-bound a: the key is the tuple (x, y) (a Typhon class's __getitem__ takes one key)
             if (targetType == "dynamic" && s.Index is TupleExpr dtk && !dtk.Parenthesized && !dtk.Elts.Any(x => x is SliceExpr))
                 return $"{Rt("__getitem")}((object?){target}, (object?){EmitExpr(new TupleExpr { Elts = dtk.Elts, Parenthesized = true, Line = dtk.Line, Col = dtk.Col })})";
@@ -67,7 +67,7 @@ namespace Typhon.Compiler.Emit
             // (also a number of another type: d[3.0] finds the key 3, as in Python)
             if (IsDictType(targetType) && DictTypes(targetType) is List<string> skv && skv[0] != "dynamic" && !skv[0].Contains(TypeInference.Pending) &&
                 !(s.Index is TupleExpr) && (InferType(s.Index) == "dynamic" || IsNumeric(skv[0]) && InferType(s.Index) is string kit && IsNumeric(kit) && kit != skv[0] && !(skv[0] == "double" && IsIntegral(kit))))
-                return $"{target}[{Rt("__key")}<{skv[0]}>((object?){Paren(EmitExpr(s.Index))})]";
+                return $"{target}[{Rt("__key")}<{skv[0]}>((object?){Paren(ModuleOrClassValue(s.Index) ?? EmitExpr(s.Index))})]";
             // self[x, y] on a Typhon class: its __getitem__ takes one key, the tuple (x, y)
             if (s.Index is TupleExpr tk && !tk.Parenthesized && (ClassKeyOfType(targetType, out _) != null || _cls != null && targetType == _cls.CsSelfType || s.Target is NameExpr sn0 && sn0.Id == "self"))
                 return $"{target}[{EmitExpr(new TupleExpr { Elts = tk.Elts, Parenthesized = true, Line = tk.Line, Col = tk.Col })}]";
@@ -76,7 +76,7 @@ namespace Typhon.Compiler.Emit
             // xs[i] with a late-bound i: a Python int converted, the position checked like any other (an int indexer does not
             // take a boxed long at run time)
             if (targetType != null && (targetType.StartsWith("List<") || targetType.EndsWith("[]")) && InferType(s.Index) == "dynamic")
-                return $"{Rt("__at")}({target}, (long){Paren(EmitExpr(s.Index))})";
+                return $"{Rt("__at")}({target}, (long){Paren(ModuleOrClassValue(s.Index) ?? EmitExpr(s.Index))})";
             // a list or array position that may be negative counts from the end (Python's xs[-k], xs[i - 1] at i == 0)
             if (!IsIntLiteral(s.Index) && !IsNonNegative(s.Index) && targetType != null && !(s.Index is TupleExpr) && IsIntegral(InferType(s.Index)) &&
                 (targetType.StartsWith("List<") || targetType.EndsWith("[]") || targetType.StartsWith("IList<") || targetType.StartsWith("IReadOnlyList<") || targetType.StartsWith(PyTuplePrefix)))

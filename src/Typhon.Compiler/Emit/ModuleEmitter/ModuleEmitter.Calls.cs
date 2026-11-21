@@ -156,7 +156,7 @@ namespace Typhon.Compiler.Emit
             var items = new List<string>();
             for (int i = 0; i < take; i++) items.Add(tupleTypes != null ? $"{source}.Item{i + 1}" : $"{Rt("__unpack")}({source}, {i}, {take})");
             var args = before.Select(a => EmitExpr(a.Value)).Concat(items).Concat(after.Select(a => $"{Esc(a.Name)}: {EmitExpr(a.Value)}"));
-            string func = c.Func is NameExpr cfn ? EmitName(cfn) : EmitExpr(c.Func);
+            string func = c.Func is NameExpr cfn ? EmitName(cfn) : EmitCallee(c.Func);
             string call = TryTypeExpr(c.Func, out var typeCode) ? $"new {typeCode}({string.Join(", ", args)})" : $"{func}({string.Join(", ", args)})";
             return prefix != null ? $"({prefix}{call} }})" : call;
         }
@@ -289,6 +289,7 @@ namespace Typhon.Compiler.Emit
                     ? EmitName(dg)
                     : a.Value is NameExpr fv && FunctionValueLambda(fv) is string lambda ? lambda
                     : a.Value is NameExpr mg && FunctionRef(mg, out _, out _) ? EmitName(mg) // a method group, for a delegate parameter
+                    : ModuleOrClassValue(a.Value) is string objectValue ? objectValue // hasattr(os, "sep"), {weakref.ref: ...}
                     : EmitExpr(a.Value);
                 // a dynamically dispatched call cannot take a lambda as such: give it a delegate type of dynamic values
                 if (dynamicCall && a.Value is LambdaExpr dl)
@@ -434,7 +435,7 @@ namespace Typhon.Compiler.Emit
             if (SpecialFormCall(c, targetTyped) is string special) return special;
             if (PythonCall(c, targetTyped) is string python) return python;
             // a call that is none of those: a Typhon function or class, a .NET method or constructor, typed by its arguments
-            string func = c.Func is NameExpr cfn ? EmitName(cfn) : StaticThroughInstance(c.Func) ?? EmitExpr(c.Func);
+            string func = c.Func is NameExpr cfn ? EmitName(cfn) : StaticThroughInstance(c.Func) ?? EmitCallee(c.Func);
             if (c.Func is LambdaExpr || c.Func is IfExpr) func = Paren(func);
             var typedAt = TypedParamPositions(c);
             if (typedAt == null && c.Func is AttributeExpr pm && RuntimeExtensionMethods.Contains(pm.Name) && IsPythonContainer(InferType(pm.Target)) &&
@@ -552,7 +553,7 @@ namespace Typhon.Compiler.Emit
                         return $"(({MapType(c.Args[0].Value, c)}){Paren(EmitExpr(c.Args[1].Value))})";
                     case "type":
                         if (c.Args.Count != 1) break;
-                        return $"{Paren(EmitExpr(c.Args[0].Value))}.GetType()";
+                        return $"{Paren(ModuleOrClassValue(c.Args[0].Value) ?? EmitExpr(c.Args[0].Value))}.GetType()";
                     case "print":
                         if (c.Args.Any(a => a.Name != null))
                         {
@@ -649,6 +650,9 @@ namespace Typhon.Compiler.Emit
         /// fills is known only at run time, so the call binds there, by parameter name (the function's value, the bound
         /// method or the class, through reflection); its value has the type the call has.
         /// </summary>
+        /// <summary>A call's function as C# code: an attribute naming a class or function stays its name (not a type object).</summary>
+        string EmitCallee(Expr f) => f is AttributeExpr fa ? EmitAttribute(fa) : EmitExpr(f);
+
         /// <summary>The call an expression statement consists of, while it is emitted.</summary>
         CallExpr _statementCall;
 
@@ -719,7 +723,7 @@ namespace Typhon.Compiler.Emit
             var extra = c.Args.Where(a => a.DoubleStar || a.Name != null && !known.Contains(a.Name)).ToList();
             if (extra.Count == 0) return null;
             string args = EmitArgs(direct, overloads: overloads);
-            string callee = isType ? $"new {typeCode}" : c.Func is NameExpr fn ? EmitName(fn) : EmitExpr(c.Func);
+            string callee = isType ? $"new {typeCode}" : c.Func is NameExpr fn ? EmitName(fn) : EmitCallee(c.Func);
             return $"{callee}({args}{(args.Length > 0 ? ", " : "")}__kwargs: {KeywordArgs(extra)})";
         }
 
@@ -770,7 +774,7 @@ namespace Typhon.Compiler.Emit
                 KwargsCallArgs(kwCallee, kwImplicit, c.Args) is string kwArgs)
             {
                 if (TryTypeExpr(c.Func, out var kwType)) return $"new {kwType}({kwArgs})";
-                return $"{(c.Func is NameExpr kfn ? EmitName(kfn) : EmitExpr(c.Func))}({kwArgs})";
+                return $"{(c.Func is NameExpr kfn ? EmitName(kfn) : EmitCallee(c.Func))}({kwArgs})";
             }
             // super().m(...) in a class whose bases have no m (a mixin compiled on its own: the next class in an MRO it is
             // mixed into has it): AttributeError when it runs, as in Python

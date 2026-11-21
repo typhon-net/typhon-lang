@@ -82,6 +82,8 @@ namespace Typhon.Compiler.Emit
                     return $"typeof({evType})";
                 case NameExpr n: return EmitName(n);
                 case FStringExpr f: return EmitFString(f);
+                // one of the runtime's classes as a value ({weakref.ref: ...}, cls is collections.deque): its type object
+                case AttributeExpr ca when !Receivers.Contains(ca) && ModuleOrClassValue(ca) is string classValue: return classValue;
                 case AttributeExpr a: return EmitAttribute(a);
                 case CallExpr gu when _m.IsGdScript && GdUnsignedCall(gu): return $"((long){EmitCall(gu, targetTyped)})";
                 case CallExpr c: return EmitCall(c, targetTyped);
@@ -167,6 +169,7 @@ namespace Typhon.Compiler.Emit
         /// </summary>
         string EmitValue(Expr e, bool targetTyped = false)
         {
+            if (ModuleOrClassValue(e) is string objectValue) return objectValue;
             switch (e)
             {
                 case ConstExpr c when c.Kind == ConstKind.Int: return IntLiteral(EmitConst(c));
@@ -303,6 +306,58 @@ namespace Typhon.Compiler.Emit
             if (!declares) return null;
             if (_cls != null && c == _cls.Def) return _cls.CsSelfType;
             return c.TypeParams.Count == 0 ? Esc(c.Name) : null;
+        }
+
+        /// <summary>
+        /// A standard module or one of the runtime's classes used as a value (hasattr(os, "sep"), getattr(math, name),
+        /// {weakref.ref: ...}): the module object (sys.modules' kind) or the type object; null for anything else. (Where a
+        /// module or class is the target of an attribute or a call, its C# name is emitted instead, by the callers.)
+        /// </summary>
+        /// <summary>The module's expressions that are the target of an attribute or the function of a call: names, not values.</summary>
+        HashSet<Expr> Receivers => _receivers ??= CollectReceivers();
+        HashSet<Expr> _receivers;
+        HashSet<Expr> CollectReceivers()
+        {
+            var set = new HashSet<Expr>();
+            if (_m.Ast != null)
+                AstWalker.VisitAll(_m.Ast.Body, n =>
+                {
+                    if (n is AttributeExpr x) set.Add(x.Target);
+                    else if (n is CallExpr c) set.Add(c.Func);
+                });
+            return set;
+        }
+
+        string ModuleOrClassValue(Expr e)
+        {
+            if (e is NameExpr n && !IsLocal(n.Id) && !_moduleFieldTypes.ContainsKey(n.Id) && !_renames.ContainsKey(n.Id) &&
+                _dotnetAliases.TryGetValue(n.Id, out var meta) && meta.StartsWith("Typhon.Stdlib.") && !meta.Contains('+'))
+                return $"global::Typhon.Runtime.PyModule.Of(typeof({EmitName(n)}), {CsString(meta.Substring("Typhon.Stdlib.".Length).TrimEnd('_'))})";
+            if (e is AttributeExpr a && DottedName(a) is string dotted && !IsLocal(dotted.Split('.')[0]))
+                // (a generic class such as collections.deque: the type with object for its type arguments, constructible and a dict key)
+                for (int arity = 0; arity <= 3; arity++)
+                    // (not a module nested in a module, os.path or numpy.linalg: a static class, without constructors)
+                    if (TryResolveType(dotted, arity, out var tmeta, out var py) && py == null && tmeta != null && tmeta.StartsWith("Typhon.Stdlib.") && tmeta.Contains('+') &&
+                        _r.GetConstructors(tmeta).Count > 0)
+                        return arity == 0 ? $"typeof({CsTypeName(tmeta)})"
+                             : $"typeof({CsTypeName(tmeta.Split('`')[0])}<{string.Join(", ", Enumerable.Repeat("object", arity))}>)";
+            // a class the runtime defines beside its module, made by a factory function of the module (collections.deque)
+            if (e is AttributeExpr fa && fa.Target is NameExpr fm && !IsLocal(fm.Id) && !_moduleFieldTypes.ContainsKey(fm.Id) &&
+                _dotnetAliases.TryGetValue(fm.Id, out var fmeta) && fmeta.StartsWith("Typhon.Stdlib.") && !fmeta.Contains('+') &&
+                _r.GetMembers(fmeta, fa.Name).All(x => x.IsMethod))
+            {
+                // (the class the factory returns, named like it: deque<T> deque<T>(...) → typeof(deque<object>))
+                string made = _r.GetMembers(fmeta, fa.Name).Where(x => x.IsMethod).Select(x => x.GenericType ?? x.Type)
+                    .FirstOrDefault(t => t != null && t.Split('<')[0].EndsWith("." + fa.Name));
+                if (made != null)
+                {
+                    string open = made.Split('<')[0];
+                    int depth = 0, arity = made.Contains('<') ? 1 : 0;
+                    foreach (char ch in made) { if (ch == '<') depth++; else if (ch == '>') depth--; else if (ch == ',' && depth == 1) arity++; }
+                    return arity == 0 ? $"typeof({open})" : $"typeof({open}<{string.Join(", ", Enumerable.Repeat("object", arity))}>)";
+                }
+            }
+            return null;
         }
 
         string EmitAttribute(AttributeExpr a)
