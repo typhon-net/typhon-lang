@@ -248,8 +248,9 @@ namespace Typhon.Compiler.Emit
                 if (!a.Star && (a.Value is ListExpr || a.Value is DictExpr || a.Value is SetExpr) && !IsEmptyLiteral(a.Value) &&
                     paramTypeAt?.Invoke(argPos, a.Name) is string cpt && cpt.Contains("dynamic") && PyType(InferType(a.Value)) != cpt)
                 {
-                    string typedLit = EmitExpr(a.Value, targetTyped: true);
-                    parts.Add(a.Name != null ? $"{Esc(a.Name)}: ({cpt}){typedLit}" : $"({cpt}){typedLit}");
+                    // (for an Any parameter itself the literal keeps its own type: a collection expression has no target type there)
+                    string typedLit = cpt == "dynamic" ? EmitExpr(a.Value) : $"({cpt}){EmitExpr(a.Value, targetTyped: true)}";
+                    parts.Add(a.Name != null ? $"{Esc(a.Name)}: {typedLit}" : typedLit);
                     continue;
                 }
                 if (a.Name == null && !a.Star && targetTypedAt != null && targetTypedAt(argPos) && IsEmptyLiteral(a.Value))
@@ -280,7 +281,11 @@ namespace Typhon.Compiler.Emit
                 // (where the parameter takes no function, issubclass(bool, int), the builtin is its type object: below)
                 string v = a.Value is NameExpr vn && ValueBuiltins.Contains(vn.Id) && !IsShadowed(vn.Id) && !_renames.ContainsKey(vn.Id) &&
                            !(noDelegateHere && BuiltinTypeValues.ContainsKey(vn.Id) && paramsHere.All(x => x.GenericType == "object" || x.GenericType == "global::System.Type" || x.GenericType == "System.Type"))
-                    ? (_big && vn.Id == "int" ? $"(__v => {Rt("__bigint")}(__v))" : $"(__v => {EmitName(vn)}(__v))")
+                    ? (_big && vn.Id == "int" ? $"(__v => {Rt("__bigint")}(__v))"
+                       // (map(repr, items) with items late-bound: nothing gives the lambda's parameter a type: object, the builtin's object overload)
+                       : args.Any(o => o != a && !o.Star && InferType(o.Value) is var ot && (ot == null || ot == "dynamic" || ot.Contains("<dynamic>") || ot == "object"))
+                       ? $"((dynamic __v) => {EmitName(vn)}((object?)__v))"
+                       : $"(__v => {EmitName(vn)}(__v))")
                     // str.upper / str.lower / list.copy passed as a function: a lambda calling the method on its argument
                     : a.Value is AttributeExpr um && um.Target is NameExpr umt && BuiltinTypeNames.Contains(umt.Id) && !IsShadowed(umt.Id) && !BuiltinClassMethods.Contains(um.Name) &&
                       !(um.Name.StartsWith("__") && um.Name.EndsWith("__")) // (int.__name__ is a value)

@@ -45,7 +45,22 @@ namespace Typhon.Compiler.Emit
                     {
                         foreach (var types in baseSigs)
                         {
-                            var tps = it.Params.Select((p, i) => $"{(types[i] == TypeInference.Declared ? MapType(p.Annotation, init) : types[i])} {Esc(p.Name)}");
+                            var tps = it.Params.Select((p, i) => $"{(types[i] == TypeInference.Declared ? MapType(p.Annotation, init) : types[i])} {Esc(p.Name)}").ToList();
+                            // the base __init__'s defaults where they fit this signature's types (optional parameters last, as C# wants)
+                            for (int i = tps.Count - 1; i >= 0; i--)
+                            {
+                                var p = it.Params[i];
+                                string pt = types[i] == TypeInference.Declared ? MapType(p.Annotation, init) : types[i];
+                                if (p.Default == null) break;
+                                if (pt == "dynamic" || pt == "object")
+                                {
+                                    if (!IsConstantDefault(p.Default)) break;
+                                    tps[i] = IsNone(p.Default) ? tps[i] + " = null"
+                                        : $"[global::System.Runtime.InteropServices.Optional, global::System.Runtime.InteropServices.DefaultParameterValue({EmitValue(p.Default)})] {tps[i]}";
+                                }
+                                else if (InferType(p.Default) == pt || IsNone(p.Default) && pt.EndsWith("?")) tps[i] += " = " + EmitExpr(p.Default, targetTyped: true);
+                                else break;
+                            }
                             // (a dynamic parameter goes as object: a constructor initializer cannot be dispatched dynamically)
                             var baseArgs = it.Params.Select((p, i) => types[i] == "dynamic" ? $"(object?){Esc(p.Name)}" : Esc(p.Name));
                             _w.Line($"{SurfaceVisibility("public", string.Join(", ", tps))} {Esc(ctx.Name)}({string.Join(", ", tps)}) : base({string.Join(", ", baseArgs)}) {{ }}");
@@ -58,7 +73,11 @@ namespace Typhon.Compiler.Emit
                     {
                         if (p.Kind != ParamKind.Normal) return; // *args/**kwargs: no faithful C# mirror, write an __init__
                         string type = p.Annotation != null ? MapType(p.Annotation, init) : "dynamic";
-                        ps.Add($"{type} {Esc(p.Name)}" + (p.Default != null ? " = " + EmitExpr(p.Default, targetTyped: true) : ""));
+                        // (a late-bound parameter with a number/bool/str default: C# allows only null as a dynamic parameter's
+                        // default, but honours [Optional, DefaultParameterValue(...)])
+                        if (p.Default != null && (type == "dynamic" || type == "object") && IsConstantDefault(p.Default) && !IsNone(p.Default))
+                            ps.Add($"[global::System.Runtime.InteropServices.Optional, global::System.Runtime.InteropServices.DefaultParameterValue({EmitValue(p.Default)})] {type} {Esc(p.Name)}");
+                        else ps.Add($"{type} {Esc(p.Name)}" + (p.Default != null ? " = " + EmitExpr(p.Default, targetTyped: true) : ""));
                         // a constructor initializer cannot be dispatched dynamically: late-bound values go as object
                         names.Add(type == "dynamic" ? $"(object?){Esc(p.Name)}" : Esc(p.Name));
                     }
