@@ -104,6 +104,7 @@ namespace Typhon.Compiler.Emit
                 }
                 case AttributeExpr at when at.Target is NameExpr self && self.Id == "self" && _cls != null:
                     return _cls.FieldTypes.TryGetValue(at.Name, out var ft) ? ft : InheritedFieldType(_cls.Def, at.Name) ??
+                           (_m.IsGdScript ? GdSelfMemberType(at.Name) : null) ??
                            (!_cls.IsInterface && HasSelfInScope() && SelfMemberUnknown(at.Name) ? "dynamic" : null); // (a mixin's: late-bound)
                 case AttributeExpr mp when mp.Name.StartsWith(LocalsAnalyzer.MatchPositionPrefix) && mp.Target is CallExpr mc0:
                 {
@@ -328,6 +329,8 @@ namespace Typhon.Compiler.Emit
             }
             if (call.Func is AttributeExpr ma && ma.Target is NameExpr ms && ms.Id == "self" && _cls != null && _cls.MethodReturnTypes.TryGetValue(ma.Name, out var mrt))
                 return mrt == "void" ? null : mrt;
+            // a GDScript method call on self that the native base declares (get_viewport_rect())
+            if (_m.IsGdScript && call.Func is AttributeExpr gm && gm.Target is NameExpr gs && gs.Id == "self" && DotNetResultType(gm.Target, gm.Name, call) is string gdRet) return gdRet;
             if (StdlibCallType(call) is string stdlibRet) return stdlibRet;
             if (call.Func is NameExpr fn && !IsShadowed(fn.Id))
             {
@@ -449,6 +452,7 @@ namespace Typhon.Compiler.Emit
                 if (l == TypeInference.Pending && r == TypeInference.Pending) return TypeInference.Pending;
                 return l == TypeInference.Pending ? r : l;
             }
+            if (_m.IsGdScript && GdBinOpType(b, l, r) is string gdType) return gdType;
             // an operator of a Typhon class: what its __sub__ / __add__ / ... returns (not "T - T is T": Point - Point is a Vector)
             if (DunderOperatorType(b.Op, l, r) is string dunderType) return dunderType;
             // a .NET type's own operator for these operand types (date - date is a timedelta, date - timedelta a date)

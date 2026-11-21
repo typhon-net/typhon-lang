@@ -1,0 +1,33 @@
+range(5) sum 10
+step 2
+step 5
+step 8
+down 5
+down 3
+down 1
+int loop 0
+int loop 1
+int loop 2
+typed int loop 0
+typed int loop 1
+item a
+item b
+item c
+char h
+char e
+char y
+key x = 1
+key y = 2
+odd 1
+odd 3
+odd 5
+odd 7
+0 is zero
+1 is one
+2 is more
+zero, small, greeting, the limit, something else
+pair 1 2, list starting with 7, named Ada, something else
+ABC
+nested 10
+one-line if
+total 20

@@ -341,6 +341,7 @@ namespace Typhon.Compiler.Emit
                 return a.Name is "__name__" or "__doc__" or "__wrapped__" or "__module__" or "__qualname__" ? $"{fav}.{a.Name}" : $"((dynamic){fav}).{Esc(a.Name)}";
             string target = a.Target is ConstExpr ic && ic.Kind == ConstKind.Int ? EmitValue(a.Target) : a.Target is NameExpr tn0 ? EmitName(tn0) : EmitExpr(a.Target);
             if (a.Target is ConstExpr || a.Target is UnaryExpr || a.Target is BinOpExpr || a.Target is AwaitExpr) target = Paren(target);
+            if (_m.IsGdScript && GdMemberAccess(a, target) is string gdMember) return gdMember;
             return target + "." + Esc(a.Name);
         }
 

@@ -140,6 +140,7 @@ namespace Typhon.Compiler.Emit
 
         string EmitBinOp(BinOpExpr b)
         {
+            if (_m.IsGdScript && GdEmitBinOp(b) is string gd) return gd;
             // literal-only integer arithmetic is folded when the result fits 64 bits (otherwise it raises OverflowError at run time)
             if (FoldInt(b) is BigInteger folded && (_big || folded >= long.MinValue && folded <= long.MaxValue))
                 return IntConstant(folded);

@@ -44,7 +44,7 @@ namespace Typhon.Compiler.Emit
 
         public ModuleEmitter(ModuleInfo module, ProjectContext project, List<TyDiagnostic> diags, bool dryRun = false)
         {
-            _m = module; _p = project; _diags = diags; _r = project.Resolver; _path = module.Path; _dry = dryRun;
+            _m = module; _p = project; _diags = diags; _r = ResolverFor(module, project); _path = module.Path; _dry = dryRun;
         }
 
 
@@ -81,6 +81,15 @@ namespace Typhon.Compiler.Emit
 
         public string Emit()
         {
+            // GDScript has no access control: every member of a .gd module is public (Godot calls _process & co.)
+            bool savedPublic = t_allPublic;
+            t_allPublic = _m.IsGdScript;
+            try { return EmitModule(); }
+            finally { t_allPublic = savedPublic; }
+        }
+
+        string EmitModule()
+        {
             foreach (var n in AllNodes(_m.Ast.Body))
             {
                 if (n is ImportStmt i) ProcessImport(i);
@@ -111,12 +120,16 @@ namespace Typhon.Compiler.Emit
             if (hasNs) { _w.Line("namespace " + _m.Namespace); _w.Open(); }
 
             var body = _m.Ast.Body;
+            // a GDScript module: the script class is a top-level class (Godot's script classes must be), which sees the
+            // module's static class (its inner classes) through a using static
+            if (GdScriptClass != null) _w.Line($"using static {ModuleClassName(_m)};");
             EmitDocComment(body);
             LineDirective(body.FirstOrDefault());
             _w.Line("public static partial class " + Esc(_m.ClassName));
             _w.Open();
             EmitModuleBody(body);
             _w.Close();
+            if (GdScriptClass != null) { _w.Line(); EmitClass(GdScriptClass); }
 
             if (hasNs) _w.Close();
             _w.Raw("#line default");
@@ -237,7 +250,7 @@ namespace Typhon.Compiler.Emit
             foreach (var s in body)
             {
                 if (s is FunctionDef f) { EmitFunction(f, isModuleLevel: true); _w.Line(); }
-                else if (s is ClassDef c) { EmitClass(c); _w.Line(); }
+                else if (s is ClassDef c && c != GdScriptClass) { EmitClass(c); _w.Line(); }
             }
             foreach (var f in body.OfType<FunctionDef>())
                 if (FunctionValueKeys.Contains(TypeInference.FuncKey(_m, null, f.Name))) { EmitFunctionValueClass(f); _w.Line(); }

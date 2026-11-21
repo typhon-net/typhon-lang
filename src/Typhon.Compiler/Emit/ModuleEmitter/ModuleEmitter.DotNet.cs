@@ -69,7 +69,7 @@ namespace Typhon.Compiler.Emit
             if (c.Func is AttributeExpr fa)
             {
                 if (DotNetStaticMeta(fa.Target) is string sm) return _r.GetMembers(sm, fa.Name).Where(m => m.IsMethod && m.IsStatic).ToList();
-                if (fa.Target is NameExpr sn && sn.Id == "self") return null;
+                if (fa.Target is NameExpr sn && sn.Id == "self") return GdSelfMembers(fa.Name).Where(m => m.IsMethod).ToList() is { Count: > 0 } gs ? gs : null;
                 var rt = InferType(fa.Target);
                 if (ClassKeyOfType(rt, out _) != null) return null;
                 if (DotNetMeta(rt) is string im)
@@ -123,6 +123,7 @@ namespace Typhon.Compiler.Emit
         /// </summary>
         string NarrowingFor(IReadOnlyList<Semantics.MemberSig> overloads, List<Arg> args, Arg a, int argPos)
         {
+            if (_m.IsGdScript && GdFloatNarrowing(overloads, args, a, argPos) is string gdFloat) return gdFloat;
             if (_big) return BigNarrowingFor(overloads, args, a, argPos);
             if (IsIntLiteral(a.Value) || InferType(a.Value) != "long") return null;
             int positional = args.Count(x => x.Name == null && !x.Star && !x.DoubleStar);
@@ -183,7 +184,7 @@ namespace Typhon.Compiler.Emit
         IEnumerable<Semantics.MemberSig> DotNetMembers(Expr receiver, string name)
         {
             if (DotNetStaticMeta(receiver) is string sm) return _r.GetMembers(sm, name).Where(m => m.IsStatic);
-            if (receiver is NameExpr sn && sn.Id == "self") return Enumerable.Empty<Semantics.MemberSig>();
+            if (receiver is NameExpr sn && sn.Id == "self") return GdSelfMembers(name);
             var rt = InferType(receiver);
             if (rt == null || ClassKeyOfType(rt, out _) != null) return Enumerable.Empty<Semantics.MemberSig>();
             return DotNetMeta(rt) is string im ? _r.GetMembers(im, name).Where(m => !m.IsStatic) : Enumerable.Empty<Semantics.MemberSig>();
@@ -209,6 +210,7 @@ namespace Typhon.Compiler.Emit
         /// <summary>A Python int assigned to a .NET property or field of a narrower integer type: the narrowing type, or null.</summary>
         string NarrowingForMember(AttributeExpr at, Expr value)
         {
+            if (_m.IsGdScript && GdFloatNarrowingForMember(at, value) is string gdFloat) return gdFloat;
             if (IsIntLiteral(value)) return null;
             string vt = InferType(value);
             if (_big && vt == TypeInference.BigInt)

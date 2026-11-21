@@ -23,7 +23,9 @@ namespace Typhon.Compiler.Emit
         {
             string subj = NewTmp("m");
             string subjType = InferType(m.Subject);
-            _w.Line($"var {subj} = {EmitValue(m.Subject)};");
+            // (a GDScript match on an untyped value: the patterns test an object, a dynamic subject cannot bind 'out var')
+            if (_m.IsGdScript && subjType == "dynamic") { _w.Line($"object? {subj} = {EmitValue(m.Subject)};"); subjType = "object"; }
+            else _w.Line($"var {subj} = {EmitValue(m.Subject)};");
             bool first = true;
             foreach (var c in m.Cases)
             {

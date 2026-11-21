@@ -1,0 +1,14 @@
+hello [1, 2, 3] 1
+0 5 6 0 3
+enum var 6 true
+11 16 16 16
+start! 42
+rect with area 6.00
+round circle with area 12.00
+blob with area 0.00
+total area 18.0
+true false true
+(3, 4) (0, 0) (3, 4)
+0 ["health=100", "health=70", "health=0"]
+signal: first
+signal: second

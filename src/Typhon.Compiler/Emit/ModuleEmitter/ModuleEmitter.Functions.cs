@@ -94,6 +94,7 @@ namespace Typhon.Compiler.Emit
 
         static string Visibility(string name, bool topLevel)
         {
+            if (t_allPublic) return "public";
             if (name.StartsWith("__") && !name.EndsWith("__")) return "private";
             if (name.StartsWith("_") && !name.EndsWith("__")) return topLevel ? "internal" : "protected internal";
             return "public";
@@ -504,7 +505,7 @@ namespace Typhon.Compiler.Emit
             string keyType = types.Count == 1 ? types[0] : "(" + string.Join(", ", types) + ")";
             string key = names.Count == 1 ? Esc(names[0]) : "(" + string.Join(", ", names.Select(Esc)) + ")";
             _w.Open();
-            _w.Line("checked");
+            _w.Line(CheckedKeyword);
             _w.Open();
             foreach (var line in sig.Prologue) _w.Line(line);
             _w.Line($"if ({id}.TryGetValue({key}, out var __hit)) return __hit;");
@@ -541,7 +542,7 @@ namespace Typhon.Compiler.Emit
             _nonNegative.UnionWith(own);
             _w.Open();
             // Python ints never wrap around: arithmetic is checked (beyond 64 bits it raises OverflowError)
-            _w.Line("checked");
+            _w.Line(CheckedKeyword);
             _w.Open();
             if (prologue != null) _w.Line(prologue);
             extraPrologue?.Invoke();

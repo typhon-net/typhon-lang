@@ -41,7 +41,7 @@ namespace Typhon.Compiler.Generator
             });
 
             var files = context.AdditionalTextsProvider
-                .Where(f => f.Path.EndsWith(TyphonCompiler.FileExtension, StringComparison.OrdinalIgnoreCase))
+                .Where(f => f.Path.EndsWith(TyphonCompiler.FileExtension, StringComparison.OrdinalIgnoreCase) || TyphonCompiler.IsGdScriptPath(f.Path))
                 .Select((f, ct) => new KeyValuePair<string, string>(f.Path, f.GetText(ct)?.ToString() ?? ""));
 
             var all = files.Collect().Combine(options).Combine(context.CompilationProvider);
@@ -81,7 +81,7 @@ namespace Typhon.Compiler.Generator
                     continue;
                 }
                 foreach (var d in diags) Report(spc, d);
-                spc.AddSource(m.Name + ".ty.g.cs", SourceText.From(code, System.Text.Encoding.UTF8));
+                spc.AddSource(m.Name + (m.IsGdScript ? ".gd.g.cs" : ".ty.g.cs"), SourceText.From(code, System.Text.Encoding.UTF8));
             }
         }
 

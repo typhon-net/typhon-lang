@@ -51,6 +51,10 @@ namespace Typhon.Compiler
         public readonly List<TyDiagnostic> ParseDiagnostics = new List<TyDiagnostic>();
         /// <summary>The module asks for big-int mode with a "# typhon: int=bigint" comment (it applies to the whole program).</summary>
         public bool BigIntPragma;
+        /// <summary>A GDScript (.gd) module: parsed by the GDScript front end, emitted with GDScript's semantics where they differ.</summary>
+        public bool IsGdScript;
+        /// <summary>What the GDScript front end knows about a .gd module (its script class, exports, inner classes).</summary>
+        public GdScriptModule GdScript;
 
         public string QualifiedClassName => "global::" + (string.IsNullOrEmpty(Namespace) ? "" : Namespace + ".") + ClassName;
         public bool IsMainModule => Name == "__main__" || Name.EndsWith(".__main__");
@@ -99,6 +103,11 @@ namespace Typhon.Compiler
     public static class TyphonCompiler
     {
         public const string FileExtension = ".ty";
+        /// <summary>GDScript files (Godot 4): compiled by the GDScript front end into the same AST.</summary>
+        public const string GdScriptExtension = ".gd";
+
+        /// <summary>Is the file a GDScript module (by its extension)?</summary>
+        public static bool IsGdScriptPath(string path) => path != null && path.EndsWith(GdScriptExtension, StringComparison.OrdinalIgnoreCase);
 
         /// <summary>Module name from the path relative to the project directory: "utils/strings.ty" → "utils.strings".</summary>
         public static string ModuleNameFromPath(string projectDir, string path)
@@ -133,9 +142,17 @@ namespace Typhon.Compiler
             string pkg = lastDot < 0 ? "" : moduleName.Substring(0, lastDot);
             info.Namespace = string.Join(".", new[] { rootNamespace, pkg }.Where(s => !string.IsNullOrEmpty(s)));
             info.BigIntPragma = System.Text.RegularExpressions.Regex.IsMatch(source, @"^[ \t]*#[ \t]*typhon:[ \t]*int[ \t]*=[ \t]*bigint\b", System.Text.RegularExpressions.RegexOptions.Multiline);
+            info.IsGdScript = IsGdScriptPath(path);
+            // a GDScript module's own static class holds its inner classes; the script class itself is a top-level class
+            if (info.IsGdScript) info.ClassName += "_gd";
             try
             {
-                info.Ast = Parser.ParseModule(source, path);
+                if (info.IsGdScript)
+                {
+                    info.Ast = GdScriptParser.ParseModule(source, path, info.IsMainModule, out var gd);
+                    info.GdScript = gd;
+                }
+                else info.Ast = Parser.ParseModule(source, path);
             }
             catch (SyntaxError e)
             {
@@ -188,6 +205,7 @@ namespace Typhon.Compiler
             if (project.Inference == null)
             {
                 if (project.Modules.Values.Any(m => m.BigIntPragma)) project.BigInts = true;
+                GdScriptLowering.Run(project);
                 ClassModel.Complete(project);
                 TypeInference.Run(project);
             }
