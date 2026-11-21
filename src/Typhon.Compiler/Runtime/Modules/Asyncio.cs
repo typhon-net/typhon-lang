@@ -25,7 +25,15 @@ namespace Typhon.Runtime
     internal sealed class PyEventLoop : SynchronizationContext
     {
         readonly System.Collections.Concurrent.BlockingCollection<(SendOrPostCallback Callback, object? State)> _queue = new System.Collections.Concurrent.BlockingCollection<(SendOrPostCallback, object?)>();
+        // the loop's timers (asyncio.sleep, wait_for's timeout): due in deadline order, ties in the order they were set,
+        // whatever the operating system's timer resolution (Windows ticks every ~15.6 ms)
+        readonly PriorityQueue<TaskCompletionSource<bool>, (long Due, long Seq)> _timers = new PriorityQueue<TaskCompletionSource<bool>, (long, long)>();
+        long _timerSeq;
         readonly int _thread = Environment.CurrentManagedThreadId;
+
+        public static PyEventLoop? Running => Current as PyEventLoop;
+        bool OnLoopThread => Environment.CurrentManagedThreadId == _thread;
+
         public override void Post(SendOrPostCallback d, object? state)
         {
             try { _queue.Add((d, state)); }
@@ -33,16 +41,46 @@ namespace Typhon.Runtime
         }
         public override void Send(SendOrPostCallback d, object? state)
         {
-            if (Environment.CurrentManagedThreadId == _thread) d(state);
+            if (OnLoopThread) d(state);
             else { using var done = new ManualResetEventSlim(); Post(_ => { try { d(state); } finally { done.Set(); } }, null); done.Wait(); }
         }
         public override SynchronizationContext CreateCopy() => this;
 
-        /// <summary>Runs the loop until the task is done.</summary>
+        /// <summary>A task done after the delay, on this loop's clock (off the loop thread: a .NET delay).</summary>
+        public Task Delay(double seconds)
+        {
+            if (!OnLoopThread) return Task.Delay(TimeSpan.FromSeconds(Math.Max(0, seconds)));
+            var tcs = new TaskCompletionSource<bool>();
+            long due = System.Diagnostics.Stopwatch.GetTimestamp() + (long)(Math.Max(0, seconds) * System.Diagnostics.Stopwatch.Frequency);
+            _timers.Enqueue(tcs, (due, _timerSeq++));
+            return tcs.Task;
+        }
+
+        /// <summary>Runs the loop until the task is done: ready callbacks first, then the timers that are due, in order.</summary>
         public void RunUntil(Task task)
         {
-            task.ContinueWith(_ => _queue.CompleteAdding(), CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
-            foreach (var (callback, state) in _queue.GetConsumingEnumerable()) callback(state);
+            task.ContinueWith(_ => { try { _queue.Add((_ => { }, null)); } catch (InvalidOperationException) { } }, CancellationToken.None,
+                              TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+            while (!task.IsCompleted)
+            {
+                if (_queue.TryTake(out var item)) { item.Callback(item.State); continue; }
+                if (_timers.TryPeek(out _, out var next))
+                {
+                    long wait = next.Due - System.Diagnostics.Stopwatch.GetTimestamp();
+                    if (wait > 0)
+                    {
+                        int ms = (int)Math.Min(int.MaxValue, Math.Ceiling(wait * 1000.0 / System.Diagnostics.Stopwatch.Frequency));
+                        if (_queue.TryTake(out item, ms)) { item.Callback(item.State); continue; }
+                    }
+                    // every timer due by now, earliest first (their continuations are posted to this loop)
+                    long now = System.Diagnostics.Stopwatch.GetTimestamp();
+                    while (_timers.TryPeek(out var due, out var at) && at.Due <= now) { _timers.Dequeue(); due.SetResult(true); }
+                    continue;
+                }
+                item = _queue.Take();
+                item.Callback(item.State);
+            }
+            _queue.CompleteAdding();
         }
 
         public static T Run<T>(Func<Task<T>> start)
@@ -327,8 +365,11 @@ namespace Typhon.Stdlib
         public static async Task sleep(double seconds)
         {
             if (seconds <= 0) await Task.Yield(); // sleep(0): let the other tasks run
-            else await Task.Delay(TimeSpan.FromSeconds(seconds));
+            else await Delay(seconds);
         }
+
+        /// <summary>A delay on the running event loop's clock (ordered by deadline), else a .NET delay.</summary>
+        static Task Delay(double seconds) => PyEventLoop.Running is PyEventLoop loop ? loop.Delay(seconds) : Task.Delay(TimeSpan.FromSeconds(Math.Max(0, seconds)));
         public static async Task<T> sleep<T>(double seconds, T result) { await sleep(seconds); return result; }
 
         /// <summary>await gather(a(), b()): the results in the order given, as a list.</summary>
@@ -350,7 +391,7 @@ namespace Typhon.Stdlib
         public static async Task<T> wait_for<T>(Task<T> aw, double? timeout)
         {
             if (timeout == null) return await aw;
-            var done = await Task.WhenAny(aw, Task.Delay(TimeSpan.FromSeconds(Math.Max(0, timeout.Value))));
+            var done = await Task.WhenAny(aw, Delay(timeout.Value));
             if (done != aw) throw new TimeoutError();
             return await aw;
         }
@@ -358,7 +399,7 @@ namespace Typhon.Stdlib
         public static async Task wait_for(Task aw, double? timeout)
         {
             if (timeout == null) { await aw; return; }
-            var done = await Task.WhenAny(aw, Task.Delay(TimeSpan.FromSeconds(Math.Max(0, timeout.Value))));
+            var done = await Task.WhenAny(aw, Delay(timeout.Value));
             if (done != aw) throw new TimeoutError();
             await aw;
         }
