@@ -722,48 +722,4 @@ namespace Typhon.Stdlib
         }
     }
 
-    /// <summary>
-    /// gc on .NET's garbage collector: collect() runs a full blocking collection and the finalizers it makes due (so weak
-    /// references to unreachable objects are dead and their callbacks have run). The collector cannot be switched off:
-    /// disable() is recorded only.
-    /// </summary>
-    internal static class gc
-    {
-        public const long DEBUG_STATS = 1, DEBUG_COLLECTABLE = 2, DEBUG_UNCOLLECTABLE = 4, DEBUG_SAVEALL = 32, DEBUG_LEAK = 38;
-        public static readonly List<object?> garbage = new List<object?>();
-        public static readonly List<object?> callbacks = new List<object?>();
-        static bool _enabled = true;
-        static long _debug;
-        static (long, long, long) _threshold = (2000, 10, 0);
-
-        /// <summary>Collects garbage now (every generation) and runs the finalizers due; 0 (the count is not known).</summary>
-        public static long collect(long generation = 2)
-        {
-            if (generation < 0 || generation > 2) throw new ArgumentException("invalid generation");
-            for (int pass = 0; pass < 2; pass++)
-            {
-                GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true);
-                GC.WaitForPendingFinalizers();
-            }
-            return 0;
-        }
-
-        public static void enable() => _enabled = true;
-        public static void disable() => _enabled = false;
-        public static bool isenabled() => _enabled;
-        public static (long, long, long) get_count() => (0, 0, 0);
-        public static (long, long, long) get_threshold() => _threshold;
-        public static void set_threshold(long threshold0, long threshold1 = 10, long threshold2 = 0) => _threshold = (threshold0, threshold1, threshold2);
-        public static void set_debug(long flags) => _debug = flags;
-        public static long get_debug() => _debug;
-        public static bool is_tracked(object? obj) => obj != null && !(obj is string || obj is PyBytes || obj.GetType().IsValueType);
-        public static bool is_finalized(object? obj) => false;
-        public static void freeze() { }
-        public static void unfreeze() { }
-        public static long get_freeze_count() => 0;
-        // .NET's collector does not tell who refers to an object, nor list the objects
-        public static List<object?> get_referrers(params object?[] objs) => throw new NotImplementedException("gc.get_referrers() is not supported in Typhon (.NET's collector does not track referrers)");
-        public static List<object?> get_referents(params object?[] objs) => throw new NotImplementedException("gc.get_referents() is not supported in Typhon");
-        public static List<object?> get_objects(long? generation = null) => throw new NotImplementedException("gc.get_objects() is not supported in Typhon");
-    }
 }

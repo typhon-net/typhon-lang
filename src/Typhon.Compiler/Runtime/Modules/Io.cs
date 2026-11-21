@@ -102,6 +102,14 @@ namespace Typhon.Stdlib
                 return new PyBytes(ms.ToArray());
             }
             public virtual long readinto(PyByteArray b) => throw Unsupported("readinto");
+            /// <summary>readinto(memoryview): read through a bytearray of the view's size, then fill the view.</summary>
+            public long readinto(global::memoryview m)
+            {
+                var tmp = new PyByteArray(new byte[m.nbytes]);
+                long n = readinto(tmp);
+                m.Fill(tmp.ToArray().AsSpan(0, (int)n));
+                return n;
+            }
             public virtual long write(PyBytes b) => throw Unsupported("write");
             public long write(PyByteArray b) => write(new PyBytes(b.ToArray()));
             public virtual PyBytes readline(long size = -1) => StreamOps.ReadLine(this, size);

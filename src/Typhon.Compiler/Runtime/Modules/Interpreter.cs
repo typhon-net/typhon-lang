@@ -228,12 +228,19 @@ namespace Typhon.Stdlib
         static long _debug;
         static (long, long, long) _threshold = (2000, 10, 10);
 
-        /// <summary>collect(generation=2): a .NET collection of that generation (and the finalizers it makes due); returns 0.</summary>
+        /// <summary>
+        /// collect(): a full blocking .NET collection and the finalizers it makes due, twice (an object a finalizer or a
+        /// weak reference's callback released is collected too), so weak references to unreachable objects are dead and
+        /// their callbacks have run; returns 0 (the count is not known).
+        /// </summary>
         public static long collect(long generation = 2)
         {
             if (generation < 0 || generation > 2) throw new ArgumentException("invalid generation");
-            GC.Collect((int)Math.Min(generation, GC.MaxGeneration), GCCollectionMode.Forced, blocking: true);
-            GC.WaitForPendingFinalizers();
+            for (int pass = 0; pass < 2; pass++)
+            {
+                GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true);
+                GC.WaitForPendingFinalizers();
+            }
             return 0;
         }
         public static void enable() => _enabled = true;

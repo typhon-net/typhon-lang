@@ -46,6 +46,7 @@ namespace Typhon.Runtime
             PyBytes b => b.Data,
             PyByteArray a => a.ToArray(),
             byte[] arr => arr,
+            global::memoryview view => view.ToArray(),
             string => throw new InvalidCastException("string argument without an encoding"),
             long or int or BigInteger => new byte[(int)Convert.ToInt64(o, CultureInfo.InvariantCulture)],
             IEnumerable e => e.Cast<object?>().Select(Byte).ToArray(),
@@ -189,7 +190,7 @@ namespace Typhon.Runtime
         public static bool operator >=(PyBytes a, PyBytes b) => a.CompareTo(b) >= 0;
 
         public bool Equals(PyBytes? other) => other is not null && Data.AsSpan().SequenceEqual(other.Data);
-        public override bool Equals(object? obj) => obj is PyBytes b ? Equals(b) : obj is PyByteArray a && Data.AsSpan().SequenceEqual(a.ToArray());
+        public override bool Equals(object? obj) => obj is PyBytes b ? Equals(b) : obj is PyByteArray a ? Data.AsSpan().SequenceEqual(a.ToArray()) : obj is global::memoryview m && m.Equals(this);
         public override int GetHashCode()
         {
             if (_hash != 0) return _hash;
@@ -396,6 +397,8 @@ namespace Typhon.Runtime
         public PyByteArray() { _data = new List<byte>(); }
         public PyByteArray(IEnumerable<byte> data) { _data = new List<byte>(data); }
         public byte[] ToArray() => _data.ToArray();
+        /// <summary>The storage itself (a memoryview of the bytearray reads and writes it).</summary>
+        internal List<byte> Buffer => _data;
         public static implicit operator byte[](PyByteArray b) => b.ToArray();
 
         public int Count => _data.Count;
@@ -477,7 +480,7 @@ namespace Typhon.Runtime
         public static PyByteArray operator +(PyByteArray a, PyBytes b) => new PyByteArray(a._data.Concat(b.Data));
         public static PyByteArray operator +(PyByteArray a, PyByteArray b) => new PyByteArray(a._data.Concat(b._data));
         public PyByteArray __iadd__(object? b) { extend(b); return this; }
-        public override bool Equals(object? obj) => obj is PyByteArray a ? _data.SequenceEqual(a._data) : obj is PyBytes b && _data.SequenceEqual(b.Data);
+        public override bool Equals(object? obj) => obj is PyByteArray a ? _data.SequenceEqual(a._data) : obj is PyBytes b ? _data.SequenceEqual(b.Data) : obj is global::memoryview m && m.Equals(this);
         public override int GetHashCode() => throw new InvalidCastException("unhashable type: 'bytearray'");
         public string __repr__() => "bytearray(" + ByteOps.Repr(_data.ToArray()) + ")";
         public override string ToString() => __repr__();
