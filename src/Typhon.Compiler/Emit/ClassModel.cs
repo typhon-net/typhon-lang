@@ -29,6 +29,7 @@ namespace Typhon.Compiler.Emit
                 if (m.Ast == null || m.ParseDiagnostics.Count > 0) continue;
                 HoistBlockClasses(m);
                 HoistLocalClasses(m);
+                LowerLegacyGenerics(m);
                 SynthesizeNamedTuples(m);
                 if (!ShadowsObject(m))
                 {
@@ -44,6 +45,65 @@ namespace Typhon.Compiler.Emit
                 foreach (var c in m.Classes.Values) { DropTypingOnlyMembers(c); NormalizeSelfNames(c); AddMethodAliases(c); NormalizeSuper(c); }
             }
             AddBaseStubs(p);
+        }
+
+        static void LowerLegacyGenerics(ModuleInfo module)
+        {
+            bool IsTypingModule(string name) => name is "typing" or "_typing";
+            var typeVariables = new HashSet<string>();
+            var genericBases = new HashSet<string>();
+            var qualifiers = new HashSet<string>();
+            foreach (var statement in module.Ast.Body)
+            {
+                if (statement is ImportStmt imports)
+                    foreach (var binding in imports.Names.Where(alias => IsTypingModule(alias.Name)))
+                        qualifiers.Add(binding.AsName ?? binding.Name);
+                if (statement is ImportFromStmt { Level: 0 } imported && IsTypingModule(imported.Module))
+                    foreach (var binding in imported.Names)
+                    {
+                        if (binding.Name == "TypeVar") typeVariables.Add(binding.AsName ?? binding.Name);
+                        if (binding.Name == "Generic") genericBases.Add(binding.AsName ?? binding.Name);
+                    }
+            }
+
+            bool HasBinding(Expr target, string name, HashSet<string> simpleNames) => target switch
+            {
+                NameExpr alias => simpleNames.Contains(alias.Id) && !module.Globals.Contains(alias.Id) &&
+                    !module.Classes.ContainsKey(alias.Id) && !module.Functions.Contains(alias.Id),
+                AttributeExpr { Target: NameExpr qualifier } member => member.Name == name &&
+                    qualifiers.Contains(qualifier.Id) && !module.Globals.Contains(qualifier.Id),
+                _ => false,
+            };
+
+            var declarations = module.Ast.Body.OfType<AssignStmt>()
+                .Where(statement => statement.Targets.Count == 1 && statement.Targets[0] is NameExpr)
+                .GroupBy(statement => ((NameExpr)statement.Targets[0]).Id);
+            foreach (var sameName in declarations)
+                if (sameName.Count() == 1 && sameName.First().Value is CallExpr constructor &&
+                    HasBinding(constructor.Func, "TypeVar", typeVariables))
+                    module.RuntimeTypeVariables.Add(sameName.Key);
+
+            void Lower(ClassDef definition)
+            {
+                if (definition.TypeParams.Count == 0)
+                {
+                    var seen = new HashSet<string>();
+                    var bases = definition.Bases.OfType<SubscriptExpr>().ToList();
+                    var explicitGeneric = bases.FirstOrDefault(basis => HasBinding(basis.Target, "Generic", genericBases));
+                    var ordered = explicitGeneric == null ? bases : new[] { explicitGeneric }.Concat(bases.Where(basis => basis != explicitGeneric));
+                    foreach (var basis in ordered)
+                        AstWalker.VisitAll(basis.Index, node =>
+                        {
+                            if (node is NameExpr name && module.RuntimeTypeVariables.Contains(name.Id) && seen.Add(name.Id))
+                                definition.TypeParams.Add(new TypeParam { Name = name.Id });
+                        });
+                    if (explicitGeneric != null && definition.TypeParams.Count > 0)
+                        definition.Bases.Remove(explicitGeneric);
+                }
+                foreach (var nested in definition.Body.OfType<ClassDef>()) Lower(nested);
+            }
+
+            foreach (var definition in module.Classes.Values) Lower(definition);
         }
 
         internal const string AllocateSingleton = "__typhon_allocate_singleton__";
@@ -187,15 +247,27 @@ namespace Typhon.Compiler.Emit
                 if (!(body[fi] is FunctionDef f)) continue;
                 var locals = LocalsAnalyzer.Analyze(f.Body, f.Params.Select(x => x.Name), null);
                 var functionNames = new HashSet<string>(locals.AllLocals.Concat(f.Params.Select(x => x.Name)).Concat(locals.LocalFunctions));
-                foreach (var cls in f.Body.OfType<ClassDef>().ToList())
+                var classes = f.Body.OfType<ClassDef>().ToList();
+                var runtimeClasses = new HashSet<string>();
+                for (int index = classes.Count - 1; index >= 0; index--)
                 {
+                    var cls = classes[index];
                     var used = new HashSet<string>();
                     AstWalker.VisitAll(cls, n => { if (n is NameExpr ne) used.Add(ne.Id); });
                     foreach (var b in cls.Bases) AstWalker.VisitAll(b, n => { if (n is NameExpr ne) used.Add(ne.Id); });
                     used.Remove(cls.Name);
-                    // names the class body binds itself (methods' locals) are not captures; a crude but safe test: any
-                    // function variable it mentions keeps it local
-                    if (used.Any(u => functionNames.Contains(u) && u != cls.Name && !ClassBinds(cls, u))) continue;
+                    // A class that captures function variables or runs a keyword-based hook is created for each call.
+                    if (!runtimeClasses.Contains(cls.Name) && cls.ClassKeywords.Count == 0 &&
+                        !used.Any(u => functionNames.Contains(u) && u != cls.Name && !ClassBinds(cls, u))) continue;
+                    runtimeClasses.Add(cls.Name);
+                    // Keep any preceding local base in the same runtime inheritance hierarchy.
+                    foreach (var parent in cls.Bases.OfType<NameExpr>())
+                        if (classes.Take(index).Any(declaration => declaration.Name == parent.Id))
+                            runtimeClasses.Add(parent.Id);
+                }
+                foreach (var cls in classes)
+                {
+                    if (runtimeClasses.Contains(cls.Name)) continue;
                     string name = cls.Name;
                     if (m.Classes.ContainsKey(name) || m.Functions.Contains(name) || m.Globals.Contains(name))
                     {

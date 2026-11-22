@@ -16,3 +16,30 @@ def print_items(value: Any, options: dict[str, Any]):
     yield first + suffix
 
 print(list(print_items('word', {'uppercase': True})))
+
+
+default_marker = object()
+
+def show(value=default_marker, *, detail=default_marker):
+    return value is default_marker, value is None, detail is default_marker, detail is None
+
+def spread(values, named):
+    return show(*values, **named)
+
+print(show())
+print(show(None, detail=None))
+print(spread([None], {"detail": None}))
+print(spread([], {}))
+
+
+callback_marker = object()
+
+def inspect_value(value=callback_marker):
+    return value is callback_marker, value is None
+
+def call(callback: Any, args):
+    return callback(*args)
+
+values = [inspect_value]
+print(call(values[0], []))
+print(call(values[0], [None]))

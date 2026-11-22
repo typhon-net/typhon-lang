@@ -1,0 +1,3 @@
+print(isinstance(lambda: None, object))
+print(isinstance(lambda: None, (str, object)))
+print(isinstance(lambda: None, (int, str)))

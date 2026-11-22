@@ -14,3 +14,9 @@ init DerivedItem True
 True 14 True
 True True
 True ordinary class body
+Packet packet True
+7 True
+RuntimeDerived 9 True
+one!-child two?-child False
+12
+invalid.<locals>.InvalidHookClass.__init_subclass__() takes no keyword arguments

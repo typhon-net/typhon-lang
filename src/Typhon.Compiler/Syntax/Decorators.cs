@@ -17,7 +17,7 @@ namespace Typhon.Compiler.Syntax
     /// so that inference and emission see ordinary code: the decorators run when the def would, f holds what they return, and
     /// calls of f are calls of that value. This applies to functions in modules and in function bodies; a decorator that names
     /// no Python callable (one the module neither defines, assigns, receives nor imports from a Python module) stays a .NET
-    /// attribute (@Obsolete("..."), @Fact), as do the decorators Typhon implements itself (@property, @dataclass, @cache, ...).
+    /// attribute (@Obsolete("..."), @Fact), as do the decorators Typhon implements itself (@property, @dataclass, ...).
     /// </summary>
     public static class Decorators
     {
@@ -28,7 +28,6 @@ namespace Typhon.Compiler.Syntax
         public static readonly HashSet<string> Builtin = new HashSet<string>
         {
             "staticmethod", "classmethod", "property", "abstractmethod", "override", "final", "dataclass", "overload",
-            "cache", "functools.cache",
             "typing.override", "typing.final", "typing.overload", "abc.abstractmethod", "dataclasses.dataclass",
             "total_ordering", "functools.total_ordering",
         };
@@ -82,7 +81,7 @@ namespace Typhon.Compiler.Syntax
                         Rewrite(f.Body, names, module);
                         if (f.Decorators.Count > 0 && f.Decorators.Any(d => IsPythonDecorator(d, names)))
                         {
-                            // decorators apply bottom-up; Typhon's own decorators keep working only below Python ones (@cache)
+                            // decorators apply bottom-up; Typhon's own decorators keep working only below Python ones
                             Expr value = new NameExpr { Id = UndecoratedPrefix + f.Name, Line = f.Line, Col = f.Col };
                             var kept = new List<Expr>();
                             for (int k = f.Decorators.Count - 1; k >= 0; k--)

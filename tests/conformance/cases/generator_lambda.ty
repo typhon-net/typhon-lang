@@ -1,0 +1,17 @@
+def make_factory():
+    prefix = "before"
+    factory = lambda value: (yield prefix + value)
+    prefix = "after"
+    return factory
+
+cursor = make_factory()("!")
+print(type(cursor).__name__, next(cursor))
+try:
+    cursor.send("received")
+except StopIteration as done:
+    print(done.value)
+
+delegate = lambda: (yield from ("a", "b"))
+print(list(delegate()))
+outer = lambda: (lambda: (yield "inner"))
+print(list(outer()()))

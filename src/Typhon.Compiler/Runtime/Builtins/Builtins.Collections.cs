@@ -100,8 +100,10 @@ namespace Typhon.Runtime
             catch (ArgumentNullException) when (key == null) { return false; }
         }
         public static bool contains<T>(HashSet<T> s, T x) => s.Contains(x);
-        public static bool contains<T>(ICollection<T> c, T x) => c.Contains(x);
-        public static bool contains<T>(IEnumerable<T> c, T x) => MembershipHook(c, x) ?? c.Contains(x);
+        public static bool contains<T>(ICollection<T> c, T x) =>
+            typeof(T) == typeof(object) ? c.Any(item => eq(item, x)) : c.Contains(x);
+        public static bool contains<T>(IEnumerable<T> c, T x) =>
+            MembershipHook(c, x) ?? (typeof(T) == typeof(object) ? c.Any(item => eq(item, x)) : c.Contains(x));
 
         static bool? MembershipHook(object c, object? x) =>
             c.GetType().IsDefined(typeof(PySourceAttribute), false) && TryGetAttr(c, "__contains__", out var contains, allowFallback: false)
@@ -115,6 +117,7 @@ namespace Typhon.Runtime
         public static bool contains(ITuple t, object? x) { for (int i = 0; i < t.Length; i++) if (eq(t[i], x)) return true; return false; }
         public static bool contains(object c, object x)
         {
+            if (c is PyBigRange range) return range.__contains__(x);
             if (c is PyAttrDict attrs) return x is string name && attrs.ContainsKey(name);
             if (c is IDictionary d)
             {
@@ -193,7 +196,7 @@ namespace Typhon.Runtime
                 yield return current;
         }
 
-        static BigInteger RangeIndex(object? value)
+        internal static BigInteger RangeIndex(object? value)
         {
             if (value is BigInteger wide) return wide;
             if (value is bool flag) return flag ? 1 : 0;
@@ -209,6 +212,13 @@ namespace Typhon.Runtime
         public static PyRange range(long start, long stop, long step = 1) => new PyRange(start, stop, step);
         public static bool contains(PyRange r, long x) => r.Contains(x);
         public static long len(PyRange r) => r.Length;
+        public static PyBigRange __range_big(object? stop) => new(0, RangeIndex(stop), 1);
+        public static PyBigRange __range_big(object? start, object? stop) => new(RangeIndex(start), RangeIndex(stop), 1);
+        public static PyBigRange __range_big(object? start, object? stop, object? step) => new(RangeIndex(start), RangeIndex(stop), RangeIndex(step));
+        public static long len(PyBigRange range) => range.__len__();
+        public static bool contains(PyBigRange range, object? value) => range.__contains__(value);
+        public static bool contains(PyBigRange range, BigInteger value) => range.__contains__(value);
+        public static IEnumerable<BigInteger> reversed(PyBigRange range) => range.__reversed__();
         // (also for a late-bound value: the runtime binder would otherwise try len<T>(T) where T is a tuple and fail)
         public static long len(PyBytes b) => b.Count;
         public static long len(PyByteArray b) => b.Count;
@@ -227,6 +237,7 @@ namespace Typhon.Runtime
         public static IEnumerable iterable(IEnumerable xs) => xs is IDictionary d ? d.Keys : xs;
 
 
+        public static PyGenerator<T> iter<T>(PyGenerator<T> generator) => generator;
         public static PyIterator<T> iter<T>(IEnumerable<T> xs) => xs as PyIterator<T> ?? new PyIterator<T>(xs.GetEnumerator());
         public static PyIterator<K> iter<K, V>(IDictionary<K, V> mapping) => new PyIterator<K>(keys(mapping).GetEnumerator());
         public static PyIterator<string> iter(string s) => new PyIterator<string>(new StrChars(s).GetEnumerator());
@@ -277,6 +288,7 @@ namespace Typhon.Runtime
         public static PyBytes encode(this string s, string encoding = "utf-8", string errors = "strict")
         {
             if (Typhon.Stdlib.codecs.IsRawUnicodeEscape(encoding)) return Typhon.Stdlib.codecs.raw_unicode_escape_encode(s, errors).Item1;
+            if (ByteOps.EncodeSingleByte(s, encoding, errors) is PyBytes encoded) return encoded;
             try { return new PyBytes(ByteOps.EncodingOf(encoding, errors).GetBytes(s)); }
             catch (EncoderFallbackException e) { throw new ArgumentException($"'{encoding}' codec can't encode character: {e.Message}"); }
         }
@@ -310,7 +322,14 @@ namespace Typhon.Runtime
         public static HashSet<T> set_xor<T>(IEnumerable<T> a, IEnumerable<T> b) { var r = new HashSet<T>(a); r.SymmetricExceptWith(b); return r; }
         public static OrderedDictionary<K, V> dict_or<K, V>(IDictionary<K, V> a, IDictionary<K, V> b) where K : notnull { var r = dict(a); foreach (var kv in b) r[kv.Key] = kv.Value; return r; }
         // late-bound operands: sets use set algebra, everything else binds normally
-        public static dynamic sub(dynamic a, dynamic b) => IsSet((object)a) ? SetOp((object)a, (object)b, '-') : checked(a - b);
+        public static dynamic sub(dynamic a, dynamic b)
+        {
+            if (TryClassBinaryOp((object?)a, (object?)b, "sub", "-", out var result)) return result!;
+            if (IsSet((object)a)) return SetOp((object)a, (object)b, '-');
+            if (a is bool left) a = left ? 1L : 0L;
+            if (b is bool right) b = right ? 1L : 0L;
+            return checked(a - b);
+        }
         public static dynamic __key_difference(object? mapping, object? other)
         {
             if (mapping is not (IDictionary or PyAttrDict))

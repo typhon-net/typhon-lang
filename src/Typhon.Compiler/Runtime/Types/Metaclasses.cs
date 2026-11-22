@@ -50,7 +50,7 @@ namespace Typhon.Runtime
                 var methods = owner.GetMethods(flags).Where(m => m.Name == name).ToArray();
                 if (methods.Length == 0) continue;
                 if (!methods.Any(m => m.IsDefined(typeof(PyMetaclassMethodAttribute), false))) return false;
-                value = new types.MethodType((object?)Builtins.getattr(owner, name), target);
+                value = new types.MethodType(new PyBoundMethod(owner, name, includeNonPublic: true), target);
                 return true;
             }
             return false;
@@ -91,14 +91,35 @@ namespace Typhon.Runtime
             return winner;
         }
 
+        static readonly PyClosure InstanceCheck = new("__instancecheck__", (args, kwargs) =>
+        {
+            if (args.Length != 2 || args[0] is not Type target || kwargs?.Count > 0)
+                throw new InvalidCastException("type.__instancecheck__ requires a type and an instance");
+            object? instance = args[1];
+            return Builtins.DirectSubclass(Builtins.__type_of(instance), target) ||
+                instance != null && Builtins.DirectSubclass(instance.GetType(), target);
+        });
+
+        static readonly PyClosure SubclassCheck = new("__subclasscheck__", (args, kwargs) =>
+        {
+            if (args.Length != 2 || args[0] is not Type target || args[1] is not Type candidate || kwargs?.Count > 0)
+                throw new InvalidCastException("type.__subclasscheck__ requires two types");
+            return Builtins.DirectSubclass(candidate, target);
+        });
+
+        internal static PyClosure? TypeCheckSlot(string name) => name switch
+        {
+            "__instancecheck__" => InstanceCheck,
+            "__subclasscheck__" => SubclassCheck,
+            _ => null,
+        };
+
         internal static readonly PyClosure New = new("__new__", (args, kwargs) =>
         {
-            var creation = _creating ?? throw new NotSupportedException("type.__new__ requires a compiled class definition");
             if (args.Length != 4 || args[0] is not Type metaclass || args[1] is not string name ||
-                args[2] is not IEnumerable bases || args[3] is not IDictionary members || kwargs?.Count > 0)
+                args[2] is not ITuple bases || args[3] is not IDictionary members || kwargs?.Count > 0)
                 throw new InvalidCastException("type.__new__ expects a metaclass, name, bases, and a namespace");
-            if (metaclass != creation.Meta || name != creation.Name || !bases.Cast<object?>().SequenceEqual(creation.Bases))
-                throw new NotSupportedException("type.__new__ cannot change a compiled class's metaclass, name, or bases");
+            Type[] parents = ClassBases(bases);
             var owned = new OrderedDictionary<string, object?>();
             var entries = members.GetEnumerator();
             while (entries.MoveNext())
@@ -106,9 +127,44 @@ namespace Typhon.Runtime
                 if (entries.Key is not string key) throw new InvalidCastException("type.__new__ namespace keys must be strings");
                 owned[key] = entries.Value;
             }
-            Definitions.Add(creation.Target, new Definition(metaclass, creation.Bases, owned));
-            return creation.Target;
+            if (_creating is { } creation)
+            {
+                if (metaclass != creation.Meta || name != creation.Name || !parents.SequenceEqual(creation.Bases))
+                    throw new NotSupportedException("type.__new__ cannot change a compiled class's metaclass, name, or bases");
+                Definitions.Add(creation.Target, new Definition(metaclass, creation.Bases, owned));
+                return creation.Target;
+            }
+            if (parents.Length > 1)
+                throw new NotSupportedException("a runtime-created class supports at most one base class");
+            string module = owned.TryGetValue("__module__", out object? declaredModule) && declaredModule is string moduleName
+                ? moduleName : sys_._getframemodulename() ?? "__main__";
+            string qualifiedName = owned.TryGetValue("__qualname__", out object? declaredName) && declaredName is string qualified
+                ? qualified : name;
+            owned["__module__"] = module;
+            var target = new PyLocalDataClass(name, module, qualifiedName, parents.FirstOrDefault() ?? typeof(object), owned);
+            Definitions.Add(target, new Definition(metaclass, parents, owned));
+            return target;
         });
+
+        static Type[] ClassBases(ITuple values) => Enumerable.Range(0, values.Length)
+            .Select(index => values[index] as Type ?? throw new InvalidCastException("type() bases must be types")).ToArray();
+
+        internal static object? Create(Type metaclass, object?[] args, IDictionary<string, object?>? keywords)
+        {
+            if (args.Length >= 2 && args[1] is ITuple bases) metaclass = Select(metaclass, ClassBases(bases));
+            object? construct = Builtins.getattr(metaclass, "__new__", New);
+            var previous = _creating;
+            _creating = null;
+            try
+            {
+                object? result = Builtins.__invoke_kw(construct, [metaclass, .. args], keywords);
+                if (result is Type cls && Builtins.IsSubclass(Of(cls), metaclass) &&
+                    (object?)Builtins.getattr(metaclass, "__init__", null) is object initialize)
+                    Builtins.__invoke_kw(initialize, [cls, .. args], keywords);
+                return result;
+            }
+            finally { _creating = previous; }
+        }
 
         internal static T Write<T>(Type type, string name, T value)
         {

@@ -138,6 +138,7 @@ namespace Typhon.Compiler.Emit
             _w.Line("public static partial class " + Esc(_m.ClassName));
             _w.Open();
             EmitModuleBody(body);
+            EmitAnnotationsMap(body);
             _w.Close();
             if (GdScriptClass != null) { _w.Line(); EmitClass(GdScriptClass); }
 
@@ -252,7 +253,13 @@ namespace Typhon.Compiler.Emit
                     continue;
                 }
                 if (s is PassStmt) continue;
-                if (s is AssignStmt aliasStmt && aliasStmt.Targets.Count == 1 && aliasStmt.Targets[0] is NameExpr aliasName && _m.TypeAliases.ContainsKey(aliasName.Id) && !CanMaterializeTypeAlias(aliasStmt.Value)) continue;
+                if (s is AssignStmt aliasStmt && aliasStmt.Targets.Count == 1 && aliasStmt.Targets[0] is NameExpr aliasName &&
+                    _m.TypeAliases.ContainsKey(aliasName.Id) && !CanMaterializeTypeAlias(aliasStmt.Value))
+                {
+                    // After imports are resolved, uppercase names can be numeric flags rather than type names.
+                    if (aliasStmt.Value is not BinOpExpr { Op: "|" } flags || !IsIntegerFlagValue(flags)) continue;
+                    _m.TypeAliases.Remove(aliasName.Id);
+                }
                 if (s is AssignStmt fnAlias && fnAlias.Targets.Count == 1 && fnAlias.Targets[0] is NameExpr fnAliasName && _functionAliases.ContainsKey(fnAliasName.Id)) continue;
                 if (s is AnnAssignStmt aliasAnn && aliasAnn.Target is NameExpr aliasAnnName && _m.TypeAliases.ContainsKey(aliasAnnName.Id)) continue;
                 if (_m.RuntimeCodeMode != "single" && s is ExprStmt es && es.Value is ConstExpr ce &&
@@ -299,7 +306,15 @@ namespace Typhon.Compiler.Emit
                     // a field initializer runs before the static constructor: only while no earlier module statement had to go
                     // there, else this assignment joins them, so the module runs top to bottom like Python's
                     if (!isMainModule && value != null && execStmts.Count == 0)
-                        _w.Line($"{vis} static {type} {Esc(fieldName)} = {Checked(type != "dynamic" ? EmitExpr(value, targetTyped: true) : EmitLooseValue(value))};");
+                    {
+                        _globalsBeforeFieldInitializer = fields.Keys.Where(name => name != fieldName);
+                        try
+                        {
+                            string initial = type != "dynamic" ? EmitExpr(value, targetTyped: true) : EmitLooseValue(value);
+                            _w.Line($"{vis} static {type} {Esc(fieldName)} = {Checked(initial)};");
+                        }
+                        finally { _globalsBeforeFieldInitializer = null; }
+                    }
                     else
                     {
                         _w.Line($"{vis} static {type} {Esc(fieldName)};");
@@ -432,6 +447,7 @@ namespace Typhon.Compiler.Emit
 
         /// <summary>The module's static fields (module-level variables functions can see).</summary>
         readonly HashSet<string> _moduleFieldNames = new HashSet<string>();
+        IEnumerable<string> _globalsBeforeFieldInitializer;
         readonly HashSet<string> _lateModuleFields = new HashSet<string>();
 
         readonly HashSet<TupleExpr> _identityTuples = new HashSet<TupleExpr>();
@@ -490,12 +506,14 @@ namespace Typhon.Compiler.Emit
             if (_m.WritesModuleGlobals || _lateModuleFields.Count != 0)
                 return $"((dynamic)global::Typhon.Runtime.PyModule.Of(typeof({ModuleClassName(_m)}), {CsString(_m.Name)}).__dict__)";
             var entries = new List<string>();
+            var fields = _globalsBeforeFieldInitializer ?? _moduleFieldNames.OrderBy(x => x, StringComparer.Ordinal);
             if (_m.IsGdScript) entries.Add($"[\"__name__\"] = {CsString(_m.Name)}");
             else
-                foreach (var name in new[] { "__name__", "__doc__" }.Where(name => !_moduleFieldNames.Contains(name)))
+                foreach (var name in new[] { "__name__", "__doc__" }.Where(name => !fields.Contains(name)))
                     entries.Add($"[{CsString(name)}] = {ModuleObject(_m)}.{name}");
-            foreach (var f in _moduleFieldNames.OrderBy(x => x, StringComparer.Ordinal)) entries.Add($"[{CsString(f)}] = {Esc(f)}");
-            foreach (var c in _m.Classes.Keys.OrderBy(x => x, StringComparer.Ordinal)) entries.Add($"[{CsString(c)}] = typeof({Esc(c)})");
+            foreach (var f in fields) entries.Add($"[{CsString(f)}] = {Esc(f)}");
+            foreach (var entry in _m.Classes.OrderBy(pair => pair.Key, StringComparer.Ordinal))
+                entries.Add($"[{CsString(entry.Key)}] = {ClassTypeValue(Esc(entry.Key), entry.Value)}");
             foreach (var fn in _m.Ast.Body.OfType<FunctionDef>())
                 if (FunctionValueKeys.Contains(TypeInference.FuncKey(_m, null, fn.Name))) entries.Add($"[{CsString(fn.Name)}] = {FunctionValueType(_m, fn.Name)}.Instance");
             return $"new OrderedDictionary<string, object?> {{ {string.Join(", ", entries)} }}";
@@ -565,7 +583,7 @@ namespace Typhon.Compiler.Emit
 
         void EmitMain(List<Stmt> stmts, IEnumerable<string> moduleFields, Node at, string registrations = "")
         {
-            var scope = new Scope { ReturnType = "void" };
+            var scope = new Scope { ReturnType = "void", ModuleTraceScope = true };
             var locals = LocalsAnalyzer.Analyze(stmts, Enumerable.Empty<string>(), moduleFields);
             bool isAsync = locals.HasAwait;
             LineDirective(at);

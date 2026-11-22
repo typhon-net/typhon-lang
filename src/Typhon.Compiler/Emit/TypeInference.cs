@@ -592,7 +592,7 @@ namespace Typhon.Compiler.Emit
             }
             // a type that keeps flipping between values it had before (a field copied out and written back) settles as dynamic
             Damp("ret", returns, Returns);
-            Damp("elem", elements, Elements);
+            Damp("elem", elements, Elements, trackMissing: true);
             Damp("hoisted", hoisted, Hoisted);
             Damp("external", external, ExternalFields);
             foreach (var kv in Obs.Fields) Damp("field:" + kv.Key, kv.Value, Fields.TryGetValue(kv.Key, out var pf) ? pf : null);
@@ -625,21 +625,25 @@ namespace Typhon.Compiler.Emit
         /// that goes back to a value it had before twice is a cycle through an unknown state (old = obj.f; ...; obj.f = old):
         /// it is pinned to dynamic, which is always valid, and the rest of the program still converges with its types.
         /// </summary>
-        void Damp(string kind, Dictionary<string, string> next, Dictionary<string, string> prev)
+        void Damp(string kind, Dictionary<string, string> next, Dictionary<string, string> prev, bool trackMissing = false)
         {
-            foreach (var key in next.Keys.ToList())
+            // A collection update can switch to late binding and disappear from the next pass's observations.
+            var keys = trackMissing && prev != null ? next.Keys.Union(prev.Keys) : next.Keys.AsEnumerable();
+            foreach (var key in keys.ToList())
             {
                 string id = kind + "|" + key;
-                string dyn = next[key] != null && next[key].Contains("→") ? "dynamic→dynamic" : "dynamic";
+                next.TryGetValue(key, out string current);
+                string old = prev != null && prev.TryGetValue(key, out string previous) ? previous : null;
+                string dyn = (current ?? old)?.Contains("→") == true ? "dynamic→dynamic" : "dynamic";
                 if (_pinned.Contains(id)) { next[key] = dyn; continue; }
-                if (prev == null || !prev.TryGetValue(key, out var old) || old == next[key]) continue;
+                if (old == current || old == null && !trackMissing) continue;
                 if (!_history.TryGetValue(id, out var seen)) _history[id] = seen = new List<string> { old };
-                if (seen.Contains(next[key]))
+                if (seen.Contains(current))
                 {
                     _returnsToOld[id] = _returnsToOld.TryGetValue(id, out var n) ? n + 1 : 1;
                     if (_returnsToOld[id] >= 2) { _pinned.Add(id); next[key] = dyn; continue; }
                 }
-                seen.Add(next[key]);
+                seen.Add(current);
             }
         }
 

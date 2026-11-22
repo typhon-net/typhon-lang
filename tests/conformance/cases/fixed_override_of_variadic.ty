@@ -1,0 +1,19 @@
+class Flexible:
+    def __call__(self, *args, **kwargs):
+        return "base"
+
+class Specific(Flexible):
+    def __call__(self, value, /, *, suffix: str = "!") -> str:
+        return value + suffix
+
+def invoke(receiver: Flexible):
+    return receiver.__call__("text", suffix="?")
+
+print(invoke(Flexible()))
+print(invoke(Specific()))
+print(Specific().__call__("direct"))
+for args, kwargs in [((), {}), (("a", "b"), {}), ((), {"value": "named"})]:
+    try:
+        Specific().__call__(*args, **kwargs)
+    except TypeError:
+        print("TypeError")

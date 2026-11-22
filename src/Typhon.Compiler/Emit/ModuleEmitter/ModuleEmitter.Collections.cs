@@ -43,6 +43,19 @@ namespace Typhon.Compiler.Emit
             return elems.Count == 1 && elems[0] != null ? PyTuplePrefix + elems[0] + ">" : null;
         }
 
+        string TupleLiteralValue(Expr value, string targetType)
+        {
+            if (value is not TupleExpr tuple || targetType == null) return null;
+            if (targetType.StartsWith("IReadOnlyList<") || targetType.StartsWith(PyTuplePrefix))
+                return EmitAsPyTuple(value, PyTuplePrefix + GenericArg(targetType) + ">");
+            if (TupleElementTypes(targetType) is not List<string> types || types.Count < 2 ||
+                types.Count != tuple.Elts.Count || tuple.Elts.Any(item => item is StarredExpr))
+                return null;
+            var converted = tuple.Elts.Select((item, index) => TupleLiteralValue(item, types[index])).ToList();
+            if (converted.All(item => item == null)) return null;
+            return "(" + string.Join(", ", tuple.Elts.Select((item, index) => converted[index] ?? EmitValue(item, targetTyped: true))) + ")";
+        }
+
         /// <summary>A value for a PyTuple&lt;T&gt; slot: a tuple literal is built as one, another tuple converted.</summary>
         string EmitAsPyTuple(Expr e, string pyTupleType)
         {
@@ -146,8 +159,13 @@ namespace Typhon.Compiler.Emit
             if (e is CallExpr me && me.Func is AttributeExpr ma && (ma.Name == "items" || ma.Name == "keys" || ma.Name == "values" || ma.Name == "split" || ma.Name == "splitlines")) return code;
             if (t == "string") return $"{Rt("chars")}({code})";
             var fixedTuple = TupleElementTypes(t);
-            if (fixedTuple != null) return $"{Rt("tuple_items")}<{(fixedTuple.Distinct().Count() == 1 ? fixedTuple[0] : "object")}>({code})";
-            if (t == "global::Typhon.Runtime.PyRange" || IsBytesType(t)) return code;
+            if (fixedTuple != null)
+            {
+                if (fixedTuple.Distinct().Count() == 1 && !IsUnknownType(fixedTuple[0]))
+                    return $"{Rt("tuple_items")}<{fixedTuple[0]}>({code})";
+                return $"{Rt("__iter_dyn")}((object?){Paren(code)})";
+            }
+            if (t is "global::Typhon.Runtime.PyRange" or BigRangeType || IsBytesType(t)) return code;
             if (IsDictType(t))
             {
                 string keys = t.StartsWith("IReadOnlyDictionary<") ? "__ro_keys" : "keys";
@@ -395,11 +413,24 @@ namespace Typhon.Compiler.Emit
                 var bound = new HashSet<string>();
                 AstWalker.VisitAll(g.Target, n => { if (n is NameExpr ne) bound.Add(ne.Id); });
                 if (g.Target is NameExpr tn) param = Esc(tn.Id);
-                else if (g.Target is TupleExpr lt && lt.Elts.All(x => x is NameExpr) && (elemType == null || elemType == "dynamic" || elemType == "object"))
+                else if (g.Target is TupleExpr tuple && tuple.Elts.All(x => x is NameExpr))
                 {
-                    // late-bound items (C# cannot deconstruct dynamic): each one's values by position, checked for the count
                     param = NewTmp("c");
-                    deconstruct = string.Join(" ", lt.Elts.Select((x, k) => $"var {Esc(((NameExpr)x).Id)} = {Rt("__unpack")}((object){param}, {k}, {lt.Elts.Count});"));
+                    var names = tuple.Elts.Cast<NameExpr>().Select(name => name.Id).ToList();
+                    bool late = IsUnknownType(elemType);
+                    if (late)
+                    {
+                        string unpacked = NewTmp("unpack");
+                        var lastBindings = names.Select((name, index) => (name, index))
+                            .Where(binding => binding.index == names.LastIndexOf(binding.name));
+                        deconstruct = $"var {unpacked} = {Rt("__unpack_items")}({Rt("__iter_dyn")}((object?){param}), {names.Count}); " +
+                            string.Join(" ", lastBindings.Select(binding => $"var {Esc(binding.name)} = {unpacked}[{binding.index}];"));
+                    }
+                    else
+                    {
+                        string pattern = string.Join(", ", names.Select((name, index) => index == names.LastIndexOf(name) ? Esc(name) : NewTmp("discard")));
+                        deconstruct = $"var ({pattern}) = {param};";
+                    }
                 }
                 else { param = NewTmp("c"); deconstruct = $"var {DeconstructionPattern(g.Target)} = {param};"; }
                 _lambdaParams.Push(bound.ToDictionary(name => name, Esc));
@@ -423,14 +454,14 @@ namespace Typhon.Compiler.Emit
                     case ComprehensionKind.List: return $"(await {Rt("__alist")}({q}))";
                     case ComprehensionKind.Set: return $"(await {Rt("__alist")}({q})).ToHashSet()";
                     case ComprehensionKind.Dict: return $"{Rt("__to_dict")}(await {Rt("__alist")}({q}))";
-                    default: return q; // an async generator expression is an async iterable
+                    default: return $"{Rt("__async_generator_expression")}({q})";
                 }
             switch (c.Kind)
             {
                 case ComprehensionKind.List: return q + ".ToList()";
                 case ComprehensionKind.Set: return q + ".ToHashSet()";
                 case ComprehensionKind.Dict: return $"{Rt("__to_dict")}({q})"; // later keys win, insertion order kept
-                default: return q;
+                default: return $"{Rt("__generator_expression")}({q})";
             }
         }
 

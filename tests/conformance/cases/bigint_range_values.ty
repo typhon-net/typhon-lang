@@ -1,0 +1,14 @@
+# typhon: int=bigint
+limit = 1 << 100
+wide = range(2, limit, 3)
+cursor = iter(wide)
+print(type(wide).__name__, bool(wide), next(cursor), next(cursor))
+print(wide.start, wide.stop, wide.step, wide[-1])
+print(wide[limit // 3 - 2], wide[:8:2], list(wide[:5]))
+print(limit + 1 in wide, 8 in wide, wide.index(8), wide.count(8))
+print(range(limit, limit - 5, -2), list(range(limit, limit - 5, -2)))
+print(range(0, 11, 2) == range(0, 12, 2))
+try:
+    print(len(wide))
+except OverflowError:
+    print("length overflow")

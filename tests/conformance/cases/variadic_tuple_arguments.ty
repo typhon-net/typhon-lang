@@ -9,3 +9,13 @@ def wrapped(items: tuple[int, ...], **kwargs):
     return describe(items), kwargs['label']
 
 print(wrapped((5, 6), label='packed'))
+
+
+def join(first: str, second: str = "default", *, separator: str = ":") -> str:
+    return first + separator + second
+
+def show(values):
+    return join(*values, separator="/")
+
+print(show(["one"]))
+print(show(["one", "two"]))

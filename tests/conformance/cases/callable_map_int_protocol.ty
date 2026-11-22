@@ -22,3 +22,22 @@ try:
     print(int(Invalid()))
 except TypeError as error:
     print(str(error))
+
+
+from typing import Protocol
+
+class TextOperation(Protocol):
+    def __call__(self, value: str, /) -> str:
+        ...
+
+def operation(prefix: str) -> TextOperation:
+    def combine(value: str) -> str:
+        return prefix + value
+    return combine
+
+def emphasize() -> TextOperation:
+    return lambda text: text.upper()
+
+label = operation("prefix-")
+print(label("value"), label.__name__)
+print(emphasize()("value"))

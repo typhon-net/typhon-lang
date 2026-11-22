@@ -1,0 +1,25 @@
+class Iterable:
+    def __iter__(self):
+        yield 1
+
+class SelfIterable(Iterable):
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self.done:
+            raise StopIteration
+        self.done = True
+        return 2
+
+    def __init__(self):
+        self.done = False
+
+class Guarded(Iterable):
+    def __iter__(self):
+        try:
+            yield 3
+        except ValueError:
+            yield 4
+
+print(list(Iterable()), list(SelfIterable()), list(Guarded()))

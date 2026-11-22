@@ -1,0 +1,7 @@
+False
+['first', 'second\nthird']
+['ValueError: bad\n', 'first\n', 'second\n', 'third\n']
+add_note() argument must be str, not int
+Cannot add note: __notes__ is not a list
+['ValueError: bad\n', 'tuple note\n']
+False

@@ -34,11 +34,23 @@ namespace Typhon.Stdlib
     using Typhon.Runtime;
 
     /// <summary>
-    /// builtins: the builtin functions as members of a module (builtins.open(...), builtins.print(...)). They forward to
-    /// Typhon's builtins. (The module itself is not a value: getattr(builtins, name) and builtins.__dict__ do not work.)
+    /// builtins: the builtin functions and types as members of a Python module.
     /// </summary>
     internal static partial class builtins
     {
+        internal static readonly Dictionary<string, Type> RuntimeClasses = new(StringComparer.Ordinal)
+        {
+            ["int"] = typeof(long), ["float"] = typeof(double), ["bool"] = typeof(bool), ["str"] = typeof(string),
+            ["object"] = typeof(object), ["type"] = typeof(Type), ["complex"] = typeof(Complex),
+            ["bytes"] = typeof(PyBytes), ["bytearray"] = typeof(PyByteArray), ["tuple"] = typeof(ITuple),
+            ["list"] = typeof(List<object>), ["set"] = typeof(HashSet<object>), ["dict"] = typeof(OrderedDictionary<object, object>),
+            ["range"] = typeof(PyRange), ["slice"] = typeof(PySlice), ["super"] = typeof(super),
+            ["property"] = typeof(property), ["classmethod"] = typeof(classmethod), ["staticmethod"] = typeof(staticmethod),
+            ["frozendict"] = typeof(frozendict<object, object>), ["frozenset"] = typeof(frozenset<object>),
+            ["Exception"] = typeof(Exception), ["ValueError"] = typeof(ArgumentException), ["TypeError"] = typeof(InvalidCastException),
+            ["NameError"] = typeof(NameError), ["KeyError"] = typeof(KeyNotFoundException), ["AttributeError"] = typeof(MissingMemberException),
+        };
+
         public static readonly Typhon.Stdlib.types.NotImplementedType NotImplemented = Builtins.NotImplemented;
         public static readonly Typhon.Stdlib.types.EllipsisType Ellipsis = Builtins.Ellipsis;
         public const bool __debug__ = true;
@@ -115,7 +127,7 @@ namespace Typhon.Stdlib
                 case Type t:
                     if (t == typeof(types.MethodType) && obj is PyBoundMethod method) return inspect.ismethod(method);
                     Type actual = obj is Type cls ? PyMetaclasses.Of(cls) : obj?.GetType() ?? typeof(types.NoneType);
-                    if (actual == t) return true;
+                    if (actual == t || Builtins.__type_of(obj) == t) return true;
                     if (PyMetaclasses.TryBindMember(t, "__instancecheck__", out var check))
                         return Builtins.truthy((object?)Builtins.__invoke(check, [obj]));
                     if (obj == null) return t == typeof(object);

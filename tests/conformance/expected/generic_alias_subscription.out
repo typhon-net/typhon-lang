@@ -1,0 +1,6 @@
+False True True
+list[int] *list[int] False True
+<class 'list'> (<class 'int'>,) *list[int]
+(<class 'int'>, Ellipsis)
+list[int]
+('Tagged', (<class 'int'>, <class 'str'>))

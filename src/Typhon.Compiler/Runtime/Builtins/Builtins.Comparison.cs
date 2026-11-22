@@ -44,6 +44,8 @@ namespace Typhon.Runtime
             if (b is PyApprox) return b.Equals(a); // (Python tries the right operand's __eq__ when the left one has none for it)
             if (a is null || b is null) return false;
             if (IntLike(a, out var x) && IntLike(b, out var y)) return x == y;
+            if (a is BigInteger wideA) return EqualWideInteger(wideA, b);
+            if (b is BigInteger wideB) return EqualWideInteger(wideB, a);
             if (IsNumber(a) && IsNumber(b)) return Convert.ToDouble(a, Inv) == Convert.ToDouble(b, Inv);
             if (a is PyString leftText) a = leftText.Text;
             if (b is PyString rightText) b = rightText.Text;
@@ -102,6 +104,20 @@ namespace Typhon.Runtime
         // bool is an int in Python (True == 1)
         static bool IntLike(object o, out long v) { if (o is bool b) { v = b ? 1 : 0; return true; } return AsInt(o, out v); }
         static bool IsNumber(object o) => o is double || o is float || o is decimal || o is bool || AsInt(o, out _);
+
+        static bool EqualWideInteger(BigInteger integer, object other)
+        {
+            if (IntLike(other, out long narrow)) return integer == narrow;
+            return other switch
+            {
+                BigInteger wide => integer == wide,
+                double floating => double.IsFinite(floating) && Math.Truncate(floating) == floating &&
+                    integer == new BigInteger(floating),
+                float floating => EqualWideInteger(integer, (double)floating),
+                decimal exact => decimal.Truncate(exact) == exact && integer == new BigInteger(exact),
+                _ => false,
+            };
+        }
 
         /// <summary>Two numbers where one is a float and the other may be a BigInteger (no .NET operator mixes them): compared as numbers.</summary>
         static bool MixedNumbers(object? a, object? b, out int cmp)
@@ -175,16 +191,37 @@ namespace Typhon.Runtime
         public static bool ge(string a, string b) => string.CompareOrdinal(a, b) >= 0;
         public static dynamic lt(object? a, object? b) => CompareDictSetViews(a, b, "<") is bool view ? view :
             MixedNumbers(a, b, out int __c) ? __c < 0 : PyOrdered(a) || PyOrdered(b) ?
-                (IsSet(a!) ? SetLe(a, b) && !eq(a, b) : compare(a, b) < 0) : (dynamic)a! < (dynamic)b!;
+                (IsSet(a!) ? SetLe(a, b) && !eq(a, b) : compare(a, b) < 0) :
+            TryRichComparison(a, b, "__lt__", "__gt__", "<", out var result) ? result! : (dynamic)a! < (dynamic)b!;
         public static dynamic le(object? a, object? b) => CompareDictSetViews(a, b, "<=") is bool view ? view :
             MixedNumbers(a, b, out int __c) ? __c <= 0 : PyOrdered(a) || PyOrdered(b) ?
-                (IsSet(a!) ? SetLe(a, b) : compare(a, b) <= 0) : (dynamic)a! <= (dynamic)b!;
+                (IsSet(a!) ? SetLe(a, b) : compare(a, b) <= 0) :
+            TryRichComparison(a, b, "__le__", "__ge__", "<=", out var result) ? result! : (dynamic)a! <= (dynamic)b!;
         public static dynamic gt(object? a, object? b) => CompareDictSetViews(a, b, ">") is bool view ? view :
             MixedNumbers(a, b, out int __c) ? __c > 0 : PyOrdered(a) || PyOrdered(b) ?
-                (IsSet(a!) ? SetLe(b, a) && !eq(a, b) : compare(a, b) > 0) : (dynamic)a! > (dynamic)b!;
+                (IsSet(a!) ? SetLe(b, a) && !eq(a, b) : compare(a, b) > 0) :
+            TryRichComparison(a, b, "__gt__", "__lt__", ">", out var result) ? result! : (dynamic)a! > (dynamic)b!;
         public static dynamic ge(object? a, object? b) => CompareDictSetViews(a, b, ">=") is bool view ? view :
             MixedNumbers(a, b, out int __c) ? __c >= 0 : PyOrdered(a) || PyOrdered(b) ?
-                (IsSet(a!) ? SetLe(b, a) : compare(a, b) >= 0) : (dynamic)a! >= (dynamic)b!;
+                (IsSet(a!) ? SetLe(b, a) : compare(a, b) >= 0) :
+            TryRichComparison(a, b, "__ge__", "__le__", ">=", out var result) ? result! : (dynamic)a! >= (dynamic)b!;
+
+        static bool TryRichComparison(object? left, object? right, string direct, string reflected,
+            string symbol, out object? result)
+        {
+            var a = LookupSourceSpecialMethod(left, direct, dataOnly: false);
+            var b = LookupSourceSpecialMethod(right, reflected, dataOnly: false);
+            result = null;
+            if (a.Owner == null && b.Owner == null) return false;
+
+            Type? leftType = left?.GetType();
+            bool reflectedFirst = leftType != null && right?.GetType().IsSubclassOf(leftType) == true;
+            if (reflectedFirst && InvokeBinarySlot(b, left, out result)) return true;
+            if (InvokeBinarySlot(a, right, out result)) return true;
+            if (!reflectedFirst && InvokeBinarySlot(b, left, out result)) return true;
+            throw new InvalidCastException($"'{symbol}' not supported between instances of " +
+                $"'{PyTypeName(__type_of(left))}' and '{PyTypeName(__type_of(right))}'");
+        }
 
         static bool IsDictSetView(object? value) => value is IEnumerable && PyDictViews.Name(value.GetType()) is "dict_keys" or "dict_items";
         static bool IsSetLike(object? value) => value != null && (IsDictSetView(value) || IsSet(value));

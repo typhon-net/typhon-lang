@@ -1,0 +1,9 @@
+class Base:
+    def transform(self, value: int) -> int:
+        return value
+
+class Derived(Base):
+    def transform(self, *, value: int) -> int:
+        return value + 1
+
+print(Derived().transform(value=7))

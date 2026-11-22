@@ -1,0 +1,29 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import zlib
+
+
+value = b"header: the quick brown fox jumps over the lazy dog\x00" * 4
+print(zlib.crc32(value), zlib.adler32(value))
+print(zlib.crc32(value[11:], zlib.crc32(value[:11])) == zlib.crc32(value))
+print(zlib.adler32(value[11:], zlib.adler32(value[:11])) == zlib.adler32(value))
+for bits in (-15, 15, 31):
+    compressor = zlib.compressobj(6, wbits=bits)
+    first = compressor.compress(value[:20]) + compressor.flush(zlib.Z_SYNC_FLUSH)
+    last = compressor.compress(value[20:]) + compressor.flush()
+    decoder = zlib.decompressobj(bits)
+    chunk = decoder.decompress(first)
+    print(bits, chunk == value[:20], decoder.eof)
+    chunk += decoder.decompress(last + b"tail", max_length=11)
+    print(len(chunk), decoder.eof, bool(decoder.unconsumed_tail))
+    for _ in range(64):
+        if decoder.eof:
+            break
+        chunk += decoder.decompress(decoder.unconsumed_tail, max_length=11)
+    print(chunk == value, decoder.eof, decoder.unused_data, decoder.flush())
+    print(zlib.decompress(zlib.compress(value, wbits=bits), wbits=bits) == value)
+try:
+    zlib.decompress(b"not compressed")
+except zlib.error:
+    print("invalid compressed data")

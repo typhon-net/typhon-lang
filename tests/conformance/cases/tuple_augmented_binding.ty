@@ -1,0 +1,16 @@
+def sample(include: bool):
+    fixed = (int, str)
+    original = fixed
+    if include:
+        fixed += (float,)
+    fixed += (bool,)
+    return original, fixed
+
+def values(prefix: str):
+    result = (prefix,)
+    result += (7, None)
+    return result
+
+print(sample(True))
+print(sample(False))
+print(values("start"))

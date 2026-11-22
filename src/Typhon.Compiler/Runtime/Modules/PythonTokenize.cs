@@ -425,3 +425,70 @@ namespace Typhon.Stdlib
         }
     }
 }
+
+namespace Typhon.Stdlib
+{
+    using System;
+    using System.Collections.Generic;
+    using Typhon.Runtime;
+    using RawPythonToken = (long Type, string Text, (long, long) Start, (long, long) End, string Line);
+
+    internal static class _tokenize
+    {
+        public sealed class TokenizerIter : PyIterator<RawPythonToken>
+        {
+            public TokenizerIter(object source, string? encoding = null, bool extra_tokens = false)
+                : base(ReadTokens(source, encoding, extra_tokens).GetEnumerator()) { }
+
+            static IEnumerable<RawPythonToken> ReadTokens(object source, string? encoding, bool extraTokens)
+            {
+                object? ReadLine()
+                {
+                    object? line = Builtins.__invoke(source, []);
+                    return line is PyBytes bytes && encoding != null ? bytes.decode(encoding) : line;
+                }
+
+                object reader = encoding == null ? source : (Func<object?>)ReadLine;
+                using var scanner = tokenize.generate_tokens(reader);
+                long row = 0;
+                string line = "";
+                while (true)
+                {
+                    tokenize.TokenInfo token;
+                    try
+                    {
+                        if (!scanner.MoveNext()) yield break;
+                        token = scanner.Current;
+                    }
+                    catch (tokenize.TokenError error) when (error.args.Count == 2 && error.args[1] is ValueTuple<long, long> position)
+                    {
+                        throw new SyntaxError(error.args[0], ("<tokenize>", position.Item1, position.Item2, line));
+                    }
+
+                    var start = (token.start[0], token.start[1]);
+                    var end = (token.end[0], token.end[1]);
+                    if (token.line.Length != 0)
+                    {
+                        row = end.Item1;
+                        line = token.line;
+                    }
+                    if (extraTokens)
+                    {
+                        yield return (token.type, token.@string, start, end, token.line);
+                        continue;
+                    }
+                    if (token.type is tokenize.COMMENT or tokenize.NL) continue;
+                    if (token.type == tokenize.NEWLINE)
+                        yield return (token.type, "", start, start, line);
+                    else if (token.type is tokenize.INDENT or tokenize.DEDENT or tokenize.ENDMARKER)
+                    {
+                        var location = (row, -1L);
+                        yield return (token.type, "", location, location, line);
+                    }
+                    else
+                        yield return (token.exact_type, token.@string, start, end, token.line);
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,22 @@
+from types import GenericAlias
+
+def subscribe(origin: object, parameters: tuple[object, ...]):
+    return origin[parameters]
+
+original: GenericAlias = list[int]
+unpacked, = original
+again, = unpacked
+print(original.__unpacked__, unpacked.__unpacked__, again.__unpacked__)
+print(repr(original), repr(unpacked), original == unpacked, unpacked == again)
+print(unpacked.__origin__, unpacked.__args__, next(iter(original)))
+
+items, = tuple[int, ...]
+print(items.__typing_unpacked_tuple_args__)
+print(subscribe(original.__origin__, original.__args__))
+
+class Tagged:
+    @classmethod
+    def __class_getitem__(cls, value):
+        return cls.__name__, value
+
+print(subscribe(Tagged, (int, str)))

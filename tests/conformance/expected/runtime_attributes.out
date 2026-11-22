@@ -8,3 +8,4 @@ False
 name renamed
 debug True
 AttributeError: 'Config' object has no attribute 'nothing'
+b 3 8

@@ -1,0 +1,10 @@
+from typing import Never
+import typing as t
+
+def stop(value: Never) -> t.NoReturn:
+    raise TypeError(f"unexpected value: {value!r}")
+
+try:
+    stop("text")
+except TypeError as error:
+    print(error)

@@ -1,0 +1,14 @@
+from types import GenericAlias
+
+class AliasWithArguments(GenericAlias):
+    def __new__(cls, origin, args):
+        return super().__new__(cls, origin, args)
+
+    def __reduce__(self):
+        args = self.__args__
+        if len(args) > 1:
+            args = (list(args[:-1]), args[-1])
+        return args
+
+print(AliasWithArguments(list, str).__reduce__())
+print(AliasWithArguments(list, (str, int)).__reduce__())

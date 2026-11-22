@@ -1,0 +1,9 @@
+rebound True
+33 24
+29 13 True
+(4,) {'offset': 9} None
+compute None
+26
+True 23
+['a', 'b'] (2, 3) NoneType
+15 True functools

@@ -1,0 +1,6 @@
+# typhon: int=bigint
+def align(text: str, size: int):
+    return text.ljust(size, "."), text.rjust(size, "-"), text.center(size, "+")
+
+print(align("xy", 6))
+print(align("xy", 2))

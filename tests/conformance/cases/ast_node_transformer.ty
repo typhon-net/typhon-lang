@@ -1,0 +1,34 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import ast
+
+
+class Rewrite(ast.NodeTransformer):
+    def visit_Name(self, node):
+        if node.id == 'old':
+            return ast.Name(id='new')
+        return node
+
+    def visit_Expr(self, node):
+        if isinstance(node.value, ast.Name):
+            if node.value.id == 'drop':
+                return None
+            if node.value.id == 'repeat':
+                return [node, node]
+        return self.generic_visit(node)
+
+
+args = [ast.Subscript(ast.Name('old'), ast.Slice(upper=ast.Constant(value=3)))]
+call = ast.Call(func=ast.Name(id='old'), args=args,
+                keywords=[ast.keyword('flag', ast.Constant(True))])
+print(ast.unparse(call))
+print(ast.unparse(Rewrite().visit(call)))
+print(list(call._fields), call.args is args, type(call.func.ctx).__name__)
+expr = ast.BinOp(ast.Name('old'), ast.Add(),
+                 ast.UnaryOp(ast.USub(), ast.Constant(value=5)))
+print(ast.unparse(Rewrite().visit(expr)))
+print(ast.unparse(ast.Dict([ast.Constant('x')], [ast.Tuple([expr])])))
+module = ast.parse('old\ndrop\nrepeat')
+Rewrite().visit(module)
+print([ast.unparse(node) for node in module.body])

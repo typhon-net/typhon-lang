@@ -107,7 +107,7 @@ namespace Typhon.Runtime
                     throw new ArgumentException($"could not convert string to float: {repr(o)}");
                 return @float(literal);
             }
-            if (o is BigInteger b) return (double)b;
+            if (o is BigInteger) return RealToDouble(o);
             if (TryGetAttr(o, "__float__", out var convert))
                 return (object?)__invoke(convert, []) is double result ? result
                     : throw new InvalidCastException("__float__ returned a non-float");
@@ -212,6 +212,7 @@ namespace Typhon.Runtime
         /// <summary>a / b on late-bound values: ints and floats divide as floats (Python's true division), others use their own /.</summary>
         public static dynamic truediv(object a, object b)
         {
+            if (TryClassBinaryOp(a, b, "truediv", "/", out var result)) return result!;
             if (a is bool ab) a = ab ? 1L : 0L;
             if (b is bool bb) b = bb ? 1L : 0L;
             if (AsInt(a, out var ia) && AsInt(b, out var ib)) return truediv(ia, ib);
@@ -219,7 +220,7 @@ namespace Typhon.Runtime
             {
                 if ((a is BigInteger || AsInt(a, out _)) && (b is BigInteger || AsInt(b, out _))) return truediv(BigOf(a), BigOf(b));
             }
-            if (IsRealNumber(a) && IsRealNumber(b)) return truediv(Convert.ToDouble(a, CultureInfo.InvariantCulture), Convert.ToDouble(b, CultureInfo.InvariantCulture));
+            if (IsRealNumber(a) && IsRealNumber(b)) return truediv(RealToDouble(a), RealToDouble(b));
             return (dynamic)a / (dynamic)b;
         }
         static bool IsRealNumber(object o) => o is double || o is float || o is long || o is int || o is short || o is byte || o is sbyte || o is ushort || o is uint || o is decimal || o is BigInteger;
@@ -241,7 +242,11 @@ namespace Typhon.Runtime
         }
         static long FloorDiv64(long a, long b) { long q = a / b; return (a - q * b != 0 && (a ^ b) < 0) ? q - 1 : q; }
         public static double floordiv(double a, double b) => Math.Floor(a / b);
-        public static dynamic floordiv(object a, object b) => AsInt(a, out var x) && AsInt(b, out var y) ? floordiv(x, y) : Math.Floor((dynamic)a / (dynamic)b);
+        public static dynamic floordiv(object a, object b)
+        {
+            if (TryClassBinaryOp(a, b, "floordiv", "//", out var result)) return result!;
+            return AsInt(a, out var x) && AsInt(b, out var y) ? floordiv(x, y) : Math.Floor((dynamic)a / (dynamic)b);
+        }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static int mod(int a, int b) { if (b == -1) return 0; int r = a % b; return (r != 0 && (r ^ b) < 0) ? r + b : r; }
@@ -260,6 +265,7 @@ namespace Typhon.Runtime
         public static T mod<T>(T a, T b) where T : IModulusOperators<T, T, T> => a % b;
         public static dynamic mod(object? a, object? b)
         {
+            if (TryClassBinaryOp(a, b, "mod", "%", out var result)) return result!;
             if (a is string format) return __percent(format, b);
             if (a is bool left) a = left ? 1L : 0L;
             if (b is bool right) b = right ? 1L : 0L;
@@ -278,6 +284,15 @@ namespace Typhon.Runtime
         public static (int, int) divmod(int a, int b) => (floordiv(a, b), mod(a, b));
         public static (long, long) divmod(long a, long b) => (floordiv(a, b), mod(a, b));
         public static (double, double) divmod(double a, double b) => (floordiv(a, b), mod(a, b));
+        public static dynamic divmod(object? a, object? b)
+        {
+            if (TryClassBinaryOp(a, b, "divmod", "divmod()", out var result)) return result!;
+            if (IntegralPowerArgument(a, out var x) && IntegralPowerArgument(b, out var y))
+                return a is BigInteger || b is BigInteger ? (object)divmod(x, y) : divmod((long)x, (long)y);
+            if (a != null && b != null && IsRealNumber(a) && IsRealNumber(b))
+                return divmod(RealToDouble(a), RealToDouble(b));
+            throw UnsupportedBinaryOp(a, b, "divmod()");
+        }
 
         public static long pow(long a, long b)
         {
@@ -318,7 +333,7 @@ namespace Typhon.Runtime
                 var exponent = BigOf(b);
                 if (exponent.Sign >= 0) return pow(BigOf(a), exponent);
             }
-            if (IsRealNumber(a) && IsRealNumber(b)) return pow(PowerFloat(a), PowerFloat(b));
+            if (IsRealNumber(a) && IsRealNumber(b)) return pow(RealToDouble(a), RealToDouble(b));
             return PowerProtocol(a, b, null);
         }
 
@@ -341,6 +356,48 @@ namespace Typhon.Runtime
             bool fits = AsInt(value, out long small);
             result = small;
             return fits;
+        }
+
+        static bool InvokeBinarySlot((Type? Owner, object? Value) slot, object? other, out object? result)
+        {
+            result = slot.Owner == null ? NotImplemented : __invoke(slot.Value, [other]);
+            return !ReferenceEquals(result, NotImplemented);
+        }
+
+        // A dunder stored in a class namespace has no corresponding CLR operator.
+        // Resolve it on the class, with the same reflected priority as Python's numeric slots.
+        static bool TryClassBinaryOp(object? left, object? right, string name, string symbol, out object? result)
+        {
+            string direct = "__" + name + "__";
+            string reflected = "__r" + name + "__";
+            var a = LookupSourceSpecialMethod(left, direct, dataOnly: true);
+            var b = LookupSourceSpecialMethod(right, reflected, dataOnly: true);
+            result = null;
+            if (a.Owner == null && b.Owner == null) return false;
+
+            if (a.Owner == null) a = LookupSourceSpecialMethod(left, direct, dataOnly: false);
+            if (b.Owner == null) b = LookupSourceSpecialMethod(right, reflected, dataOnly: false);
+            Type? leftType = left?.GetType();
+            Type? rightType = right?.GetType();
+            bool distinct = leftType != rightType;
+            bool reflectedFirst = distinct && b.Owner != null && leftType != null &&
+                rightType?.IsSubclassOf(leftType) == true && b.Owner != LookupSourceSpecialMethod(left, reflected, dataOnly: false).Owner;
+            if (reflectedFirst && InvokeBinarySlot(b, left, out result)) return true;
+            if (InvokeBinarySlot(a, right, out result)) return true;
+            if (distinct && !reflectedFirst && InvokeBinarySlot(b, left, out result)) return true;
+            throw UnsupportedBinaryOp(left, right, symbol);
+        }
+
+        static InvalidCastException UnsupportedBinaryOp(object? left, object? right, string symbol)
+        {
+            string Name(object? value) => value == null ? "NoneType" : PyTypeName(value.GetType());
+            return new InvalidCastException($"unsupported operand type(s) for {symbol}: '{Name(left)}' and '{Name(right)}'");
+        }
+
+        public static dynamic? __class_binary_op(object? left, object? right, string name, string symbol)
+        {
+            if (TryClassBinaryOp(left, right, name, symbol, out var result)) return result;
+            throw UnsupportedBinaryOp(left, right, symbol);
         }
 
         static object? PowerProtocol(object? @base, object? exp, object? mod)
@@ -368,7 +425,7 @@ namespace Typhon.Runtime
             }
         }
 
-        static double PowerFloat(object value)
+        static double RealToDouble(object value)
         {
             if (value is not BigInteger integer) return Convert.ToDouble(value, Inv);
             double converted = (double)integer;
@@ -579,6 +636,7 @@ namespace Typhon.Runtime
         public static dynamic mul(dynamic a, dynamic b)
         {
             object oa = a, ob = b;
+            if (TryClassBinaryOp(oa, ob, "mul", "*", out var result)) return result!;
             if (oa is string s1 && TryRepeatCount(ob, out var n1)) return __repeat(s1, n1);
             if (ob is string s2 && TryRepeatCount(oa, out var n2)) return __repeat(s2, n2);
             if (oa is IList l1 && TryRepeatCount(ob, out var n3)) return RepeatList(l1, n3);
@@ -602,6 +660,7 @@ namespace Typhon.Runtime
         /// <summary>a + b with late-bound operands: list concatenation (str and numbers bind normally).</summary>
         public static dynamic add(dynamic a, dynamic b)
         {
+            if (TryClassBinaryOp((object?)a, (object?)b, "add", "+", out var result)) return result!;
             if (a is ITuple && b is ITuple) return __tupcat<object?>((object)a, (object)b);
             if (a is IList la && b is IList lb && !(a is string) && !(a is IDictionary))
             {

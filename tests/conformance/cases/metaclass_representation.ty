@@ -1,0 +1,31 @@
+class Labeled(type):
+    def __repr__(cls) -> str:
+        return f"[{cls.__name__}]"
+
+class Derived(Labeled):
+    def __repr__(cls) -> str:
+        return super().__repr__() + "!"
+
+    def __str__(cls) -> str:
+        return cls.__name__.lower()
+
+class First(metaclass=Labeled):
+    pass
+
+class Second(metaclass=Derived):
+    pass
+
+class Plain:
+    pass
+
+class BaseRepr(type):
+    def __repr__(cls) -> str:
+        return "default " + super().__repr__()
+
+class Third(metaclass=BaseRepr):
+    pass
+
+print(repr(First), str(First))
+print(repr(Second), str(Second))
+print(repr(Plain), str(Plain))
+print(repr(Third))

@@ -443,6 +443,32 @@ namespace Typhon.Compiler.Emit
                 at = next;
             }
             if (reached.Count == 0) return;
+            if (own == null && reached.Count == 1)
+            {
+                var initializer = reached[0].Body.OfType<FunctionDef>().First(f => f.Name == "__init__");
+                if (!CallsSuperInit(initializer))
+                {
+                    var target = new AttributeExpr { Target = new NameExpr { Id = "self" }, Name = Hidden(reached[0], "__init__") };
+                    var invoke = new CallExpr { Func = target, Line = c.Line, Col = c.Col };
+                    foreach (Param parameter in initializer.Params.Skip(1))
+                        invoke.Args.Add(new Arg
+                        {
+                            Value = new NameExpr { Id = parameter.Name },
+                            Name = parameter.KeywordOnly ? parameter.Name : null,
+                            Star = parameter.Kind == ParamKind.VarArgs,
+                            DoubleStar = parameter.Kind == ParamKind.KwArgs,
+                        });
+                    c.Body.Add(new FunctionDef
+                    {
+                        Name = "__init__",
+                        Params = initializer.Params.Select(parameter => AstClone.Clone(parameter)).ToList(),
+                        Body = new List<Stmt> { new ExprStmt { Value = invoke, Line = c.Line, Col = c.Col } },
+                        Line = c.Line,
+                        Col = c.Col,
+                    });
+                    return;
+                }
+            }
             var calls = Enumerable.Reverse(reached).Select(k => (Stmt)new ExprStmt
             {
                 Line = c.Line, Col = c.Col,

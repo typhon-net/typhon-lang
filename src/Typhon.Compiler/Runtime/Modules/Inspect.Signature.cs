@@ -82,6 +82,7 @@ namespace Typhon.Stdlib
         internal sealed class Signature : IPyRepr
         {
             readonly Parameter[] _parameters;
+            internal IReadOnlyList<Parameter> Arguments => _parameters;
             public static Type empty => typeof(_empty);
             public types.MappingProxyType parameters { get; }
             public dynamic? return_annotation { get; }

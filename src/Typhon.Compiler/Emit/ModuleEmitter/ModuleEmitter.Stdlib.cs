@@ -70,7 +70,7 @@ namespace Typhon.Compiler.Emit
                 case "Typhon.Stdlib.itertools.count":
                     return pos.Any(p => InferType(p) == "double") ? "IEnumerable<double>" : $"IEnumerable<{IntT}>";
                 case "Typhon.Stdlib.itertools.chain":
-                    return $"IEnumerable<{(pos.Count == call.Args.Count ? ChainElementType(pos) : "dynamic")}>";
+                    return $"global::Typhon.Runtime.PyIterator<{(pos.Count == call.Args.Count ? ChainElementType(pos) : "dynamic")}>";
                 case "Typhon.Stdlib.itertools.cycle": case "Typhon.Stdlib.itertools.islice": case "Typhon.Stdlib.itertools.accumulate":
                     return Wrap(Elem(0), "IEnumerable<{0}>");
                 case "Typhon.Stdlib.itertools.takewhile": case "Typhon.Stdlib.itertools.dropwhile": case "Typhon.Stdlib.itertools.filterfalse":
@@ -426,15 +426,19 @@ namespace Typhon.Compiler.Emit
                     _ => null,
                 });
                 if (elt == TypeInference.Pending) return elt;
+                if (comp.Kind == ComprehensionKind.Generator)
+                {
+                    string prefix = comp.Generators.Count == 1 && comp.Generators[0].IsAsync
+                        ? "global::Typhon.Runtime.PyAsyncGenerator<" : PyGeneratorPrefix;
+                    return $"{prefix}{elt ?? "dynamic"}>";
+                }
                 // late-bound items: what the LINQ query builds ([f(x) for x in d] is a List<dynamic> to C#)
-                if ((elt == null || elt == "dynamic") && (comp.Kind == ComprehensionKind.List || comp.Kind == ComprehensionKind.Generator))
-                    return comp.Kind == ComprehensionKind.List ? "List<dynamic>" : "IEnumerable<dynamic>";
+                if ((elt == null || elt == "dynamic") && comp.Kind == ComprehensionKind.List) return "List<dynamic>";
                 if (elt == null || elt == "dynamic") return null;
                 switch (comp.Kind)
                 {
                     case ComprehensionKind.List: return $"List<{elt}>";
                     case ComprehensionKind.Set: return $"HashSet<{elt}>";
-                    case ComprehensionKind.Generator: return $"IEnumerable<{elt}>";
                     default:
                         string v = InferType(comp.ValueElt);
                         return v == null || v == "dynamic" || v == TypeInference.Pending ? (v == TypeInference.Pending ? v : null) : $"OrderedDictionary<{elt}, {v}>";

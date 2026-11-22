@@ -1,0 +1,13 @@
+# typhon: int=bigint
+from typing import Any
+
+def inspect(items: Any, number: Any):
+    lookup = items.__getitem__
+    accepts = items.__contains__
+    print(lookup(-1), lookup(slice(0, 1)), accepts(number))
+    return number in (3, 6)
+
+values = ("item", 3)
+print(inspect(values, "abc".find("") + len("abc")))
+typed_lookup = values.__getitem__
+print(typed_lookup(0))

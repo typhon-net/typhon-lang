@@ -1,0 +1,7 @@
+('direct', 2) ('reflected', 2) ('subtract', 3) ('divide', 4) (3, 5)
+child reflected
+('direct', 6)
+unsupported
+right comparison
+comparison unsupported
+True right comparison

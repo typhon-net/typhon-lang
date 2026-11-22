@@ -41,6 +41,14 @@ namespace Typhon.Compiler.Emit
 
         bool IsRuntimeTypeValue(Expr expression) => InferType(expression) is "global::System.Type" or "System.Type";
 
+        bool IsIntegerFlagValue(Expr value) => value switch
+        {
+            BinOpExpr { Op: "|" } flags => IsIntegerFlagValue(flags.Left) && IsIntegerFlagValue(flags.Right),
+            NameExpr name when !IsShadowed(name.Id) && StdlibOwner(name.Id) is string owner =>
+                _r.GetMembers(owner, name.Id).Any(member => member.IsStatic && !member.IsMethod && IsIntegral(member.Type)),
+            _ => IsIntegral(InferType(value)),
+        };
+
         bool IsUnionOperation(BinOpExpr binary) => binary.Op == "|" &&
             (IsKnownClassOrUnion(binary.Left) || IsKnownClassOrUnion(binary.Right));
 
@@ -103,7 +111,7 @@ namespace Typhon.Compiler.Emit
                 TryResolveType(dotted, 0, out var runtime, out var cls) &&
                 (cls != null || runtime != null && _r.TypeExists(runtime) && IsRuntimeClassMeta(runtime)) &&
                 TryTypeExpr(expression, out var type))
-                return $"typeof({type})";
+                return cls == null ? $"typeof({type})" : ClassTypeValue(type, cls);
             return EmitValue(expression);
         }
     }

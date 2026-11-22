@@ -351,10 +351,15 @@ namespace Typhon.Stdlib
             return rel.Count == 0 ? "." : string.Join("\\", rel);
         }
 
-        public static string commonpath(IList<string> paths)
+        public static string commonpath(IList<string> paths, bool bytePaths = false)
         {
             if (paths.Count == 0) throw new ArgumentException("commonpath() arg is an empty iterable");
-            var drivesplits = paths.Select(p => splitroot(p.Replace('/', '\\').ToLowerInvariant())).ToList();
+            string Fold(string value) => bytePaths ? string.Create(value.Length, value, (destination, source) =>
+            {
+                for (int i = 0; i < source.Length; i++) destination[i] = char.IsAsciiLetterUpper(source[i])
+                    ? char.ToLowerInvariant(source[i]) : source[i];
+            }) : value.ToLowerInvariant();
+            var drivesplits = paths.Select(p => splitroot(Fold(p.Replace('/', '\\')))).ToList();
             var splitPaths = drivesplits.Select(d => d.Item3.Split('\\').Where(c => c.Length > 0 && c != ".").ToList()).ToList();
             if (drivesplits.Select(d => d.Item1).Distinct().Count() != 1) throw new ArgumentException("Paths don't have the same drive");
             var (drive, root, path) = splitroot(paths[0].Replace('/', '\\'));
@@ -593,6 +598,27 @@ namespace Typhon.Stdlib
             /// <summary>relpath(path, start=os.curdir): path relative to start, from their normalized absolute forms.</summary>
             public static string relpath(string p, string? start = null) => Win ? NtPath.relpath(p, start) : PosixPath.relpath(p, start);
             public static string commonpath(IEnumerable<string> paths) => Win ? NtPath.commonpath(paths.ToList()) : PosixPath.commonpath(paths.ToList());
+            public static dynamic commonpath(object paths)
+            {
+                var values = new List<string>();
+                bool? bytePaths = null;
+                foreach (object? value in Builtins.__iter_dyn(paths))
+                {
+                    object pathname = os_.fspath(value);
+                    bool binary = pathname is PyBytes;
+                    if (bytePaths is bool previous && previous != binary)
+                        throw new InvalidCastException("Can't mix strings and bytes in path components");
+                    bytePaths = binary;
+                    values.Add(pathname switch
+                    {
+                        string text => text,
+                        PyBytes bytes => bytes.decode("latin-1"),
+                        _ => throw new InvalidCastException("expected a string or bytes path"),
+                    });
+                }
+                string prefix = Win ? NtPath.commonpath(values, bytePaths == true) : PosixPath.commonpath(values);
+                return bytePaths == true ? PyBytes.Latin1(prefix) : prefix;
+            }
             /// <summary>commonprefix(list): the longest common leading string (character by character; deprecated in 3.15).</summary>
             public static string commonprefix(IEnumerable<string> m) => GenericPath.commonprefix(m.ToList());
             public static string expanduser(string p) => Win ? NtPath.expanduser(p) : PosixPath.expanduser(p);

@@ -1,0 +1,17 @@
+class Data:
+    def __init__(self, value, *, label="default"):
+        self.value = value
+        self.label = label
+
+class NativeRoot:
+    pass
+
+class Behavior(NativeRoot):
+    def unpack(self):
+        return self.label, self.value
+
+class Complete(Data, Behavior):
+    pass
+
+print(Complete(41).unpack())
+print(Complete(42, label="answer").unpack())

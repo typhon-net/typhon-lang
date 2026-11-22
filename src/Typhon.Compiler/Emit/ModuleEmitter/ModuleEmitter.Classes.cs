@@ -87,7 +87,7 @@ namespace Typhon.Compiler.Emit
             foreach (var b in c.Bases)
             {
                 string bn = DottedName(b is SubscriptExpr bs ? bs.Target : b);
-                if (bn == "Protocol" || bn == "typing.Protocol") { isInterface = true; continue; }
+                if (IsInterfaceProtocolBase(b, _m)) { isInterface = true; continue; }
                 if (bn == "Enum" || bn == "IntEnum" || bn == "enum.Enum" || bn == "enum.IntEnum") { isEnum = true; continue; }
                 if (bn is "ABC" or "abc.ABC" && (!ResolveBase(b, out var abc, out _) || abc == null))
                 { isAbstract = true; continue; }
@@ -118,7 +118,8 @@ namespace Typhon.Compiler.Emit
             if (vis == "public" && DerivesFromInternalClass(c)) vis = "internal";
             string kind = isInterface ? "partial interface" : (isAbstract ? "abstract partial class" : (ctx.IsSealed ? "sealed partial class" : "partial class"));
             var baseTypes = bases.Select(b => BuiltinStringBase(b) ? "global::Typhon.Runtime.PyString" :
-                MappingBaseMetadata(b) is string mapping ? CsTypeName(mapping) : MapType(b, c)).ToList();
+                (RuntimeClassBase(b) ?? MappingBaseMetadata(b)) is string runtime ? CsTypeName(runtime) : MapType(b, c)).ToList();
+            vis = SurfaceVisibility(vis, baseTypes.ToArray());
             if (!isInterface) baseTypes.AddRange(StructuralProtocols(c, bases));
             if (!_m.IsGdScript && !isInterface && DefinesInHierarchy(c, "__getattr__"))
                 baseTypes.Add("global::Typhon.Runtime.IPyFallbackAttributes");
@@ -140,7 +141,7 @@ namespace Typhon.Compiler.Emit
             if (!isInterface && c.Body.OfType<FunctionDef>().Any(f => f.Name == "__len__" && f.Params.Count == 1 && f.Returns is NameExpr rn && rn.Id == "int"))
                 baseTypes.Add("global::Typhon.Runtime.IPyLen");
             // a namedtuple: a tuple of its fields (unpacking, indexing, iteration, len, comparison, repr)
-            if (!isInterface && (c.NamedTupleFields != null || c.Body.OfType<FunctionDef>().Any(f => f.Name == "__repr__") ||
+            if (!isInterface && !IsUserMetaclass(c) && (c.NamedTupleFields != null || c.Body.OfType<FunctionDef>().Any(f => f.Name == "__repr__") ||
                 GeneratesDataclassRepr(c)))
                 baseTypes.Add("global::Typhon.Runtime.IPyRepr");
             if (c.NamedTupleFields != null && !isInterface)
@@ -158,6 +159,7 @@ namespace Typhon.Compiler.Emit
             else
             {
                 EmitClassBody(c, ctx, bases, isAbstract);
+                EmitAnnotationsMap(c.Body);
                 if (c.UninitializedSingleton)
                     _w.Line($"internal static dynamic {ClassModel.AllocateSingleton}() => global::System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(typeof({ctx.CsSelfType}));");
             }
@@ -166,7 +168,38 @@ namespace Typhon.Compiler.Emit
             _cls = savedCls; _scope = savedScope; _emptyFields = savedEmptyFields;
         }
 
-        static bool IsProtocol(ClassDef c) => c.Bases.Any(b => { var n = DottedName(b is SubscriptExpr s ? s.Target : b); return n == "Protocol" || n == "typing.Protocol"; });
+        bool IsInterfaceProtocolBase(Expr @base, ModuleInfo module)
+        {
+            string name = DottedName(@base is SubscriptExpr generic ? generic.Target : @base);
+            if (name == "typing.Protocol") return _p.FindModule("typing") == null;
+            if (name != "Protocol" || module.Classes.ContainsKey("Protocol")) return false;
+            foreach (var import in module.Ast.Body.OfType<ImportFromStmt>())
+                if (module.ResolveImport(import.Module, import.Level) is string path && _p.FindModule(path) is ModuleInfo source &&
+                    import.Names.Any(alias => alias.Name == "*" ? source.Classes.ContainsKey(name) :
+                        (alias.AsName ?? alias.Name) == name && source.Classes.ContainsKey(alias.Name)))
+                    return false;
+            return true;
+        }
+
+        bool IsProtocol(ClassDef c, ModuleInfo owner) => c.Bases.Any(b => IsInterfaceProtocolBase(b, owner));
+
+        bool IsProtocol(ClassDef c)
+        {
+            var module = _p.Modules.Values.FirstOrDefault(owner => owner.Classes.TryGetValue(c.Name, out var declaration) && declaration == c) ?? _m;
+            return IsProtocol(c, module);
+        }
+
+        bool CallableProtocolAnnotation(Expr annotation)
+        {
+            int arity = annotation is SubscriptExpr application ? application.Index is TupleExpr tuple ? tuple.Elts.Count : 1 : 0;
+            string name = DottedName(annotation is SubscriptExpr generic ? generic.Target : annotation);
+            if (name == null || !TryResolveType(name, arity, out _, out var protocol) || protocol == null ||
+                !protocol.Body.OfType<FunctionDef>().Any(method => method.Name == "__call__")) return false;
+            if (IsProtocol(protocol)) return true;
+            var resolver = ClassDeclarationResolver(protocol);
+            return protocol.Bases.Any(parent => resolver.ResolveBase(parent, out var declaration, out _) &&
+                declaration?.Name == "Protocol" && _p.DeclaringModule(declaration)?.Name == "typing");
+        }
 
         /// <summary>
         /// Python Protocols are structural, CLR interfaces are nominal. Bridge the gap inside the project: a Typhon class
@@ -184,7 +217,7 @@ namespace Typhon.Compiler.Emit
             foreach (var kv in CollectImplicitFields(c)) if (!members.ContainsKey(kv.Key)) members[kv.Key] = -1;
 
             foreach (var mod in _p.Modules.Values)
-                foreach (var proto in mod.Classes.Values.Where(IsProtocol))
+                foreach (var proto in mod.Classes.Values.Where(candidate => IsProtocol(candidate, mod)))
                 {
                     if (proto.Name == c.Name || explicitNames.Contains(proto.Name) || proto.TypeParams.Count > 0) continue;
                     bool matches = true;
@@ -203,6 +236,7 @@ namespace Typhon.Compiler.Emit
         {
             EmitDocComment(c.Body);
             LineDirective(c);
+            EmitClassSource(c.Body, c.Line, pythonName: c.PyName);
             EmitConditionalModuleClassAttribute(c);
             // an IntEnum is long-based: the runtime prints its members as ints (str(Level.HIGH) == "2"), arithmetic treats them as ints
             bool intEnum = IsIntEnum(c);
@@ -295,11 +329,13 @@ namespace Typhon.Compiler.Emit
         bool DerivesFromInternalClass(ClassDef c, int depth = 0)
         {
             if (depth > 20) return false;
+            var resolver = ClassDeclarationResolver(c);
             foreach (var b in c.Bases)
             {
-                if (!ClassDeclarationResolver(c).ResolveBase(b, out var py, out var meta)) continue;
+                if (!resolver.ResolveBase(b, out var py, out var meta)) continue;
                 if (py == null ? IsRuntimeType(meta) :
                     py != c && (Visibility(py.Name, topLevel: true) != "public" || DerivesFromInternalClass(py, depth + 1))) return true;
+                if (b is SubscriptExpr && UsesRuntimeSurfaceType(resolver.MapType(b, c))) return true;
             }
             return false;
         }
@@ -326,9 +362,29 @@ namespace Typhon.Compiler.Emit
         bool HasStringBase(ClassDef definition, int depth = 0) => depth < 20 &&
             (definition.Bases.Any(BuiltinStringBase) || TyphonBases(definition).Any(parent => HasStringBase(parent, depth + 1)));
 
+        string RuntimeClassBase(Expr basis)
+        {
+            if (_m.IsGdScript || IsShadowed("type")) return null;
+            Expr expression = basis;
+            if (basis is NameExpr name && !IsLocal(name.Id) && !_m.ConditionalGlobals.Contains(name.Id))
+            {
+                var assignment = _m.Ast.Body.OfType<AssignStmt>()
+                    .Where(statement => statement.Targets.Any(target => target is NameExpr binding && binding.Id == name.Id))
+                    .Take(2).ToList();
+                if (assignment.Count != 1 || assignment[0].Line >= basis.Line) return null;
+                expression = assignment[0].Value;
+            }
+            if (expression is CallExpr { Func: NameExpr { Id: "type" }, Args.Count: 1 } call &&
+                call.Args[0] is Arg { Name: null, Star: false, DoubleStar: false } argument && IsBuiltinGenericAlias(argument.Value))
+                return "Typhon.Stdlib.types+GenericAlias";
+            return null;
+        }
+
         bool ResolveBase(Expr b, out ClassDef pyClass, out string meta)
         {
-            pyClass = null; meta = null;
+            pyClass = null;
+            meta = RuntimeClassBase(b);
+            if (meta != null) return true;
             int arity = 0;
             var target = b;
             if (b is SubscriptExpr s) { target = s.Target; arity = s.Index is TupleExpr t ? t.Elts.Count : 1; }
@@ -372,7 +428,8 @@ namespace Typhon.Compiler.Emit
         void EmitLocalDataClass(ClassDef c)
         {
             if (c.Bases.Count > 1 || c.Decorators.Count > 0 || c.TypeParams.Count > 0 || c.Metaclass != null ||
-                c.Body.Any(s => s is not (PassStmt or ExprStmt { Value: ConstExpr { Kind: ConstKind.Str } }) &&
+                c.Body.Any(s => s is not (PassStmt or ExprStmt { Value: ConstExpr { Kind: ConstKind.Str } } or
+                    FunctionDef { TypeParams.Count: 0 }) &&
                     s is not AssignStmt { Targets.Count: 1 } || s is AssignStmt assignment && assignment.Targets[0] is not NameExpr))
             {
                 Unsupported(c, "this local class body");
@@ -380,16 +437,55 @@ namespace Typhon.Compiler.Emit
             }
             string parent = c.Bases.Count == 1 ? EmitValue(c.Bases[0]) : "typeof(object)";
             string name = Esc(c.Name);
-            if (IsInline(c, c.Name)) { _w.Line($"{LocalDataClassType} {name};"); Declared(c.Name); }
+            if (IsInline(c, c.Name)) { _w.Line($"{LocalDataClassType} {name} = default!;"); Declared(c.Name); }
+            SetType(c.Name, LocalDataClassType);
             string value = NewTmp("cls");
             string qualified = _scope.FunctionQualName + ".<locals>." + c.Name;
             _w.Line($"var {value} = new {LocalDataClassType}({CsString(c.Name)}, {CsString(PythonModuleName)}, {CsString(qualified)}, (global::System.Type){Paren(parent)});");
+            string keywords = null;
+            if (c.ClassKeywords.Count > 0)
+            {
+                keywords = NewTmp("classKeywords");
+                _w.Line($"var {keywords} = {KeywordArgs(c.ClassKeywords)};");
+            }
             if (c.Body.FirstOrDefault() is ExprStmt { Value: ConstExpr { Kind: ConstKind.Str } doc })
                 _w.Line($"{value}.Members[\"__doc__\"] = {EmitValue(doc)};");
-            foreach (var member in c.Body.OfType<AssignStmt>())
-                _w.Line($"{value}.Members[{CsString(((NameExpr)member.Targets[0]).Id)}] = {EmitValue(member.Value)};");
+            foreach (var member in c.Body)
+                if (member is AssignStmt data)
+                    _w.Line($"{value}.Members[{CsString(((NameExpr)data.Targets[0]).Id)}] = {EmitValue(data.Value)};");
+                else if (member is FunctionDef method)
+                    EmitLocalClassMethod(value, method);
+            _w.Line($"{Rt("__initialize_subclass")}({value}, {keywords ?? "null"});");
             _w.Line($"{name} = {value};");
-            SetType(c.Name, LocalDataClassType);
+        }
+
+        void EmitLocalClassMethod(string owner, FunctionDef method)
+        {
+            CaptureLocalDefaults(method);
+            var previousReturn = _retKey;
+            _retKey = null;
+            var signature = BuildSignature(method, dropFirst: false);
+            signature.Scope.HasSelf = false;
+            signature.Scope.LocalClassOwner = owner;
+            signature.Scope.LocalClassReceiver = method.Params.Count == 0 ? null : method.Params[0].Name;
+            bool implicitClassMethod = method.Name == "__init_subclass__" && method.Decorators.Count == 0;
+            if ((implicitClassMethod || HasDecorator(method.Decorators, "classmethod")) && method.Params.Count > 0)
+                signature.Scope.Types[method.Params[0].Name] = "global::System.Type";
+            string name = NewTmp("method");
+            string asynchronous = method.IsAsync && !signature.IsGenerator ? "async " : "";
+            _w.Line($"{asynchronous}{signature.ReturnType} {name}({signature.Params})");
+            EmitSignatureBody(method.Body, signature);
+            _retKey = previousReturn;
+
+            string member = ClosureCode(method, signature, name, null);
+            if (implicitClassMethod)
+                member = $"new global::Typhon.Stdlib.builtins.classmethod((object?){Paren(member)})";
+            foreach (Expr decorator in method.Decorators.AsEnumerable().Reverse())
+            {
+                string callable = ModuleOrClassValue(decorator) ?? EmitDecoratorCallee(decorator);
+                member = $"{Rt("__invoke")}((object?){Paren(callable)}, [(object?){Paren(member)}])";
+            }
+            _w.Line($"{owner}.Members[{CsString(method.Name)}] = {member};");
         }
 
         static Dictionary<string, KeyValuePair<Expr, KeyValuePair<FunctionDef, Expr>>> CollectImplicitFields(ClassDef c)
@@ -1044,9 +1140,9 @@ namespace Typhon.Compiler.Emit
             if (f.Name.StartsWith("__") && f.Name.EndsWith("__")) vis = "public";
             var mods = new List<string> { vis };
             if (isStatic) mods.Add("static");
-            else if (isAbstract) mods.Add("abstract");
-            else if (vis != "private")
+            else if (isAbstract || vis != "private")
             {
+                if (isAbstract) mods.Add("abstract");
                 bool explicitOverride = HasDecorator(f.Decorators, "override");
                 bool nativeVariadicOverride = !_m.IsGdScript && !f.IsAsync && f.TypeParams.Count == 0 &&
                     IsVariadicOverride(f) && NativeVariadicSlots(bases, f.Name).Any();
@@ -1056,8 +1152,8 @@ namespace Typhon.Compiler.Emit
                     mods.Add("override");
                     if (DotNetOverrideVisibility(bases, f.Name, parameterCount) is string access) mods[0] = access;
                 }
-                else if (!ctx.IsSealed && !HasDecorator(f.Decorators, "final")) mods.Add("virtual");
-                if (HasDecorator(f.Decorators, "final") && mods.Contains("override")) mods.Add("sealed");
+                else if (!isAbstract && !ctx.IsSealed && !HasDecorator(f.Decorators, "final")) mods.Add("virtual");
+                if (!isAbstract && HasDecorator(f.Decorators, "final") && mods.Contains("override")) mods.Add("sealed");
             }
             if (f.IsAsync && !isAbstract) mods.Add("async");
             return string.Join(" ", mods);
@@ -1185,14 +1281,101 @@ namespace Typhon.Compiler.Emit
         static bool IsVariadicOverride(FunctionDef method) =>
             method.Params.Count == 2 && method.Params[1].Kind == ParamKind.VarArgs || IsEmptyPackedOverride(method);
 
-        // Keep the CLR virtual slot when the Python override accepts a different argument shape.
-        bool EmitExtendedOverride(FunctionDef method, Signature signature, List<Expr> bases, string modifiers)
+        (ClassDef Owner, FunctionDef Method, IReadOnlyDictionary<string, string> Bindings) SourceOverrideSlot(
+            ClassDef child, Expr parent, string name)
         {
+            IReadOnlyDictionary<string, string> bindings = null;
+            for (int depth = 0; parent != null && depth < 20; depth++)
+            {
+                var resolver = ClassDeclarationResolver(child);
+                if (!resolver.ResolveBase(parent, out var owner, out _) || owner == null || owner == child || IsProtocol(owner))
+                    break;
+                var inherited = new Dictionary<string, string>();
+                if (parent is SubscriptExpr applied)
+                {
+                    var arguments = applied.Index is TupleExpr tuple ? tuple.Elts : new List<Expr> { applied.Index };
+                    for (int index = 0; index < Math.Min(owner.TypeParams.Count, arguments.Count); index++)
+                        inherited[owner.TypeParams[index].Name] = resolver.MapInheritedType(arguments[index], child, bindings);
+                }
+                var method = owner.Body.OfType<FunctionDef>().FirstOrDefault(candidate => candidate.Name == name);
+                if (method != null) return (owner, method, inherited);
+                child = owner;
+                parent = owner.Bases.FirstOrDefault();
+                bindings = inherited;
+            }
+            return default;
+        }
+
+        string DeclaredSlotVisibility(ClassDef owner, FunctionDef method, int depth = 0)
+        {
+            var resolver = ClassDeclarationResolver(owner);
+            var open = owner.TypeParams.ToDictionary(parameter => parameter.Name, parameter => Esc(parameter.Name));
+            var types = method.Params.Skip(1)
+                .Select(parameter => resolver.MapInheritedType(parameter.Annotation, owner, open))
+                .Append(resolver.MapInheritedType(method.Returns, owner, open, isReturn: true));
+            string declared = Visibility(method.Name, false);
+            string visible = resolver.SurfaceVisibility(declared, types.ToArray());
+            if (depth < 20 && declared == "public" && visible == "internal" &&
+                (Visibility(owner.Name, topLevel: true) != "public" || DerivesFromInternalClass(owner)))
+            {
+                var parent = SourceOverrideSlot(owner, owner.Bases.FirstOrDefault(), method.Name);
+                if (parent.Owner != null && parent.Method.Params.Count == method.Params.Count)
+                    return DeclaredSlotVisibility(parent.Owner, parent.Method, depth + 1);
+            }
+            return visible;
+        }
+
+        bool EmitWidenedGenericOverride(FunctionDef method, ClassContext context, Signature signature, List<Expr> bases, string modifiers)
+        {
+            if (method.TypeParams.Count > 0 || method.IsAsync ||
+                method.Params.Skip(1).Any(parameter => parameter.Kind != ParamKind.Normal || parameter.Default != null))
+                return false;
+            var (owner, inherited, bindings) = SourceOverrideSlot(context.Def, bases.FirstOrDefault(), method.Name);
+            if (inherited == null || bindings.Count == 0 || inherited.TypeParams.Count > 0 || inherited.IsAsync ||
+                inherited.Params.Count != method.Params.Count || inherited.Params.Skip(1).Any(parameter =>
+                    parameter.Kind != ParamKind.Normal || parameter.Default != null || parameter.Annotation == null) ||
+                HasDecorator(inherited.Decorators, "staticmethod") || HasDecorator(inherited.Decorators, "classmethod") ||
+                HasDecorator(inherited.Decorators, "property"))
+                return false;
+            var resolver = ClassDeclarationResolver(owner);
+            var parameters = inherited.Params.Skip(1).ToList();
+            var slotTypes = parameters.Select(parameter => resolver.MapInheritedType(parameter.Annotation, owner, bindings)).ToList();
+            var destinationTypes = method.Params.Skip(1).Select(parameter => signature.Scope.Types[parameter.Name]).ToList();
+            bool SameType(int index) => slotTypes[index] == destinationTypes[index] ||
+                slotTypes[index] is "object" or "dynamic" && destinationTypes[index] is "object" or "dynamic";
+            if (Enumerable.Range(0, parameters.Count).All(SameType) ||
+                Enumerable.Range(0, parameters.Count).Any(index => !SameType(index) && destinationTypes[index] is not ("object" or "dynamic")))
+                return false;
+            string returnType = resolver.MapInheritedType(inherited.Returns, owner, bindings, isReturn: true);
+            string slots = string.Join(", ", parameters.Select((parameter, index) => $"{slotTypes[index]} {Esc(parameter.Name)}"));
+            string values = string.Join(", ", parameters.Select((parameter, index) =>
+                SameType(index) ? Esc(parameter.Name) : $"(object?){Esc(parameter.Name)}"));
+            string declaration = $"{DeclaredSlotVisibility(owner, inherited)} {(modifiers.Contains(" sealed") ? "sealed " : "")}override {returnType} {Esc(method.Name)}({slots})";
+            string call = $"this.{Esc(method.Name)}({values})";
+            LineDirective(method);
+            _w.Line("[global::Typhon.Runtime.PyOverrideBridge]");
+            if (returnType == "void") _w.Line($"{declaration} {{ {call}; }}");
+            else if (signature.ReturnType == "void") _w.Line($"{declaration} {{ {call}; return default!; }}");
+            else if (returnType == signature.ReturnType) _w.Line($"{declaration} => {call};");
+            else _w.Line($"{declaration} => ({returnType})(dynamic)({call});");
+            return true;
+        }
+
+        // Keep the CLR virtual slot when the Python override accepts a different argument shape.
+        bool EmitExtendedOverride(FunctionDef method, ClassContext context, Signature signature, List<Expr> bases, string modifiers)
+        {
+            var inherited = BaseOfExtendedOverride(method, bases);
+            if (inherited?.Params.Count == 3 && inherited.Params[1].Kind == ParamKind.VarArgs &&
+                inherited.Params[2].Kind == ParamKind.KwArgs && method.Params.Skip(1).All(parameter => parameter.Kind == ParamKind.Normal))
+            {
+                EmitFixedOverrideOfPackedMethod(method, context, signature, inherited, modifiers);
+                return true;
+            }
+
             bool emptyPackedOverride = IsEmptyPackedOverride(method);
             if (method.Params.Count < 2 || !emptyPackedOverride && method.Params.Last().Kind != ParamKind.VarArgs &&
                 (method.Params.Last().Default == null || method.Params.Skip(1).Any(parameter => parameter.Kind != ParamKind.Normal))) return false;
             bool variadic = emptyPackedOverride || method.Params.Count == 2 && method.Params[1].Kind == ParamKind.VarArgs;
-            var inherited = BaseOfExtendedOverride(method, bases);
             if (inherited == null)
                 return variadic && EmitNativeVariadicOverride(method, signature, bases, modifiers);
             bool fixedBase = inherited.Params.Skip(1).All(parameter => parameter.Kind == ParamKind.Normal);
@@ -1245,6 +1428,27 @@ namespace Typhon.Compiler.Emit
             return true;
         }
 
+        // The CLR slot still takes both packs. Bind those arguments using the overriding Python signature.
+        void EmitFixedOverrideOfPackedMethod(FunctionDef method, ClassContext context, Signature signature,
+            FunctionDef inherited, string modifiers)
+        {
+            var inheritedSignature = BuildSignature(inherited, dropFirst: true);
+            string name = Esc(method.Name);
+            string callable = ClosureCode(method, signature, name, context.CsSelfType);
+            string args = Esc(inherited.Params[1].Name), kwargs = Esc(inherited.Params[2].Name);
+            string call = $"{Rt("__invoke_kw")}((object?){Paren(callable)}, [this, .. ({args} ?? [])], {kwargs})";
+            string bridgeModifiers = modifiers.Replace(" async", "");
+            if (bridgeModifiers.StartsWith("public ") &&
+                SurfaceVisibility("public", inheritedSignature.ReturnType, inheritedSignature.Params) == "internal")
+                bridgeModifiers = "internal " + bridgeModifiers.Substring("public ".Length);
+            string bridge = $"{bridgeModifiers} {inheritedSignature.ReturnType} {name}({inheritedSignature.Params})";
+            LineDirective(method);
+            _w.Line("[global::Typhon.Runtime.PyOverrideBridge]");
+            if (inheritedSignature.ReturnType == "void") _w.Line($"{bridge} {{ {call}; }}");
+            else _w.Line($"{bridge} => ({inheritedSignature.ReturnType}){Paren(call)};");
+            _w.Line();
+        }
+
         IEnumerable<Semantics.MemberSig> NativeOverrideSlots(List<Expr> bases, string name)
         {
             if (bases.Count == 0 || !ResolveBase(bases[0], out _, out var metadata) || metadata == null)
@@ -1284,6 +1488,26 @@ namespace Typhon.Compiler.Emit
             return true;
         }
 
+        bool InheritsUntypedEnumerableSlot(ClassDef @class, int depth = 0)
+        {
+            if (depth > 20) return false;
+            foreach (var parent in TyphonBases(@class))
+            {
+                var iterator = parent.Body.OfType<FunctionDef>().FirstOrDefault(method => method.Name == "__iter__");
+                if (iterator == null)
+                {
+                    if (InheritsUntypedEnumerableSlot(parent, depth + 1)) return true;
+                    continue;
+                }
+                if (iterator.Returns != null || iterator.IsAsync || iterator.Params.Count != 1) return false;
+                if (InheritsUntypedEnumerableSlot(parent, depth + 1)) return true;
+                return AstWalker.ContainsOutsideNestedScopes(iterator.Body, node => node is YieldExpr) &&
+                    !GeneratorNeedsAsyncForm(iterator.Body, tracksFinally: !_m.IsGdScript) &&
+                    !GeneratorReceivesValues(iterator.Body);
+            }
+            return false;
+        }
+
         void EmitMethodTyped(FunctionDef f, ClassContext ctx, List<Expr> bases, bool isStaticDecl, bool isClassMethod, string retKey, string[] paramTypes = null)
         {
             var sig = BuildSignature(f, dropFirst: !isStaticDecl, paramTypes: paramTypes, retKey: retKey);
@@ -1291,10 +1515,18 @@ namespace Typhon.Compiler.Emit
             if (isStaticDecl && (f.Name == "__new__" && UsesCustomAllocation(ctx.Def) || metaclassMethod))
                 sig.Scope.ClassArgument = f.Params[0].Name;
             string mods = MethodModifiers(f, ctx, bases, out bool isStatic, out bool isAbstract);
-            if (!_m.IsGdScript && !isAbstract && !isStatic && mods.Contains(" override") &&
-                EmitExtendedOverride(f, sig, bases, mods))
+            if (!isStatic && !f.IsAsync && f.Returns == null && f.Name == "__iter__" && mods.Contains(" override") &&
+                InheritsUntypedEnumerableSlot(ctx.Def))
+            {
+                sig.ReturnType = "IEnumerable<dynamic>";
+                if (!sig.IsGenerator) sig.Scope.ReturnType = sig.ReturnType;
+            }
+            if (!_m.IsGdScript && !isStatic && mods.Contains(" override") &&
+                (EmitWidenedGenericOverride(f, ctx, sig, bases, mods) ||
+                    (!isAbstract || f.Params.LastOrDefault()?.Default != null) &&
+                    EmitExtendedOverride(f, ctx, sig, bases, mods.Replace(" abstract", ""))))
                 mods = mods.Replace(" sealed", "").Replace(" override",
-                    ctx.IsSealed || HasDecorator(f.Decorators, "final") ? "" : " virtual");
+                    isAbstract || ctx.IsSealed || HasDecorator(f.Decorators, "final") ? "" : " virtual");
             if (!isStatic) { sig.Scope.HasSelf = true; sig.Scope.Params.Remove(f.Params[0].Name); }
             if (isClassMethod)
             {
@@ -1310,14 +1542,7 @@ namespace Typhon.Compiler.Emit
             if (metaclassMethod && f.Name != "__new__") _w.Line("[global::Typhon.Runtime.PyMetaclassMethod]");
             if (HasUserMetaclass(ctx.Def) && HasDecorator(f.Decorators, "abstractmethod"))
                 _w.Line("[global::Typhon.Runtime.PyAbstractMethod]");
-            // (an override of a runtime class's public method stays public: the class is internal anyway, and an override may not
-            // change the base's access)
-            if (mods.StartsWith("public ") && SurfaceVisibility("public", sig.ReturnType, sig.Params) == "internal" &&
-                !(mods.Contains(" override") && OverridesRuntimeMember(ctx.Def, f.Name)))
-                mods = "internal " + mods.Substring("public ".Length);
-            // (a _method is protected internal: with an internal type in its signature, internal, unless it overrides)
-            else if (mods.StartsWith("protected internal ") && !mods.Contains(" override") && SurfaceVisibility("public", sig.ReturnType, sig.Params) == "internal")
-                mods = "internal " + mods.Substring("protected internal ".Length);
+            mods = MemberSurfaceModifiers(f, ctx, mods, sig.ReturnType, sig.Params);
             bool decorated = _m.Ast.MethodDecorators.TryGetValue(f, out var decorators);
             if (decorated) { mods = isStatic ? "internal static" : "internal"; if (f.IsAsync && !sig.IsGenerator) mods += " async"; }
             string methodName = decorated ? Decorators.UndecoratedPrefix + f.Name : f.Name;
@@ -1377,7 +1602,7 @@ namespace Typhon.Compiler.Emit
                         break;
                 }
             string leading = isStatic ? "[]" : "[this]";
-            string mods = isStatic ? "public static" : "public";
+            string mods = isStatic ? "public static" : ctx.IsSealed || HasDecorator(f.Decorators, "final") ? "public" : "public virtual";
             _w.Line($"{mods} dynamic {Esc(f.Name)}({string.Join(", ", ps)}) => {Rt("__forward")}((object?){field}, {leading}, [{string.Join(", ", values)}], [{string.Join(", ", names)}], {rest}, {kw});");
         }
 
@@ -1444,6 +1669,28 @@ namespace Typhon.Compiler.Emit
             _w.Close();
         }
 
+        string MemberSurfaceModifiers(FunctionDef member, ClassContext ctx, string modifiers, string type, string parameters = null)
+        {
+            if (SurfaceVisibility("public", type, parameters) != "internal") return modifiers;
+            bool overrides = modifiers.Contains(" override");
+            if (modifiers.StartsWith("public "))
+            {
+                if (overrides)
+                {
+                    if (OverridesRuntimeMember(ctx.Def, member.Name)) return modifiers;
+                    if (Visibility(ctx.Name, topLevel: true) != "public" || DerivesFromInternalClass(ctx.Def))
+                    {
+                        var slot = SourceOverrideSlot(ctx.Def, ctx.Def.Bases.FirstOrDefault(), member.Name);
+                        if (slot.Owner != null && DeclaredSlotVisibility(slot.Owner, slot.Method) == "public") return modifiers;
+                    }
+                }
+                return "internal " + modifiers.Substring("public ".Length);
+            }
+            if (modifiers.StartsWith("protected internal ") && !overrides)
+                return "internal " + modifiers.Substring("protected internal ".Length);
+            return modifiers;
+        }
+
         void EmitProperty(List<FunctionDef> defs, ClassContext ctx, List<Expr> bases)
         {
             var getter = defs.FirstOrDefault(d => HasDecorator(d.Decorators, "property"));
@@ -1486,6 +1733,7 @@ namespace Typhon.Compiler.Emit
             }
             EmitAttributes(getter.Decorators);
             string propertyType = decoratedGetter != null && !mods.Contains(" override") ? "dynamic" : gsig.ReturnType;
+            mods = MemberSurfaceModifiers(getter, ctx, mods, propertyType);
             _w.Line($"{mods} {propertyType} {Esc(getter.Name)}");
             _w.Open();
             if (isAbstract) { _w.Line(setter != null ? "get; set;" : "get;"); _w.Close(); return; }

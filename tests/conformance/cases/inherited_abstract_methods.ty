@@ -1,7 +1,7 @@
 # Copyright (c) 2026 The Typhon contributors.
 # Licensed under the MIT License. See LICENSE file in the project root for full license information.
 
-from abc import ABCMeta, abstractmethod
+from abc import ABC, ABCMeta, abstractmethod
 import inspect
 
 class Base(metaclass=ABCMeta):
@@ -28,3 +28,27 @@ print(inspect.isabstract(Base), inspect.isabstract(Intermediate), inspect.isabst
 print(inspect.isabstract(Concrete))
 concrete = Concrete()
 print(concrete.required(), concrete.second())
+
+
+class PowerBase(ABC):
+    @abstractmethod
+    def power(self, exponent: int) -> int:
+        pass
+
+class WithModulus(PowerBase):
+    @abstractmethod
+    def power(self, exponent: int, modulus: int = 0) -> int:
+        pass
+
+class ConcretePower(WithModulus):
+    def power(self, exponent: int, modulus: int = 0) -> int:
+        value = 2 ** exponent
+        return value % modulus if modulus else value
+
+def base_power(instance: PowerBase) -> int:
+    return instance.power(4)
+
+def modular_power(instance: WithModulus) -> int:
+    return instance.power(4, 3)
+
+print(base_power(ConcretePower()), modular_power(ConcretePower()))

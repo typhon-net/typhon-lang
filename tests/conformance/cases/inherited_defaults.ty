@@ -32,3 +32,19 @@ def lengths(items: Any) -> list:
 
 
 print(describe(["a", 1]), lengths(["ab", [1, 2, 3]]), list(map(str, [1, 2])))
+
+
+inherited_default_marker = object()
+
+class DefaultSentinelBase:
+    def __init__(self, value=inherited_default_marker, *, label=inherited_default_marker):
+        self.value = value
+        self.label = label
+
+class DefaultSentinelChild(DefaultSentinelBase):
+    pass
+
+omitted = DefaultSentinelChild()
+explicit = DefaultSentinelChild(None, label=None)
+print(omitted.value is inherited_default_marker, omitted.label is inherited_default_marker)
+print(explicit.value is None, explicit.label is None)

@@ -78,11 +78,20 @@ namespace Typhon.Compiler.Emit
         /// </summary>
         string SurfaceVisibility(string vis, params string[] signatureParts) =>
             (vis == "public" || vis == "protected internal" || vis == "protected") &&
-            signatureParts.Any(p => p != null && (p.Contains("global::Typhon.Runtime.") || p.Contains("global::Typhon.Stdlib.") || p.Contains("." + FnPrefix) ||
-                                                  RuntimeShortName.IsMatch(p) || InternalClassNames is { } ic && ic.IsMatch(p))) ? "internal" : vis;
+            signatureParts.Where(part => part != null).Select(part => RuntimeParameterAttribute.Replace(part, ""))
+                .Any(part => UsesRuntimeSurfaceType(part) ||
+                    InternalClassNames is { } internalNames && internalNames.IsMatch(part)) ? "internal" : vis;
+
+        static bool UsesRuntimeSurfaceType(string type) =>
+            type.Contains("global::Typhon.Runtime.") || type.Contains("global::Typhon.Stdlib.") ||
+            type.Contains("." + FnPrefix) || RuntimeShortName.IsMatch(type);
+
+        // Attributes on a parameter are metadata. They do not restrict the member's surface type.
+        static readonly System.Text.RegularExpressions.Regex RuntimeParameterAttribute =
+            new System.Text.RegularExpressions.Regex(@"\[global::Typhon\.Runtime\.[A-Za-z_]\w*\][ 	]*");
 
         /// <summary>A runtime type written by its short name (PyFile, PyTextStream: the runtime's types are named Py...).</summary>
-        static readonly System.Text.RegularExpressions.Regex RuntimeShortName = new System.Text.RegularExpressions.Regex(@"(^|[^\w.])Py[A-Z]\w*");
+        static readonly System.Text.RegularExpressions.Regex RuntimeShortName = new System.Text.RegularExpressions.Regex(@"(^|[^\w.])(?:Py[A-Z]\w*|(?:global::)?memoryview(?=[>),?\[\s]|$))");
 
         /// <summary>The project's internal classes (named _Like_this) as one pattern of whole type names, or null.</summary>
         System.Text.RegularExpressions.Regex InternalClassNames => _internalClassNames ??= BuildInternalClassNames();
@@ -130,15 +139,39 @@ namespace Typhon.Compiler.Emit
 
         string TypeParamList(List<TypeParam> tps) => tps.Count == 0 ? "" : "<" + string.Join(", ", tps.Select(t => Esc(t.Name))) + ">";
 
+        static string ClassTypeValue(string name, ClassDef definition)
+        {
+            if (definition.TypeParams.Count == 0) return $"typeof({name})";
+            int genericArguments = name.LastIndexOf('<');
+            if (name.EndsWith(">") && genericArguments >= 0)
+                name = name.Substring(0, genericArguments);
+            return $"typeof({name}<{new string(',', definition.TypeParams.Count - 1)}>)";
+        }
+
         string TypeParamConstraints(List<TypeParam> tps, Node at)
         {
             var sb = new StringBuilder();
-            foreach (var t in tps.Where(t => t.Bound != null))
-            {
-                var bounds = t.Bound is TupleExpr tup ? tup.Elts : new List<Expr> { t.Bound };
-                sb.Append($" where {Esc(t.Name)} : {string.Join(", ", bounds.Select(b => MapType(b, at)))}");
-            }
+            foreach (var parameter in tps)
+                if (ClrTypeParamBound(parameter.Bound, at) is string bound)
+                    sb.Append($" where {Esc(parameter.Name)} : {bound}");
             return sb.ToString();
+        }
+
+        // Python permits alternative constraints and concrete bounds such as str and Callable.
+        // Keep a CLR constraint only when the bound is expressible as a CLR base type.
+        string ClrTypeParamBound(Expr expression, Node at)
+        {
+            if (expression == null || expression is TupleExpr or BinOpExpr { Op: "|" } ||
+                expression is SubscriptExpr union && IsTypingUnion(union.Target)) return null;
+            string bound = MapType(expression, at);
+            if (bound is "object" or "dynamic" or "void" or "string" or "Action" ||
+                IsValueTypeName(bound) || bound.EndsWith("[]") || bound.StartsWith("(") ||
+                bound.StartsWith("Action<") || bound.StartsWith("Func<")) return null;
+            if (DotNetMeta(bound) is string metadata && _r is RoslynTypeResolver resolver &&
+                !resolver.AllowsTypeParameterConstraint(metadata)) return null;
+            if (ClassKeyOfType(bound, out _) is string key && ClassDefOfKey(key) is ClassDef definition &&
+                HasDecorator(definition.Decorators, "final")) return null;
+            return bound;
         }
 
         sealed class Signature
@@ -200,6 +233,16 @@ namespace Typhon.Compiler.Emit
         }
 
         static string NullableOf(string t) => t == "dynamic" || t == "object" || t.EndsWith("?") ? t : t + "?";
+
+        bool UsesMissingDefinitionDefault(string type) => !_m.IsGdScript && type is "dynamic" or "object" or "object?";
+
+        string DefinitionDefaultParameter(string type, string name, out string defaultCode)
+        {
+            bool useMissing = UsesMissingDefinitionDefault(type);
+            defaultCode = useMissing ? "" : "null";
+            return useMissing ? $"[global::System.Runtime.InteropServices.Optional] {type} {name}"
+                : $"{NullableOf(type)} {name}";
+        }
 
         /// <summary>Emits a function-like body with its signature's prologue and renames in effect.</summary>
         void EmitSignatureBody(List<Stmt> body, Signature sig)
@@ -414,11 +457,13 @@ namespace Typhon.Compiler.Emit
                 string wider = p.Kind == ParamKind.Normal ? ConflictType(p.Name) : null;
                 if (keepDefault && p.Kind == ParamKind.Normal && !IsConstantDefault(p.Default) && _defaultSources.TryGetValue(p, out var source))
                 {
-                    // a definition-time default: optional (null) parameter, the body uses a non-null local that falls back to it
+                    // An omitted object argument uses the CLR sentinel so an explicit Python None stays null.
                     string local = p.Name + "__arg";
-                    decl = $"{NullableOf(type)} {Esc(p.Name)}";
-                    defaultCode = "null";
-                    string argument = $"{Esc(p.Name)} ?? {source}";
+                    string parameterName = Esc(p.Name);
+                    decl = DefinitionDefaultParameter(type, parameterName, out defaultCode);
+                    string argument = UsesMissingDefinitionDefault(type)
+                        ? $"global::System.Object.ReferenceEquals({parameterName}, global::System.Type.Missing) ? {source} : {parameterName}"
+                        : $"{parameterName} ?? {source}";
                     sig.DefaultArguments[p.Name] = Paren(argument);
                     sig.Prologue.Add($"{wider ?? type} {Esc(local)} = {argument};");
                     sig.Renames[p.Name] = local;
@@ -446,6 +491,8 @@ namespace Typhon.Compiler.Emit
                         scope.Types[p.Name] = wider;
                     }
                 }
+                if (!_m.IsGdScript && p.PositionalOnly) decl = "[global::Typhon.Runtime.PyPositionalOnly] " + decl;
+                if (!_m.IsGdScript && p.KeywordOnly) decl = "[global::Typhon.Runtime.PyKeywordOnly] " + decl;
                 ps.Add(decl);
                 defaults.Add(defaultCode);
             }
@@ -669,11 +716,30 @@ namespace Typhon.Compiler.Emit
             _w.Line(CheckedKeyword);
             _w.Open();
             scope.ProfileToken = null;
+            scope.TraceToken = null;
+            if (!_dry && _p.EmitsTraceEvents && (scope.ModuleTraceScope || scope.ProfileName != null) &&
+                !scope.IsGenerator && !scope.IsAsync)
+            {
+                scope.TraceToken = NewTmp("trace");
+                var lines = new SortedSet<int>();
+                AstWalker.ContainsOutsideNestedScopes(body, node =>
+                {
+                    if (node is Stmt and not GlobalStmt && node.Line > 0) lines.Add(node.Line);
+                    return false;
+                });
+                string name = scope.ProfileName ?? "<module>";
+                _w.Line($"using var {scope.TraceToken} = global::Typhon.Runtime.PyTracing.Enter(" +
+                    $"typeof({ModuleClassName(_m)}).Assembly, {CsString(name)}, {CsString(scope.FunctionQualName ?? name)}, {CsString(_m.Path ?? "")}, " +
+                    $"{(scope.ModuleTraceScope ? 1 : scope.ProfileLine)}, {CsString(PythonModuleName)}, [{string.Join(", ", lines)}]);");
+            }
             if (!_dry && _p.EmitsProfileEvents && scope.ProfileName != null && !scope.IsGenerator && !scope.IsAsync)
             {
                 scope.ProfileToken = NewTmp("profile");
                 _w.Line($"using var {scope.ProfileToken} = global::Typhon.Runtime.PyProfiling.Enter(" +
                     $"{CsString(scope.ProfileName)}, {CsString(scope.FunctionQualName)}, {CsString(_m.Path ?? "")}, {scope.ProfileLine}, {CsString(_m.Name)});");
+            }
+            if (scope.TraceToken != null || scope.ProfileToken != null)
+            {
                 _w.Line("try");
                 _w.Open();
             }
@@ -722,12 +788,14 @@ namespace Typhon.Compiler.Emit
                 if (Obs != null && _retKey != null && CanFallThrough(body)) Obs.AddReturn(_retKey, TypeInference.NoneType);
                 _w.Line("return default!;");
             }
-            if (scope.ProfileToken != null)
+            if (scope.TraceToken != null || scope.ProfileToken != null)
             {
                 _w.Close();
-                _w.Line("catch");
+                string error = scope.TraceToken != null ? NewTmp("traceError") : null;
+                _w.Line(error == null ? "catch" : $"catch (global::System.Exception {error})");
                 _w.Open();
-                _w.Line($"if ({scope.ProfileToken} != null) {scope.ProfileToken}.Result = null;");
+                if (scope.ProfileToken != null) _w.Line($"if ({scope.ProfileToken} != null) {scope.ProfileToken}.Result = null;");
+                if (error != null) _w.Line($"{scope.TraceToken}.Unwind({error});");
                 _w.Line("throw;");
                 _w.Close();
             }
@@ -753,11 +821,8 @@ namespace Typhon.Compiler.Emit
         /// <summary>An initializer outside a method body (fields): checked like code in methods. Constants stay as they are.</summary>
         static string Checked(string code) => code.Length > 0 && (char.IsDigit(code[0]) || code[0] == '"' || code == "null" || code == "true" || code == "false") ? code : $"checked({code})";
 
-        void EmitLocalFunction(FunctionDef f)
+        void CaptureLocalDefaults(FunctionDef f)
         {
-            if (f.Decorators.Count > 0) Unsupported(f, "decorators on nested functions");
-            foreach (var tp in f.TypeParams) _currentFuncTypeParams.Add(tp.Name);
-            var savedRet = _retKey; _retKey = null; // a nested function's returns are its own
             // definition-time defaults of a nested function are evaluated each time its def runs: locals before it
             foreach (var p in f.Params)
                 if (p.Default != null && p.Kind == ParamKind.Normal && !IsConstantDefault(p.Default))
@@ -766,6 +831,14 @@ namespace Typhon.Compiler.Emit
                     _w.Line($"var {tmp} = {EmitValue(p.Default)};");
                     _defaultSources[p] = tmp;
                 }
+        }
+
+        void EmitLocalFunction(FunctionDef f)
+        {
+            if (f.Decorators.Count > 0) Unsupported(f, "decorators on nested functions");
+            foreach (var tp in f.TypeParams) _currentFuncTypeParams.Add(tp.Name);
+            var savedRet = _retKey; _retKey = null; // a nested function's returns are its own
+            CaptureLocalDefaults(f);
             var sig = BuildSignature(f, dropFirst: false);
             sig.Scope.HasSelf = false;
             bool shadowsParameter = _scope != null && _scope.Params.Contains(f.Name) && IsUnknownType(KnownTypeCore(f.Name));

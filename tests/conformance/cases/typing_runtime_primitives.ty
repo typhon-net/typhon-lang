@@ -1,0 +1,57 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+from _typing import Generic, NoDefault, ParamSpec, ParamSpecArgs, ParamSpecKwargs, TypeAliasType
+from _typing import TypeVar, TypeVarTuple, Union, _idfunc
+
+
+T = TypeVar('T')
+print(T, T.__name__, T.__module__, type(T).__module__)
+print(T.__bound__, T.__constraints__, T.__default__ is NoDefault, T.has_default())
+B = TypeVar('B', bound=int, default=bool, covariant=True)
+print(B, B.__bound__, B.__default__, B.__covariant__, B.has_default())
+C = TypeVar('C', bytes, str, contravariant=True)
+print(C, C.__constraints__, C.__contravariant__)
+print(TypeVar('Infer', infer_variance=True))
+
+P = ParamSpec('P', bound=int, default=None)
+print(P, P.args, P.kwargs, P.__default__, P.has_default())
+print(isinstance(P.args, ParamSpecArgs), isinstance(P.kwargs, ParamSpecKwargs))
+print(P.args.__origin__ is P, P.args == P.args, P.args is P.args)
+Ts = TypeVarTuple('Ts')
+print(Ts, Ts.__default__, Ts.has_default())
+
+alias = TypeAliasType('Alias', list[T], type_params=(T,))
+print(alias, alias.__value__, alias.__parameters__, alias.__module__)
+print(Union[T, int], Union[T, int].__parameters__, list[T].__parameters__)
+print(Generic.__module__, _idfunc(T) is T)
+try:
+    TypeVar('Invalid', int)
+except TypeError as error:
+    print(error)
+try:
+    TypeVar('Invalid', covariant=True, contravariant=True)
+except ValueError as error:
+    print(error)
+
+
+def class_sequence(extra):
+    members = (Generic, TypeVar)
+    if extra:
+        members += (str,)
+    return members
+
+
+print(len(class_sequence(False)), class_sequence(True)[-1].__name__)
+
+
+first = Generic.__init_subclass__
+second = Generic.__init_subclass__
+print(first.__name__, first.__self__ is Generic, callable(first))
+print(first is second, first == second, hasattr(Generic, "__parameters__"))
+first()
+print(Generic.__parameters__)
+try:
+    second(tag=True)
+except TypeError as error:
+    print(str(error))

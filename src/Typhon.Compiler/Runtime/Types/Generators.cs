@@ -341,6 +341,20 @@ namespace Typhon.Runtime
             var e = IteratorOf(gen);
             return e.MoveNext() ? e.Current : throw new StopIteration();
         }
+        public static PyGenerator<T> __generator_expression<T>(IEnumerable<T> values)
+        {
+            var generator = new PyGenerator<T>();
+            generator.__start(values, plain: true);
+            return generator;
+        }
+
+        /// <summary>Closing a completed coroutine leaves its terminal state unchanged.</summary>
+        public static void close(this Task coroutine)
+        {
+            if (!coroutine.IsCompleted)
+                throw new InvalidOperationException("cannot close a coroutine backed by a running task");
+        }
+
         /// <summary>gen.close() on a generator compiled as a C# iterator: disposing its iterator runs its pending finally blocks.</summary>
         public static void close<T>(this IEnumerable<T> gen)
         {
@@ -379,7 +393,7 @@ namespace Typhon.Runtime
 
         public static OrderedDictionary<K, V> dict<K, V>(IEnumerable<(K, V)> xs) where K : notnull { var d = new OrderedDictionary<K, V>(); foreach (var (k, v) in xs) d[PyNoneDictKey.Store(k)] = v; return d; }
         public static OrderedDictionary<K, V> dict<K, V>(IDictionary<K, V> src) where K : notnull { var d = new OrderedDictionary<K, V>(); foreach (var kv in src) d[kv.Key] = kv.Value; return d; }
-        public static OrderedDictionary<K, V> __to_dict<K, V>(IEnumerable<(K, V)> items) where K : notnull { var d = new OrderedDictionary<K, V>(); foreach (var (k, v) in items) d[PyNoneDictKey.Store(k)] = v; return d; }
+        public static OrderedDictionary<K, V> __to_dict<K, V>(IEnumerable<(K, V)> items) where K : notnull { var d = __newdict<K, V>(); foreach (var (k, v) in items) d[PyNoneDictKey.Store(k)] = v; return d; }
 
         // literal helpers used by the compiler: [a, b] / {k: v} / {a, b} without a target type
         public static List<T> __list<T>(params T[] items) => new List<T>(items);
@@ -400,7 +414,8 @@ namespace Typhon.Runtime
                 case null: return 0;
                 case bool b: return b ? 1 : 0;
                 case string str: return str.GetHashCode();
-                case double d: return Math.Floor(d) == d && d >= long.MinValue && d <= long.MaxValue ? ((long)d).GetHashCode() : d.GetHashCode();
+                case double d: return double.IsFinite(d) && Math.Truncate(d) == d ? KeyHash(new BigInteger(d)) : d.GetHashCode();
+                case decimal m when decimal.Truncate(m) == m: return KeyHash(new BigInteger(m));
                 case float f: return KeyHash((double)f);
                 case BigInteger bi: return bi >= long.MinValue && bi <= long.MaxValue ? ((long)bi).GetHashCode() : bi.GetHashCode();
                 case ITuple t when o is not IDictionary:

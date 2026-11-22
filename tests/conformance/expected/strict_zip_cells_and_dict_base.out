@@ -1,0 +1,9 @@
+None
+Cell is empty
+filled again
+{'first': 1, 'second': 2}
+{'x': 3, 'y': 4}
+[('a', 1), ('b', 2)]
+[('a', 1)]
+zip() argument 2 is shorter than argument 1
+zip() argument 2 is longer than argument 1

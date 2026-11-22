@@ -1,0 +1,19 @@
+# typhon: int=bigint
+
+class Values:
+    enabled: bool = True
+    disabled: bool = False
+
+def depth_after_guard(depth: int, key: str, limit: int):
+    guard = getattr(Values(), key)
+    return depth - 1 - (guard and depth >= limit)
+
+def difference(left, right):
+    return left - right
+
+large = 1 << 70
+print(depth_after_guard(large, "enabled", 7))
+print(depth_after_guard(large, "disabled", 7))
+print(difference(getattr(Values(), "enabled"), large))
+print(difference(large, getattr(Values(), "enabled")))
+print(difference(getattr(Values(), "enabled"), getattr(Values(), "disabled")))

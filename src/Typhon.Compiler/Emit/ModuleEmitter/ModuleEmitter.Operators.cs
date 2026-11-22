@@ -21,6 +21,17 @@ namespace Typhon.Compiler.Emit
             ["@"] = "matmul", ["&"] = "and", ["|"] = "or", ["^"] = "xor", ["<<"] = "lshift", [">>"] = "rshift",
         };
 
+        bool HasClassAssignedOperator(string type, string method)
+        {
+            ClassDef owner = _cls != null && type == _cls.CsSelfType ? _cls.Def
+                : ClassKeyOfType(type, out _) is string key ? ClassDefOfKey(key) : null;
+            return ClassVariableOwner(owner, method) != null;
+        }
+
+        bool HasClassAssignedOperator(string left, string right, string name) =>
+            HasClassAssignedOperator(left, "__" + name + "__") ||
+            HasClassAssignedOperator(right, "__r" + name + "__");
+
         /// <summary>
         /// The result type of l op r when l's class defines __op__ (or r's defines __rop__): that method's return type, dynamic
         /// when it returns different types, Pending while a dry run has not seen it yet. Null when no Typhon class is involved.
@@ -28,6 +39,7 @@ namespace Typhon.Compiler.Emit
         string DunderOperatorType(string op, string l, string r)
         {
             if (!OperatorDunders.TryGetValue(op, out var name)) return null;
+            if (HasClassAssignedOperator(l, r, name)) return "dynamic";
             string Of(string t, string method)
             {
                 if (t == null || ClassKeyOfType(t, out _) is not string key || ClassDefOfKey(key) is not ClassDef cd || !DefinesInHierarchy(cd, method)) return null;
@@ -163,6 +175,9 @@ namespace Typhon.Compiler.Emit
                 return IntConstant(folded);
             string l = Operand(b.Left, b.Right), r = Operand(b.Right, b.Left);
             string lType = InferType(b.Left), rType = InferType(b.Right);
+            if (!_m.IsGdScript && OperatorDunders.TryGetValue(b.Op, out var operation) &&
+                HasClassAssignedOperator(lType, rType, operation))
+                return $"{Rt("__class_binary_op")}((object?){Paren(l)}, (object?){Paren(r)}, {CsString(operation)}, {CsString(b.Op)})";
             // an IntEnum member is an int in arithmetic (Level.LOW + 1 == 2)
             if (ArithmeticOps.Contains(b.Op))
             {
@@ -214,7 +229,7 @@ namespace Typhon.Compiler.Emit
                 var items = lItems.Select((_, i) => $"__ta.Item{i + 1}").Concat(rItems.Select((_, i) => $"__tb.Item{i + 1}"));
                 return $"(({l}, {r}) switch {{ var (__ta, __tb) => ({string.Join(", ", items)}) }})";
             }
-            if (b.Op == "-" && lType == "dynamic" && rType == "dynamic" ||
+            if (b.Op == "-" && (lType == "dynamic" || rType == "dynamic") ||
                 bitwise && (IsUnknownType(lType) || IsUnknownType(rType)))
                 return $"{Rt(b.Op == "-" ? "sub" : b.Op == "|" ? "or_" : b.Op == "&" ? "and_" : "xor_")}({l}, {r})";
             // x // 2**k and x % 2**k on integers are exactly an arithmetic shift and a mask in Python (floor semantics, any sign)
@@ -322,11 +337,12 @@ namespace Typhon.Compiler.Emit
                 if (lt == "string" && rt == "string") return $"(string.CompareOrdinal({l}, {r}) {op} 0)";
                 // Python's own containers order by Python's rules (sequences and tuples lexicographically, sets by inclusion);
                 // values of unknown type decide at run time; every other type keeps its own operators (classes, ndarray, decimal)
-                if (PythonOrdered(lt) || PythonOrdered(rt) || MayBeDictView(lt) || MayBeDictView(rt) || IsUnknownType(lt) || IsUnknownType(rt))
-                {
-                    string helper = op == "<" ? "lt" : op == "<=" ? "le" : op == ">" ? "gt" : "ge";
+                string helper = op == "<" ? "lt" : op == "<=" ? "le" : op == ">" ? "gt" : "ge";
+                string reflected = op == "<" ? "gt" : op == "<=" ? "ge" : op == ">" ? "lt" : "le";
+                if (PythonOrdered(lt) || PythonOrdered(rt) || MayBeDictView(lt) || MayBeDictView(rt) ||
+                    IsUnknownType(lt) || IsUnknownType(rt) || lt == "object?" || rt == "object?" ||
+                    HasClassAssignedOperator(lt, "__" + helper + "__") || HasClassAssignedOperator(rt, "__" + reflected + "__"))
                     return $"{Rt(helper)}({l}, {r})";
-                }
             }
             switch (op)
             {

@@ -1,0 +1,6 @@
+a:2! b:3! a:2?
+True True False
+True False True
+Local:local Local:local make.<locals>.Local
+a:7! b:3! local
+a:7!

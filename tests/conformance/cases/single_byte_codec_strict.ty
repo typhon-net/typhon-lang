@@ -1,0 +1,14 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+for text, codec in (("caféß", "ascii"), ("a💡λb", "latin_1")):
+    try:
+        print(text.encode(codec))
+    except UnicodeEncodeError as error:
+        print(error.encoding, error.start, error.end, error.reason)
+    print(text.encode(codec, "replace"))
+try:
+    print(b"a\xffb".decode("us-ascii"))
+except UnicodeDecodeError as error:
+    print(error.encoding, error.start, error.end, error.reason)
+print(b"a\xffb".decode("latin-1"))

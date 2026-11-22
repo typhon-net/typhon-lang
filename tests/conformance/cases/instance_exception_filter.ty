@@ -1,0 +1,19 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+class Parser:
+    def __init__(self, recover):
+        self.recover = recover
+
+    def read(self, error):
+        try:
+            raise error
+        except self.recover as caught:
+            return str(caught)
+
+print(Parser(ValueError).read(ValueError('caught')))
+print(Parser((ValueError, TypeError)).read(TypeError('tuple')))
+try:
+    Parser(ValueError).read(OSError('escapes'))
+except OSError as err:
+    print(str(err))

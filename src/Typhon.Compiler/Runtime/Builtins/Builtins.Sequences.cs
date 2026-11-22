@@ -42,7 +42,16 @@ namespace Typhon.Runtime
             {
                 case Type type when type == typeof(Typhon.Stdlib.types.UnionType):
                     return Typhon.Stdlib.types.UnionType.Subscribe(key);
+                case Type type:
+                    if (PyMetaclasses.TryBindMember(type, "__getitem__", out var metaItem)) return __invoke(metaItem, [key]);
+                    if (TryGetAttr(type, "__class_getitem__", out var classItem, allowFallback: false)) return __invoke(classItem, [key]);
+                    if (type == typeof(List<object>) || type == typeof(HashSet<object>) ||
+                        type == typeof(OrderedDictionary<object, object>) || type == typeof(frozenset<object>) ||
+                        type == typeof(ITuple) || type == typeof(Type))
+                        return new Typhon.Stdlib.types.GenericAlias(type, key);
+                    throw new InvalidCastException($"type '{PyTypeName(type)}' is not subscriptable");
                 // a dict first: .NET's OrderedDictionary is an IList too, but d[3] is a key, not a position
+                case PyBigRange range: return key is PySlice rangeSlice ? (object)range[rangeSlice] : range[key];
                 case IDictionary d:
                 {
                     var k = KeyFor(d, key);
@@ -110,6 +119,12 @@ namespace Typhon.Runtime
         /// <summary>o[key] = value on a late-bound value.</summary>
         public static void __setitem(object? o, object? key, object? value)
         {
+            var setter = LookupSourceSpecialMethod(o, "__setitem__");
+            if (setter.Owner != null)
+            {
+                __invoke(setter.Value, [key, value]);
+                return;
+            }
             switch (o)
             {
                 case IDictionary d: d[KeyFor(d, key)!] = value; return;
@@ -172,8 +187,27 @@ namespace Typhon.Runtime
             foreach (var x in xs) yield return (checked(i++), x);
         }
 
-        public static IEnumerable<(A, B)> zip<A, B>(IEnumerable<A> a, IEnumerable<B> b) => a.Zip(b, (x, y) => (x, y));
-        public static IEnumerable<(A, B, C)> zip<A, B, C>(IEnumerable<A> a, IEnumerable<B> b, IEnumerable<C> c) => a.Zip(b, (x, y) => (x, y)).Zip(c, (xy, z) => (xy.Item1, xy.Item2, z));
+        public static PyZip<PyTuple<object?>> zip() => new(Enumerable.Empty<PyTuple<object?>>().GetEnumerator());
+        public static PyZip<PyTuple<A>> zip<A>(IEnumerable<A> items) =>
+            new(items.Select(item => new PyTuple<A>(new[] { item })).GetEnumerator());
+        public static PyZip<(A, B)> zip<A, B>(IEnumerable<A> a, IEnumerable<B> b) =>
+            new(a.Zip(b, (x, y) => (x, y)).GetEnumerator());
+        public static PyZip<(A, B, C)> zip<A, B, C>(IEnumerable<A> a, IEnumerable<B> b, IEnumerable<C> c) =>
+            new(a.Zip(b, (x, y) => (x, y)).Zip(c, (xy, z) => (xy.Item1, xy.Item2, z)).GetEnumerator());
+        public static PyZip<(A, B)> __zip_strict<A, B>(IEnumerable<A> a, IEnumerable<B> b, object? strict) =>
+            truthy(strict) ? new(ZipEqualLength(a, b).GetEnumerator()) : zip(a, b);
+
+        static IEnumerable<(A, B)> ZipEqualLength<A, B>(IEnumerable<A> a, IEnumerable<B> b)
+        {
+            using var first = a.GetEnumerator();
+            using var second = b.GetEnumerator();
+            while (first.MoveNext())
+            {
+                if (!second.MoveNext()) throw new ArgumentException("zip() argument 2 is shorter than argument 1");
+                yield return (first.Current, second.Current);
+            }
+            if (second.MoveNext()) throw new ArgumentException("zip() argument 2 is longer than argument 1");
+        }
 
         public static long sum(IEnumerable<int> xs) { long s = 0; foreach (var x in xs) s = checked(s + x); return s; }
         public static long sum(IEnumerable<long> xs) { long s = 0; foreach (var x in xs) s = checked(s + x); return s; }
@@ -490,6 +524,8 @@ namespace Typhon.Runtime
         public static bool __uses_builtin_method(object? o, string name)
         {
             if (o is string or IConvertible or BigInteger) return true;
+            if (o is Task && name is ("send" or "close")) return true;
+            if (o is Exception && name == "add_note") return !HasSourceMember(o.GetType(), name);
             if (o == null) return false;
             Type type = o.GetType();
             bool builtinShape = o is ITuple or IList || o is IDictionary and not (Typhon.Stdlib.types.MappingProxyType or PyAttrDict) ||
@@ -501,7 +537,7 @@ namespace Typhon.Runtime
         public static dynamic __iadd(dynamic a, dynamic b)
         {
             if (a is System.Collections.IList list && !(b is string)) { foreach (var x in (IEnumerable)b) list.Add(x); return a; }
-            return a + b;
+            return add((object?)a, (object?)b);
         }
         public static void insert<T>(this List<T> l, long i, T x) => l.Insert((int)(i < 0 ? Math.Max(0, l.Count + i) : Math.Min(i, l.Count)), x);
         public static T pop<T>(this List<T> l, long i = -1)

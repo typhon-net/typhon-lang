@@ -1,0 +1,63 @@
+from operator import lt
+
+def plus(self, other):
+    if isinstance(other, int):
+        return 'direct', other
+    return NotImplemented
+
+def reverse(self, other):
+    return 'reflected', other
+
+def child_reverse(self, other):
+    return 'child reflected'
+
+def subtract(self, other):
+    return 'subtract', other
+
+def divide(self, other):
+    return 'divide', other
+
+def quotient(self, other):
+    return 3, other
+
+class Parent:
+    __add__, __radd__ = plus, reverse
+    __sub__, __truediv__, __divmod__ = subtract, divide, quotient
+
+class Child(Parent):
+    __radd__ = child_reverse
+
+def typed(value: Parent):
+    print(value + 2, 2 + value, value - 3, value / 4, divmod(value, 5))
+
+def untyped(left, right):
+    return left + right
+
+typed(Parent())
+print(untyped(Parent(), Child()))
+p = Parent()
+p.__add__ = lambda other: 'instance'
+print(p + 6)
+try:
+    print(p + Parent())
+except TypeError:
+    print('unsupported')
+
+class Left:
+    def __lt__(self, other):
+        return NotImplemented
+
+class Right:
+    def __gt__(self, other):
+        return 'right comparison'
+
+def less(left: object, right: object):
+    return left < right
+
+print(less(Left(), Right()))
+try:
+    print(less(Left(), Left()))
+except TypeError:
+    print('comparison unsupported')
+
+print(lt(2, 3), lt(Left(), Right()))

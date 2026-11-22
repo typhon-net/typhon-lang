@@ -1,0 +1,13 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import io
+
+class Reader(io.BufferedReader):
+    def __init__(self, content: bytes):
+        raw = io.BytesIO(content)
+        super().__init__(raw, buffer_size=2)
+
+reading = Reader(b'abcdef')
+print(reading.read(2), reading.tell(), reading.read())
+reading.close()

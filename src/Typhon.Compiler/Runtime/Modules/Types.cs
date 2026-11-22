@@ -139,29 +139,56 @@ namespace Typhon.Stdlib
         }
 
         /// <summary>GenericAlias(origin, args): a parameterized generic such as list[int]; prints as list[int].</summary>
-        internal sealed class GenericAlias : IPyRepr
+        internal class GenericAlias : IPyRepr, IEnumerable<GenericAlias>
         {
-            public readonly object? __origin__;
-            public readonly PyTuple<object?> __args__;
-            public readonly PyTuple<object?> __parameters__ = new PyTuple<object?>(Array.Empty<object?>());
-            public GenericAlias(object? origin, object? args)
+            public object? __origin__ { get; private set; }
+            public PyTuple<object?> __args__ { get; private set; } = PyTuple<object?>.Empty;
+            public PyTuple<object?> __parameters__ { get; private set; } = PyTuple<object?>.Empty;
+            public bool __unpacked__ { get; private set; }
+            public object? __typing_unpacked_tuple_args__ => __unpacked__ && Equals(__origin__, typeof(ITuple)) ? __args__ : null;
+
+            protected GenericAlias() { }
+
+            public GenericAlias(object? origin, object? args) => Initialize(origin, args);
+
+            public static GenericAlias __new__(Type cls, object? origin, object? args)
+            {
+                if (!typeof(GenericAlias).IsAssignableFrom(cls))
+                    throw new InvalidCastException("GenericAlias.__new__ requires a GenericAlias subtype");
+                var alias = (GenericAlias)RuntimeHelpers.GetUninitializedObject(cls);
+                alias.Initialize(origin, args);
+                return alias;
+            }
+
+            void Initialize(object? origin, object? args)
             {
                 __origin__ = origin;
                 __args__ = new PyTuple<object?>(args is ITuple t ? Enumerable.Range(0, t.Length).Select(i => t[i]).ToArray()
                                              : args is IPyTuple pt ? Enumerable.Range(0, pt.Count).Select(i => pt[i]).ToArray()
                                              : new[] { args });
+                __parameters__ = _typing.CollectParameters(__args__);
             }
             static string Show(object? x) => x switch
             {
-                Type t => PyExc.TypeName(t),
+                Type t => Builtins.PythonQualifiedTypeName(t),
                 null => "None",
                 EllipsisType => "...",
                 _ => Builtins.repr(x),
             };
             public object? __call__(params object?[] args) => Builtins.__invoke(__origin__, args);
-            public override bool Equals(object? obj) => obj is GenericAlias g && Equals(g.__origin__, __origin__) && Builtins.eq(g.__args__, __args__);
+            public PyIterator<GenericAlias> __iter__() => Builtins.iter((IEnumerable<GenericAlias>)this);
+            public IEnumerator<GenericAlias> GetEnumerator()
+            {
+                yield return new GenericAlias(__origin__, __args__) { __unpacked__ = true };
+            }
+
+            IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+
+            public override bool Equals(object? obj) => obj is GenericAlias g && g.__unpacked__ == __unpacked__ &&
+                Equals(g.__origin__, __origin__) && Builtins.eq(g.__args__, __args__);
             public override int GetHashCode() => HashCode.Combine(__origin__, Builtins.KeyHash(__args__));
-            public string __repr__() => Show(__origin__) + "[" + (__args__.Count == 0 ? "()" : string.Join(", ", __args__.Select(Show))) + "]";
+            public virtual string __repr__() => (__unpacked__ ? "*" : "") + Show(__origin__) +
+                "[" + (__args__.Count == 0 ? "()" : string.Join(", ", __args__.Select(Show))) + "]";
             public override string ToString() => __repr__();
         }
 
@@ -276,10 +303,23 @@ namespace Typhon.Stdlib
 
         // ── the interpreter's own types: names only (no Typhon value is an instance of these) ──
 
-        internal class FunctionType { protected FunctionType() { } }
         internal sealed class LambdaType : FunctionType { LambdaType() { } }
         internal sealed class CodeType { CodeType() { } }
-        internal sealed class CellType { CellType() { } }
+        internal sealed class CellType
+        {
+            object? _value;
+            bool _filled;
+
+            public CellType() { }
+            public CellType(object? value) { cell_contents = value; }
+            public object? cell_contents
+            {
+                get => _filled ? _value : throw new ArgumentException("Cell is empty");
+                set { _value = value; _filled = true; }
+            }
+
+            internal void Clear() { _value = null; _filled = false; }
+        }
         internal sealed class FrameType { FrameType() { } }
         internal sealed class TracebackType
         {

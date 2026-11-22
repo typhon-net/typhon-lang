@@ -1,0 +1,3 @@
+((<class 'int'>, <class 'str'>), (<class 'int'>, <class 'str'>, <class 'float'>, <class 'bool'>))
+((<class 'int'>, <class 'str'>), (<class 'int'>, <class 'str'>, <class 'bool'>))
+('start', 7, None)

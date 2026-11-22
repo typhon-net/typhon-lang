@@ -1,0 +1,18 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+
+class Protocol:
+    def __init__(self, value: int):
+        self.value = value
+
+
+class Implementation(Protocol):
+    label = 'ordinary class'
+
+    def read(self):
+        return self.value
+
+
+value = Implementation(7)
+print(value.label, value.read(), isinstance(value, Protocol))

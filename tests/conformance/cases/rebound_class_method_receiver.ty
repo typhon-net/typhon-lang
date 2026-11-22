@@ -1,0 +1,35 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+class Entry:
+    @classmethod
+    def from_value(cls, value: int) -> str:
+        return cls.__name__ + ':' + str(value)
+
+    @staticmethod
+    def double(value: int) -> int:
+        return value * 2
+
+class Alternate(Entry):
+    pass
+
+class Ordinary:
+    def from_value(self, value: int) -> str:
+        return 'ordinary:' + str(value)
+
+    def double(self, value: int) -> int:
+        return value + value + 1
+
+class Manager:
+    entry = Entry
+
+    def __init__(self, replacement=None):
+        if replacement is not None:
+            self.entry = replacement
+
+    def show(self, value: int):
+        return self.entry.from_value(value), self.entry.double(value)
+
+print(Manager().show(3))
+print(Manager(Alternate).show(5))
+print(Manager(Ordinary()).show(7))

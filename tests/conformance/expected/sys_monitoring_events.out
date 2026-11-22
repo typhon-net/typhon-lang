@@ -1,0 +1,5 @@
+test monitor None
+14 16
+[('start', 0), ('line', 1), ('line', 2), ('return', 14), ('start', 0), ('return', 16)]
+18 [('start', 0), ('line', 1), ('line', 2), ('return', 18)]
+None 0

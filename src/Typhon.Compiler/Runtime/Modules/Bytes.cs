@@ -84,9 +84,39 @@ namespace Typhon.Runtime
 
         public static int Compare(ReadOnlySpan<byte> a, ReadOnlySpan<byte> b) => a.SequenceCompareTo(b);
 
+        static string CodecName(string encoding) => encoding.ToLowerInvariant().Replace("_", "-");
+
+        internal static PyBytes? EncodeSingleByte(string text, string encoding, string errors)
+        {
+            if (errors is not ("strict" or "replace")) return null;
+            int limit = CodecName(encoding) switch
+            {
+                "ascii" or "us-ascii" => 128,
+                "latin-1" or "latin1" or "iso-8859-1" or "l1" => 256,
+                _ => 0,
+            };
+            if (limit == 0) return null;
+            int start = text.AsSpan().IndexOfAnyInRange((char)limit, char.MaxValue);
+            if (start < 0) return new PyBytes(Encoding.Latin1.GetBytes(text));
+            if (errors == "replace")
+            {
+                var output = new byte[text.Length];
+                int index = 0;
+                foreach (var rune in text.EnumerateRunes())
+                    output[index++] = rune.Value < limit ? (byte)rune.Value : (byte)'?';
+                return new PyBytes(index == output.Length ? output : output[..index]);
+            }
+            int end = start;
+            while (end < text.Length && text[end] >= limit) end++;
+            int length = 0;
+            foreach (var rune in text.AsSpan(start, end - start).EnumerateRunes()) length++;
+            throw new UnicodeEncodeError(limit == 128 ? "ascii" : "latin-1", text, start, start + length,
+                $"ordinal not in range({limit})");
+        }
+
         public static Encoding EncodingOf(string encoding, string errors)
         {
-            string e = encoding.ToLowerInvariant().Replace("_", "-");
+            string e = CodecName(encoding);
             Encoding enc = e switch
             {
                 "utf-8" or "utf8" or "u8" => new UTF8Encoding(false, true),
@@ -172,6 +202,11 @@ namespace Typhon.Runtime
         {
             if (Typhon.Stdlib.codecs.IsRawUnicodeEscape(encoding))
                 return Typhon.Stdlib.codecs.raw_unicode_escape_decode(new PyBytes(data), errors).Item1;
+            if (errors == "strict" && CodecName(encoding) is "ascii" or "us-ascii")
+            {
+                int offset = data.AsSpan().IndexOfAnyInRange((byte)128, byte.MaxValue);
+                if (offset >= 0) throw new UnicodeDecodeError("ascii", new PyBytes(data), offset, offset + 1, "ordinal not in range(128)");
+            }
             try { return EncodingOf(encoding, errors).GetString(data); }
             catch (DecoderFallbackException ex) { throw new ArgumentException($"'{encoding}' codec can't decode byte: {ex.Message}"); }
         }

@@ -345,20 +345,28 @@ namespace Typhon.Compiler.Emit
         /// <summary>The type of a field a Typhon base class declares (self.v1 in a subclass's method), or null.</summary>
         string InheritedFieldType(ClassDef c, string name, int depth = 0)
         {
-            if (depth > 20 || Ti == null) return null;
+            if (depth > 20) return null;
             foreach (var b in TyphonBases(c))
             {
                 if (_p.TryFindClass(_m, b.Name, out var bc, out var owner) && bc == b)
                 {
                     string key = TypeInference.ClassKey(owner, bc.Name);
                     // An unannotated namedtuple field and a widened slot both have dynamic storage.
-                    if (Ti.Fields.TryGetValue(key, out var fields) && fields.TryGetValue(name, out var type) &&
+                    if (Ti != null && Ti.Fields.TryGetValue(key, out var fields) && fields.TryGetValue(name, out var type) &&
                         type != "void" && (type != "dynamic" || bc.NamedTupleFields?.Contains(name) == true ||
                             Ti.ExternalFields.ContainsKey(key + "|" + name)))
                         return type;
                 }
                 if (InheritedFieldType(b, name, depth + 1) is string deeper) return deeper;
             }
+            var resolver = ClassDeclarationResolver(c);
+            foreach (var basis in c.Bases)
+                if (resolver.ResolveBase(basis, out _, out var metadata) && metadata != null)
+                {
+                    var member = _r.GetMembers(metadata, name)
+                        .FirstOrDefault(candidate => !candidate.IsMethod && !candidate.IsStatic && candidate.Type != null);
+                    if (member != null) return member.Type;
+                }
             return null;
         }
     }

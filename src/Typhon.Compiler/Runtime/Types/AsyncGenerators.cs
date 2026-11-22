@@ -116,6 +116,8 @@ namespace Typhon.Runtime
         public static PyAsyncNext athrow<T>(this IAsyncEnumerable<T> source, object? error) => AsyncGenerator(source).athrow(error);
         public static PyAsyncNext aclose<T>(this IAsyncEnumerable<T> source) => AsyncGenerator(source).aclose();
 
+        public static PyAsyncGenerator<T> __async_generator_expression<T>(IAsyncEnumerable<T> source) => AsyncGenerator(source);
+
         static PyAsyncGenerator<T> AsyncGenerator<T>(IAsyncEnumerable<T> source) => source as PyAsyncGenerator<T> ??
             throw new InvalidCastException("object is not an async generator");
     }

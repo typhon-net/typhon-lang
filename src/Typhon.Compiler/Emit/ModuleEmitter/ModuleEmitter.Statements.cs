@@ -81,6 +81,8 @@ namespace Typhon.Compiler.Emit
         void EmitStmt(Stmt s)
         {
             LineDirective(s);
+            if (_scope?.TraceToken is string trace && s is not GlobalStmt && s.Line > 0)
+                _w.Line($"{trace}.Line({s.Line});");
             switch (s)
             {
                 case ExprStmt e: EmitExprStmt(e); break;
@@ -135,7 +137,7 @@ namespace Typhon.Compiler.Emit
                         EmitClassInitialization(binding.Definition);
                     _w.Line($"{ClassActivation(binding.Definition)} = true;");
                     if (_m.RuntimeCodeMode != null)
-                        _w.Line($"__typhon_execution.Export({CsString(binding.Definition.Name)}, typeof({Esc(binding.Definition.Name)}));");
+                        _w.Line($"__typhon_execution.Export({CsString(binding.Definition.Name)}, {ClassTypeValue(Esc(binding.Definition.Name), binding.Definition)});");
                     break;
                 case ClassDef c: EmitLocalDataClass(c); break;
                 default: Unsupported(s, s.GetType().Name); break;
@@ -259,10 +261,31 @@ namespace Typhon.Compiler.Emit
                 _w.Line(rt is null or "void" ? "return;" : $"return {ProfileReturn("null")};");
                 return;
             }
-            _w.Line($"return {ProfileReturn(EmitExpr(r.Value, targetTyped: rt != null && rt != "dynamic" && rt != "void"))};");
+            string result = TupleLiteralValue(r.Value, rt) ?? FrozenSetReturn(r.Value, rt) ??
+                (rt == "dynamic" && r.Value is LambdaExpr lambda ? EmitRuntimeLambda(lambda) :
+                    EmitExpr(r.Value, targetTyped: rt != null && rt != "dynamic" && rt != "void"));
+            _w.Line($"return {ProfileReturn(result)};");
 
-            string ProfileReturn(string value) => _scope?.ProfileToken is string profile && rt != "void"
-                ? $"global::Typhon.Runtime.PyProfiling.Result<{rt ?? "dynamic"}>({profile}, {value})" : value;
+            string ProfileReturn(string value)
+            {
+                if (rt == "void") return value;
+                if (_scope?.TraceToken is string trace)
+                    value = $"global::Typhon.Runtime.PyTracing.Return<{rt ?? "dynamic"}>({trace}, {value})";
+                return _scope?.ProfileToken is string profile
+                    ? $"global::Typhon.Runtime.PyProfiling.Result<{rt ?? "dynamic"}>({profile}, {value})" : value;
+            }
+        }
+
+        string FrozenSetReturn(Expr value, string targetType)
+        {
+            if (targetType?.StartsWith("IReadOnlySet<") != true ||
+                value is not CallExpr { Func: NameExpr { Id: "frozenset" }, Args.Count: 1 } call ||
+                IsShadowed("frozenset") || call.Args[0].Name != null || call.Args[0].Star || call.Args[0].DoubleStar)
+                return null;
+            string itemType = GenericArg(targetType);
+            if (ElementTypeOf(InferType(call)) == itemType) return null;
+            string iterable = $"{Rt("__iter_dyn")}((object?){Paren(EmitValue(call.Args[0].Value))})";
+            return $"{Rt("frozenset")}<{itemType}>(global::System.Linq.Enumerable.Cast<{itemType}>({iterable}))";
         }
 
         bool IsTestModule => _staticTypes.Contains("Typhon.Stdlib.pytest") || _dotnetAliases.ContainsValue("Typhon.Stdlib.pytest");
@@ -609,9 +632,10 @@ namespace Typhon.Compiler.Emit
                 else
                 {
                     var specs = h.Type is TupleExpr ht ? ht.Elts : new List<Expr> { h.Type };
-                    // Exception aliases may be Type-valued fields, e.g. socket.timeout.
+                    // Exception aliases may be stored in module fields, instance attributes or local values.
                     var aliases = specs.Where(x => !TryTypeExpr(x, out _) &&
-                        (InferType(x) is "System.Type" or "global::System.Type" || x is NameExpr nameValue && (IsLocal(nameValue.Id) || IsValueName(nameValue.Id)))).ToList();
+                        (x is AttributeExpr || InferType(x) is "System.Type" or "global::System.Type" ||
+                         x is NameExpr nameValue && (IsLocal(nameValue.Id) || IsValueName(nameValue.Id)))).ToList();
                     var types = specs.Except(aliases).SelectMany(x => CatchTypes(x, h)).Distinct().ToList();
                     IEnumerable<string> AliasTests(string caught) => aliases.Select(x =>
                         $"global::Typhon.Stdlib.builtins.isinstance({caught}, (object?){Paren(EmitValue(x))})");

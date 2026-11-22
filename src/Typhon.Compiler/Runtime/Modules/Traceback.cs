@@ -393,7 +393,7 @@ namespace Typhon.Stdlib
             public readonly string exc_type_str;
             public readonly StackSummary stack;
             public readonly string _str;
-            public readonly List<string>? __notes__ = null;
+            public readonly object? __notes__;
             public readonly object? __cause__ = null, __context__ = null;
             public readonly bool __suppress_context__ = false;
             public readonly List<TracebackException>? exceptions;
@@ -410,6 +410,7 @@ namespace Typhon.Stdlib
                 exc_type_str = PyExc.QualifiedName(exc);
                 stack = Frames(new StackTrace(exc, true).GetFrames(), limit);
                 _str = Builtins.str(exc);
+                __notes__ = Builtins.getattr(exc, "__notes__", null);
                 if (exc is SyntaxError se)
                 {
                     filename = se.filename; lineno = se.lineno; end_lineno = se.end_lineno; text = se.text;
@@ -443,9 +444,18 @@ namespace Typhon.Stdlib
                     }
                     string m = se.msg == null ? "" : Builtins.str(se.msg);
                     result.Add(ColoredException(exc_type_str, m, colorize));
-                    return result;
                 }
-                result.Add(ColoredException(exc_type_str, _str, colorize));
+                else result.Add(ColoredException(exc_type_str, _str, colorize));
+                if (__notes__ != null)
+                {
+                    IEnumerable<string> notes = __notes__ is not (string or PyString or PyBytes) &&
+                        builtins.isinstance(__notes__, typeof(collections.abc.Sequence))
+                            ? Builtins.__iter_dyn(__notes__).Select(note => Builtins.str((object?)note))
+                            : [Builtins.repr(__notes__)];
+                    foreach (string note in notes)
+                        foreach (string line in note.Split('\n'))
+                            result.Add(line + "\n");
+                }
                 if (show_group && exceptions != null)
                     foreach (var sub in exceptions) foreach (var line in sub.format_exception_only(true)) result.Add("   " + line);
                 return result;

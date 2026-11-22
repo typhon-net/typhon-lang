@@ -15,6 +15,8 @@ namespace Typhon.Compiler.Emit
     // Indexing and slicing: positions that may count from the end, slices, and the non-negative analysis.
     internal sealed partial class ModuleEmitter
     {
+        const string BigRangeType = "global::Typhon.Runtime.PyBigRange";
+
         string EmitIndex(Expr e)
         {
             if (e is UnaryExpr u && u.Op == "-" && u.Operand is ConstExpr c && c.Kind == ConstKind.Int) return "^" + EmitConst(c);
@@ -31,6 +33,20 @@ namespace Typhon.Compiler.Emit
             return owner != null && (DefinesInHierarchy(owner, "__missing__") || ClassVariableOwner(owner, "__missing__") != null);
         }
 
+        // Type-annotation spelling does not change a source value into a CLR type.
+        bool SourceValueSubscription(Expr target)
+        {
+            if (!GenericAliases.Contains(StripTypingPrefix(DottedName(target)))) return false;
+            bool ExportsValue(ModuleInfo module, string name) => !module.Classes.ContainsKey(name) &&
+                (module.Globals.Contains(name) || module.Functions.Contains(name));
+            if (target is NameExpr name)
+                return IsLocal(name.Id) || ExportsValue(_m, name.Id) ||
+                    _importedFromModules.TryGetValue(name.Id, out var binding) && ExportsValue(binding.Key, binding.Value);
+            return target is AttributeExpr member && DottedName(member.Target) is string qualifier &&
+                ModuleRef(qualifier) is ModuleInfo source && ProjectExport(source, member.Name) is var exported &&
+                exported.Owner != null && exported.Member != null && ExportsValue(exported.Owner, exported.Member);
+        }
+
         string EmitSubscript(SubscriptExpr s, bool store = false)
         {
             if (IsUnionFactory(s.Target))
@@ -41,10 +57,19 @@ namespace Typhon.Compiler.Emit
                 Obs.AddElement(rkey, (PyType(InferType(s.Index)) ?? TypeInference.Unknown) + "→" + (rk == 'c' ? "long" : TypeInference.Pending));
             if (!(s.Index is SliceExpr) && BuiltinGenericOrigin(s.Target) is string origin)
                 return EmitGenericAlias(s, origin);
+            if (!store && s.Index is not SliceExpr && SourceValueSubscription(s.Target))
+                return $"{Rt("__getitem")}((object?){Paren(EmitValue(s.Target))}, {EmitUnionArguments(s.Index)})";
             // a generic type used as a value, e.g. Stack[str].of(...) or Dictionary[str, int] passed around
             if (!(s.Index is SliceExpr) && TryTypeExpr(s, out var genericType)) return genericType;
             string target = EmitExpr(s.Target);
             if (s.Target is ConstExpr || s.Target is BinOpExpr || s.Target is UnaryExpr || s.Target is AwaitExpr) target = Paren(target);
+            if (!store && InferType(s.Target) == BigRangeType)
+            {
+                string Bound(Expr value) => value == null ? "null" : $"(object?){Paren(EmitValue(value))}";
+                return s.Index is SliceExpr rangeSlice
+                    ? $"{target}[new global::Typhon.Runtime.PySlice({Bound(rangeSlice.Lower)}, {Bound(rangeSlice.Upper)}, {Bound(rangeSlice.Step)})]"
+                    : $"{target}[{Bound(s.Index)}]";
+            }
             if (s.Index is SliceExpr sl)
             {
                 // Python slicing semantics (copies, clamps out-of-range bounds, negative indices, steps)
@@ -67,12 +92,17 @@ namespace Typhon.Compiler.Emit
                 _lambdaParams.Any(scope => scope.ContainsKey(parameter.Id));
             bool lateResult = IsDynamicallyDispatched(s.Target) ||
                 targetType == null && s.Target is CallExpr && MaybeLateBound(s.Target);
-            bool lateContainer = targetType is "dynamic" or "object" or "object?";
+            bool untypedModuleField = targetType == null && s.Target is AttributeExpr member &&
+                DottedName(member.Target) is string moduleName && ModuleRef(moduleName) is ModuleInfo module &&
+                ProjectExport(module, member.Name) is var exported && exported.Member != null &&
+                exported.Owner?.Globals.Contains(exported.Member) == true;
+            bool lateContainer = targetType is "dynamic" or "object" or "object?" or "global::System.Type" or "System.Type" ||
+                untypedModuleField;
             if ((lateContainer || lateResult || untypedLambdaParameter ||
                 targetType == null && InferType(s.Index) == "dynamic") && !(s.Index is TupleExpr))
                 return $"{Rt("__getitem")}((object?){target}, (object?){Paren(ModuleOrClassValue(s.Index) ?? EmitExpr(s.Index))})";
             // a[x, y] on a late-bound a: the key is the tuple (x, y) (a Typhon class's __getitem__ takes one key)
-            if (lateContainer && s.Index is TupleExpr dtk && !dtk.Parenthesized && !dtk.Elts.Any(x => x is SliceExpr))
+            if (lateContainer && s.Index is TupleExpr dtk && !dtk.Elts.Any(x => x is SliceExpr))
                 return $"{Rt("__getitem")}((object?){target}, (object?){EmitExpr(new TupleExpr { Elts = dtk.Elts, Parenthesized = true, Line = dtk.Line, Col = dtk.Col })})";
             // s[i] is a one-character str
             if (targetType == "string" && !(s.Index is TupleExpr)) return $"{Rt("str_at")}({target}, {EmitPosition(s.Index, targetType)})";

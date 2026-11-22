@@ -1,0 +1,21 @@
+from traceback import format_exception_only
+
+error = ValueError("bad")
+print(hasattr(error, "__notes__"))
+error.add_note("first")
+error.add_note("second\nthird")
+print(error.__notes__)
+print(format_exception_only(error))
+try:
+    error.add_note(7)
+except TypeError as invalid:
+    print(str(invalid))
+
+error.__notes__ = ("tuple note",)
+try:
+    error.add_note("additional")
+except TypeError as invalid:
+    print(str(invalid))
+print(format_exception_only(error))
+del error.__notes__
+print(hasattr(error, "__notes__"))

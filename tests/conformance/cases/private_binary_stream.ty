@@ -1,0 +1,45 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import io
+
+class _Stream:
+    def __init__(self):
+        self.source = io.BytesIO(b"hello")
+        self.closed = False
+
+    def readable(self) -> bool:
+        return True
+
+    def writable(self) -> bool:
+        return False
+
+    def seekable(self) -> bool:
+        return True
+
+    def read(self, size: int = -1) -> bytes:
+        return self.source.read(size)
+
+    def readinto(self, target: bytearray) -> int:
+        data = self.read(len(target))
+        target[:len(data)] = data
+        return len(data)
+
+    def tell(self) -> int:
+        return self.source.tell()
+
+    def seek(self, offset: int, whence: int = 0) -> int:
+        return self.source.seek(offset, whence)
+
+    def flush(self):
+        pass
+
+    def close(self):
+        self.closed = True
+        self.source.close()
+
+raw = _Stream()
+reading = io.BufferedReader(raw)
+print(reading.read(2), reading.tell(), reading.read())
+reading.close()
+print(raw.closed)

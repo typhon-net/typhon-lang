@@ -1,0 +1,40 @@
+from typing import Any
+from inspect import CO_GENERATOR, CO_COROUTINE, CO_ASYNC_GENERATOR
+import dis
+import sys
+
+FLAG_MASK = CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR
+
+def last_binding(rows: Any):
+    return [_ for _, _, tail in rows if tail]
+
+class Token:
+    def __init__(self, label: str):
+        self.label = label
+
+def use_row(rows: list[tuple[Any, tuple[int, int]]]) -> str:
+    chosen = Token("initial")
+    for chosen, (line, column) in rows:
+        print(line, column)
+    return chosen.label
+
+class CodeLines:
+    def co_lines(self):
+        return [(0, 2, 3), (2, 4, 3), (4, 6, None), (6, 8, 7)]
+
+print(FLAG_MASK, sys.monitoring.events.PY_START, sys.monitoring.events.LINE)
+print(last_binding([(10, 20, True), (30, 40, False)]))
+print(use_row([(Token("chosen"), (7, 8))]))
+print(list(dis.findlinestarts(CodeLines())))
+
+
+def update_during_iteration(entries: Any):
+    seen = []
+    for entry in entries:
+        seen.append(entry)
+        if entry == 1:
+            entries[0] = 4
+            entries.append(3)
+    print(seen, entries)
+
+update_during_iteration([1, 2])

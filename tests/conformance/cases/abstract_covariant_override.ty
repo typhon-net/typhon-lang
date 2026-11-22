@@ -1,0 +1,18 @@
+from abc import ABC, abstractmethod
+
+class Parent[T](ABC):
+    @abstractmethod
+    def enter(self) -> Parent[T]:
+        raise NotImplementedError
+
+class Middle(Parent[str]):
+    @abstractmethod
+    def enter(self) -> Middle:
+        raise NotImplementedError
+
+class Child(Middle):
+    def enter(self) -> Child:
+        return self
+
+value = Child()
+print(value.enter() is value)

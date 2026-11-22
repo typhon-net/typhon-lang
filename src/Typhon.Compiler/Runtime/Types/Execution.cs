@@ -56,6 +56,20 @@ namespace Typhon.Runtime
         }
     }
 
+    internal sealed class RuntimeFunctionCode(string name, string filename, long line, string source, bool bigInts)
+        : sys_.code(name, filename, line)
+    {
+        internal PyFunction Bind(IDictionary globals)
+        {
+            var bind = AppContext.GetData("Typhon.BindRuntimeFunction") as
+                Func<string, string, IDictionary, bool, bool, (object? Function, string? Error)>
+                ?? throw new NotSupportedException("types.FunctionType() requires the Typhon runtime compiler host");
+            var result = bind(source, co_filename, globals, bigInts, PyProfiling.Active);
+            if (result.Error != null) throw new SyntaxError(result.Error);
+            return (PyFunction)result.Function!;
+        }
+    }
+
     internal static partial class Builtins
     {
         public static dynamic compile(object? source, object? filename = null, object? mode = null, long flags = 0, bool dont_inherit = false, long optimize = -1, object? module = null)
@@ -112,9 +126,9 @@ namespace Typhon.Runtime
             var localNames = locals == null ? globalNames :
                 locals as IDictionary ?? throw new InvalidCastException("locals must be a mapping");
             var run = AppContext.GetData("Typhon.RunRuntimeCode") as
-                Func<string, string, string, long, IDictionary, IDictionary, bool, (object? Value, string? Error)>
+                Func<string, string, string, long, IDictionary, IDictionary, bool, bool, (object? Value, string? Error)>
                 ?? throw new NotSupportedException("exec() and eval() require the Typhon runtime compiler host");
-            var result = run(code.Source, code.co_filename, code.Mode, code.co_flags, globalNames, localNames, PyProfiling.Active);
+            var result = run(code.Source, code.co_filename, code.Mode, code.co_flags, globalNames, localNames, PyProfiling.Active, PyTracing.Active || PyMonitoring.Active);
             return result.Error != null ? throw new SyntaxError(result.Error) : result.Value;
         }
 

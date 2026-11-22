@@ -85,5 +85,35 @@ print(half + third, half * third, half - third, half / third, Fraction(6, 8), ha
 print(sum([Fraction(1, n) for n in range(1, 5)]), Fraction(1, 3) == Fraction(2, 6), Fraction("0.75"))
 p = Path("/data/reports/summary.txt")
 # as_posix(): the same text on every platform (str() uses backslashes on Windows, in CPython too)
-print(p.name, p.stem, p.suffix, p.parent.as_posix(), p.parent.name, (Path("/tmp") / "x.txt").as_posix())
+print(p.name, p.stem, p.suffix, p.parent.as_posix(), p.parent.name, (Path("/data") / "x.txt").as_posix())
 doctest.testmod()
+
+
+@cache
+def size_history():
+    return []
+
+
+first_history = size_history()
+print(size_history() is first_history, size_history.cache_info())
+clear_history = size_history.cache_clear
+clear_history()
+print(size_history() is first_history, size_history.cache_info(), size_history.__wrapped__.__name__)
+
+
+import functools
+import operator
+from operator import or_ as merge
+
+def join(values):
+    return functools.reduce(operator.or_, values)
+
+print(join([4, 1, 2]))
+print(join([False, True, False]), type(join([False, True, False])).__name__)
+print(sorted(join([{2}, {1, 2}])))
+print(repr(join([int, str, bytes])))
+print(functools.reduce(merge, [], initial=5))
+try:
+    functools.reduce(merge, [])
+except TypeError as error:
+    print(str(error))

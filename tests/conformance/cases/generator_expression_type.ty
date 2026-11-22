@@ -1,0 +1,10 @@
+from types import FunctionType, GeneratorType
+
+function = lambda value: value + 1
+call = FunctionType.__dict__["__call__"]
+print("__call__" in FunctionType.__dict__, call(function, 14))
+print(isinstance(function, FunctionType))
+
+cursor = (item * item for item in [1, 2, 3])
+print(type(cursor) is GeneratorType, isinstance(cursor, GeneratorType))
+print(iter(cursor) is cursor, next(cursor), list(cursor), list(cursor))

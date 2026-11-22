@@ -532,10 +532,13 @@ namespace Typhon.Stdlib
                     throw new ArgumentException($"invalid conflict_resolution value: {Builtins.repr(conflictHandler)}");
             }
 
-            public Action add_argument(string a, KwOnly _ = default, object? action = null, object? nargs = null, object? @const = null, object? @default = null,
+            public Action add_argument(string? a = null, KwOnly _ = default, object? action = null, object? nargs = null, object? @const = null, object? @default = null,
                 Func<string, object?>? type = null, object? choices = null, bool? required = null, string? help = null, object? metavar = null,
-                string? dest = null, string? version = null, bool deprecated = false) =>
-                AddArgument(new[] { a }, action, nargs, @const, @default, type, choices, required, help, metavar, dest, version, deprecated);
+                string? dest = null, string? version = null, bool deprecated = false)
+            {
+                string name = a ?? dest ?? throw new InvalidCastException("add_argument() requires a name or dest");
+                return AddArgument([name], action, nargs, @const, @default, type, choices, required, help, metavar, a == null ? null : dest, version, deprecated);
+            }
 
             public Action add_argument(string a, string b, KwOnly _ = default, object? action = null, object? nargs = null, object? @const = null, object? @default = null,
                 Func<string, object?>? type = null, object? choices = null, bool? required = null, string? help = null, object? metavar = null,

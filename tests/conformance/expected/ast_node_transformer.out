@@ -1,0 +1,6 @@
+old(old[:3], flag=True)
+new(new[:3], flag=True)
+['func', 'args', 'keywords'] True Load
+new + -5
+{'x': (new + -5,)}
+['new', 'repeat', 'repeat']

@@ -17,4 +17,12 @@ OrderedDict({'a': 1, 'b': 2}) ['a', 'b']
 abcde 0123456789 32 False
 5/6 1/6 1/6 3/2 3/4 False 3 Fraction(1, 2)
 25/12 True 3/4
-summary.txt summary .txt /data/reports reports /tmp/x.txt
+summary.txt summary .txt /data/reports reports /data/x.txt
+True CacheInfo(hits=1, misses=1, maxsize=None, currsize=1)
+False CacheInfo(hits=0, misses=1, maxsize=None, currsize=1) size_history
+7
+True bool
+[1, 2]
+int | str | bytes
+5
+reduce() of empty iterable with no initial value

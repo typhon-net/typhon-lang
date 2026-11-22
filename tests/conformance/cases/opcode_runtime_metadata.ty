@@ -1,0 +1,17 @@
+from _opcode import has_arg, has_const, has_jump, has_name, is_valid, stack_effect
+
+for code in (0, 42, 68, 81, 91, 255, 256, 1000):
+    print(code, is_valid(code), has_arg(code), has_const(code), has_jump(code), has_name(code))
+print(stack_effect(44, 3), stack_effect(91, 1), stack_effect(117, 2 | (3 << 8)))
+print(stack_effect(68, 0, jump=True), stack_effect(68, 0, jump=False))
+
+class Position:
+    def __index__(self) -> int:
+        return 44
+
+print(stack_effect(Position(), 4))
+for code, argument in ((999, 0), (44, -1)):
+    try:
+        print(stack_effect(code, argument))
+    except ValueError as error:
+        print(str(error))

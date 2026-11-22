@@ -33,7 +33,11 @@ internal static class RuntimeCodeHost
         AppContext.SetData("Typhon.CheckRuntimeSyntax",
             (Func<string, string, string, long, (string? Error, int Line, int Column, int Kind, long Flags)>)CheckSyntax);
         AppContext.SetData("Typhon.RunRuntimeCode",
-            (Func<string, string, string, long, IDictionary, IDictionary, bool, (object? Value, string? Error)>)Run);
+            (Func<string, string, string, long, IDictionary, IDictionary, bool, bool, (object? Value, string? Error)>)
+                ((source, filename, mode, flags, globals, locals, profiling, tracing) =>
+                    Run(source, filename, mode, flags, globals, locals, profiling, tracing)));
+        AppContext.SetData("Typhon.BindRuntimeFunction",
+            (Func<string, string, IDictionary, bool, bool, (object? Function, string? Error)>)BindFunction);
     }
 
     static ModuleInfo Parse(string source, string filename, string mode, long flags) =>
@@ -114,10 +118,29 @@ internal static class RuntimeCodeHost
         MatchStmt match => match.Cases.FirstOrDefault()?.Body, _ => null,
     };
 
-    static (object? Value, string? Error) Run(string source, string filename, string mode, long flags, IDictionary globals, IDictionary locals, bool profiling)
+    static (object? Function, string? Error) BindFunction(string source, string filename, IDictionary globals, bool bigInts, bool profiling) =>
+        Run(source, filename, "exec", 0, globals, new Dictionary<string, object?>(), profiling,
+            tracing: false, bindFunction: true, bigInts: bigInts);
+
+    static (object? Value, string? Error) Run(string source, string filename, string mode, long flags, IDictionary globals,
+        IDictionary locals, bool profiling, bool tracing, bool bindFunction = false, bool bigInts = false)
     {
         var module = Parse(source, filename, mode, flags);
         if (CheckSyntax(module, source, mode, flags).Error is string syntax) return (null, syntax);
+        FunctionDef? binding = null;
+        if (bindFunction)
+        {
+            if (module.Ast.Body.Count != 1 || module.Ast.Body[0] is not FunctionDef function)
+                return (null, "expected source for one function definition");
+            binding = function;
+            binding.Decorators.Clear();
+            binding.Returns = null;
+            foreach (var parameter in binding.Params)
+            {
+                parameter.Annotation = null;
+                parameter.Default = null;
+            }
+        }
         module.RuntimeCodeMode = mode;
         module.ClassName = ModuleType;
         module.Path = filename;
@@ -133,6 +156,7 @@ internal static class RuntimeCodeHost
         {
             MainModule = "__main__", TypeMode = TypeMode.Permissive,
             Resolver = new RoslynTypeResolver(compilation), ProfileRuntimeCode = profiling,
+            TraceRuntimeCode = tracing, BigInts = bigInts,
         };
         project.Modules.Add(module.Name, module);
         var diagnostics = new List<TyDiagnostic>();
@@ -157,7 +181,8 @@ internal static class RuntimeCodeHost
         {
             var assembly = context.LoadFromStream(pe, pdb);
             var entry = assembly.GetType(ModuleType, throwOnError: true)!.GetMethod("ExecutePythonCode")!;
-            return (entry.Invoke(null, [globals, locals]), null);
+            object? value = entry.Invoke(null, [globals, locals]);
+            return (binding == null ? value : locals[binding.Name], null);
         }
         catch (TargetInvocationException e) when (e.InnerException != null)
         {

@@ -84,8 +84,15 @@ namespace Typhon.Runtime
                 value = PyExceptionState.GetAttribute(error, name);
                 return true;
             }
+            if (o is Enum member && member.GetType().IsDefined(typeof(PySourceAttribute), false))
+            {
+                if (name == "name") { value = member.ToString(); return true; }
+                if (name == "value") { value = Convert.ToInt64(member, Inv); return true; }
+            }
+            if (o is PyLocalClassInstance instance) return instance.TryRead(name, out value);
             if (o is Type t)
             {
+                if (t == typeof(Type) && PyMetaclasses.TypeCheckSlot(name) is PyClosure typeCheck) { value = typeCheck; return true; }
                 if (name == "__name__") { value = PyTypeName(t); return true; }
                 if (name == "__class__") { value = PyMetaclasses.Of(t); return true; }
                 if (name == "__qualname__") { value = t is PyLocalDataClass localName ? localName.QualName : PyTypeName(t); return true; }
@@ -97,9 +104,17 @@ namespace Typhon.Runtime
                 if (name == "__module__") { value = __module_of(t); return true; }
                 if (name == "__mro__") { value = new PyTuple<Type>(Ancestors(t)); return true; }
                 if (name == "__bases__") { value = new PyTuple<Type>(PyMetaclasses.Bases(t)); return true; }
+                if (t == typeof(Typhon.Stdlib._typing.Generic) && name == "__parameters__")
+                    return Typhon.Stdlib._typing.Generic.TryGetParameters(out value);
+                if (name == "__annotations__") return PyClassDescriptors.TryGetAnnotations(t, out value);
                 if (t is PyLocalDataClass local)
                 {
-                    if (local.Members.TryGetValue(name, out value) || name == "__doc__") return true;
+                    if (local.TryLookup(name, out value))
+                    {
+                        value = PyMetaclasses.Bind(value, null, local);
+                        return true;
+                    }
+                    if (name == "__doc__") return true;
                     return TryGetAttr(local.BaseType, name, out value, allowFallback);
                 }
                 if (name == "__doc__") { value = t.GetCustomAttribute<PySourceAttribute>()?.DocString; return true; }
@@ -202,6 +217,16 @@ namespace Typhon.Runtime
                 return true;
             }
             if (PyClassDescriptors.TryGetAttribute(type, name, out value, instance: true)) return true;
+            if (o is ITuple tuple && name is ("__getitem__" or "__contains__"))
+            {
+                value = new PyClosure(name, (args, keywords) =>
+                {
+                    if (args.Length != 1 || keywords?.Count > 0)
+                        throw PyClosure.ArgCountError(name, 1, 1, args.Length);
+                    return name == "__getitem__" ? (object?)__getitem(tuple, args[0]) : contains(tuple, args[0]);
+                });
+                return true;
+            }
             if (o is Exception exception && name == "with_traceback")
             {
                 value = new PyClosure(name, (args, keywords) =>
@@ -373,6 +398,8 @@ namespace Typhon.Runtime
                 var implementation = new PyBoundMethod(typeof(Builtins), method);
                 return new PyClosure(method, (args, keywords) =>
                 {
+                    if (type == typeof(string) && args.Length > 0 && args[0] is char character)
+                        args = [character.ToString(), .. args.AsSpan(1)];
                     if (args.Length == 0 || args[0] == null || !IsSubclass(args[0]!.GetType(), type))
                         throw new InvalidCastException($"descriptor '{method}' requires a '{PyTypeName(type)}' object");
                     return __invoke_kw(implementation, args, keywords);
@@ -544,6 +571,7 @@ namespace Typhon.Runtime
                 if (value is Type same && same == o.GetType()) return;
                 throw new InvalidCastException("__class__ assignment requires a compatible object layout");
             }
+            if (o is PyLocalClassInstance instance) { instance.Set(name, value); return; }
             if (o is PyLocalDataClass local) { local.Members[name] = value; return; }
             if (o is Type t)
             {
@@ -580,12 +608,18 @@ namespace Typhon.Runtime
 
         public static void delattr(object? o, string name)
         {
+            if (o is Typhon.Stdlib.types.CellType cell && name == "cell_contents")
+            {
+                cell.Clear();
+                return;
+            }
             if (o is MissingMemberException error && PyExceptionState.IsAttributeErrorMember(name))
             {
                 PyExceptionState.SetAttribute(error, name, null);
                 return;
             }
             if (o is PyModule module && module.__dict__.Remove(name)) return;
+            if (o is PyLocalClassInstance instance && instance.Remove(name)) return;
             if (o is PyLocalDataClass local && local.Members.Remove(name)) return;
             if (o is Type type && PyClassDescriptors.DeleteSlot(type, name)) return;
             if (o is Type owner && PyClassDescriptors.DeleteAddedAttribute(owner, name)) return;

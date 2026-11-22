@@ -1,0 +1,6 @@
+ascii 3 5 ordinal not in range(128)
+b'caf??'
+latin-1 1 3 ordinal not in range(256)
+b'a??b'
+ascii 1 2 ordinal not in range(128)
+aÿb

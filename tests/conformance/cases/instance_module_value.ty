@@ -1,0 +1,12 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+class NumberModule:
+    def __init__(self):
+        import math as local_math
+        self.api = local_math
+
+    def root(self, value: float) -> float:
+        return self.api.sqrt(value)
+
+print(NumberModule().root(81.0))

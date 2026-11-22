@@ -87,8 +87,7 @@ namespace Typhon.Compiler.Emit
 
         void EmitClassInitialization(ClassDef definition)
         {
-            string parameters = definition.TypeParams.Count == 0 ? "" : $"<{new string(',', definition.TypeParams.Count - 1)}>";
-            string type = $"typeof({Esc(definition.Name)}{parameters})";
+            string type = ClassTypeValue(Esc(definition.Name), definition);
             if (CapturesClassModuleName)
                 _w.Line($"{Rt("__remember_class_module")}({type}, (object?)__name__);");
             if (!RunsClassBodyAtDefinition(definition)) return;
@@ -130,14 +129,21 @@ namespace Typhon.Compiler.Emit
             $"{Rt("__class_namespace_read")}(typeof({_cls.CsSelfType}), {CsString(name)}, " +
             $"typeof({ModuleClassName(_m)}), {CsString(PythonModuleName)})";
 
-        string EmitBuiltinTypeNew(CallExpr call)
+        static bool IsTypeCheckSlot(string name) => name is "__instancecheck__" or "__subclasscheck__";
+
+        string EmitBuiltinTypeSlot(AttributeExpr member) =>
+            $"{Rt("getattr")}(typeof(global::System.Type), {CsString(member.Name)})";
+
+        string EmitTypeSlotCall(CallExpr call)
         {
-            if (call.Func is not AttributeExpr { Name: "__new__" } member) return null;
-            if (_scope?.ClassArgument != null && _cls != null && (IsUserMetaclass(_cls.Def) || HasStringBase(_cls.Def)) &&
-                member.Target is CallExpr { Func: NameExpr { Id: "super" }, Args.Count: 0 } && !IsShadowed("super"))
+            if (call.Func is not AttributeExpr member) return null;
+            if (_scope?.ClassArgument != null && _cls != null &&
+                member.Target is CallExpr { Func: NameExpr { Id: "super" }, Args.Count: 0 } && !IsShadowed("super") &&
+                (member.Name == "__new__" && (IsUserMetaclass(_cls.Def) || HasStringBase(_cls.Def)) ||
+                 (member.Name == "__repr__" || IsTypeCheckSlot(member.Name)) && IsUserMetaclass(_cls.Def)))
                 return InvokeLogicalMethod(member, $"(object?){Paren(EmitExpr(member.Target))}", call.Args);
-            if (!BuiltinTypeBase(member.Target)) return null;
-            string callable = $"{Rt("getattr")}(typeof(global::System.Type), {CsString("__new__")})";
+            if (member.Name != "__new__" && !IsTypeCheckSlot(member.Name) || !BuiltinTypeBase(member.Target)) return null;
+            string callable = EmitBuiltinTypeSlot(member);
             var arguments = call.Args.Where(a => a.Name == null && !a.DoubleStar)
                 .Select(a => a.Star ? $".. {Rt("__iter_dyn")}((object?){Paren(EmitExpr(a.Value))})" : $"(object?){Paren(EmitLooseValue(a.Value))}");
             return $"{Rt("__invoke_kw")}((object?){callable}, [{string.Join(", ", arguments)}], {KeywordArgs(call.Args)})";

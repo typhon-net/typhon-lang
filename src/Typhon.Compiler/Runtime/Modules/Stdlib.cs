@@ -592,14 +592,21 @@ namespace Typhon.Stdlib
                 }
             }
         }
-        public static IEnumerable<T> chain<T>(params IEnumerable<T>[] iterables) { foreach (var it in iterables) foreach (var x in it) yield return x; }
-        public static IEnumerable<dynamic> chain(params object?[] iterables)
+        public static PyIterator<T> chain<T>(params IEnumerable<T>[] iterables) => chain_from_iterable(iterables);
+        public static PyIterator<dynamic> chain(params object?[] iterables) =>
+            chain_from_iterable(iterables.Select(iterator => Builtins.__iter_dyn(iterator)));
+
+        public static PyIterator<T> chain_from_iterable<T>(IEnumerable<IEnumerable<T>> iterables)
         {
-            foreach (var iterator in iterables)
-                foreach (var item in Builtins.__iter_dyn(iterator))
-                    yield return item;
+            return new PyIterator<T>(Items().GetEnumerator());
+
+            IEnumerable<T> Items()
+            {
+                foreach (var iterator in iterables)
+                    foreach (var item in iterator)
+                        yield return item;
+            }
         }
-        public static IEnumerable<T> chain_from_iterable<T>(IEnumerable<IEnumerable<T>> iterables) { foreach (var it in iterables) foreach (var x in it) yield return x; }
         public static IEnumerable<long> accumulate(IEnumerable<long> xs) { long s = 0; bool any = false; foreach (var x in xs) { s = any ? checked(s + x) : x; any = true; yield return s; } }
         public static IEnumerable<double> accumulate(IEnumerable<double> xs) { double s = 0; bool any = false; foreach (var x in xs) { s = any ? s + x : x; any = true; yield return s; } }
         public static IEnumerable<T> accumulate<T>(IEnumerable<T> xs, Func<T, T, T> func)
@@ -608,6 +615,10 @@ namespace Typhon.Stdlib
             foreach (var x in xs) { acc = any ? func(acc, x) : x; any = true; yield return acc; }
         }
         public static IEnumerable<T> takewhile<T>(Func<T, bool> predicate, IEnumerable<T> iterable) { foreach (var x in iterable) { if (!predicate(x)) yield break; yield return x; } }
+        public static IEnumerable<T> takewhile<T>(object predicate, IEnumerable<T> iterable) =>
+            takewhile(value => Builtins.truthy((object?)Builtins.__invoke(predicate, [value])), iterable);
+        public static IEnumerable<dynamic> takewhile(object predicate, object iterable) =>
+            takewhile(predicate, Builtins.__iter_dyn(iterable));
         public static IEnumerable<T> dropwhile<T>(Func<T, bool> predicate, IEnumerable<T> iterable)
         {
             bool dropping = true;
@@ -689,6 +700,12 @@ namespace Typhon.Stdlib
             foreach (var x in iterable) acc = function(acc, x);
             return acc;
         }
+        public static dynamic? __reduce(object function, object iterable) =>
+            reduce<object?>((accumulator, item) => (object?)Builtins.__invoke(function, [accumulator, item]), Builtins.__iter_dyn(iterable));
+
+        public static dynamic? __reduce(object function, object iterable, object? initial) =>
+            reduce<object?, object?>((accumulator, item) => (object?)Builtins.__invoke(function, [accumulator, item]), Builtins.__iter_dyn(iterable), initial);
+
         public static Func<T, CmpKey<T>> cmp_to_key<T>(Func<T, T, long> mycmp) => x => new CmpKey<T>(x, mycmp);
         public static PyClosure __cmp_to_key(object mycmp)
         {
@@ -717,10 +734,15 @@ namespace Typhon.Stdlib
         public static double truediv(double a, double b) => Builtins.truediv(a, b);
         public static long floordiv(long a, long b) => Builtins.floordiv(a, b);
         public static long mod(long a, long b) => Builtins.mod(a, b);
+        public static dynamic lt(object? a, object? b) => Builtins.lt(a, b);
+        public static dynamic le(object? a, object? b) => Builtins.le(a, b);
+        public static dynamic gt(object? a, object? b) => Builtins.gt(a, b);
+        public static dynamic ge(object? a, object? b) => Builtins.ge(a, b);
         public static long neg(long a) => checked(-a);
         public static double neg(double a) => -a;
         public static long and_(long a, long b) => a & b;
         public static long or_(long a, long b) => a | b;
+        public static dynamic or_(object? a, object? b) => Builtins.or_((dynamic)a!, (dynamic)b!);
         public static readonly Func<object?, object?, dynamic?> getitem = Builtins.__getitem;
         public static long xor(long a, long b) => a ^ b;
         public static Func<IList<T>, T> itemgetter<T>(long i) => xs => xs[(int)i];

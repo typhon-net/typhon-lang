@@ -1,0 +1,15 @@
+from enum import Enum, IntEnum
+
+class Choice(Enum):
+    FIRST = 1
+    LAST = 2
+
+class Level(IntEnum):
+    MID = 7
+
+def describe(value: object):
+    return value.name, value.value, str(value), repr(value)
+
+print(describe(Choice.FIRST))
+print(describe(Level.MID))
+print((Choice.LAST, Level.MID))

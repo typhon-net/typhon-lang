@@ -1,0 +1,14 @@
+from typing import Any
+
+async def immediate():
+    pass
+
+def finish(coroutine: Any):
+    close = coroutine.close
+    close()
+    coroutine.close()
+
+coroutine = immediate()
+print(type(coroutine).__name__)
+finish(coroutine)
+print("closed")

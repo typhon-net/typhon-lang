@@ -62,7 +62,7 @@ namespace Typhon.Runtime
                 case Enum en when Enum.GetUnderlyingType(en.GetType()) == typeof(long): return Convert.ToInt64(en, Inv).ToString(Inv);
                 case Enum en: return en.GetType().Name + "." + en.ToString();
                 case Exception e: return ExceptionText(e);
-                case Type type: return $"<class '{PythonQualifiedTypeName(type)}'>";
+                case Type type: return TryMetaclassText(type, "__str__", out string text) ? text : ClassRepr(type);
                 case IPyRepr own: return own.ToString() ?? own.__repr__(); // str(): Fraction → 1/2, Path → /tmp/x
                 case IEnumerable view when PyDictViews.Name(view.GetType()) is string name: return PyDictViews.Repr(view, name);
                 case IFormattable fmt when o is int || o is long || o is short || o is byte || o is sbyte || o is uint || o is ulong || o is ushort || o is decimal || o is BigInteger:
@@ -83,10 +83,26 @@ namespace Typhon.Runtime
         {
             string s => Quote(s),
             char c => Quote(c.ToString()),
+            Type type => ClassRepr(type),
+            Enum member when member.GetType().IsDefined(typeof(PySourceAttribute), false) =>
+                $"<{PyTypeName(member.GetType())}.{member}: {Convert.ToInt64(member, Inv).ToString(Inv)}>",
             IPyRepr own => own.__repr__(), // repr(): Fraction(1, 2), PosixPath('/tmp/x')
             MissingMemberException error => PyExc.Repr(error, PyExc.Args(error)),
             _ => str(o),
         };
+
+        internal static string DefaultClassRepr(Type type) => $"<class '{PythonQualifiedTypeName(type)}'>";
+
+        static string ClassRepr(Type type) => TryMetaclassText(type, "__repr__", out string text) ? text : DefaultClassRepr(type);
+
+        static bool TryMetaclassText(Type type, string slot, out string result)
+        {
+            result = "";
+            if (!PyMetaclasses.TryBindMember(type, slot, out var callable)) return false;
+            result = (object?)__invoke(callable, []) as string ??
+                throw new InvalidCastException($"{slot} returned a non-string value");
+            return true;
+        }
 
         /// <summary>object.__str__ delegates to repr and avoids any overridden __str__.</summary>
         public static string __object_str(object? value)
@@ -758,10 +774,18 @@ namespace Typhon.Runtime
             string s => new StrChars(s),
             PyAttrDict attrs => attrs.Keys,
             IDictionary d => d.Keys.Cast<object>().Select(PyNoneDictKey.Read),
+            IList list => IterateList(list),
             ITuple t => Enumerable.Range(0, t.Length).Select(i => t[i]!),
             IEnumerable e => e.Cast<object>(),
             _ => throw new InvalidCastException($"'{o?.GetType().Name}' object is not iterable"),
         };
+        static IEnumerable<dynamic> IterateList(IList list)
+        {
+            // Python's list iterator advances by position even if the list is updated.
+            for (int index = 0; index < list.Count; index++)
+                yield return list[index]!;
+        }
+
         public static string str_at(string s, int i) => CharStr(s[i < 0 ? i + s.Length : i]);
 
 
@@ -833,6 +857,11 @@ namespace Typhon.Runtime
             if (i < s.Length) sb.Append(s, i, s.Length - i);
             return sb.ToString();
         }
+        public static object __eq__(this string value, object? other) => other is string text
+            ? string.Equals(value, text, StringComparison.Ordinal) : NotImplemented;
+        public static object __ne__(this string value, object? other) => other is string text
+            ? !string.Equals(value, text, StringComparison.Ordinal) : NotImplemented;
+
         public static long find(this string s, string sub) => s.IndexOf(sub, StringComparison.Ordinal);
         static (int Start, int End) StringSearchBounds(int length, long start, long? end)
         {
@@ -1015,10 +1044,13 @@ namespace Typhon.Runtime
                 : s.PadLeft(Width(size), '0');
         }
         public static string center(this string s, long width, string fill = " ") => format(s, fill + "^" + Width(width));
+        public static string center(this string s, object? width, string fill = " ") => s.center(StringSize(width), fill);
         public static PyBytes ljust(this PyBytes value, long width, PyBytes? fillbyte = null) => value.ljust(width, fillbyte);
         public static PyByteArray ljust(this PyByteArray value, long width, PyBytes? fillbyte = null) => value.ljust(width, fillbyte);
         public static string ljust(this string s, long width, string fill = " ") => s.PadRight(Width(width), fill[0]);
+        public static string ljust(this string s, object? width, string fill = " ") => s.ljust(StringSize(width), fill);
         public static string rjust(this string s, long width, string fill = " ") => s.PadLeft(Width(width), fill[0]);
+        public static string rjust(this string s, object? width, string fill = " ") => s.rjust(StringSize(width), fill);
         static int Width(long w) => w <= 0 ? 0 : checked((int)w);
 
         // iterating a str yields .NET chars; give them the Python str API too

@@ -1,0 +1,18 @@
+def preserve(function):
+    return function
+
+class Base:
+    @preserve
+    def __getitem__(self, key):
+        return "base", key
+
+class Derived(Base):
+    def __getitem__(self, key):
+        return "derived", key
+
+def through_base(value: Base):
+    return value[3]
+
+print(through_base(Base()))
+print(through_base(Derived()))
+print(Derived()[9])

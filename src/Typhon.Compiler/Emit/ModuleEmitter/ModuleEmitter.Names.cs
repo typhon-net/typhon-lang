@@ -183,7 +183,7 @@ namespace Typhon.Compiler.Emit
 
         /// <summary>A Typhon runtime helper (mod, pow, slice, str, ...): qualified when a Python name in scope hides it (a parameter called 'mod').</summary>
         string Rt(string helper) =>
-            IsShadowed(helper) || _renames.ContainsKey(helper) || BuiltinClashes(helper) ||
+            IsShadowed(helper) || _renames.ContainsKey(helper) || StdlibOwner(helper) != null || BuiltinClashes(helper) ||
             _cls != null && (_cls.Members.Contains(helper) || _cls.FieldTypes.ContainsKey(helper) || MethodInHierarchy(_cls.Def, helper) != null)
                 ? "global::Typhon.Runtime.Builtins." + helper : helper;
 
@@ -243,6 +243,8 @@ namespace Typhon.Compiler.Emit
             }
             if (QualifiedProjectImport(id) is string projectImport) return projectImport;
             if (_runtimeProjectBindings.TryGetValue(id, out var runtimeBinding)) return runtimeBinding.Storage;
+            if (_typingModules.Contains(id) && !IsValueName(id) && !_dotnetAliases.ContainsKey(id) && ModuleRef(id) == null)
+                return $"((dynamic){Rt("__import__")}({CsString("typing")}))";
             // A CLR class member can shadow a using alias. In Python, a method resolves an
             // imported name from the module scope, outside the surrounding class namespace.
             if ((_cls != null || _qualifiedRuntimeModuleImports.Contains(id)) && !IsShadowed(id) &&
@@ -261,6 +263,7 @@ namespace Typhon.Compiler.Emit
             if (!IsShadowed(id))
             {
                 if (StdlibOwner(id) is string owner && _r.GetMembers(owner, id).Count > 0) return CsTypeName(owner) + "." + Esc(id);
+                if (SourceStarReExport(id) is string fromStar) return fromStar;
                 if (BuiltinClashes(id) || hidesGlobal && _r.GetMembers("Typhon.Runtime.Builtins", id).Count != 0)
                     return "global::Typhon.Runtime.Builtins." + Esc(id);
                 // An optional module that failed to import left its global name unbound.
@@ -443,6 +446,8 @@ namespace Typhon.Compiler.Emit
 
         readonly HashSet<string> _currentFuncTypeParams = new HashSet<string>();
 
+        bool IsTypeParamType(string type) => type != null && IsTypeParamInScope(type.TrimStart('@'));
+
         /// <summary>
         /// A .NET type whose attributes are bound at run time (a System.Dynamic.DynamicObject such as argparse.Namespace): an
         /// annotation naming it is dynamic, so attribute access on the annotated value stays late-bound as in Python.
@@ -461,6 +466,8 @@ namespace Typhon.Compiler.Emit
         /// <summary>Maps a Python type annotation to a C# type.</summary>
         string MapType(Expr e, Node at, bool isReturn = false)
         {
+            // Python functions satisfy callable protocols without a CLR interface wrapper.
+            if (isReturn && !_m.IsGdScript && CallableProtocolAnnotation(e)) return "dynamic";
             switch (e)
             {
                 case null: return "dynamic";
@@ -472,11 +479,17 @@ namespace Typhon.Compiler.Emit
                 {
                     if (n.Id == "None") return isReturn ? "void" : "object";
                     if (n.Id == "Self" && _cls != null) return _cls.CsSelfType;
+                    if (_inheritedTypeBindings?.TryGetValue(n.Id, out string bound) == true) return bound;
                     if (IsTypeParamInScope(n.Id)) return Esc(n.Id);
+                    if (!IsLocal(n.Id) && _m.RuntimeTypeVariables.Contains(n.Id)) return "dynamic";
+                    if (n.Id is "Never" or "NoReturn" && !IsLocal(n.Id) &&
+                        (_typingOnlyNames.Contains(n.Id) || _m.Name == "typing" && !_m.Classes.ContainsKey(n.Id)))
+                        return "dynamic";
                     if (TypeAlias(n.Id) is Expr aliased) return MapType(aliased, at, isReturn);
                     if (StdlibClassType(n.Id) is string stdlibType) return stdlibType;
                     if (n.Id == "NDArray" && !IsShadowed("NDArray") && _staticTypes.Contains("Typhon.Stdlib.numpy+typing")) return "global::Typhon.Stdlib.numpy.ndarray";
                     if (_big && n.Id == "int" && !IsShadowed("int")) return IntT;
+                    if (_big && n.Id == "range" && !IsShadowed("range")) return BigRangeType;
                     if (!IsShadowed(n.Id) && PrimitiveTypes.TryGetValue(n.Id, out var prim)) return prim;
                     if (ExceptionMap.TryGetValue(n.Id, out var ex) && !IsShadowed(n.Id)) return ex;
                     if (IsLateBoundDotNetType(n.Id)) return "dynamic";
@@ -485,13 +498,22 @@ namespace Typhon.Compiler.Emit
                 }
                 case AttributeExpr a:
                 {
+                    if (a.Name is "Never" or "NoReturn" && a.Target is NameExpr typingModule &&
+                        _typingModules.Contains(typingModule.Id) && !IsLocal(typingModule.Id))
+                        return "dynamic";
                     string dotted = DottedName(a);
                     if (dotted == null) { Error(at, "invalid type annotation"); return "dynamic"; }
                     string stripped = StripTypingPrefix(dotted);
-                    if (stripped != dotted) return MapType(new NameExpr { Id = stripped, Line = a.Line, Col = a.Col }, at, isReturn);
+                    if (stripped != dotted)
+                    {
+                        if (!PrimitiveTypes.ContainsKey(stripped) && TryResolveType(dotted, 0, out _, out var declared) &&
+                            declared != null && ProjectModuleMember(dotted) is string sourceType)
+                            return sourceType;
+                        return MapType(new NameExpr { Id = stripped, Line = a.Line, Col = a.Col }, at, isReturn);
+                    }
                     if (IsLateBoundDotNetType(dotted)) return "dynamic";
                     if (TryResolveType(dotted, 0, out var stdMeta, out var stdPy) && StdlibTypeCode(stdMeta, stdPy) is string stdName) return stdName;
-                    return (stdPy == null ? null : ProjectPackageMember(dotted)) ?? StdlibNestedType(dotted) ?? string.Join(".", dotted.Split('.').Select(Esc));
+                    return (stdPy == null ? null : ProjectModuleMember(dotted)) ?? StdlibNestedType(dotted) ?? string.Join(".", dotted.Split('.').Select(Esc));
                 }
                 case SubscriptExpr s:
                 {
@@ -574,11 +596,13 @@ namespace Typhon.Compiler.Emit
                 case AttributeExpr a: { var d = DottedName(a); return d != null && TryResolveType(d, 0, out _, out _); }
                 case SubscriptExpr s:
                 {
-                    string bn = StripTypingPrefix(DottedName(s.Target));
-                    if (bn == null) return false;
+                    string qualified = DottedName(s.Target);
+                    string bn = StripTypingPrefix(qualified);
+                    if (bn == null || SourceValueSubscription(s.Target)) return false;
                     var args = s.Index is TupleExpr t ? t.Elts : new List<Expr> { s.Index };
                     if (GenericAliases.Contains(bn)) return true;
-                    return TryResolveType(bn, args.Count, out _, out _) && args.All(IsTypeish);
+                    return (TryResolveType(qualified, args.Count, out _, out _) ||
+                        qualified != bn && TryResolveType(bn, args.Count, out _, out _)) && args.All(IsTypeish);
                 }
                 case BinOpExpr b when b.Op == "|": return IsTypeish(b.Left) && IsTypeish(b.Right);
                 default: return false;
@@ -602,16 +626,19 @@ namespace Typhon.Compiler.Emit
                     string dotted = DottedName(a);
                     if (dotted == null || ConditionalClassReference(a) ||
                         !TryResolveType(dotted, 0, out var attrMeta, out var attrPy)) return false;
-                    code = (attrPy == null ? null : ProjectPackageMember(dotted)) ?? StdlibTypeCode(attrMeta, attrPy) ?? StdlibNestedType(dotted) ?? string.Join(".", dotted.Split('.').Select(Esc));
+                    code = (attrPy == null ? null : ProjectModuleMember(dotted)) ?? StdlibTypeCode(attrMeta, attrPy) ?? StdlibNestedType(dotted) ?? string.Join(".", dotted.Split('.').Select(Esc));
                     return true;
                 }
                 case SubscriptExpr s:
                 {
                     var args = s.Index is TupleExpr t ? t.Elts : new List<Expr> { s.Index };
                     if (!args.All(IsTypeish)) return false;
-                    string bn = StripTypingPrefix(DottedName(s.Target));
-                    if (bn == null) return false;
-                    if (GenericAliases.Contains(bn) || TryResolveType(bn, args.Count, out _, out _)) { code = MapType(s, s); return true; }
+                    string qualified = DottedName(s.Target);
+                    string bn = StripTypingPrefix(qualified);
+                    if (bn == null || SourceValueSubscription(s.Target)) return false;
+                    if (GenericAliases.Contains(bn) || TryResolveType(qualified, args.Count, out _, out _) ||
+                        qualified != bn && TryResolveType(bn, args.Count, out _, out _))
+                    { code = MapType(s, s); return true; }
                     return false;
                 }
                 default: return false;

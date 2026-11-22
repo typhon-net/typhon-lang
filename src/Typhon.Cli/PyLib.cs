@@ -65,10 +65,12 @@ internal static class PyLib
     });
 
     /// <summary>Is the module one Typhon provides itself (a runtime module, a typing-only one)? Those are never taken from Lib.</summary>
-    public static bool ProvidedByTyphon(string module)
+    public static bool ProvidedByTyphon(string module, bool bigInts)
     {
         // Compile the Lib implementations that use Typhon's runtime primitives.
-        if (module is "timeit" or "copyreg" or "csv" or "hashlib" or "hmac") return false;
+        if (module is "timeit" or "copyreg" or "csv" or "hashlib" or "hmac" or "traceback") return false;
+        // urllib.parse imports ipaddress, whose IPv6 constants require Python's wide integers.
+        if (bigInts && module is ("urllib" or "urllib.parse")) return false;
         if (TypingOnly.Contains(module)) return true;
         // With #:pylib, use the source doctest module to discover and execute examples.
         return module.Split('.')[0] != "doctest" && RuntimeModule(module) != null;

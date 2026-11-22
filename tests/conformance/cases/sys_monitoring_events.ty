@@ -1,0 +1,38 @@
+from sys import monitoring
+
+tool = monitoring.PROFILER_ID
+events = monitoring.events
+record: list[tuple[str, int]] = []
+
+def on_start(code, offset):
+    if code.co_name == "work":
+        record.append(("start", int(offset)))
+        monitoring.set_local_events(tool, code, events.LINE | events.PY_RETURN)
+
+def on_line(code, line):
+    if code.co_name == "work":
+        record.append(("line", int(line - code.co_firstlineno)))
+        return monitoring.DISABLE
+
+def on_return(code, offset, value):
+    if code.co_name == "work":
+        record.append(("return", int(value)))
+
+def work(value: int) -> int:
+    adjusted = value + 4
+    return adjusted * 2
+
+monitoring.use_tool_id(tool, "test monitor")
+print(monitoring.get_tool(tool), monitoring.register_callback(tool, events.PY_START, on_start))
+monitoring.register_callback(tool, events.LINE, on_line)
+monitoring.register_callback(tool, events.PY_RETURN, on_return)
+monitoring.set_events(tool, events.PY_START)
+try:
+    print(work(3), work(4))
+    print(record)
+    record.clear()
+    monitoring.restart_events()
+    print(work(5), record)
+finally:
+    monitoring.free_tool_id(tool)
+print(monitoring.get_tool(tool), monitoring.get_events(tool))

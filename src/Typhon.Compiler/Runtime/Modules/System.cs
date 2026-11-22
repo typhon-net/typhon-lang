@@ -129,13 +129,13 @@ namespace Typhon.Stdlib
         /// <summary>audit(event, *args): raises an auditing event (no hooks are ever called).</summary>
         public static void audit(string @event, params object?[] args) { }
         public static void addaudithook(object? hook) { }
-        public static void settrace(object? function) { _trace = function; }
-        public static object? gettrace() => _trace;
+        public static readonly dynamic monitoring = PyModule.Of(typeof(PyMonitoring), "sys.monitoring");
+        public static void settrace(object? function) => PyTracing.Callback = function;
+        public static object? gettrace() => PyTracing.Callback;
         public static void setprofile(object? function) => PyProfiling.Callback = function;
         public static object? getprofile() => PyProfiling.Callback;
-        public static void _settraceallthreads(object? function) { _trace = function; }
+        public static void _settraceallthreads(object? function) => PyTracing.SetAll(function);
         public static void _setprofileallthreads(object? function) => PyProfiling.Callback = function;
-        static object? _trace;
 
         // ── exceptions ──
 
@@ -188,6 +188,7 @@ namespace Typhon.Stdlib
         /// </summary>
         public static frame _getframe(long depth = 0)
         {
+            if (PyTracing.GetFrame(depth) is frame traced) return traced;
             var frames = frame.Stack(1);
             if (depth < 0 || depth >= frames.Count) throw new ArgumentException("call stack is not deep enough");
             return frames[(int)depth];
@@ -279,10 +280,10 @@ namespace Typhon.Stdlib
             readonly int _index;
             readonly frame? _caller;
             public readonly code f_code;
-            public readonly long f_lineno;
-            public readonly long f_lasti = 0;
+            public long f_lineno { get; internal set; }
+            public long f_lasti { get; internal set; }
             public readonly OrderedDictionary<string, object?> f_globals, f_locals = new OrderedDictionary<string, object?>(), f_builtins = new OrderedDictionary<string, object?>();
-            public object? f_trace = null;
+            public dynamic? f_trace = null;
             public bool f_trace_lines = true, f_trace_opcodes = false;
             frame(List<frame> stack, int index, code c, long line, string module)
             {
@@ -333,10 +334,17 @@ namespace Typhon.Stdlib
         {
             public readonly string co_name, co_qualname, co_filename;
             public readonly long co_firstlineno, co_flags;
+            public virtual PyTuple<string> co_freevars { get; } = new PyTuple<string>(Array.Empty<string>());
             public code(string name, string file, long line, long flags = 0, string? qualname = null)
             { co_name = name; co_qualname = qualname ?? name; co_filename = file; co_firstlineno = line; co_flags = flags; }
-            // A managed frame captures one mapped source position and uses instruction offset zero for it.
-            public PyIterator<(long?, long?, long?, long?)> co_positions()
+            // A managed frame without tracing has the one source position captured from the stack.
+            public virtual IEnumerable<(long, long, long?)> co_lines()
+            {
+                long? line = co_firstlineno > 0 ? co_firstlineno : null;
+                yield return (0L, 1L, line);
+            }
+
+            public virtual PyIterator<(long?, long?, long?, long?)> co_positions()
             {
                 long? line = co_firstlineno > 0 ? co_firstlineno : null;
                 return Builtins.iter<(long?, long?, long?, long?)>([(line, line, null, null)]);
@@ -454,6 +462,19 @@ namespace Typhon.Runtime
             throw new ImportError($"cannot import name '{name}' from '{__name__}'");
         public override bool TryGetMember(GetMemberBinder binder, out object? result) => __dict__.TryGetValue(binder.Name, out result);
         public override bool TrySetMember(SetMemberBinder binder, object? value) { __dict__[binder.Name] = value; return true; }
+        public override bool TryInvokeMember(InvokeMemberBinder binder, object?[]? args, out object? result)
+        {
+            result = null;
+            if (!__dict__.TryGetValue(binder.Name, out var member) || member is not Type type) return false;
+            args ??= [];
+            var names = binder.CallInfo.ArgumentNames;
+            if (names.Count == 0) { result = Builtins.__invoke(type, args); return true; }
+            int positional = args.Length - names.Count;
+            var keywords = new Dictionary<string, object?>();
+            for (int i = 0; i < names.Count; i++) keywords[names[i]] = args[positional + i];
+            result = Builtins.__invoke_kw(type, args[..positional], keywords);
+            return true;
+        }
 
         BindingFlags Members => BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly |
             (_source != null ? BindingFlags.NonPublic : 0);
@@ -476,6 +497,9 @@ namespace Typhon.Runtime
             if (_type == null || !IsModuleName(name)) return false;
             if (_type == typeof(Typhon.Stdlib.os_) && name == "path") { result = Typhon.Stdlib.os_.__path_module__; return true; }
             if (_type == typeof(Typhon.Stdlib.builtins) && name == "print") { result = Builtins.__print_value(); return true; }
+            if (_type == typeof(Typhon.Stdlib.builtins) && Typhon.Stdlib.builtins.RuntimeClasses.TryGetValue(name, out Type? cls))
+            { result = cls; return true; }
+            if (_type == typeof(Typhon.Stdlib.functools) && name == "partial") { result = typeof(PyPartial); return true; }
             if (_type.GetField(name, Members) is FieldInfo f)
             {
                 result = f.GetValue(null);
@@ -531,6 +555,8 @@ namespace Typhon.Runtime
             yield return "__doc__";
             if (__file__ != null) yield return "__file__";
             if (_type == null) yield break;
+            if (_type == typeof(Typhon.Stdlib.builtins))
+                foreach (string name in Typhon.Stdlib.builtins.RuntimeClasses.Keys) yield return name;
             foreach (var member in _type.GetMembers(Members))
                 if (IsModuleName(member.Name) && (member is FieldInfo or PropertyInfo || member is MethodInfo method && IsNamespaceMethod(method)) &&
                     (member is not FieldInfo field || !field.IsDefined(typeof(PyOptionalModuleMemberAttribute), false) ||

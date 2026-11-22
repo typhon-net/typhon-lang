@@ -59,6 +59,28 @@ namespace Typhon.Runtime
 
         internal static types.MappingProxyType Dictionary(Type type) => new(PyMetaclasses.Namespace(type) ?? Namespace(type));
 
+        internal static bool TryGetAnnotations(Type type, out object? value)
+        {
+            if (type is PyLocalDataClass local && local.Members.TryGetValue("__annotations__", out value)) return true;
+            var members = Namespace(type);
+            if (members.TryRead("__annotations__", out value)) return true;
+            if (type is not PyLocalDataClass && !type.IsDefined(typeof(PySourceAttribute), false)) return false;
+            value = new OrderedDictionary<string, object?>();
+            members.SetAdded("__annotations__", value);
+            return true;
+        }
+
+        sealed class TypeAnnotations
+        {
+            public object? __get__(object? owner, object? ignored = null)
+            {
+                if (owner == null) return this;
+                if (owner is not Type type) throw new InvalidCastException("type.__annotations__ requires a type object");
+                if (TryGetAnnotations(type, out var value)) return value;
+                throw new MissingMemberException($"type object '{Builtins.PyTypeName(type)}' has no attribute '__annotations__'");
+            }
+        }
+
         internal static readonly object Unassigned = new();
 
         internal static dynamic? ReadBodyName(object? value, string name, Type module, string moduleName)
@@ -222,6 +244,15 @@ namespace Typhon.Runtime
                 _bindings["__module__"] = () => Builtins.__module_of(type);
                 _bindings["__qualname__"] = () => Builtins.PyTypeName(type);
                 _bindings["__doc__"] = () => source?.DocString;
+                if (type == typeof(Type)) AddDescriptor("__annotations__", new TypeAnnotations());
+                if (type == typeof(PyFunction) || type == typeof(types.FunctionType))
+                    _bindings["__call__"] = Bind(new PyClosure("__call__", (arguments, keywords) =>
+                    {
+                        object function = Receiver("__call__", arguments);
+                        if (!inspect.isfunction(function))
+                            throw new InvalidCastException("function.__call__ requires a function");
+                        return Builtins.__invoke_kw(function, arguments[1..], keywords);
+                    }));
                 foreach (var field in type.GetFields(Declared).Where(f => f.IsStatic && !f.Name.StartsWith("<", StringComparison.Ordinal) &&
                     !f.Name.StartsWith("__typhon_branch_", StringComparison.Ordinal) && !f.IsDefined(typeof(CompilerGeneratedAttribute))))
                     _bindings[field.Name] = () => field.GetValue(null);
@@ -231,7 +262,10 @@ namespace Typhon.Runtime
                 {
                     var spec = member.GetCustomAttribute<PyDescriptorAttribute>();
                     var declaration = member.GetCustomAttribute<PySourceAttribute>();
-                    if (member.GetCustomAttribute<PyClassSlotAttribute>() is { } slot)
+                    if (member.Name == "__annotations__" && member.GetGetMethod(true)?.IsStatic == true &&
+                        member.GetCustomAttribute<PyClassSlotAttribute>() == null)
+                        _bindings[member.Name] = () => member.GetValue(null);
+                    else if (member.GetCustomAttribute<PyClassSlotAttribute>() is { } slot)
                     {
                         var storage = slot.Storage(member);
                         _bindings[member.Name] = () => storage.GetValue(null);

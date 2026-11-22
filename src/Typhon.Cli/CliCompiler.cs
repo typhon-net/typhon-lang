@@ -136,6 +136,7 @@ internal static class CliCompiler
                 if (pylib == null) output.Messages.Add($"{path}: warning TY0102: #:pylib: no CPython standard library found (give #:pylib DIR or set TYPHON_PYLIB)");
             }
             var m = TyphonCompiler.Parse(path, source, name, "");
+            if (m.BigIntPragma) project.BigInts = true;
             if (isPackage)
             {
                 m.IsPackage = true;
@@ -151,7 +152,7 @@ internal static class CliCompiler
         var runtimePackages = new Dictionary<string, bool>(StringComparer.Ordinal);
         bool IsRuntimePackage(string name)
         {
-            if (pylib == null || !PyLib.ProvidedByTyphon(name)) return false;
+            if (pylib == null || !PyLib.ProvidedByTyphon(name, project.BigInts)) return false;
             if (runtimePackages.TryGetValue(name, out bool cached)) return cached;
             var (initializer, _) = PyLib.SourceCandidates(pylib, name).First();
             bool exists = File.Exists(initializer);
@@ -169,7 +170,7 @@ internal static class CliCompiler
             var parent = dot < 0 ? null : Discover(parentName);
             IEnumerable<(string Path, bool Package)> choices = PyLib.SourceCandidates(dir, name, TyphonCompiler.FileExtension);
             // A library child may be supplied by source even if its package is provided by the runtime.
-            if (pylib != null && !PyLib.ProvidedByTyphon(name) &&
+            if (pylib != null && !PyLib.ProvidedByTyphon(name, project.BigInts) &&
                 (dot < 0 || parent?.IsPackage == true && parent.Path.StartsWith(Path.EndsInDirectorySeparator(pylib) ? pylib : pylib + Path.DirectorySeparatorChar, StringComparison.Ordinal) ||
                  parent == null && IsRuntimePackage(parentName)))
                 choices = choices.Concat(PyLib.SourceCandidates(pylib, name));

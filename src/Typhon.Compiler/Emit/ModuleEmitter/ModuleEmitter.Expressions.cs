@@ -36,7 +36,7 @@ namespace Typhon.Compiler.Emit
         {
             switch (e)
             {
-                case CompareExpr _: return true;
+                case CompareExpr comparison: return InferType(comparison) == "bool";
                 case BoolOpExpr b: return b.Values.All(IsBoolish);
                 case UnaryExpr u when u.Op == "not": return true;
                 case ConstExpr c: return c.Kind == ConstKind.Bool;
@@ -81,10 +81,10 @@ namespace Typhon.Compiler.Emit
                     return EmitName(imported);
                 case NameExpr conditional when !IsLocal(conditional.Id) && ConditionalModuleClass(_m, conditional.Id):
                     return $"global::Typhon.Runtime.PyModule.ReadLateGlobal({ClassActivation(_m.Classes[conditional.Id])} ? " +
-                        $"(object)typeof({Esc(conditional.Id)}) : global::Typhon.Runtime.PyModule.Unbound, {CsString(conditional.Id)})";
+                        $"(object){ClassTypeValue(Esc(conditional.Id), _m.Classes[conditional.Id])} : global::Typhon.Runtime.PyModule.Unbound, {CsString(conditional.Id)})";
                 case NameExpr cv when !IsLocal(cv.Id) && !_moduleFieldTypes.ContainsKey(cv.Id) && !_renames.ContainsKey(cv.Id) &&
-                                      TryResolveType(cv.Id, 0, out var cvMeta, out var cvClass) && cvClass != null && cvClass.TypeParams.Count == 0:
-                    return $"typeof({EmitName(cv)})";
+                                      TryResolveType(cv.Id, 0, out _, out var cvClass) && cvClass != null:
+                    return ClassTypeValue(EmitName(cv), cvClass);
                 // an exception class as a value (exc_type is KeyError, a tuple of exception classes): its type object
                 case NameExpr ev when ExceptionMap.TryGetValue(ev.Id, out var evType) && !IsShadowed(ev.Id) && !IsLocal(ev.Id) && !_renames.ContainsKey(ev.Id):
                     return $"typeof({evType})";
@@ -134,7 +134,7 @@ namespace Typhon.Compiler.Emit
                 case CompareExpr c: return EmitCompare(c);
                 case IfExpr i when ConditionalNeedsDynamic(i, targetTyped): return $"({Cond(i.Test)} ? (dynamic?){Paren(EmitLooseValue(i.Body))} : (dynamic?){Paren(EmitLooseValue(i.OrElse))})";
                 case IfExpr i: return $"({Cond(i.Test)} ? {EmitExpr(i.Body, targetTyped)} : {EmitExpr(i.OrElse, targetTyped)})";
-                case LambdaExpr l when l.RequiresArgumentBinding: return EmitRuntimeLambda(l);
+                case LambdaExpr l when l.RequiresArgumentBinding || IsGeneratorLambda(l): return EmitRuntimeLambda(l);
                 case LambdaExpr l:
                 {
                     var parameters = LambdaParameters(l.Params);
@@ -175,6 +175,11 @@ namespace Typhon.Compiler.Emit
                 case ComprehensionExpr c: return EmitComprehension(c);
                 case AwaitExpr a: return $"(await {EmitExpr(a.Value)})";
                 // (yield v) inside an expression: the async form awaits it; its value is what send() passes in
+                case YieldExpr y when _lambdaGenerators.Count > 0:
+                {
+                    string value = y.Value == null ? "null" : $"(object?){Paren(EmitValue(y.Value))}";
+                    return $"(await {_lambdaGenerators.Peek()}.{(y.From ? "YieldFrom" : "Yield")}({value}))";
+                }
                 case YieldExpr { From: true } y when _scope?.AsyncForm == true:
                     return $"(await {GenVar}.YieldFrom((object?){Paren(EmitValue(y.Value))}))";
                 case YieldExpr y when _scope?.AsyncForm == true: return $"(await {GenVar}.Yield({YieldedValue(y)}))";
@@ -495,6 +500,7 @@ namespace Typhon.Compiler.Emit
             ["list"] = "global::System.Collections.Generic.List<object>", ["set"] = "global::System.Collections.Generic.HashSet<object>",
             ["dict"] = "global::System.Collections.Generic.OrderedDictionary<object, object>",
             ["range"] = "global::Typhon.Runtime.PyRange",
+            ["memoryview"] = "global::memoryview",
             ["frozendict"] = "global::Typhon.Runtime.frozendict<object, object>",
             ["frozenset"] = "global::Typhon.Runtime.frozenset<object>",
             ["slice"] = "global::Typhon.Runtime.PySlice",
@@ -502,7 +508,7 @@ namespace Typhon.Compiler.Emit
 
         string BuiltinTypeValue(NameExpr name) =>
             BuiltinTypeValues.TryGetValue(name.Id, out var type) && !IsShadowed(name.Id) && !IsLocal(name.Id) &&
-            !_moduleFieldTypes.ContainsKey(name.Id) && !_renames.ContainsKey(name.Id) ? $"typeof({type})" : null;
+            !_moduleFieldTypes.ContainsKey(name.Id) && !_renames.ContainsKey(name.Id) ? $"typeof({(_big && name.Id == "range" ? BigRangeType : type)})" : null;
 
         string ImportedBuiltinTypeValue(Expr expression)
         {
@@ -625,9 +631,9 @@ namespace Typhon.Compiler.Emit
             if (e is NameExpr n && RuntimeModuleValue(n) is string runtimeModule) return runtimeModule;
             if (e is AttributeExpr a && DottedName(a) is string dotted && !IsLocal(dotted.Split('.')[0]))
             {
-                if (TryResolveType(dotted, 0, out _, out var projectClass) && projectClass is { TypeParams.Count: 0 } &&
+                if (TryResolveType(dotted, 0, out _, out var projectClass) && projectClass != null &&
                     TryTypeExpr(e, out string projectType))
-                    return $"typeof({projectType})";
+                    return ClassTypeValue(projectType, projectClass);
                 // (a generic class such as collections.deque: the type with object for its type arguments, constructible and a dict key)
                 for (int arity = 0; arity <= 3; arity++)
                     // (not a module nested in a module, os.path or numpy.linalg: a static class)
@@ -689,7 +695,7 @@ namespace Typhon.Compiler.Emit
             {
                 case "name": case "obj":
                     return InferType(attribute.Target)?.Replace("global::", "").TrimEnd('?') == "System.MissingMemberException";
-                case "__cause__": case "__context__": case "__suppress_context__": case "__traceback__": case "with_traceback":
+                case "__cause__": case "__context__": case "__suppress_context__": case "__traceback__": case "with_traceback": case "__notes__":
                     string type = InferType(attribute.Target);
                     return IsUnknownType(type) || IsExceptionType(type);
                 case "filename": case "lineno": case "offset": case "text":
@@ -711,17 +717,32 @@ namespace Typhon.Compiler.Emit
             !_m.IsGdScript && !IsAttributeStore(attribute) && attribute.Name is ("real" or "imag") &&
             IsComplexType(InferType(attribute.Target));
 
+        string BuiltinStringMethodValue(AttributeExpr attribute) =>
+            attribute.Target is NameExpr { Id: "str" } owner && BuiltinTypeValue(owner) is string type &&
+            !BuiltinClassMethods.Contains(attribute.Name) &&
+            _r.GetMembers("Typhon.Runtime.Builtins", attribute.Name).Any(method =>
+                method.IsMethod && method.IsStatic && method.Parameters.Count > 0 && method.Parameters[0].GenericType == "string")
+                ? $"{Rt("getattr")}({type}, {CsString(attribute.Name)})" : null;
+
+        bool UsesBuiltinStringComparison(AttributeExpr attribute) =>
+            !_m.IsGdScript && attribute.Name is ("__eq__" or "__ne__") && InferType(attribute.Target) == "string";
+
         bool UsesRuntimeSelfAttribute(AttributeExpr attribute) =>
             attribute.Target is NameExpr { Id: "self" } && _cls != null && !_cls.IsInterface &&
             HasSelfInScope() && SelfMemberUnknown(attribute.Name);
 
         string EmitAttribute(AttributeExpr a, bool allowMethodGroup = false)
         {
+            if (!_m.IsGdScript && IsTypeCheckSlot(a.Name) && BuiltinTypeBase(a.Target)) return EmitBuiltinTypeSlot(a);
             if (IsRuntimeModuleAttribute(a) || IsRuntimeObjectAttribute(a))
                 return IsAttributeStore(a) ? $"((dynamic){Paren(EmitExpr(a.Target))}).{Esc(a.Name)}" :
                     $"{Rt("getattr")}((object?){Paren(EmitExpr(a.Target))}, {CsString(a.Name)})";
             if (!_m.IsGdScript && !allowMethodGroup && !IsAttributeStore(a) && a.Name == "__next__")
                 return $"{Rt("getattr")}((object?){Paren(EmitValue(a.Target))}, {CsString(a.Name)})";
+            if (!allowMethodGroup && !Receivers.Contains(a) && !IsAttributeStore(a) &&
+                BuiltinStringMethodValue(a) is string stringMethod) return stringMethod;
+            if (!IsAttributeStore(a) && UsesBuiltinStringComparison(a))
+                return $"{Rt("getattr")}((object?){Paren(EmitExpr(a.Target))}, {CsString(a.Name)})";
             if (UsesComplexComponent(a))
                 return $"{Paren(EmitExpr(a.Target))}.{(a.Name == "real" ? "Real" : "Imaginary")}";
             if (!_m.IsGdScript && a.Name is ("numerator" or "denominator" or "real" or "imag") && !IsAttributeStore(a) &&
@@ -786,7 +807,7 @@ namespace Typhon.Compiler.Emit
                 if (a.Name == "__package__") return CsString(projectModule.PackageName);
                 if (a.Name == "__file__") return CsString(System.IO.Path.GetFullPath(projectModule.Path));
                 if (!IsAttributeStore(a) && UsesRuntimeProjectMember(projectModule, a.Name)) return RuntimeProjectMember(projectModule, a.Name);
-                if (IsProjectPackageModule(projectModule) && ProjectPackageMember(prefix + "." + a.Name) is string member) return member;
+                if (ProjectModuleMember(prefix + "." + a.Name) is string member) return member;
             }
             if (a.Name is "errno" or "strerror" or "filename" or "filename2" or "winerror" &&
                 InferType(a.Target) is ("global::System.IO.IOException" or "System.IO.IOException"))
@@ -795,6 +816,9 @@ namespace Typhon.Compiler.Emit
             if (a.Name == "args" && InferType(a.Target) is string ext && IsExceptionType(ext) && !ext.Contains("Typhon.Runtime.") &&
                 !(ClassKeyOfType(ext, out _) is string eck && ClassDefOfKey(eck) is ClassDef ecd && AssignsArgs(ecd)))
                 return $"global::Typhon.Runtime.PyExc.Args((global::System.Exception){Paren(EmitExpr(a.Target))})";
+            if (a.Name is ("__getitem__" or "__contains__") && !Receivers.Contains(a) && !IsAttributeStore(a) &&
+                TupleElementTypes(InferType(a.Target)) != null)
+                return $"{Rt("getattr")}((object?){Paren(EmitValue(a.Target))}, {CsString(a.Name)})";
             // frozenset(kwlist).__contains__ / table.__getitem__ as a value (not called here): a function of the container
             if ((a.Name == "__contains__" || a.Name == "__getitem__") && !Receivers.Contains(a) && InferType(a.Target) is string ct && ct != "dynamic" &&
                 (ct.StartsWith("HashSet<") || ct.StartsWith("List<") || ct.StartsWith("OrderedDictionary<") || ct.StartsWith("Dictionary<") ||
@@ -823,7 +847,8 @@ namespace Typhon.Compiler.Emit
                 (PrimitiveCsTypes.Contains(localType) || FunctionOfType(localType, out _, out _)))
                 return $"((dynamic){Paren(EmitExpr(local))}).{Esc(a.Name)}";
             if (a.Name == "__module__" && !IsAttributeStore(a) && DottedName(a.Target) is string sourceClassName &&
-                TryResolveType(sourceClassName, 0, out _, out var sourceClass) && sourceClass != null && TryTypeExpr(a.Target, out var sourceClassType))
+                TryResolveType(sourceClassName, 0, out var nativeClass, out var sourceClass) &&
+                (sourceClass != null || nativeClass != null && IsRuntimeClassMeta(nativeClass)) && TryTypeExpr(a.Target, out var sourceClassType))
                 return $"{Rt("getattr")}(typeof({sourceClassType}), {CsString(a.Name)})";
             // type(x).__name__, x.__class__, SomeClass.__name__
             if (a.Name == "__class__")
@@ -941,6 +966,10 @@ namespace Typhon.Compiler.Emit
 
         /// <summary>Cheap local type inference, used where C# 'var' cannot be used (hoisted locals, fields).</summary>
         /// <summary>a if c else b with branches of different types C# has no common type for (a range and a list, a str and an int).</summary>
+        static bool MixedWideIntegerAndReal(string left, string right) =>
+            left == TypeInference.BigInt && right is ("float" or "double" or "decimal") ||
+            right == TypeInference.BigInt && left is ("float" or "double" or "decimal");
+
         bool ConditionalNeedsDynamic(IfExpr i, bool targetTyped = false)
         {
             bool StaticMethod(Expr value) => value is AttributeExpr member && DotNetStaticMeta(member.Target) is string metadata &&
@@ -952,7 +981,7 @@ namespace Typhon.Compiler.Emit
             string a = InferType(i.Body), o = InferType(i.OrElse);
             if (a == null || o == null || a == o || a == "dynamic" || o == "dynamic" || a == TypeInference.Pending || o == TypeInference.Pending) return false;
             if (a.Contains(TypeInference.Pending) || o.Contains(TypeInference.Pending)) return false;
-            if (IsNumeric(a) && IsNumeric(o)) return false;
+            if (IsNumeric(a) && IsNumeric(o)) return MixedWideIntegerAndReal(a, o);
             if (a == o + "?" || o == a + "?") return false;
             // a Typhon class and its base: C# converts the subclass to the base
             if (DerivesFromType(a, o) || DerivesFromType(o, a)) return false;

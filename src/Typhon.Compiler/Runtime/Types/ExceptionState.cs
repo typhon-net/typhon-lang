@@ -139,6 +139,20 @@ namespace Typhon.Runtime
             return PyExceptionState.CreateAttributeError(args, name, obj);
         }
 
+        public static void add_note(this Exception error, object? note)
+        {
+            if (note is not (string or PyString or PyStrEnum))
+                throw new InvalidCastException($"add_note() argument must be str, not {(note == null ? "NoneType" : PyTypeName(note.GetType()))}");
+            if (!TryGetAttr(error, "__notes__", out object? notes))
+            {
+                setattr(error, "__notes__", new List<object?> { note });
+                return;
+            }
+            if (notes is not System.Collections.IList list || list.IsFixedSize || list.IsReadOnly)
+                throw new InvalidCastException("Cannot add note: __notes__ is not a list");
+            list.Add(list is List<string> ? str(note) : note);
+        }
+
         public static IDisposable __handling_exception(Exception error) => new PyExceptionState.Handler(error);
 
         public static Exception __reraise()

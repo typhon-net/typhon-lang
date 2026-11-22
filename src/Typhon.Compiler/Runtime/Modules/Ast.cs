@@ -7,6 +7,7 @@
 namespace Typhon.Stdlib
 {
     using System;
+    using System.Collections;
     using System.Collections.Generic;
     using System.Dynamic;
     using System.Linq;
@@ -21,6 +22,12 @@ namespace Typhon.Stdlib
         {
             internal readonly Dictionary<string, object?> Fields = new(StringComparer.Ordinal);
             internal readonly Dictionary<string, object?> Attributes = new(StringComparer.Ordinal);
+            public AST() { }
+            protected AST(params (string Name, object? Value)[] fields)
+            {
+                foreach (var (name, value) in fields) Fields[name] = value;
+            }
+
             public PyTuple<string> _fields => new PyTuple<string>(Fields.Keys);
             public PyTuple<string> _attributes => new PyTuple<string>(Attributes.Keys);
             public override IEnumerable<string> GetDynamicMemberNames() => Fields.Keys.Concat(Attributes.Keys);
@@ -64,12 +71,32 @@ namespace Typhon.Stdlib
         internal sealed class Continue : AST { }
         internal sealed class BoolOp : AST { }
         internal sealed class NamedExpr : AST { }
-        internal sealed class BinOp : AST { }
-        internal sealed class UnaryOp : AST { }
+        internal sealed class BinOp : AST
+        {
+            private BinOp() { }
+            public BinOp(AST left, AST op, AST right)
+                : base(("left", left), ("op", op), ("right", right)) { }
+        }
+        internal sealed class UnaryOp : AST
+        {
+            private UnaryOp() { }
+            public UnaryOp(AST op, AST operand)
+                : base(("op", op), ("operand", operand)) { }
+        }
         internal sealed class Lambda : AST { }
         internal sealed class IfExp : AST { }
-        internal sealed class Dict : AST { }
-        internal sealed class Set : AST { }
+        internal sealed class Dict : AST
+        {
+            private Dict() { }
+            public Dict(IList? keys = null, IList? values = null)
+                : base(("keys", keys ?? new List<object?>()), ("values", values ?? new List<object?>())) { }
+        }
+        internal sealed class Set : AST
+        {
+            private Set() { }
+            public Set(IList? elts = null)
+                : base(("elts", elts ?? new List<object?>())) { }
+        }
         internal sealed class ListComp : AST { }
         internal sealed class SetComp : AST { }
         internal sealed class DictComp : AST { }
@@ -77,20 +104,80 @@ namespace Typhon.Stdlib
         internal sealed class Await : AST { }
         internal sealed class Yield : AST { }
         internal sealed class YieldFrom : AST { }
-        internal sealed class Compare : AST { }
-        internal sealed class Call : AST { }
+        internal sealed class Compare : AST
+        {
+            private Compare() { }
+            public Compare(AST left, IList? ops = null, IList? comparators = null)
+                : base(("left", left), ("ops", ops ?? new List<object?>()), ("comparators", comparators ?? new List<object?>())) { }
+        }
+        internal sealed class Call : AST
+        {
+            private Call() { }
+            public Call(AST func, IList? args = null, IList? keywords = null)
+                : base(("func", func), ("args", args ?? new List<object?>()), ("keywords", keywords ?? new List<object?>())) { }
+        }
         internal sealed class FormattedValue : AST { }
         internal sealed class JoinedStr : AST { }
-        internal sealed class TemplateStr : AST { }
-        internal sealed class Interpolation : AST { }
-        internal sealed class Constant : AST { }
-        internal sealed class Attribute : AST { }
-        internal sealed class Subscript : AST { }
-        internal sealed class Starred : AST { }
-        internal sealed class Name : AST { }
-        internal sealed class List : AST { }
-        internal sealed class Tuple : AST { }
-        internal sealed class Slice : AST { }
+        internal sealed class TemplateStr : AST
+        {
+            private TemplateStr() { }
+            public TemplateStr(IList? values = null)
+                : base(("values", values ?? new List<object?>())) { }
+        }
+        internal sealed class Interpolation : AST
+        {
+            private Interpolation() { }
+            public Interpolation(AST value, string? str, object conversion, AST? format_spec = null)
+                : base(("value", value), ("str", str), ("conversion", conversion), ("format_spec", format_spec)) { }
+        }
+        internal sealed class Constant : AST
+        {
+            private Constant() { }
+            public Constant(object? value, string? kind = null)
+                : base(("value", value), ("kind", kind)) { }
+        }
+        internal sealed class Attribute : AST
+        {
+            private Attribute() { }
+            public Attribute(AST value, string attr, AST? ctx = null)
+                : base(("value", value), ("attr", attr), ("ctx", ctx ?? new Load())) { }
+        }
+        internal sealed class Subscript : AST
+        {
+            private Subscript() { }
+            public Subscript(AST value, AST slice, AST? ctx = null)
+                : base(("value", value), ("slice", slice), ("ctx", ctx ?? new Load())) { }
+        }
+        internal sealed class Starred : AST
+        {
+            private Starred() { }
+            public Starred(AST value, AST? ctx = null)
+                : base(("value", value), ("ctx", ctx ?? new Load())) { }
+        }
+        internal sealed class Name : AST
+        {
+            private Name() { }
+            public Name(string id, AST? ctx = null)
+                : base(("id", id), ("ctx", ctx ?? new Load())) { }
+        }
+        internal sealed class List : AST
+        {
+            private List() { }
+            public List(IList? elts = null, AST? ctx = null)
+                : base(("elts", elts ?? new List<object?>()), ("ctx", ctx ?? new Load())) { }
+        }
+        internal sealed class Tuple : AST
+        {
+            private Tuple() { }
+            public Tuple(IList? elts = null, AST? ctx = null)
+                : base(("elts", elts ?? new List<object?>()), ("ctx", ctx ?? new Load())) { }
+        }
+        internal sealed class Slice : AST
+        {
+            private Slice() { }
+            public Slice(AST? lower = null, AST? upper = null, AST? step = null)
+                : base(("lower", lower), ("upper", upper), ("step", step)) { }
+        }
         internal sealed class Load : AST { }
         internal sealed class Store : AST { }
         internal sealed class Del : AST { }
@@ -127,7 +214,12 @@ namespace Typhon.Stdlib
         internal sealed class ExceptHandler : AST { }
         internal sealed class arguments : AST { }
         internal sealed class arg : AST { }
-        internal sealed class keyword : AST { }
+        internal sealed class keyword : AST
+        {
+            private keyword() { }
+            public keyword(string? arg, AST value)
+                : base(("arg", arg), ("value", value)) { }
+        }
         internal sealed class alias : AST { }
         internal sealed class withitem : AST { }
         internal sealed class match_case : AST { }
@@ -150,10 +242,40 @@ namespace Typhon.Stdlib
                 return Builtins.__invoke(visit, [node]);
             }
 
-            public object? generic_visit(AST node)
+            public virtual object? generic_visit(AST node)
             {
                 foreach (AST child in iter_child_nodes(node)) visit(child);
                 return null;
+            }
+        }
+
+        internal class NodeTransformer : NodeVisitor
+        {
+            public override object? generic_visit(AST node)
+            {
+                foreach (var (name, value) in node.Fields.ToArray())
+                {
+                    if (value is AST child)
+                    {
+                        object? replacement = visit(child);
+                        if (replacement == null) node.Fields.Remove(name);
+                        else node.Fields[name] = replacement;
+                    }
+                    else if (value is IList list)
+                    {
+                        var revised = new List<object?>();
+                        foreach (object? item in list)
+                        {
+                            if (item is not AST element) { revised.Add(item); continue; }
+                            object? replacement = visit(element);
+                            if (replacement is AST) revised.Add(replacement);
+                            else if (replacement != null) revised.AddRange(Builtins.__iter_dyn(replacement));
+                        }
+                        list.Clear();
+                        foreach (object? item in revised) list.Add(item);
+                    }
+                }
+                return node;
             }
         }
 
@@ -167,7 +289,7 @@ namespace Typhon.Stdlib
             foreach (object? field in node.Fields.Values)
             {
                 if (field is AST child) yield return child;
-                else if (field is List<object?> children)
+                else if (field is IList children)
                     foreach (var item in children)
                         if (item is AST nested) yield return nested;
             }
@@ -217,7 +339,7 @@ namespace Typhon.Stdlib
             if (packed is object?[] items) return items.Select(Materialize).ToList();
             if (packed is byte[] data) return new PyBytes(data);
             if (packed is not ValueTuple<string, KeyValuePair<string, object?>[], long[]> node) return packed;
-            var result = (AST)Activator.CreateInstance(NodeTypes[node.Item1])!;
+            var result = (AST)Activator.CreateInstance(NodeTypes[node.Item1], nonPublic: true)!;
             foreach (var field in node.Item2) result.Fields[field.Key] = Materialize(field.Value);
             if (node.Item3 != null)
             {

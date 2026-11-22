@@ -1,0 +1,19 @@
+class Custom(type):
+    def __instancecheck__(cls, value):
+        return value == "token" or type.__instancecheck__(cls, value)
+
+    def __subclasscheck__(cls, candidate):
+        return candidate is str or super().__subclasscheck__(candidate)
+
+class Parent(metaclass=Custom):
+    pass
+
+class Child(Parent):
+    pass
+
+print(type.__instancecheck__(Parent, Child()), type.__instancecheck__(Parent, "token"))
+print(type.__subclasscheck__(Parent, Child), type.__subclasscheck__(Parent, str))
+print(isinstance("token", Parent), issubclass(str, Parent))
+print(isinstance(Child(), Parent), issubclass(Child, Parent))
+test = type.__subclasscheck__
+print(test(int, bool), test(bool, int))

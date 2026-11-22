@@ -45,6 +45,7 @@ namespace Typhon.Compiler
         public string ClassName;     // C# static class name, e.g. "strings"
         public string Namespace;     // C# namespace, e.g. "MyApp.utils"
         public string Path;
+        internal string SourceText;
         public ModuleAst Ast;
         public readonly Dictionary<string, ClassDef> Classes = new Dictionary<string, ClassDef>();
         public readonly HashSet<string> Functions = new HashSet<string>();
@@ -58,6 +59,7 @@ namespace Typhon.Compiler
         internal bool MayReplaceModule;
         /// <summary>Module-level type aliases: EdgeT = tuple[int, int], Matrix = list[list[float]], X: TypeAlias = ...</summary>
         public readonly Dictionary<string, Expr> TypeAliases = new Dictionary<string, Expr>();
+        internal readonly HashSet<string> RuntimeTypeVariables = new HashSet<string>();
         public readonly List<TyDiagnostic> ParseDiagnostics = new List<TyDiagnostic>();
         /// <summary>The module asks for big-int mode with a "# typhon: int=bigint" comment (it applies to the whole program).</summary>
         public bool BigIntPragma;
@@ -106,6 +108,26 @@ namespace Typhon.Compiler
         bool? _emitsProfileEvents;
         public bool ProfileRuntimeCode;
         internal bool EmitsProfileEvents => ProfileRuntimeCode || (_emitsProfileEvents ??= Modules.Values.Any(UsesProfiling));
+
+        bool? _emitsTraceEvents;
+        public bool TraceRuntimeCode;
+        internal bool EmitsTraceEvents => TraceRuntimeCode || (_emitsTraceEvents ??= Modules.Values.Any(UsesTracing));
+
+        static bool UsesTracing(ModuleInfo module)
+        {
+            if (module.Ast == null) return false;
+            bool found = false;
+            AstWalker.VisitAll(module.Ast.Body, node =>
+            {
+                if (found) return;
+                found = node is NameExpr { Id: "settrace" or "settrace_all_threads" or "_settraceallthreads" } ||
+                        node is AttributeExpr { Name: "settrace" or "settrace_all_threads" or "_settraceallthreads" or "monitoring" } ||
+                        node is ConstExpr { Kind: ConstKind.Str, Str: "settrace" or "settrace_all_threads" or "_settraceallthreads" } ||
+                        node is ImportFromStmt { Module: "sys" or "threading" } from &&
+                        from.Names.Any(n => n.Name is "settrace" or "settrace_all_threads" or "_settraceallthreads" or "monitoring");
+            });
+            return found;
+        }
 
         static bool UsesProfiling(ModuleInfo module)
         {
@@ -212,7 +234,7 @@ namespace Typhon.Compiler
         public static ModuleInfo Parse(string path, string source, string moduleName, string rootNamespace,
             bool barryAsFlufl = false, bool runtimeCode = false, bool expressionOnly = false, bool runtimeAstOnly = false)
         {
-            var info = new ModuleInfo { Name = moduleName, Path = path };
+            var info = new ModuleInfo { Name = moduleName, Path = path, SourceText = source };
             int lastDot = moduleName.LastIndexOf('.');
             info.ClassName = lastDot < 0 ? moduleName : moduleName.Substring(lastDot + 1);
             string pkg = lastDot < 0 ? "" : moduleName.Substring(0, lastDot);

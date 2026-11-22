@@ -74,6 +74,7 @@ namespace Typhon.Runtime
                 if (ps.Any(p => p.ParameterType.IsByRef || p.ParameterType == typeof(NoInit))) continue;
                 bool hasParams = ps.Length > 0 && ps[^1].GetCustomAttributes(typeof(ParamArrayAttribute), false).Length > 0;
                 int fixedCount = hasParams ? ps.Length - 1 : ps.Length;
+                if (args.Length > PyArgs.PositionalLimit(ps, fixedCount) && ps.Any(PyArgs.IsKeywordOnly)) continue;
                 int required = ps.Take(fixedCount).Count(p => !p.IsOptional);
                 if (args.Length < required || !hasParams && args.Length > fixedCount) continue;
                 var call = new object?[ps.Length];
@@ -127,7 +128,7 @@ namespace Typhon.Runtime
             var parameters = method.GetParameters();
             var types = new Type?[method.GetGenericArguments().Length];
             int restIndex = Array.FindIndex(parameters, PyArgs.IsPositionalRest);
-            int fixedCount = restIndex < 0 ? parameters.Length : restIndex;
+            int fixedCount = PyArgs.PositionalLimit(parameters, restIndex < 0 ? parameters.Length : restIndex);
             Type? element = restIndex < 0 ? null : parameters[restIndex].ParameterType.GetElementType();
             for (int i = 0; i < args.Length; i++)
             {
@@ -138,7 +139,8 @@ namespace Typhon.Runtime
             if (keywords != null)
                 foreach (var keyword in keywords)
                 {
-                    var parameter = parameters.FirstOrDefault(p => p.Position != restIndex && p.Name == keyword.Key);
+                    var parameter = parameters.FirstOrDefault(p => p.Position != restIndex &&
+                        !PyArgs.IsPositionalOnly(p) && p.Name == keyword.Key);
                     if (parameter != null && keyword.Value is object argument && !MatchArgumentType(parameter.ParameterType, argument.GetType(), types))
                         return null;
                 }
@@ -234,6 +236,18 @@ namespace Typhon.Runtime
         internal static bool IsPositionalRest(System.Reflection.ParameterInfo parameter) =>
             parameter.IsDefined(typeof(ParamArrayAttribute), false) || parameter.IsDefined(typeof(PyPackedArgumentsAttribute), false);
 
+        internal static bool IsPositionalOnly(System.Reflection.ParameterInfo parameter) =>
+            parameter.IsDefined(typeof(PyPositionalOnlyAttribute), false);
+
+        internal static bool IsKeywordOnly(System.Reflection.ParameterInfo parameter) =>
+            parameter.IsDefined(typeof(PyKeywordOnlyAttribute), false);
+
+        internal static int PositionalLimit(System.Reflection.ParameterInfo[] parameters, int fixedCount)
+        {
+            int firstKeyword = Array.FindIndex(parameters, IsKeywordOnly);
+            return firstKeyword < 0 ? fixedCount : Math.Min(fixedCount, firstKeyword);
+        }
+
         /// <summary>The arguments of a call to a method with these parameters, and how well they fit (-1: they do not).</summary>
         public static int Bind(System.Reflection.ParameterInfo[] ps, object?[] args, IDictionary<string, object?>? kw, out object?[] call)
         {
@@ -242,7 +256,7 @@ namespace Typhon.Runtime
             bool hasKeywords = ps.Length > 0 && ps[^1].IsDefined(typeof(PyKeywordArgumentsAttribute), false);
             int parameterCount = hasKeywords ? ps.Length - 1 : ps.Length;
             int restIndex = Array.FindIndex(ps, IsPositionalRest);
-            int positionalLimit = restIndex < 0 ? parameterCount : restIndex;
+            int positionalLimit = PositionalLimit(ps, restIndex < 0 ? parameterCount : restIndex);
             if (restIndex < 0 && args.Length > positionalLimit) return -1;
             int score = 0, byName = 0;
             for (int i = 0; i < parameterCount; i++)
@@ -252,10 +266,10 @@ namespace Typhon.Runtime
                 object? v;
                 if (i < positionalLimit && i < args.Length)
                 {
-                    if (kw != null && p.Name != null && kw.ContainsKey(p.Name)) return -1; // given twice
+                    if (kw != null && p.Name != null && !IsPositionalOnly(p) && kw.ContainsKey(p.Name)) return -1; // given twice
                     v = args[i];
                 }
-                else if (kw != null && p.Name != null && kw.TryGetValue(p.Name, out v)) byName++;
+                else if (kw != null && p.Name != null && !IsPositionalOnly(p) && kw.TryGetValue(p.Name, out v)) byName++;
                 else
                 {
                     if (!p.IsOptional) return -1;
@@ -272,18 +286,19 @@ namespace Typhon.Runtime
                 var extra = new OrderedDictionary<string, object?>();
                 if (kw != null && byName != kw.Count)
                     foreach (var pair in kw)
-                        if (!ps.Take(parameterCount).Any(parameter => parameter.Position != restIndex && parameter.Name == pair.Key))
+                        if (!ps.Take(parameterCount).Any(parameter => parameter.Position != restIndex &&
+                            !IsPositionalOnly(parameter) && parameter.Name == pair.Key))
                             extra[pair.Key] = pair.Value;
                 call[^1] = extra;
             }
             if (restIndex >= 0)
             {
                 var elem = ps[restIndex].ParameterType.GetElementType()!;
-                var rest = Array.CreateInstance(elem, Math.Max(0, args.Length - restIndex));
-                for (int i = restIndex; i < args.Length; i++)
+                var rest = Array.CreateInstance(elem, Math.Max(0, args.Length - positionalLimit));
+                for (int i = positionalLimit; i < args.Length; i++)
                 {
                     if (Fit(args[i], elem, out var converted) < 0) return -1;
-                    rest.SetValue(converted, i - restIndex);
+                    rest.SetValue(converted, i - positionalLimit);
                 }
                 call[restIndex] = rest;
             }
@@ -480,6 +495,8 @@ namespace Typhon.Runtime
         static string ModuleOfType(Type t)
         {
             if (t == typeof(Typhon.Stdlib.types.UnionType)) return "typing";
+            if (t.DeclaringType == typeof(Typhon.Stdlib._typing) && t != typeof(Typhon.Stdlib._typing.NoDefaultType)) return "typing";
+            if (t == typeof(PyPartial)) return "functools";
             if (t is PyLocalDataClass local) return local.PythonModule;
             var definitionType = t.IsGenericType ? t.GetGenericTypeDefinition() : t;
             if (ClassModuleNames.TryGetValue(definitionType, out var capturedName)) return capturedName;
@@ -522,10 +539,12 @@ namespace Typhon.Runtime
             if (t == typeof(Typhon.Stdlib.types.AsyncGeneratorType)) return "async_generator";
             if (PyDictViews.Name(t) is string view) return view;
             if (t == typeof(Type)) return "type";
-            if (t == typeof(PyRange)) return "range";
+            if (t == typeof(PyRange) || t == typeof(PyBigRange)) return "range";
             if (t == typeof(PySlice)) return "slice";
             if (t == typeof(ITuple)) return "tuple";
             if (t == typeof(Typhon.Stdlib.types.FunctionType)) return "function";
+            if (t == typeof(Typhon.Stdlib.types.CellType)) return "cell";
+            if (t == typeof(PyPartial)) return "partial";
             if (t == typeof(Typhon.Stdlib.types.MethodType)) return "method";
             if (t == typeof(long) || t == typeof(int) || t == typeof(short) || t == typeof(byte) || t == typeof(System.Numerics.BigInteger)) return "int";
             if (t == typeof(double) || t == typeof(float)) return "float";
@@ -543,6 +562,7 @@ namespace Typhon.Runtime
             {
                 var g = t.GetGenericTypeDefinition();
                 if (g == typeof(List<>)) return "list";
+                if (g == typeof(PyZip<>)) return "zip";
                 if (g == typeof(OrderedDictionary<,>) || g == typeof(Dictionary<,>)) return "dict";
                 if (g == typeof(HashSet<>)) return "set";
                 if (g == typeof(PyArray<>)) return "array";
@@ -572,9 +592,12 @@ namespace Typhon.Runtime
             }
             if (f is Type t)
             {
+                if (PyMetaclasses.IsMetaclass(t) || t == typeof(Type) && args.Length != 1)
+                    return PyMetaclasses.Create(t, args, kw);
                 if (TryCustomAllocation(t, args, kw, out var allocated)) return allocated;
                 Typhon.Stdlib._abc.CheckAbstract(t);
                 if (t == typeof(MissingMemberException)) return __attribute_error(args, kw);
+                if (t == typeof(PyPartial)) return ConstructPartial(args, kw);
                 if (ByteSequenceFactory(t) is PyBoundMethod factory) return factory.__call_kw__(args, kw);
                 if (t == typeof(frozendict<object, object>)) return ConstructFrozenDict(args, kw);
                 if (t == typeof(OrderedDictionary<object, object>)) return dict(ConstructFrozenDict(args, kw, "dict"));
@@ -664,7 +687,17 @@ namespace Typhon.Runtime
                 };
             else if (t == typeof(string)) result = args.Length == 0 ? "" : str(a);
             else if (t == typeof(bool)) result = args.Length == 1 && @bool(a);
-            else if (t == typeof(Type) && args.Length == 1) result = a?.GetType();
+            else if (t == typeof(Type) && args.Length == 1) result = __type_of(a);
+            else if (t == typeof(ITuple)) result = new PyTuple<object?>(args.Length == 0 ? Array.Empty<object?>() : __iter_dyn(a));
+            else if (t == typeof(List<object>)) result = args.Length == 0 ? new List<object?>() : __iter_dyn(a).ToList();
+            else if (t == typeof(HashSet<object>))
+            {
+                var set = __newset<object?>();
+                if (args.Length != 0) set.UnionWith(__iter_dyn(a));
+                result = set;
+            }
+            else if (t == typeof(OrderedDictionary<object, object>))
+                result = args.Length == 0 ? __newdict<object, object?>() : dict(a);
             else if (t == typeof(object) && args.Length == 0) result = new object();
             else return false;
             return true;
@@ -679,15 +712,23 @@ namespace Typhon.Runtime
         {
             PyFunction pf => pf.__call__(args),
             PyBoundMethod bm => bm.__call__(args),
+            IPyKeywordCallable callable => callable.__call_kw__(args, null),
             Delegate d => Unwrapped(() => d.DynamicInvoke(args)),
             // a builtin type as a value (conv = int; conv("5")): the builtin's conversion
+            Type t when PyMetaclasses.IsMetaclass(t) || t == typeof(Type) && args.Length != 1 =>
+                PyMetaclasses.Create(t, args, null),
             Type t when t == typeof(MissingMemberException) => __attribute_error(args),
+            Type t when t == typeof(PyPartial) => ConstructPartial(args, null),
             Type t when BuiltinTypeCall(t, args, out var converted) => converted,
             // a class passed as a value (cls = Array2D; cls(n, n)): constructed with the constructor that fits the arguments
             Type t => Construct(t, args),
             null => throw new NullReferenceException("'NoneType' object is not callable"),
             _ => CallMember(f).__call__(args),
         };
+
+        static PyPartial ConstructPartial(object?[] args, IDictionary<string, object?>? keywords) => args.Length > 0
+            ? new PyPartial(args[0], args[1..], keywords)
+            : throw new InvalidCastException("type 'partial' takes at least one argument");
 
         static PyBoundMethod CallMember(object callable) => new PyBoundMethod(callable, "__call__",
             includeNonPublic: callable.GetType().IsDefined(typeof(PySourceAttribute), false));
@@ -711,6 +752,12 @@ namespace Typhon.Runtime
 
     [AttributeUsage(AttributeTargets.Parameter)]
     internal sealed class PyKeywordArgumentsAttribute : Attribute { }
+
+    [AttributeUsage(AttributeTargets.Parameter)]
+    internal sealed class PyPositionalOnlyAttribute : Attribute { }
+
+    [AttributeUsage(AttributeTargets.Parameter)]
+    internal sealed class PyKeywordOnlyAttribute : Attribute { }
 
     internal interface IPyKeywordCallable
     {
@@ -743,6 +790,47 @@ namespace Typhon.Runtime
         public Typhon.Stdlib.sys_.code? __code__ =>
             _code ?? (GetType().GetCustomAttributes(typeof(PySourceAttribute), false).FirstOrDefault() is PySourceAttribute { Line: > 0 } source
                 ? new Typhon.Stdlib.sys_.code(__name__, source.Filename, source.Line) : null);
+        public virtual IDictionary? __globals__ => GetType().DeclaringType is Type owner ? PyModule.Of(owner, __module__).__dict__ : null;
+        public IDictionary __builtins__ => PyModule.Of(typeof(Typhon.Stdlib.builtins), "builtins").__dict__;
+        public virtual ITuple? __defaults__
+        {
+            get
+            {
+                var defaults = _signature?.Invoke().Arguments
+                    .Where(p => p.kind is Typhon.Stdlib.inspect._ParameterKind.POSITIONAL_ONLY or Typhon.Stdlib.inspect._ParameterKind.POSITIONAL_OR_KEYWORD)
+                    .Select(p => (object?)p.@default).Where(value => !ReferenceEquals(value, Typhon.Stdlib.inspect.Signature.empty)).ToArray();
+                return defaults is { Length: > 0 } ? new PyTuple<object?>(defaults) : null;
+            }
+        }
+        public virtual IDictionary? __kwdefaults__
+        {
+            get
+            {
+                var defaults = _signature?.Invoke().Arguments.Where(p => p.kind == Typhon.Stdlib.inspect._ParameterKind.KEYWORD_ONLY &&
+                    !ReferenceEquals((object?)p.@default, Typhon.Stdlib.inspect.Signature.empty)).ToDictionary(p => p.name, p => (object?)p.@default);
+                return defaults is { Count: > 0 } ? defaults : null;
+            }
+        }
+        public virtual ITuple? __closure__ => null;
+        public IDictionary<string, object?> __annotations__
+        {
+            get => _annotations ??= ReadAnnotations();
+            set => _annotations = value;
+        }
+        IDictionary<string, object?>? _annotations;
+        IDictionary<string, object?> ReadAnnotations()
+        {
+            var result = new OrderedDictionary<string, object?>();
+            if (_signature?.Invoke() is Typhon.Stdlib.inspect.Signature signature)
+            {
+                foreach (var parameter in signature.Arguments)
+                    if (!ReferenceEquals((object?)parameter.annotation, Typhon.Stdlib.inspect.Signature.empty))
+                        result[parameter.name] = parameter.annotation;
+                if (!ReferenceEquals((object?)signature.return_annotation, Typhon.Stdlib.inspect.Signature.empty))
+                    result["return"] = signature.return_annotation;
+            }
+            return result;
+        }
         internal Dictionary<string, object?>? _attrs;
         protected PyFunction(string name) { __name__ = __qualname__ = name; }
         /// <summary>Calls the function with arguments of any type (dynamic overload resolution).</summary>

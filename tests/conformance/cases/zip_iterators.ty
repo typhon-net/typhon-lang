@@ -1,0 +1,7 @@
+empty = zip()
+print(type(empty).__name__, iter(empty) is empty, list(empty))
+single = zip(["a", "b"])
+print(next(single), list(single), list(single))
+pair = zip([1, 2, 3], "abc")
+print(type(pair).__name__, next(pair), list(pair))
+print(list(zip([1], ["b"], [False])))

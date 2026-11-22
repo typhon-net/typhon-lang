@@ -39,10 +39,12 @@ namespace Typhon.Runtime
         public static Type __type_of(object? value)
         {
             if (value == null) return typeof(Typhon.Stdlib.types.NoneType);
+            if (value is PyLocalClassInstance instance) return instance.PythonType;
             if (value is Type type) return PyMetaclasses.Of(type);
             if (value is PyModule) return typeof(Typhon.Stdlib.types.ModuleType);
             if (value is ReprDescriptor) return typeof(Typhon.Stdlib.types.WrapperDescriptorType);
-            if (value is PyFunction) return typeof(Typhon.Stdlib.types.FunctionType);
+            if (value is PyPartial) return typeof(PyPartial);
+            if (value is PyFunction || value is Delegate && Typhon.Stdlib.inspect.isfunction(value)) return typeof(Typhon.Stdlib.types.FunctionType);
             if (value is PyBoundMethod { BuiltinOwner: not null })
                 return typeof(Typhon.Stdlib.types.BuiltinFunctionType);
             if (value is PyBoundMethod method && Typhon.Stdlib.inspect.ismethod(method))
@@ -168,7 +170,7 @@ namespace Typhon.Runtime
             }
         }
 
-        static bool DirectSubclass(Type cls, Type of)
+        internal static bool DirectSubclass(Type cls, Type of)
         {
             if (of == typeof(object)) return true;
             if (cls == of) return true;
@@ -192,7 +194,7 @@ namespace Typhon.Runtime
                 !(cls.IsGenericType && (cls.GetGenericTypeDefinition() == typeof(frozendict<,>) ||
                     cls.GetGenericTypeDefinition() == typeof(System.Collections.ObjectModel.ReadOnlyDictionary<,>)))) return true;
             if (of == typeof(Typhon.Stdlib.collections.abc.Sequence) && !typeof(IDictionary).IsAssignableFrom(cls) &&
-                (cls == typeof(string) || cls == typeof(global::memoryview) ||
+                (cls == typeof(string) || cls == typeof(global::memoryview) || cls == typeof(PyBigRange) ||
                 typeof(IList).IsAssignableFrom(cls) || typeof(ITuple).IsAssignableFrom(cls) ||
                 typeof(Typhon.Stdlib.collections.UserList).IsAssignableFrom(cls) || typeof(Typhon.Stdlib.collections.UserString).IsAssignableFrom(cls) ||
                 cls.GetInterfaces().Any(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IReadOnlyList<>)))) return true;
@@ -417,6 +419,10 @@ namespace Typhon.Runtime
 
         /// <summary>copy(): a frozendict is immutable, so the copy is the object itself.</summary>
         public frozendict<K, V> copy() => this;
+        public object? get(object? key, object? @default = null) =>
+            Builtins.KeyFor((IDictionary)this, key) is K stored && base.TryGetValue(stored, out V? value)
+                ? value : @default;
+
         public static frozendict<K, object?> fromkeys(IEnumerable<K> keys, object? value = null) =>
             new frozendict<K, object?>(keys.Select(k => new KeyValuePair<K, object?>(k, value)), typeof(K) == typeof(object) ? (IEqualityComparer<K>)(object)PyKeyComparer.Instance : EqualityComparer<K>.Default);
 

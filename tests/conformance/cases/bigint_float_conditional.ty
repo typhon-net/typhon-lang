@@ -1,0 +1,17 @@
+# typhon: int=bigint
+
+def choose(integer: bool):
+    return (1 << 75) if integer else 0.25
+
+for flag in [True, False]:
+    value = choose(flag)
+    print(value, type(value).__name__)
+
+def ratio(left: object, right: object):
+    return left / right
+
+print(ratio(3.0, 1 << 2), ratio(1 << 2, 2.0))
+try:
+    float(1 << 1500)
+except OverflowError:
+    print("OverflowError")

@@ -1,0 +1,29 @@
+from typing import Callable
+
+def identity[T: (str, int)](value: T) -> T:
+    return value
+
+def either[T: str | int](value: T) -> T:
+    return value
+
+def exact[T: str](value: T) -> T:
+    return value
+
+def apply[F: Callable[..., int]](fn: F, value: int) -> int:
+    return fn(value)
+
+def mark[F: Callable[..., int]](fn: F) -> F:
+    fn.marker = "marked"
+    return fn
+
+class Counter:
+    def __call__(self, value: int) -> int:
+        return value + 1
+
+def double(value: int) -> int:
+    return value * 2
+
+print(identity("text"), identity(4))
+print(either("word"), either(8), exact("exact"))
+print(apply(Counter(), 9), apply(double, 7))
+print(getattr(mark(Counter()), "marker"), getattr(mark(double), "marker"))

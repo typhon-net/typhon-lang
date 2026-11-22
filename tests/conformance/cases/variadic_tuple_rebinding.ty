@@ -23,3 +23,31 @@ class Relay(Base):
 relay: Base = Relay()
 print(relay.process("value", "word", 10))
 print(relay.process("value", None, 10))
+
+
+class Marker:
+    pass
+
+
+def combine(extra):
+    members = (int, Marker)
+    if extra:
+        members += (str,)
+    return members
+
+
+original = combine(False)
+extended = combine(True)
+print(len(original), original[-1].__name__)
+print(len(extended), extended[-1].__name__)
+
+
+def collect(data, flag):
+    args = tuple(data)
+    if flag:
+        args = list(args[:-1]), args[-1]
+    return ("collected", (Marker, args))
+
+
+print(collect([1, 2], False)[1][1])
+print(collect([1, 2], True)[1][1])

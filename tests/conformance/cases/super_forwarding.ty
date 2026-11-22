@@ -1,0 +1,15 @@
+class Receiver:
+    def __init_subclass__(cls, *, enabled=False):
+        print(cls.__name__, enabled)
+
+class Relay(Receiver):
+    def __init_subclass__(cls, *args, **kwargs):
+        super().__init_subclass__(*args, **kwargs)
+
+class Leaf(Relay, enabled=True):
+    pass
+
+def relay(cls, options):
+    super(Relay, cls).__init_subclass__(**options)
+
+relay(Leaf, {"enabled": False})

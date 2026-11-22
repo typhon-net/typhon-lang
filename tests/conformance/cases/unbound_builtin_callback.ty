@@ -1,0 +1,10 @@
+from itertools import takewhile
+from typing import Any
+
+def leading_space(text: Any):
+    return ''.join(takewhile(str.isspace, reversed(text)))
+
+print(repr(leading_space("x \t ")))
+print(list(map(str.upper, ["abc", "dé"])))
+predicate = str.isspace
+print(predicate(" \t"), predicate("x"))

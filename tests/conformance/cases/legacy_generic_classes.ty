@@ -1,0 +1,80 @@
+from typing import Generic as BaseGeneric, TypeVar as variable
+import typing as t
+
+Item = variable("Item")
+Other = t.TypeVar("Other")
+
+class Box(BaseGeneric[Item]):
+    def __init__(self, value: Item):
+        self.value = value
+
+    def read(self) -> Item:
+        return self.value
+
+class Child(Box[Other]):
+    pass
+
+class Concrete(Box[int]):
+    pass
+
+def value_of(value: Item) -> Item:
+    return value
+
+print(Box[int](7).read(), Child[str]("text").read())
+print(Concrete(9).read(), value_of("plain"))
+print(Box.__name__, Child.__name__, type(Item).__name__, Other.__name__)
+
+
+class Stream[T]:
+    def __init__(self, value: T):
+        self.value = value
+
+    def read(self) -> T:
+        return self.value
+
+class PayloadStream(Stream[bytes]):
+    pass
+
+class CompressedStream(PayloadStream):
+    pass
+
+class Document:
+    @property
+    def embedded(self) -> CompressedStream:
+        return CompressedStream(b"data")
+
+print(Document().embedded.read())
+
+
+from abc import ABC, abstractmethod
+
+class ClosedStream[T](ABC):
+    @abstractmethod
+    def write(self, value: T) -> int:
+        pass
+
+    @abstractmethod
+    def enter(self) -> "ClosedStream[T]":
+        pass
+
+class ClosedBinaryStream(ClosedStream[bytes]):
+    @abstractmethod
+    def write(self, value: bytes | bytearray) -> int:
+        pass
+
+    @abstractmethod
+    def enter(self) -> "ClosedBinaryStream":
+        pass
+
+class ClosedBuffer(ClosedBinaryStream):
+    def write(self, value: bytes | bytearray) -> int:
+        return len(value)
+
+    def enter(self) -> ClosedBinaryStream:
+        return self
+
+def basic_output(stream: ClosedStream[bytes]) -> int:
+    return stream.enter().write(b"test")
+
+print(basic_output(ClosedBuffer()))
+print(ClosedBuffer().write(bytearray(b"another")))

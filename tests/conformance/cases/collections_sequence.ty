@@ -21,3 +21,20 @@ try:
     numbers.index(9)
 except ValueError as error:
     print(repr(str(error)))
+
+
+def tuple_default(data: Sequence[object] = ()):
+    return repr(data)
+
+
+def tuple_result(word: str) -> tuple[object, ...]:
+    return [word], len(word)
+
+
+def frozen_result(values: object) -> frozenset[str]:
+    return frozenset(values)
+
+
+print(tuple_default(), tuple_default(("x",)))
+print(tuple_result("abc"))
+print(sorted(frozen_result(["x", "x", "y"])), type(frozen_result([])).__name__)

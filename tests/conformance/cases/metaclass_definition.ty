@@ -56,3 +56,59 @@ class Passive(metaclass=PassiveMeta):
 
 
 print(type(Passive) is PassiveMeta, Passive.marker)
+
+
+class RuntimeMeta(type):
+    def __new__(mcls, name, bases, namespace, *, token=9):
+        namespace["token"] = token
+        return super().__new__(mcls, name, bases, namespace)
+
+    def __init__(cls, name, bases, namespace, *, token=9):
+        cls.tag = name.lower()
+
+def read_token(self):
+    return self.token
+
+class_object = RuntimeMeta("Packet", (), {"contents": read_token}, token=7)
+print(class_object.__name__, class_object.tag, type(class_object) is RuntimeMeta)
+print(class_object().contents(), class_object.__bases__ == (object,))
+
+RuntimeDerived = type("RuntimeDerived", (class_object,), {"token": 9})
+print(RuntimeDerived.__name__, RuntimeDerived().contents(), type(RuntimeDerived) is RuntimeMeta)
+
+
+def make_local_chain(prefix):
+    class LocalBase:
+        def __init_subclass__(cls, *, prefix):
+            cls.prefix = prefix
+
+        def label(self, suffix):
+            return self.prefix + suffix
+
+    class LocalChild(LocalBase, prefix=prefix):
+        def label(self, suffix):
+            return super().label(suffix) + "-child"
+
+    return LocalChild
+
+first = make_local_chain("one")
+second = make_local_chain("two")
+print(first().label("!"), second().label("?"), first is second)
+
+class GlobalSubclassHook:
+    def __init_subclass__(cls, *, token):
+        cls.token = token
+
+def managed(token):
+    class ClassWithHook(GlobalSubclassHook, token=token):
+        pass
+    return ClassWithHook
+
+print(managed(12).token)
+try:
+    def invalid():
+        class InvalidHookClass(flag=True):
+            pass
+    invalid()
+except TypeError as error:
+    print(str(error))

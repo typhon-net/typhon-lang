@@ -14,6 +14,34 @@ namespace Typhon.Stdlib
 
     internal static class codecs
     {
+        public static readonly PyBytes BOM_UTF8 = new([0xef, 0xbb, 0xbf]);
+
+        public static CodecInfo lookup(string encoding)
+        {
+            try
+            {
+                string key = encoding.Trim().ToLowerInvariant().Replace('_', '-').Replace(' ', '-');
+                var codec = ByteOps.EncodingOf(key, "strict");
+                return new CodecInfo(codec.WebName == "us-ascii" ? "ascii" : codec.WebName);
+            }
+            catch (Exception error) when (error is ArgumentException or NotSupportedException)
+            {
+                throw new LookupError($"unknown encoding: {encoding}");
+            }
+        }
+
+        internal sealed class CodecInfo(string identifier)
+        {
+            public string name => identifier;
+            public (PyBytes, long) encode(string text, string errors = "strict") =>
+                (new PyBytes(ByteOps.EncodingOf(identifier, errors).GetBytes(text)), Builtins.len(text));
+            public (string, long) decode(object buffer, string errors = "strict")
+            {
+                byte[] data = ByteOps.Buffer(buffer);
+                return (ByteOps.Decode(data, identifier, errors), data.LongLength);
+            }
+        }
+
         public static (PyBytes, long) escape_decode(object data, string errors = "strict")
         {
             byte[] source = data is string text ? Encoding.UTF8.GetBytes(text) : ByteOps.Buffer(data);

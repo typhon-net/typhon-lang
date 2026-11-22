@@ -194,7 +194,8 @@ namespace Typhon.Compiler.Emit
             // (items unpacked into names: only items C# can deconstruct, not late-bound ones)
             if (iterType != null && iterType.StartsWith("List<") &&
                 (f.Target is NameExpr || f.Target is TupleExpr tt0 && tt0.Elts.Count >= 2 &&
-                 tt0.Elts.All(e => e is NameExpr) && !IsUnknownType(ElementTypeOf(iterType))))
+                 tt0.Elts.All(e => e is NameExpr) && !IsUnknownType(ElementTypeOf(iterType)) &&
+                 !NeedsLateUnpackRebinding(tt0.Elts, ElementTypeOf(iterType), f)))
             {
                 string list = NewTmp("l"), idx = NewTmp("i");
                 _w.Line($"var {list} = {EmitExpr(f.Iter)};");
@@ -257,7 +258,7 @@ namespace Typhon.Compiler.Emit
                 string loopElem = IterElementType(IterableType(f.Iter));
                 // (also when the loop iterates late-bound itself, for bit, char in table with table an object: __iter_dyn(table))
                 if ((lateAsync || tup.Elts.Count < 2 || HasLateNestedUnpack(tup.Elts, loopElem) || loopElem == "dynamic" || IsDynamicallyDispatched(f.Iter) || IsUnknownType(IterableType(f.Iter)) && !(f.Iter is NameExpr) ||
-                     iter.StartsWith(Rt("__iter_dyn") + "(") ||
+                     iter.StartsWith(Rt("__iter_dyn") + "(") || NeedsLateUnpackRebinding(tup.Elts, loopElem, f) ||
                      (loopElem == null || loopElem == "object") && f.Iter is CallExpr && UnpackPartTypes(loopElem, tup.Elts.Count) == null) &&
                     !tup.Elts.Any(e => e is StarredExpr))
                 {
@@ -297,6 +298,21 @@ namespace Typhon.Compiler.Emit
                 return;
             }
             Unsupported(f.Target, "this loop target");
+        }
+
+        // C# tuple deconstruction does not apply dynamic conversions to existing typed names.
+        bool NeedsLateUnpackRebinding(List<Expr> targets, string type, Stmt statement)
+        {
+            if (UnpackPartTypes(type, targets.Count) is not List<string> types) return false;
+            for (int index = 0; index < targets.Count; index++)
+            {
+                Expr target = targets[index];
+                string itemType = types[index];
+                if (target is NameExpr name && !IsInline(statement, name.Id) && !IsUnknownType(KnownType(name.Id)) &&
+                    IsUnknownType(itemType)) return true;
+                if (target is TupleExpr tuple && NeedsLateUnpackRebinding(tuple.Elts, itemType, statement)) return true;
+            }
+            return false;
         }
 
         // A typed outer tuple can contain a dynamic item. C# cannot deconstruct that item as part of the same pattern.

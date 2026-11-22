@@ -1,6 +1,7 @@
 // Copyright (c) 2026 The Typhon contributors.
 // Licensed under the MIT License. See LICENSE file in the project root for full license information.
 
+using System.Collections.Generic;
 using System.Linq;
 using Typhon.Compiler.Syntax;
 
@@ -19,16 +20,34 @@ namespace Typhon.Compiler.Emit
         void EmitSignatureAttribute(FunctionDef function, string provider = null) =>
             _w.Line($"[global::Typhon.Runtime.PySignature({CsString(provider ?? SignatureProviderName(function))})]");
 
+        string RuntimeAnnotation(Expr expression) => expression switch
+        {
+            NameExpr name when BuiltinTypeValues.TryGetValue(name.Id, out var builtin) && !IsShadowed(name.Id) => $"typeof({builtin})",
+            ConstExpr { Kind: ConstKind.Str } forward => CsString(forward.Str),
+            ConstExpr { Kind: ConstKind.None } => "null",
+            NameExpr or AttributeExpr when TryTypeExpr(expression, out string type) => $"typeof({type})",
+            _ when CanMaterializeTypeAlias(expression) => EmitUnionOperand(expression),
+            _ => null,
+        };
+
+        void EmitAnnotationsMap(List<Stmt> body)
+        {
+            if (_m.IsGdScript || _m.RuntimeCodeMode != null || body.Any(statement => statement is AssignStmt assignment &&
+                assignment.Targets.Any(target => target is NameExpr { Id: "__annotations__" }) ||
+                statement is AnnAssignStmt { Target: NameExpr { Id: "__annotations__" } })) return;
+            var assignments = body.OfType<AnnAssignStmt>().Where(entry => entry.Target is NameExpr)
+                .GroupBy(entry => ((NameExpr)entry.Target).Id).Select(group => (Name: group.Key, Value: RuntimeAnnotation(group.Last().Annotation)))
+                .Where(entry => entry.Value != null).Select(entry => $"[{CsString(entry.Name)}] = {entry.Value}").ToList();
+            if (assignments.Count == 0) return;
+            _w.Line("private static object? __typhon_annotations;");
+            _w.Line("private static object __annotations__ { get => __typhon_annotations ??= new OrderedDictionary<string, object?> { " +
+                string.Join(", ", assignments) + " }; set => __typhon_annotations = value; }");
+        }
+
         string SignatureValue(FunctionDef function)
         {
             const string empty = InspectSignatureClass + ".Signature.empty";
-            string Annotation(Expr expression) => expression switch
-            {
-                NameExpr name when BuiltinTypeValues.TryGetValue(name.Id, out var type) && !IsShadowed(name.Id) => $"typeof({type})",
-                ConstExpr { Kind: ConstKind.Str } forward => CsString(forward.Str),
-                ConstExpr { Kind: ConstKind.None } => "null",
-                _ => empty,
-            };
+            string Annotation(Expr expression) => RuntimeAnnotation(expression) ?? empty;
             string CallableDefault(Expr expression)
             {
                 if (expression is AttributeExpr member && ModuleRef(DottedName(member.Target) ?? "") is ModuleInfo module)

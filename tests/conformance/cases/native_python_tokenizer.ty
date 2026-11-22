@@ -1,0 +1,22 @@
+from _tokenize import TokenizerIter
+from argparse import ArgumentParser
+from codecs import BOM_UTF8, lookup
+from collections import namedtuple
+from io import BytesIO, StringIO
+from itertools import takewhile
+
+for extra in [False, True]:
+    tokens = TokenizerIter(StringIO("# greeting\nx = (2 + 3)\n").readline, extra_tokens=extra)
+    print(iter(tokens) is tokens, list(tokens))
+encoded = BytesIO(b"\xe9 = 1")
+iterator = TokenizerIter(encoded.readline, encoding="latin-1", extra_tokens=True)
+print(next(iterator))
+print(BOM_UTF8.hex(), lookup("Latin_1").decode(b"\xe9"))
+predicate = " ".__eq__
+print(list(takewhile(predicate, "   word")))
+parser = ArgumentParser(usage="fixture")
+parser.add_argument(dest="file", nargs="?")
+print(parser.parse_args(["input"]).file)
+
+Item = namedtuple("Item", "code text")
+print(Item._make((1, "item")))

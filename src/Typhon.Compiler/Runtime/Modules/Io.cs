@@ -312,16 +312,24 @@ namespace Typhon.Stdlib
         /// <summary>Buffered access to a raw stream (BufferedReader / BufferedWriter / BufferedRandom share it).</summary>
         internal class BufferedBase : BufferedIOBase
         {
-            protected readonly System.IO.Stream _s;
-            public readonly object raw;
-            public BufferedBase(object raw, long buffer_size = DEFAULT_BUFFER_SIZE)
+            System.IO.Stream? _stream;
+            protected System.IO.Stream _s => _stream ?? throw new ArgumentException("I/O operation on uninitialized object");
+            public object? raw { get; private set; }
+            protected BufferedBase() { }
+            public BufferedBase(object raw, long buffer_size = DEFAULT_BUFFER_SIZE) => __init__(raw, buffer_size);
+
+            public void __init__(object raw) => __init__(raw, DEFAULT_BUFFER_SIZE);
+
+            public void __init__(object raw, object? buffer_size)
             {
+                if (checked((long)Builtins.__index_value(buffer_size)) <= 0)
+                    throw new ArgumentException("buffer size must be strictly positive");
+                _stream = StreamOps.StreamOf(raw);
                 this.raw = raw;
-                _s = StreamOps.StreamOf(raw);
             }
-            internal override System.IO.Stream? __stream => _s;
+            internal override System.IO.Stream? __stream => _stream;
             protected System.IO.Stream S { get { _checkClosed(); return _s; } }
-            public override bool closed => raw is IOBase r ? r.closed : base.closed;
+            public override bool closed { get { _ = _s; return raw is IOBase r ? r.closed : base.closed; } }
             public object? name => raw is FileIO f ? f.name : raw is IOBase ? null : Builtins.getattr(raw, "name", null);
             public object? mode => raw is FileIO f ? f.mode : null;
             public override PyBytes read(long size = -1) => StreamOps.Read(S, size);
@@ -359,9 +367,21 @@ namespace Typhon.Stdlib
             public override string ToString() => $"<_io.{GetType().Name}{(name != null ? " name=" + Builtins.repr(name) : "")}>";
         }
 
-        internal class BufferedReader : BufferedBase { public BufferedReader(object raw, long buffer_size = DEFAULT_BUFFER_SIZE) : base(raw, buffer_size) { } }
-        internal class BufferedWriter : BufferedBase { public BufferedWriter(object raw, long buffer_size = DEFAULT_BUFFER_SIZE) : base(raw, buffer_size) { } }
-        internal class BufferedRandom : BufferedBase { public BufferedRandom(object raw, long buffer_size = DEFAULT_BUFFER_SIZE) : base(raw, buffer_size) { } }
+        internal class BufferedReader : BufferedBase
+        {
+            protected BufferedReader() { }
+            public BufferedReader(object raw, long buffer_size = DEFAULT_BUFFER_SIZE) : base(raw, buffer_size) { }
+        }
+        internal class BufferedWriter : BufferedBase
+        {
+            protected BufferedWriter() { }
+            public BufferedWriter(object raw, long buffer_size = DEFAULT_BUFFER_SIZE) : base(raw, buffer_size) { }
+        }
+        internal class BufferedRandom : BufferedBase
+        {
+            protected BufferedRandom() { }
+            public BufferedRandom(object raw, long buffer_size = DEFAULT_BUFFER_SIZE) : base(raw, buffer_size) { }
+        }
 
         /// <summary>io.BufferedRWPair: reads from one raw stream, writes to another.</summary>
         internal class BufferedRWPair : BufferedIOBase
@@ -812,15 +832,17 @@ namespace Typhon.Runtime
     internal sealed class PyObjectStream : System.IO.Stream
     {
         readonly object _o;
+        bool _disposed;
         public PyObjectStream(object o) { _o = o; }
-        dynamic D => _o;
         bool Has(string name) => Builtins.hasattr(_o, name);
+        dynamic? Invoke(string method, params object?[] arguments) =>
+            Builtins.__invoke((object?)Builtins.getattr(_o, method), arguments);
         public override bool CanRead => _o is io.IOBase b ? b.readable() : Has("read") || Has("readinto");
         public override bool CanWrite => _o is io.IOBase b ? b.writable() : Has("write");
         public override bool CanSeek => _o is io.IOBase b ? b.seekable() : Has("seek");
         public override long Length { get { long pos = Position; long end = Seek(0, System.IO.SeekOrigin.End); Position = pos; return end; } }
-        public override long Position { get => (long)D.tell(); set => D.seek(value, 0L); }
-        public override void Flush() { if (Has("flush")) D.flush(); }
+        public override long Position { get => (long)Invoke("tell")!; set => Invoke("seek", value, 0L); }
+        public override void Flush() { if (Has("flush")) Invoke("flush"); }
         public override int Read(byte[] buffer, int offset, int count)
         {
             if (_o is io.RawIOBase raw)
@@ -831,7 +853,7 @@ namespace Typhon.Runtime
                 Array.Copy(got, 0, buffer, offset, n);
                 return (int)n;
             }
-            object? data = _o is io.BufferedIOBase bb ? bb.read1(count) : D.read((long)count);
+            object? data = _o is io.BufferedIOBase bb ? bb.read1(count) : Invoke("read", (long)count);
             var bytes = ByteOps.From(data);
             Array.Copy(bytes, 0, buffer, offset, bytes.Length);
             return bytes.Length;
@@ -841,9 +863,19 @@ namespace Typhon.Runtime
             var data = new PyBytes(buffer.AsSpan(offset, count).ToArray());
             if (_o is io.RawIOBase raw) { int done = 0; while (done < count) { long n = raw.write(new PyBytes(buffer.AsSpan(offset + done, count - done).ToArray())); if (n <= 0) break; done += (int)n; } }
             else if (_o is io.BufferedIOBase bb) bb.write(data);
-            else D.write(data);
+            else Invoke("write", data);
         }
-        public override long Seek(long offset, System.IO.SeekOrigin origin) => (long)D.seek(offset, (long)(int)origin);
-        public override void SetLength(long value) => D.truncate(value);
+        public override long Seek(long offset, System.IO.SeekOrigin origin) => (long)Invoke("seek", offset, (long)(int)origin)!;
+        public override void SetLength(long value) => Invoke("truncate", value);
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && !_disposed)
+            {
+                _disposed = true;
+                if (Has("close")) Invoke("close");
+            }
+            base.Dispose(disposing);
+        }
     }
 }

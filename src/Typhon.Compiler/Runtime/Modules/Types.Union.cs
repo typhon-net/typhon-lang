@@ -18,12 +18,16 @@ namespace Typhon.Stdlib
         internal sealed class UnionType : IPyRepr
         {
             public readonly PyTuple<object?> __args__;
-            public readonly PyTuple<object?> __parameters__ = new([]);
+            public readonly PyTuple<object?> __parameters__;
             public Type __origin__ => typeof(UnionType);
 
-            UnionType(List<object?> members) => __args__ = new PyTuple<object?>(members.ToArray());
+            UnionType(List<object?> members)
+            {
+                __args__ = new PyTuple<object?>(members);
+                __parameters__ = _typing.CollectParameters(members);
+            }
 
-            internal static bool IsOperand(object? value) => value is Type or UnionType or GenericAlias;
+            internal static bool IsOperand(object? value) => value is Type or UnionType or GenericAlias or _typing.TypeParameter or _typing.TypeAliasType;
 
             internal static object Combine(object? left, object? right)
             {
@@ -56,7 +60,7 @@ namespace Typhon.Stdlib
                         return;
                     }
                     member ??= typeof(NoneType);
-                    if (member is not Type && member is not GenericAlias)
+                    if (!IsOperand(member))
                         throw new InvalidCastException($"Union requires types. Got {Builtins.repr(member)}.");
                     if (unique.Add(member)) members.Add(member);
                 }

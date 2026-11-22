@@ -1,0 +1,24 @@
+import sys
+
+events: list[tuple[str, int]] = []
+
+def tracer(frame, event, result):
+    if frame.f_code.co_name != "work":
+        return None
+    assert sys._getframe().f_back is frame
+    if event == "return":
+        events.append((str(event), int(result)))
+    else:
+        events.append((str(event), int(frame.f_lineno - frame.f_code.co_firstlineno)))
+    return tracer
+
+def work(value: int) -> int:
+    adjusted = value + 4
+    return adjusted * 2
+
+sys.settrace(tracer)
+try:
+    result = work(4)
+finally:
+    sys.settrace(None)
+print(result, sys.gettrace(), events)

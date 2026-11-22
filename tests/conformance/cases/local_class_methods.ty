@@ -1,0 +1,31 @@
+def make(prefix: str):
+    class Local:
+        category = "local"
+
+        def __init__(self, value: int):
+            self.value = value
+
+        def render(self, suffix: str = "!") -> str:
+            return f"{prefix}:{self.value}{suffix}"
+
+        @property
+        def description(self) -> str:
+            return self.render("?")
+
+        @classmethod
+        def kind(cls) -> str:
+            return cls.__name__ + ":" + cls.category
+
+    return Local
+
+First = make("a")
+Second = make("b")
+a = First(2)
+b = Second(value=3)
+print(a.render(), b.render(), a.description)
+print(type(a) is First, type(b) is Second, First is Second)
+print(isinstance(a, First), isinstance(a, Second), isinstance(a, object))
+print(First.kind(), a.kind(), First.__qualname__)
+a.value = 7
+print(a.render(), b.render(), a.category)
+print(First.render(a, "!"))

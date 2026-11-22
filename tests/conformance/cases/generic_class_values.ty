@@ -1,0 +1,14 @@
+class Box[T]:
+    def __init__(self, value: T):
+        self.value = value
+
+class Pair[L, R]:
+    pass
+
+def describe(cls):
+    return cls.__name__, type(cls).__name__
+
+print(describe(Box), describe(Pair))
+print(globals()["Box"] is Box, globals()["Pair"] is Pair)
+instance = Box[int](4)
+print(instance.value, isinstance(instance, Box), isinstance(instance, Pair))

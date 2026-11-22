@@ -1,0 +1,11 @@
+AliasType = type(list[int])
+
+class Child(AliasType):
+    def __new__(cls, origin, args):
+        return super().__new__(cls, origin, args)
+
+    def __repr__(self):
+        return "modified " + super().__repr__()
+
+child = Child(list, (int,))
+print(type(child).__name__, repr(child), child.__origin__ is list, child.__args__ == (int,))

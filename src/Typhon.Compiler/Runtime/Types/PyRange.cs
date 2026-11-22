@@ -55,4 +55,94 @@ namespace Typhon.Runtime
         public string __repr__() => Step == 1 ? $"range({Start}, {Stop})" : $"range({Start}, {Stop}, {Step})";
         public override string ToString() => __repr__();
     }
+
+    /// <summary>A lazy range whose bounds and elements carry Python's arbitrary-precision integers.</summary>
+    internal sealed class PyBigRange : IEnumerable<BigInteger>, IPyRepr, IPyLen, IPyBool
+    {
+        readonly BigInteger _count;
+        public BigInteger start { get; }
+        public BigInteger stop { get; }
+        public BigInteger step { get; }
+
+        public PyBigRange(BigInteger start, BigInteger stop, BigInteger step)
+        {
+            if (step.IsZero) throw new ArgumentException("range() arg 3 must not be zero");
+            this.start = start;
+            this.stop = stop;
+            this.step = step;
+            BigInteger distance = step.Sign > 0 ? stop - start : start - stop;
+            _count = distance.Sign > 0 ? (distance - 1) / BigInteger.Abs(step) + 1 : BigInteger.Zero;
+        }
+
+        public long __len__() => (long)_count;
+        public bool __bool__() => !_count.IsZero;
+
+        public BigInteger this[object? index]
+        {
+            get
+            {
+                BigInteger position = Builtins.RangeIndex(index);
+                if (position.Sign < 0) position += _count;
+                if (position.Sign < 0 || position >= _count) throw new IndexOutOfRangeException("range object index out of range");
+                return start + step * position;
+            }
+        }
+
+        public PyBigRange this[PySlice slice]
+        {
+            get
+            {
+                var (first, last, stride) = slice.BigIndices(_count);
+                return new PyBigRange(start + step * first, start + step * last, step * stride);
+            }
+        }
+
+        bool TryPosition(object? value, out BigInteger position)
+        {
+            position = default;
+            BigInteger integer;
+            switch (value)
+            {
+                case BigInteger or bool or byte or sbyte or short or ushort or int or uint or long or ulong:
+                    integer = Builtins.RangeIndex(value);
+                    break;
+                case float or double:
+                    double floating = Convert.ToDouble(value, CultureInfo.InvariantCulture);
+                    if (!double.IsFinite(floating) || Math.Truncate(floating) != floating) return false;
+                    integer = new BigInteger(floating);
+                    break;
+                case decimal exact when decimal.Truncate(exact) == exact:
+                    integer = new BigInteger(exact);
+                    break;
+                default:
+                    return false;
+            }
+            position = BigInteger.DivRem(integer - start, step, out var remainder);
+            return remainder.IsZero && position.Sign >= 0 && position < _count;
+        }
+
+        public bool __contains__(object? value) => TryPosition(value, out _);
+        public long count(object? value) => __contains__(value) ? 1 : 0;
+        public BigInteger index(object? value) => TryPosition(value, out var position)
+            ? position : throw new ArgumentException($"{Builtins.repr(value)} is not in range");
+
+        public IEnumerable<BigInteger> __reversed__() => this[new PySlice(null, null, -1L)];
+
+        public IEnumerator<BigInteger> GetEnumerator()
+        {
+            BigInteger current = start;
+            for (BigInteger left = _count; left > 0; left--, current += step) yield return current;
+        }
+
+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+
+        public override bool Equals(object? value) => value is PyBigRange range && _count == range._count &&
+            (_count.IsZero || start == range.start && (_count.IsOne || step == range.step));
+
+        public override int GetHashCode() => HashCode.Combine(_count, _count.IsZero ? BigInteger.Zero : start,
+            _count <= 1 ? BigInteger.Zero : step);
+
+        public string __repr__() => step.IsOne ? $"range({start}, {stop})" : $"range({start}, {stop}, {step})";
+        public override string ToString() => __repr__();
+    }
 }

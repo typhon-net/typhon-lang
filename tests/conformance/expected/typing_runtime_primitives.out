@@ -1,0 +1,19 @@
+~T T __main__ typing
+None () True False
++B <class 'int'> <class 'bool'> True True
+-C (<class 'bytes'>, <class 'str'>) True
+Infer
+~P P.args P.kwargs None True
+True True
+True True False
+~Ts typing.NoDefault False
+Alias list[~T] (~T,) __main__
+~T | int (~T,) (~T,)
+typing True
+A single constraint is not allowed
+Bivariant types are not supported.
+2 str
+__init_subclass__ True True
+False True False
+()
+Generic.__init_subclass__() takes no keyword arguments

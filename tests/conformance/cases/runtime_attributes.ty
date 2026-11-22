@@ -37,3 +37,20 @@ try:
     getattr(c, "nothing")
 except AttributeError as e:
     print("AttributeError:", e)
+
+
+class Box:
+    def __init__(self, number: int):
+        self.number = number
+
+def set_number(box: Box, number: int):
+    box.number = number + 1
+
+box = Box(2)
+owner = type(box)
+owner.tag = "b"
+owner.count: int = 1
+owner.count += 2
+owner.__init__ = set_number
+owner.__init__(box, 7)
+print(owner.tag, owner.count, box.number)

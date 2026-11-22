@@ -1,0 +1,12 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import os
+from pathlib import Path
+from typing import Any
+
+def ancestor(left: Any, right: Any) -> str | bytes:
+    return os.path.commonpath([left, right])
+
+print(ancestor(Path('first') / 'left', os.path.join('first', 'right')))
+print(ancestor(b'first/left', b'first/right'))

@@ -23,10 +23,8 @@ public sealed class PyLibTracebackTests
         string dir = Directory.CreateTempSubdirectory("typhon-original-traceback-").FullName;
         try
         {
-            File.Copy(Path.Combine(lib, "traceback.py"), Path.Combine(dir, "traceback.ty"));
-            File.Copy(Path.Combine(lib, "codeop.py"), Path.Combine(dir, "codeop.ty"));
             string script = Path.Combine(dir, "portable_traceback.ty");
-            File.WriteAllText(script, """
+            File.WriteAllText(script, $"#:pylib {lib}\n" + """
                 import traceback
 
                 print(traceback.format_exception_only(ValueError("problem")))

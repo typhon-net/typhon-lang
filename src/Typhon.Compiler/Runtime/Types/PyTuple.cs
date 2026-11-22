@@ -31,7 +31,7 @@ namespace Typhon.Runtime
     /// A Python iterator (iter(x)): it remembers its position, next() advances it, and iterating it (for, list(), ...)
     /// continues from there.
     /// </summary>
-    internal sealed class PyIterator<T> : IEnumerable<T>, IEnumerator<T>
+    internal class PyIterator<T> : IEnumerable<T>, IEnumerator<T>
     {
         readonly IEnumerator<T> _e;
         public PyIterator(IEnumerator<T> e) { _e = e; }
@@ -46,6 +46,8 @@ namespace Typhon.Runtime
         public T __next__() => _e.MoveNext() ? _e.Current : throw new StopIteration();
         public PyIterator<T> __iter__() => this;
     }
+
+    internal sealed class PyZip<T>(IEnumerator<T> items) : PyIterator<T>(items) { }
 
     /// <summary>A Python tuple of any length (implemented by PyTuple&lt;T&gt;), seen without its element type.</summary>
     internal interface IPyTuple

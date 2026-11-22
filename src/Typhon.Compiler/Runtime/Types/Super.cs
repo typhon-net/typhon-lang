@@ -31,8 +31,13 @@ namespace Typhon.Stdlib
                 __thisclass__ = type as Type ?? throw new InvalidCastException("super() argument 1 must be a type");
                 __self__ = @object;
                 if (@object == null) return;
-                __self_class__ = @object as Type ?? @object.GetType();
-                if (!__thisclass__.IsAssignableFrom(__self_class__))
+                __self_class__ = @object as Type ?? (@object is PyLocalClassInstance local ? local.PythonType : @object.GetType());
+                bool Compatible() => __thisclass__ is PyLocalDataClass || __self_class__ is PyLocalDataClass
+                    ? Builtins.DirectSubclass(__self_class__, __thisclass__) : __thisclass__.IsAssignableFrom(__self_class__);
+                if (!Compatible() && @object is Type target &&
+                    PyMetaclasses.IsMetaclass(__thisclass__))
+                    __self_class__ = PyMetaclasses.Of(target);
+                if (!Compatible())
                     throw new InvalidCastException("super(type, obj): obj must be an instance or subtype of type");
             }
 
@@ -75,11 +80,24 @@ namespace Typhon.Stdlib
                         {
                             result = new PyClosure(name, (args, keywords) =>
                             {
-                                string method = Builtins.PyTypeName(__self_class__) + ".__init_subclass__()";
+                                string ownerName = __self_class__ is PyLocalDataClass local ? local.QualName : Builtins.PyTypeName(__self_class__);
+                                string method = ownerName + ".__init_subclass__()";
                                 if (keywords?.Count > 0) throw new InvalidCastException(method + " takes no keyword arguments");
                                 if (args.Length > 0) throw new InvalidCastException($"{method} takes no arguments ({args.Length} given)");
                                 return null;
                             });
+                            return true;
+                        }
+                        if (owner == typeof(object) && __self__ is Type checkTarget && PyMetaclasses.IsMetaclass(__thisclass__) &&
+                            PyMetaclasses.TypeCheckSlot(name) is PyClosure typeCheck)
+                        {
+                            result = new types.MethodType(typeCheck, checkTarget);
+                            return true;
+                        }
+                        if (owner == typeof(object) && name == "__repr__" && __self__ is Type classObject &&
+                            PyMetaclasses.IsMetaclass(__thisclass__))
+                        {
+                            result = new PyClosure(name, (args, keywords) => Builtins.DefaultClassRepr(classObject));
                             return true;
                         }
                         if (owner == typeof(object) && name == "__new__" && PyMetaclasses.IsMetaclass(__thisclass__))
@@ -93,10 +111,26 @@ namespace Typhon.Stdlib
                             result = receiver != null && name != "__new__" ? new types.MethodType(method, receiver) : method;
                             return true;
                         }
+                        if (owner is PyLocalDataClass local && local.Members.TryGetValue(name, out var member))
+                        {
+                            result = PyMetaclasses.Bind(member, receiver, __self_class__);
+                            return true;
+                        }
                         if (PyClassDescriptors.TryGetDeclaredAddedAttribute(owner, name, out var added))
                         {
                             result = PyMetaclasses.Bind(added, receiver, __self_class__);
                             return true;
+                        }
+                        if (name != "__new__" && __self__ is Type && PyMetaclasses.IsMetaclass(owner))
+                        {
+                            var metaclassMethods = owner.GetMethods(Declared).Where(method => method.Name == name &&
+                                method.IsDefined(typeof(PyMetaclassMethodAttribute), false)).ToArray();
+                            if (metaclassMethods.Length > 0)
+                            {
+                                result = new PyClosure(name, (args, keywords) =>
+                                    CallMethods(name, metaclassMethods, null, [__self__, .. args], keywords));
+                                return true;
+                            }
                         }
                         if (PyClassDescriptors.TryGetDeclaredDescriptor(owner, name, out var descriptor))
                         {

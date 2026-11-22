@@ -44,11 +44,12 @@ namespace Typhon.Compiler.Emit
         {
             if (t == null || t == TypeInference.Pending) return t;
             if (t == "global::Typhon.Runtime.PyRange") return "long";
+            if (t == BigRangeType) return TypeInference.BigInt;
             if (t == "global::Typhon.Runtime.PyBytes" || t == "global::Typhon.Runtime.PyByteArray") return "long";
             if (t.StartsWith("(") && t.EndsWith(")") && TupleElementTypes(t) is List<string> items) return items.Distinct().Count() == 1 ? items[0] : "object";
             if (t == "string") return "string"; // a str's elements are strs (one character each)
             if (t.EndsWith("[]")) return t.Substring(0, t.Length - 2);
-            foreach (var g in new[] { "List<", "IList<", "IReadOnlyList<", "IEnumerable<", "HashSet<", "ISet<", "IReadOnlySet<", "IReadOnlyCollection<", "global::Typhon.Runtime.PyIterator<", "global::Typhon.Runtime.PyTuple<", "global::Typhon.Runtime.PyGenerator<", "IAsyncEnumerable<", "global::System.Collections.Generic.IAsyncEnumerable<" })
+            foreach (var g in new[] { "List<", "IList<", "IReadOnlyList<", "IEnumerable<", "HashSet<", "ISet<", "IReadOnlySet<", "IReadOnlyCollection<", "global::Typhon.Runtime.PyIterator<", "global::Typhon.Runtime.PyTuple<", "global::Typhon.Runtime.PyGenerator<", "global::Typhon.Runtime.PyAsyncGenerator<", "IAsyncEnumerable<", "global::System.Collections.Generic.IAsyncEnumerable<" })
                 if (t.StartsWith(g) && t.EndsWith(">")) return GenericArg(t);
             if (DictTypes(t) is List<string> kv0) return kv0[0];
             if (t.StartsWith("global::Typhon.Runtime.deque<") && t.EndsWith(">")) return GenericArg(t);
@@ -86,8 +87,8 @@ namespace Typhon.Compiler.Emit
             !_r.HasMember("Typhon.Runtime.PyModule", member.Name);
 
         bool IsRuntimeObjectAttribute(AttributeExpr member) =>
-            !_m.IsGdScript && InferType(member.Target) is "object" or "object?" &&
-            !_r.HasMember("System.Object", member.Name);
+            !_m.IsGdScript && (InferType(member.Target) is "object" or "object?" ||
+                IsTypeParamType(InferType(member.Target))) && !_r.HasMember("System.Object", member.Name);
 
         string InferType(Expr e)
         {
@@ -106,8 +107,8 @@ namespace Typhon.Compiler.Emit
                     }
                 case FStringExpr tf when tf.IsTemplate: return TemplateType;
                 case FStringExpr _: return "string";
-                case LambdaExpr l when l.RequiresArgumentBinding: return "dynamic";
-                case YieldExpr _ when _scope != null && _scope.AsyncForm: return "dynamic";
+                case LambdaExpr l when l.RequiresArgumentBinding || IsGeneratorLambda(l): return "dynamic";
+                case YieldExpr _ when _scope?.AsyncForm == true || _lambdaGenerators.Count > 0: return "dynamic";
                 case NamedExpr ne: return InferType(ne.Target) ?? InferType(ne.Value);
                 case ComprehensionExpr comp: return ComprehensionType(comp);
                 case NameExpr { Id: "__debug__" }: return "bool";
@@ -132,6 +133,9 @@ namespace Typhon.Compiler.Emit
                     return null;
                 }
                 case AttributeExpr component when UsesComplexComponent(component): return "double";
+                case AttributeExpr comparator when UsesBuiltinStringComparison(comparator): return "dynamic";
+                case AttributeExpr typeCheck when !_m.IsGdScript && IsTypeCheckSlot(typeCheck.Name) &&
+                    BuiltinTypeBase(typeCheck.Target): return "dynamic";
                 case AttributeExpr { Name: "__class__" }: return "global::System.Type";
                 case AttributeExpr moduleAttribute when IsRuntimeModuleAttribute(moduleAttribute): return "dynamic";
                 case AttributeExpr objectAttribute when IsRuntimeObjectAttribute(objectAttribute): return "dynamic";
@@ -175,16 +179,17 @@ namespace Typhon.Compiler.Emit
                 }
                 case SubscriptExpr ix when !(ix.Index is SliceExpr):
                 {
-                    if (BuiltinGenericOrigin(ix.Target) != null) return "dynamic";
+                    if (BuiltinGenericOrigin(ix.Target) != null || SourceValueSubscription(ix.Target)) return "dynamic";
                     if (InferType(ix.Index) == "global::Typhon.Runtime.PySlice") return "dynamic";
                     var t = InferType(ix.Target);
                     if (UsesDictMissingLookup(t)) return "dynamic";
+                    if (t == BigRangeType) return TypeInference.BigInt;
                     if (IsBytesType(t)) return "long"; // b[i] is an int
                     if (NamedTupleOf(t) is ClassDef ntd && ConstIntValue(ix.Index) is long ntk && ntk >= -ntd.NamedTupleFields.Count && ntk < ntd.NamedTupleFields.Count)
                         return MemberType(t, ntd.NamedTupleFields[(int)(ntk < 0 ? ntk + ntd.NamedTupleFields.Count : ntk)], method: false);
                     // (an unknown container with a late-bound key is read through __getitem: a late-bound value)
                     if (t == null && !(ix.Index is TupleExpr) && InferType(ix.Index) == "dynamic") return "dynamic";
-                    if (t is "object" or "object?") return "dynamic";
+                    if (t is "object" or "object?" or "global::System.Type" or "System.Type") return "dynamic";
                     if (t == null || t == TypeInference.Pending || t == "dynamic") return t;
                     if (t == "string") return "string";
                     // a class deriving from list/dict: its items; a class with __getitem__: what that returns
@@ -213,7 +218,7 @@ namespace Typhon.Compiler.Emit
                 case SubscriptExpr sub when sub.Index is SliceExpr:
                 {
                     var t = InferType(sub.Target);
-                    if (t == "global::Typhon.Runtime.PyRange") return t; // a range's slice is a range
+                    if (t is "global::Typhon.Runtime.PyRange" or BigRangeType) return t;
                     if (IsBytesType(t)) return t;
                     if (t != null && t.StartsWith(PyTuplePrefix)) return t;
                     return t != null && (t == "string" || t.StartsWith("List<") || t.EndsWith("[]") || t == "dynamic") ? t : null;
@@ -241,7 +246,7 @@ namespace Typhon.Compiler.Emit
                             string lt = InferType(left), rt = InferType(ce.Comparators[i]);
                             bool decided = (IsNumeric(lt) || lt == "bool" || lt == "char") && (IsNumeric(rt) || rt == "bool" || rt == "char") ||
                                            PythonOrdered(lt) || PythonOrdered(rt);
-                            if (!decided && !(IsUnknownType(lt) && IsUnknownType(rt))) return null;
+                            if (!decided) return IsUnknownType(lt) && IsUnknownType(rt) ? "dynamic" : null;
                         }
                         left = ce.Comparators[i];
                     }
@@ -268,6 +273,7 @@ namespace Typhon.Compiler.Emit
                     // None or a list: the list type (a reference can be None); an int or a float: a float
                     if (IsNone(i.Body) && o != null && !IsValueTypeName(o)) return o;
                     if (IsNone(i.OrElse) && a != null && !IsValueTypeName(a)) return a;
+                    if (MixedWideIntegerAndReal(a, o)) return "dynamic";
                     if (IsNumeric(a) && IsNumeric(o) && (a == "double" || o == "double")) return "double";
                     // different types: late-bound (both branches are emitted as dynamic)
                     return ConditionalNeedsDynamic(i) ? "dynamic" : null;
@@ -334,9 +340,8 @@ namespace Typhon.Compiler.Emit
                         return PyTuplePrefix + itemType + ">";
                     }
                     if (t.Elts.Count == 0) return "ValueTuple";
-                    string ItemType(Expr value) => InferType(value) ??
-                        (value is NameExpr name && BuiltinTypeValue(name) != null ? "global::System.Type" :
-                         BoundMethodValue(value) != null ? "dynamic" : null);
+                    string ItemType(Expr value) => AssignedValueType(value) ??
+                        (BoundMethodValue(value) != null ? "dynamic" : null);
                     if (t.Elts.Count == 1)
                     {
                         Expr element = t.Elts[0];
@@ -360,6 +365,8 @@ namespace Typhon.Compiler.Emit
         /// <summary>The type of a call: a Typhon function, a class, a builtin, a method of a known type, a standard-library function.</summary>
         string CallType(CallExpr call)
         {
+            if (!_m.IsGdScript && (BuiltinTypeBase(call.Func) && call.Args.Count == 3 || IsMetaclassExpression(call.Func)))
+                return "dynamic";
             if (CustomAllocatorTarget(call.Func, out _) ||
                 call.Func is AttributeExpr allocator && (BaseObjectMethod(allocator) == "__object_new" ||
                     allocator.Name == "__new__" && CustomAllocatorTarget(allocator.Target, out _)))
@@ -443,7 +450,7 @@ namespace Typhon.Compiler.Emit
                     case "cast": return call.Args.Count == 2 ? MapType(call.Args[0].Value, call) : null;   // typing.cast(T, x) is a C# cast to T
                     case "round": return call.Args.Count == 1 ? "long" : "double";
                     case "abs": return call.Args.Count == 1 ? (_big && IsIntegral(InferType(call.Args[0].Value)) ? IntT : InferType(call.Args[0].Value)) : null;
-                    case "range": return "global::Typhon.Runtime.PyRange";
+                    case "range": return _big ? BigRangeType : "global::Typhon.Runtime.PyRange";
                     case "open": return OpenMode(call) switch
                     {
                         null => "dynamic",
@@ -533,7 +540,7 @@ namespace Typhon.Compiler.Emit
                         if (pos.Count == 0) return null;
                         var ts = pos.Count == 1 ? new List<string> { ElementTypeOf(InferType(pos[0].Value)) } : pos.Select(a => InferType(a.Value)).ToList();
                         if (ts.Contains(TypeInference.Pending)) return TypeInference.Pending;
-                        if (ts.Any(t => t == null)) return null;
+                        if (ts.Any(t => t is null or "object" or "object?")) return "dynamic";
                         if (_big && ts.All(IsIntegral)) return pos.Count == 1 && ts[0] == "long" ? "long" : IntT;
                         if (ts.All(t => t == ts[0])) return ts[0];
                         if (ts.All(IsIntegral)) return "long";

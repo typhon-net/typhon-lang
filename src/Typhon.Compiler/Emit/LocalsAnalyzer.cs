@@ -298,9 +298,11 @@ namespace Typhon.Compiler.Emit
                 case NameExpr n: Add(n.Id, path, Kind.Load, null); return;
                 case LambdaExpr l:
                     foreach (var value in l.Defaults) Loads(value, path);
+                    bool hasYield = _r.HasYield;
                     _shadow.Push(new HashSet<string>(l.ParameterNames()));
                     Loads(l.Body, path);
                     _shadow.Pop();
+                    _r.HasYield = hasYield;
                     return;
                 case ComprehensionExpr c:
                     var bound = new HashSet<string>(); // grows as generators bind targets

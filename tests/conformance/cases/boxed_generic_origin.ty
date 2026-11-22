@@ -1,0 +1,12 @@
+from types import GenericAlias
+
+def rebuild(alias: GenericAlias):
+    return alias.__origin__[(int, str)]
+
+def expand(alias: GenericAlias):
+    return alias.__origin__[alias.__args__]
+
+original = dict[int, str]
+print(rebuild(original))
+print(expand(original))
+print(rebuild(original) == original, expand(original) == original)

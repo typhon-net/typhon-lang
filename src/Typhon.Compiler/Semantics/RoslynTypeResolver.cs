@@ -34,6 +34,14 @@ namespace Typhon.Compiler.Semantics
 
         public bool TypeExists(string metadataName) => Find(metadataName) != null;
 
+        internal bool AllowsTypeParameterConstraint(string metadataName)
+        {
+            var type = Find(metadataName);
+            return type == null || type.TypeKind == TypeKind.Interface ||
+                type.TypeKind == TypeKind.Class && !type.IsSealed && !type.IsStatic &&
+                type.SpecialType is not (SpecialType.System_Object or SpecialType.System_Array or SpecialType.System_ValueType);
+        }
+
         internal bool HasTypedEnumerable(string metadataName)
         {
             var type = Find(metadataName);
@@ -235,12 +243,13 @@ namespace Typhon.Compiler.Semantics
 
         /// <summary>
         /// The type as C# code usable anywhere in generated code (keywords, else fully qualified; System.Collections.Generic
-        /// short, as Typhon spells it), or null when Typhon should not adopt it: void, object/dynamic, open generic types,
+        /// short, as Typhon spells it), or null when Typhon should not adopt it: void, dynamic, open generic types,
         /// ref structs, pointers.
         /// </summary>
         static string Display(ITypeSymbol t)
         {
-            if (t == null || t.SpecialType == SpecialType.System_Void || t.SpecialType == SpecialType.System_Object || t.TypeKind == TypeKind.Dynamic) return null;
+            if (t == null || t.SpecialType == SpecialType.System_Void || t.TypeKind == TypeKind.Dynamic) return null;
+            if (t.SpecialType == SpecialType.System_Object) return "object";
             if (Keyword(t) is string k) return k;
             if (t.IsRefLikeType || t.TypeKind == TypeKind.Pointer || t.TypeKind == TypeKind.FunctionPointer || t.TypeKind == TypeKind.Error || HasTypeParameter(t)) return null;
             return t.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat).Replace("global::System.Collections.Generic.", "");

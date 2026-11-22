@@ -230,3 +230,16 @@ try:
         raise ValueError('propagates')
 except ValueError as error:
     print(str(error))
+
+
+def decorator_identity(value):
+    return value
+
+print(decorator_identity(3), decorator_identity("text"))
+
+class DecoratedConfig:
+    @decorator_identity
+    def count(self, value: int):
+        return value + 1
+
+print(DecoratedConfig().count(9))

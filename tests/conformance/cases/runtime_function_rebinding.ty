@@ -1,0 +1,33 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import types
+import functools
+import sys
+
+
+scale = 3
+
+
+def compute(x, /, y=2, *, offset=5):
+    return x * scale + y + offset
+
+
+namespace = {'scale': 10}
+function = types.FunctionType(compute.__code__, namespace, name='rebound',
+                              argdefs=(4,), kwdefaults={'offset': 9})
+print(function.__name__, function.__code__ is compute.__code__)
+print(function(2), function(2, y=3, offset=1))
+namespace['scale'] = 8
+print(function(2), compute(2), function.__globals__ is namespace)
+print(function.__defaults__, function.__kwdefaults__, function.__closure__)
+print(function.__qualname__, function.__module__)
+function.__kwdefaults__['offset'] = 6
+print(function(2))
+builtin_module = sys.modules['builtins']
+converter = getattr(builtin_module, 'int')
+print(converter is int, converter('23'))
+print(builtin_module.list('ab'), builtin_module.tuple([2, 3]), builtin_module.type(None).__name__)
+partial_type = getattr(sys.modules['functools'], 'partial')
+partial = partial_type(compute, 2, y=4)
+print(partial(), type(partial) is partial_type, partial_type.__module__)

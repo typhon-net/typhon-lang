@@ -40,12 +40,14 @@ namespace Typhon.Compiler.Emit
                 if (m.Ast == null || m.ParseDiagnostics.Count > 0) continue;
                 var callees = new HashSet<Node>();
                 var aliases = new List<ImportAlias>();
-                AstWalker.VisitAll(m.Ast.Body, n =>
+                // Python method decorators are stored separately after syntax lowering.
+                var roots = m.Ast.Body.Cast<Node>().Concat(m.Ast.MethodDecorators.Values.SelectMany(decorators => decorators));
+                AstWalker.VisitAll(roots, n =>
                 {
                     if (n is CallExpr c) callees.Add(c.Func);
                     if (n is ImportFromStmt imp) aliases.AddRange(imp.Names.Where(a => a.AsName != null));
                 });
-                AstWalker.VisitAll(m.Ast.Body, n => { if (n is NameExpr ne && !callees.Contains(ne)) names.Add(ne.Id); });
+                AstWalker.VisitAll(roots, n => { if (n is NameExpr ne && !callees.Contains(ne)) names.Add(ne.Id); });
                 if (m.RuntimeCodeMode != null) names.UnionWith(m.Functions);
                 foreach (var a in aliases) if (names.Contains(a.AsName)) names.Add(a.Name);
             }
@@ -298,7 +300,6 @@ namespace Typhon.Compiler.Emit
         {
             string cls = FnPrefix + f.Name;
             var ps = f.Params;
-            int required = ps.Count(p => p.Default == null);
             var locals = LocalsAnalyzer.Analyze(f.Body, ps.Select(p => p.Name), null);
             bool returnsValue = f.IsAsync || locals.HasYield || locals.HasValueReturn ||
                                 f.Returns != null && !(f.Returns is ConstExpr rc && rc.Kind == ConstKind.None);
@@ -313,7 +314,10 @@ namespace Typhon.Compiler.Emit
             _w.Line($"public static readonly {cls} Instance = new {cls}();");
             string doc = f.Body.Count > 0 && f.Body[0] is ExprStmt ds && ds.Value is ConstExpr dc && dc.Kind == ConstKind.Str ? CsString(dc.Str) : null;
             string module = _m.IsGdScript ? "" : $"__module__ = {CsString(PythonModuleName)}; _signature = {SignatureProviderName(f)}; ";
-            _w.Line($"{cls}() : base({CsString(f.PyName ?? f.Name)}) {{ {module}{(doc != null ? $"__doc__ = {doc}; " : "")}}}");
+            string source = !_m.IsGdScript && _m.RuntimeCodeMode == null && f.EndOffset > f.StartOffset && f.EndOffset <= _m.SourceText?.Length
+                ? $"_code = new global::Typhon.Runtime.RuntimeFunctionCode(__name__, {CsString(_path)}, {f.Line}, " +
+                  $"{CsString(_m.SourceText.Substring(f.StartOffset, f.EndOffset - f.StartOffset))}, {(_big ? "true" : "false")}); " : "";
+            _w.Line($"{cls}() : base({CsString(f.PyName ?? f.Name)}) {{ {module}{source}{(doc != null ? $"__doc__ = {doc}; " : "")}}}");
             if (ps.Any(p => p.Kind != ParamKind.Normal))
             {
                 var signature = BuildSignature(f, dropFirst: false);
@@ -327,18 +331,21 @@ namespace Typhon.Compiler.Emit
             if (ps.Count > 0 && ps.All(x => x.Kind == ParamKind.Normal))
                 _w.Line($"protected override string[] __params__ => new[] {{ {string.Join(", ", ps.Select(x => CsString(x.Name)))} }};");
             if (ps.Any(p => p.Default != null))
-                _w.Line($"public override object? __call_kw__(object?[] args, IDictionary<string, object?>? kw) => new global::Typhon.Runtime.PyBoundMethod(typeof({ModuleClassName(_m)}), {CsString(f.Name)}, includeNonPublic: true).__call_kw__(args, kw);");
-            _w.Line("public override object? __call__(object?[] a)");
-            _w.Open();
-            for (int n = required; n <= ps.Count; n++)
             {
-                var args = Enumerable.Range(0, ps.Count).Select(i => i < n ? $"(dynamic?)a[{i}]"
-                    : _defaultSources.ContainsKey(ps[i]) || IsParamAlias(f, ps[i]) ? "null" : EmitValue(ps[i].Default));
-                string call = $"{Esc(f.Name)}({string.Join(", ", args)})";
-                _w.Line(returnsValue ? $"if (a.Length == {n}) return {call};" : $"if (a.Length == {n}) {{ {call}; return null; }}");
+                _w.Line($"static readonly global::Typhon.Runtime.PyBoundMethod __bound = new global::Typhon.Runtime.PyBoundMethod(typeof({ModuleClassName(_m)}), {CsString(f.Name)}, includeNonPublic: true);");
+                _w.Line("public override object? __call__(object?[] args) => __bound.__call__(args);");
+                _w.Line("public override object? __call_kw__(object?[] args, IDictionary<string, object?>? kw) => __bound.__call_kw__(args, kw);");
             }
-            _w.Line($"throw ArgCount({CsString(f.Name)}, {required}, {ps.Count}, a.Length);");
-            _w.Close();
+            else
+            {
+                _w.Line("public override object? __call__(object?[] a)");
+                _w.Open();
+                var args = Enumerable.Range(0, ps.Count).Select(i => $"(dynamic?)a[{i}]");
+                string call = $"{Esc(f.Name)}({string.Join(", ", args)})";
+                _w.Line(returnsValue ? $"if (a.Length == {ps.Count}) return {call};" : $"if (a.Length == {ps.Count}) {{ {call}; return null; }}");
+                _w.Line($"throw ArgCount({CsString(f.Name)}, {ps.Count}, {ps.Count}, a.Length);");
+                _w.Close();
+            }
             // conversions to the delegate types of its known signatures (a Callable[[int], int] parameter, Func<long, long>)
             var delegates = new HashSet<string>();
             // (a generator's C# type depends on how it is emitted: no conversion; an async function returns a Task)
@@ -349,7 +356,15 @@ namespace Typhon.Compiler.Emit
                 if (f.IsAsync) ret = ret == "void" ? "global::System.Threading.Tasks.Task" : $"global::System.Threading.Tasks.Task<{ret}>";
                 string d = ret == "void" ? (types.Count == 0 ? "global::System.Action" : $"global::System.Action<{string.Join(", ", types)}>")
                                          : $"global::System.Func<{string.Join(", ", types.Concat(new[] { ret }))}>";
-                if (delegates.Add(d)) _w.Line($"public static implicit operator {d}({cls} _) => {Esc(f.Name)};");
+                if (!delegates.Add(d)) return;
+                // A definition-time default can make the CLR parameter nullable even when the Python annotation is not.
+                string function = Esc(f.Name);
+                if (f.Params.Any(parameter => parameter.Default != null))
+                {
+                    string arguments = string.Join(", ", Enumerable.Range(0, types.Count).Select(index => "__arg" + index));
+                    function = $"({arguments}) => {function}({arguments})";
+                }
+                _w.Line($"public static implicit operator {d}({cls} _) => {function};");
             }
             if (ps.All(p => p.Annotation != null) && (f.Returns != null || !returnsValue))
                 Conversion(ps.Select(p => MapType(p.Annotation, p)).ToList(), f.Returns != null ? MapType(f.Returns, f, isReturn: true) : "void");
@@ -553,8 +568,29 @@ namespace Typhon.Compiler.Emit
             }
             _comprehensionTypes.Add(bindings);
             _lambdaParams.Push(parameters);
-            try { return code.Append($" {LambdaValueStatements(lambda.Body)} }})").ToString(); }
+            try
+            {
+                string body = IsGeneratorLambda(lambda) ? GeneratorLambdaBody(lambda.Body) : LambdaValueStatements(lambda.Body);
+                return code.Append($" {body} }})").ToString();
+            }
             finally { _lambdaParams.Pop(); _comprehensionTypes.Remove(bindings); }
+        }
+
+        readonly Stack<string> _lambdaGenerators = new Stack<string>();
+
+        static bool IsGeneratorLambda(LambdaExpr lambda) =>
+            AstWalker.ContainsOutsideNestedScopes(new List<Stmt> { new ReturnStmt { Value = lambda.Body } }, node => node is YieldExpr);
+
+        string GeneratorLambdaBody(Expr expression)
+        {
+            string generator = NewTmp("gen");
+            _lambdaGenerators.Push(generator);
+            try
+            {
+                return $"var {generator} = new {PyGeneratorPrefix}object?>(); " +
+                    $"{generator}.__start_async(async () => {{ {LambdaValueStatements(expression)} }}); return {generator};";
+            }
+            finally { _lambdaGenerators.Pop(); }
         }
 
         string LambdaValueStatements(Expr body) =>
@@ -585,7 +621,7 @@ namespace Typhon.Compiler.Emit
         /// <summary>A lambda bound to a local name: Func&lt;T..., R&gt; when its calls give the parameter types, else a delegate of dynamic values.</summary>
         string EmitLambdaLocal(LambdaExpr lam, string key, out string code)
         {
-            if (lam.RequiresArgumentBinding)
+            if (lam.RequiresArgumentBinding || IsGeneratorLambda(lam))
             {
                 code = EmitRuntimeLambda(lam);
                 return "dynamic";

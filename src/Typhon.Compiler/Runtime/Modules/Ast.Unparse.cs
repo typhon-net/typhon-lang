@@ -7,6 +7,7 @@
 namespace Typhon.Stdlib
 {
     using System;
+    using System.Collections;
     using System.Collections.Generic;
     using System.Linq;
     using Typhon.Runtime;
@@ -20,7 +21,7 @@ namespace Typhon.Stdlib
             if (node == null) return "";
             object? Field(string name) => node.Fields[name];
             AST? Child(string name) => Field(name) as AST;
-            List<object?> Children(string name) => (List<object?>)Field(name)!;
+            IEnumerable<object?> Children(string name) => ((IList)Field(name)!).Cast<object?>();
             string Text(string name, int precedence = 0) => PrintExpression(Child(name), precedence);
             IEnumerable<string> Texts(string name, int precedence = 0) => Children(name).Cast<AST>().Select(child => PrintExpression(child, precedence));
             string Sequence(string name) => string.Join(", ", Texts(name));
@@ -116,7 +117,7 @@ namespace Typhon.Stdlib
 
         static string PrintTupleItems(AST tuple)
         {
-            var items = (List<object?>)tuple.Fields["elts"]!;
+            var items = (IList)tuple.Fields["elts"]!;
             string text = string.Join(", ", items.Cast<AST>().Select(child => PrintExpression(child)));
             return items.Count == 1 ? text + "," : text;
         }

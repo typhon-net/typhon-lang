@@ -155,6 +155,7 @@ namespace Typhon.Compiler.Emit
                 else return NativeImportedMethodValue(importedName);
             }
             if (value is not AttributeExpr a || ImportedBuiltinTypeValue(a) != null) return null;
+            if (BuiltinStringMethodValue(a) is string stringMethod) return stringMethod;
             if (DottedName(a.Target) is string dotted && !IsLocal(dotted.Split('.')[0]) &&
                 TryResolveType(dotted, 0, out _, out var owner) && owner != null &&
                 MethodInHierarchy(owner, a.Name) is FunctionDef definition &&
@@ -218,6 +219,18 @@ namespace Typhon.Compiler.Emit
         /// <summary>A function name being assigned to a variable (its function type is kept).</summary>
         bool _fnTypedUse;
 
+        string AssignedValueType(Expr value)
+        {
+            string type = InferType(value);
+            if (type != null) return type;
+            if (value is NameExpr name && (BuiltinTypeValue(name) != null ||
+                !IsLocal(name.Id) && TryResolveType(name.Id, 0, out _, out var namedClass) && namedClass != null))
+                return "global::System.Type";
+            if (value is NameExpr or AttributeExpr && ModuleOrClassValue(value)?.StartsWith("typeof(", StringComparison.Ordinal) == true)
+                return "global::System.Type";
+            return null;
+        }
+
         void EmitAssignToName(NameExpr n, Expr value, Stmt stmt, string rawValue)
         {
             // f = obj.method of a .NET object: a callable bound method (a method group has no type C# can store here)
@@ -237,10 +250,7 @@ namespace Typhon.Compiler.Emit
                         string declType = null;
                         if (_scope.Locals.Annotations.TryGetValue(n.Id, out var ann) && !TypeInference.IsBareContainer(ann)) declType = MapType(ann, stmt);
                         else if (ConflictType(n.Id) is string wider) declType = wider; // rebound to other types later (in a nested block)
-                        string inferred = boundMethod ? "dynamic" : rawValue != null ? null :
-                            InferType(value) ?? (value is NameExpr typeName && (BuiltinTypeValue(typeName) != null ||
-                                !IsLocal(typeName.Id) && TryResolveType(typeName.Id, 0, out _, out var pythonClass) && pythonClass != null)
-                                ? "global::System.Type" : null);
+                        string inferred = boundMethod ? "dynamic" : rawValue != null ? null : AssignedValueType(value);
                         Declared(n.Id);
                         if (declType != null)
                         {
@@ -314,11 +324,21 @@ namespace Typhon.Compiler.Emit
                     else
                     {
                         string known = KnownType(n.Id) ?? (!IsLocal(n.Id) && _moduleFieldTypes.TryGetValue(n.Id, out var fieldType) ? fieldType : null);
-                        string valueType = rawValue == null ? PyType(InferType(value)) : null;
+                        string valueType = rawValue == null ? PyType(AssignedValueType(value)) : null;
                         if (rawValue == null && known?.StartsWith(PyTuplePrefix) == true &&
                             (value is TupleExpr || TupleElementTypes(valueType) != null))
                         {
                             // Fixed and variable-length tuple shapes are the same Python container.
+                            // Rebinding without an annotation can change the item types as well.
+                            string itemType = GenericArg(known);
+                            if (Obs != null && itemType is not ("dynamic" or "object" or "object?") &&
+                                _scope.Locals?.Annotations.ContainsKey(n.Id) != true)
+                            {
+                                var parts = value is TupleExpr literal
+                                    ? literal.Elts.Select(AssignedValueType).ToList() : TupleElementTypes(valueType);
+                                if (parts?.Any(part => IsUnknownType(part) || Incompatible(itemType, part)) == true)
+                                    Obs.AddConflict(_scopeKey + "|" + n.Id, "dynamic");
+                            }
                             rawValue = EmitAsPyTuple(value, known);
                             valueType = known;
                         }
@@ -344,10 +364,11 @@ namespace Typhon.Compiler.Emit
                             constructor.Id is "tuple" or "list" or "set" or "dict" && !IsShadowed(constructor.Id) &&
                             !ContainerMatches(constructor, known);
                         if (changesContainer) valueType = "dynamic";
-                        // A loop can replace an initial scalar with the result of an untyped call.
+                        // A loop can replace an initial scalar with a value whose type is only known at runtime.
                         bool unknownLoopResult = _breakFlags.Count > 0 && !sameBlock && IsLocal(n.Id) &&
                             !_scope.Params.Contains(n.Id) && _scope.Locals?.Annotations.ContainsKey(n.Id) != true &&
-                            known != null && IsValueTypeName(known.TrimEnd('?')) && value is CallExpr &&
+                            known != null && IsValueTypeName(known.TrimEnd('?')) &&
+                            value is CallExpr or NameExpr or AttributeExpr or SubscriptExpr &&
                             (valueType == "dynamic" || IsUnknownType(valueType) && MaybeLateBound(value));
                         if (unknownLoopResult) valueType = "dynamic";
                         if (Obs != null && valueType != null && known != null && !sameBlock &&
@@ -380,7 +401,8 @@ namespace Typhon.Compiler.Emit
                         bool typed = known != null && known != "dynamic";
                         // a lambda into a late-bound variable or field: a delegate of dynamic values
                         if (rawValue == null && value is LambdaExpr dl && !typed) { string dtype = EmitLambdaLocal(dl, null, out var dcode); rawValue = $"({dtype}){dcode}"; }
-                        _w.Line($"{EmitName(n)} = {rawValue ?? (typed ? EmitExpr(value, targetTyped: true) : EmitValue(value))};");
+                        _w.Line($"{EmitName(n)} = {rawValue ?? TupleLiteralValue(value, known) ??
+                            (typed ? EmitExpr(value, targetTyped: true) : EmitValue(value))};");
                     }
                     return;
                 }
@@ -409,10 +431,7 @@ namespace Typhon.Compiler.Emit
                     if (unpackedType == null && elts.Count < 2 ||
                         elts.OfType<NameExpr>().GroupBy(n => n.Id).Any(group => group.Count() > 1))
                         unpackedType = "dynamic";
-                    if (unpackedType != null && TupleElementTypes(unpackedType) is List<string> tupleParts &&
-                        tupleParts.Count == elts.Count && elts.Select((item, index) => (item, index)).Any(pair =>
-                            pair.item is NameExpr unpackName && !IsInline(stmt, unpackName.Id) &&
-                            !IsUnknownType(KnownType(unpackName.Id)) && IsUnknownType(tupleParts[pair.index])))
+                    if (unpackedType != null && NeedsLateUnpackRebinding(elts, unpackedType, stmt))
                         unpackedType = "dynamic";
                     if (unpackedType != null && (elts.Count < 2 || unpackedType == "dynamic" || unpackedType == "object" ||
                         HasLateNestedUnpack(elts, unpackedType) ||
@@ -507,8 +526,8 @@ namespace Typhon.Compiler.Emit
             {
                 case AttributeExpr at:
                 {
-                    if (!_m.IsGdScript && (at.Name == "__class__" || UsesExceptionAttribute(at) || MetaclassMember(at, out _) ||
-                        FunctionOfType(InferType(at.Target), out _, out _)) ||
+                    if (!_m.IsGdScript && (at.Name == "__class__" || UsesExceptionAttribute(at) || MetaclassMember(at, out _) || TypeObjectMember(at) ||
+                        FunctionOfType(InferType(at.Target), out _, out _) || IsTypeParamType(InferType(at.Target))) ||
                         at.Target is NameExpr owner && IsClassArgument(owner.Id) || IsInstanceClassDefault(at) || InferType(at.Target) == LocalDataClassType)
                     {
                         string temporary = NewTmp("value");
@@ -542,14 +561,31 @@ namespace Typhon.Compiler.Emit
                     if (rawValue == null && value is ComprehensionExpr comp && ft != null && ft != "dynamic"
                         && !TypeInference.IsNonePlaceholder(comp))
                         rawValue = EmitComprehension(comp, ft);
+                    if (rawValue == null && ft == "HashSet<dynamic>")
+                        rawValue = EmitFreshDynamicSet(value);
                     bool lateField = IsUnknownType(ft) || ft == "object?";
                     string lambdaValue = lateField && _cls != null && at.Target is NameExpr { Id: "self" } && value is LambdaExpr lambda
                         ? EmitRuntimeLambda(lambda) : null;
-                    string code = rawValue ?? lambdaValue ?? (lateField ? BoundMethodValue(value) : null) ??
+                    string code = rawValue ?? ModuleOrClassValue(value) ?? lambdaValue ?? (lateField ? BoundMethodValue(value) : null) ??
                         (TypeInference.IsNonePlaceholder(value) && ft != null && ft.StartsWith("List<")
                         ? EmitNonePlaceholder(value, ft) : EmitExpr(value, targetTyped: ft != null && ft != "dynamic"));
                     if (rawValue == null && NarrowingForMember(at, value) is string narrowTo) code = $"checked(({narrowTo})({code}))";
                     _w.Line($"{EmitExpr(at)} = {code};");
+                    return;
+                }
+                case SubscriptExpr sub when HasSourceItemSetter(sub.Target):
+                {
+                    string key = sub.Index is SliceExpr slice
+                        ? $"new global::Typhon.Runtime.PySlice({(slice.Lower == null ? "null" : EmitValue(slice.Lower))}, " +
+                          $"{(slice.Upper == null ? "null" : EmitValue(slice.Upper))}, {(slice.Step == null ? "null" : EmitValue(slice.Step))})"
+                        : EmitValue(sub.Index);
+                    string assigned = rawValue;
+                    if (assigned == null)
+                    {
+                        assigned = NewTmp("assigned");
+                        _w.Line($"object? {assigned} = {EmitValue(value)};");
+                    }
+                    _w.Line($"{Rt("__setitem")}((object?){Paren(EmitValue(sub.Target))}, (object?){Paren(key)}, {assigned});");
                     return;
                 }
                 case SubscriptExpr sub when sub.Index is SliceExpr sl:
@@ -606,10 +642,30 @@ namespace Typhon.Compiler.Emit
             }
         }
 
+        bool HasSourceItemSetter(Expr expression) =>
+            ClassKeyOfType(InferType(expression), out _) is string key &&
+            ClassDefOfKey(key) is ClassDef owner && DefinesInHierarchy(owner, "__setitem__");
+
+        string EmitFreshDynamicSet(Expr value)
+        {
+            if (value is CallExpr { Func: NameExpr { Id: "set" }, Args.Count: 1 } set && !IsShadowed("set") &&
+                set.Args[0] is { Name: null, Star: false, DoubleStar: false } arg &&
+                InferType(set) != "HashSet<dynamic>")
+                return $"{Rt("set")}({Rt("__iter_dyn")}((object?){Paren(EmitExpr(arg.Value))}))";
+            if (value is IfExpr conditional)
+            {
+                if (IsNone(conditional.OrElse) && EmitFreshDynamicSet(conditional.Body) is string body)
+                    return $"({Cond(conditional.Test)} ? {body} : null)";
+                if (IsNone(conditional.Body) && EmitFreshDynamicSet(conditional.OrElse) is string otherwise)
+                    return $"({Cond(conditional.Test)} ? null : {otherwise})";
+            }
+            return null;
+        }
+
         /// <summary>A call C# binds at run time (a late-bound argument or receiver): its C# type is dynamic.</summary>
         bool IsDynamicallyDispatched(Expr e) =>
             e is CallExpr c && (c.Args.Any(a => InferType(a.Value) == "dynamic" || IsDynamicallyDispatched(a.Value)) ||
-                InferType(c.Func) is "global::System.Type" or "System.Type" ||
+                InferType(c.Func) is "dynamic" or "global::System.Type" or "System.Type" ||
                 c.Func is AttributeExpr fa && (InferType(fa.Target) == "dynamic" || IsDynamicallyDispatched(fa.Target)) ||
                 IsLateRuntimeMethodCall(c, out _));
 
@@ -666,7 +722,8 @@ namespace Typhon.Compiler.Emit
         void EmitAugAssign(AugAssignStmt a)
         {
             if (a.Target is AttributeExpr member &&
-                (member.Target is NameExpr owner && IsClassArgument(owner.Id) || IsInstanceClassDefault(member)))
+                (member.Target is NameExpr owner && IsClassArgument(owner.Id) || IsInstanceClassDefault(member) ||
+                    !_m.IsGdScript && TypeObjectMember(member)))
             {
                 string receiver = NewTmp("receiver"), name = CsString(member.Name);
                 _w.Line($"object? {receiver} = {EmitExpr(member.Target)};");
@@ -700,6 +757,11 @@ namespace Typhon.Compiler.Emit
                 CollectImplicitFields(_cls.Def).TryGetValue(field.Name, out var declaration) && declaration.Key == null &&
                 IsNumeric(PyType(InferType(declaration.Value.Value))))
                 Obs.AddExternal(TypeInference.ClassKey(_m, _cls.Name) + "|" + field.Name, vt == "dynamic" ? "dynamic" : "double");
+            // Concatenation rebinds an immutable tuple to a different shape.
+            if (Obs != null && a.Op == "+" && a.Target is NameExpr tupleName &&
+                TupleElementTypes(tt) != null && (a.Value is TupleExpr || TupleElementTypes(vt) != null || vt == "dynamic" ||
+                    vt?.StartsWith(PyTuplePrefix) == true))
+                Obs.AddConflict(_scopeKey + "|" + tupleName.Id, "dynamic");
             // n += 0.5 / n /= 2 on an int variable: it becomes a float
             if (Obs != null && a.Target is NameExpr an && IsIntegral(tt) && tt != "bool" && (a.Op == "/" || vt == "double" && ArithmeticOps.Contains(a.Op)))
                 Obs.AddConflict(_scopeKey + "|" + an.Id, "double");
@@ -767,7 +829,7 @@ namespace Typhon.Compiler.Emit
                 if (a.Value != null)
                 {
                     if (at.Target is NameExpr owner && IsClassArgument(owner.Id) || IsInstanceClassDefault(at) ||
-                        !_m.IsGdScript && UsesExceptionAttribute(at)) EmitAssignTo(at, a.Value, a);
+                        !_m.IsGdScript && (UsesExceptionAttribute(at) || TypeObjectMember(at))) EmitAssignTo(at, a.Value, a);
                     else _w.Line($"{EmitExpr(at)} = {EmitExpr(a.Value, targetTyped: true)};");
                 }
                 return;

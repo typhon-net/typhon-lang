@@ -1,0 +1,18 @@
+class Readable:
+    def __getitem__(self, index):
+        return self.values[index]
+
+class Writable(Readable):
+    def __init__(self):
+        self.values = [1, 2]
+
+    def __setitem__(self, index, value):
+        self.values[index] = value
+
+    def swap(self):
+        self[0], self[1] = self[1], self[0]
+
+sequence = Writable()
+sequence.swap()
+sequence[0] = 3
+print(sequence[0], sequence[1])

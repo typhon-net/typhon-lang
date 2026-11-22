@@ -37,6 +37,12 @@ namespace Typhon.Runtime
         {
             BigInteger count = Index(length);
             if (count.Sign < 0) throw new ArgumentException("length should not be negative");
+            var (first, last, stride) = BigIndices(count);
+            return (PythonInteger(first), PythonInteger(last), PythonInteger(stride));
+        }
+
+        internal (BigInteger, BigInteger, BigInteger) BigIndices(BigInteger count)
+        {
             BigInteger stride = Stride();
             BigInteger lower = stride.Sign < 0 ? -1 : 0;
             BigInteger upper = stride.Sign < 0 ? count - 1 : count;
@@ -45,9 +51,8 @@ namespace Typhon.Runtime
                 var index = Index(value);
                 return BigInteger.Min(BigInteger.Max(index.Sign < 0 ? index + count : index, lower), upper);
             }
-            return (PythonInteger(start == null ? stride.Sign < 0 ? upper : lower : Bound(start)),
-                    PythonInteger(stop == null ? stride.Sign < 0 ? lower : upper : Bound(stop)),
-                    PythonInteger(stride));
+            return (start == null ? stride.Sign < 0 ? upper : lower : Bound(start),
+                    stop == null ? stride.Sign < 0 ? lower : upper : Bound(stop), stride);
         }
 
         static object PythonInteger(BigInteger value) => value >= long.MinValue && value <= long.MaxValue ? (object)(long)value : value;

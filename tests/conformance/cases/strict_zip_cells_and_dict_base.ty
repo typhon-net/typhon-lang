@@ -1,0 +1,37 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+from types import CellType
+
+
+def cells(value):
+    cell = CellType(value)
+    print(cell.cell_contents)
+    del cell.cell_contents
+    try:
+        print(cell.cell_contents)
+    except ValueError as error:
+        print(error)
+    cell.cell_contents = 'filled again'
+    print(cell.cell_contents)
+
+
+class Mapping(dict):
+    def __init__(self, source):
+        super().__init__(source)
+
+
+def copy_mapping(source):
+    return Mapping(source)
+
+
+cells(None)
+print(copy_mapping({'first': 1, 'second': 2}))
+print(copy_mapping([('x', 3), ('y', 4)]))
+print(list(zip('ab', [1, 2], strict=True)))
+print(list(zip('ab', [1], strict=False)))
+for left, right in (('ab', [1]), ('a', [1, 2])):
+    try:
+        print(list(zip(left, right, strict=1)))
+    except ValueError as error:
+        print(error)

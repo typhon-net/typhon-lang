@@ -71,8 +71,113 @@ namespace Typhon.Stdlib
             internal readonly PyBytes LocalKinds = localKinds;
             public readonly PyTuple<string> co_varnames = NamesWithKind(localNames, localKinds, 0x20);
             public readonly PyTuple<string> co_cellvars = NamesWithKind(localNames, localKinds, 0x40);
-            public readonly PyTuple<string> co_freevars = NamesWithKind(localNames, localKinds, 0x80);
+            public override PyTuple<string> co_freevars { get; } = NamesWithKind(localNames, localKinds, 0x80);
             public long co_nlocals => co_varnames.Count;
+
+            // CPython location table encoding
+            // https://github.com/python/cpython/blob/main/InternalDocs/code_objects.md#format-of-the-locations-table
+            readonly record struct Location(int Size, long? Line, long? EndLine, long? Column, long? EndColumn);
+            public PyBytes _co_code_adaptive => co_code;
+
+            public string _varname_from_oparg(long argument) =>
+                argument >= 0 && argument < LocalNames.Count ? (string)LocalNames[(int)argument]! :
+                throw new IndexOutOfRangeException("tuple index out of range");
+
+            IEnumerable<Location> Locations()
+            {
+                byte[] table = co_linetable.Data;
+                int index = 0;
+                long line = co_firstlineno;
+                while (index < table.Length)
+                {
+                    byte marker = table[index++];
+                    if ((marker & 128) == 0) throw BadLocations();
+                    int size = (marker & 7) + 1;
+                    int kind = (marker >> 3) & 15;
+                    if (kind < 10)
+                    {
+                        int columns = Payload(table, ref index);
+                        long column = kind * 8L + (columns >> 4);
+                        yield return new(size, line, line, column, column + (columns & 15));
+                    }
+                    else if (kind <= 12)
+                    {
+                        line += kind - 10;
+                        long column = Payload(table, ref index);
+                        long endColumn = Payload(table, ref index);
+                        yield return new(size, line, line, column, endColumn);
+                    }
+                    else if (kind == 15)
+                    {
+                        yield return new(size, null, null, null, null);
+                    }
+                    else
+                    {
+                        long delta = LocationNumber(table, ref index);
+                        line += (delta & 1) == 0 ? delta >> 1 : -(delta >> 1);
+                        if (kind == 13)
+                        {
+                            yield return new(size, line, line, null, null);
+                        }
+                        else
+                        {
+                            long endLine = line + LocationNumber(table, ref index);
+                            long column = LocationNumber(table, ref index);
+                            long endColumn = LocationNumber(table, ref index);
+                            yield return new(size, line, endLine, column == 0 ? null : column - 1,
+                                endColumn == 0 ? null : endColumn - 1);
+                        }
+                    }
+                }
+            }
+
+            static ArgumentException BadLocations() => new("bad marshal data (invalid code location table)");
+
+            static byte Payload(byte[] table, ref int index)
+            {
+                if (index >= table.Length || (table[index] & 128) != 0) throw BadLocations();
+                return table[index++];
+            }
+
+            static long LocationNumber(byte[] table, ref int index)
+            {
+                long result = 0;
+                for (int shift = 0; shift <= 30; shift += 6)
+                {
+                    byte part = Payload(table, ref index);
+                    long bits = part & 63;
+                    if (shift == 30 && bits > 3) throw BadLocations();
+                    result |= bits << shift;
+                    if ((part & 64) == 0) return result;
+                }
+                throw BadLocations();
+            }
+
+            public override IEnumerable<(long, long, long?)> co_lines()
+            {
+                long start = 0, end = 0;
+                long? line = null;
+                foreach (var location in Locations())
+                {
+                    if (location.Line != line && end > start)
+                    {
+                        yield return (start, end, line);
+                        start = end;
+                    }
+                    end += location.Size * 2L;
+                    line = location.Line;
+                }
+                if (end > start) yield return (start, end, line);
+            }
+
+            public override PyIterator<(long?, long?, long?, long?)> co_positions() => Builtins.iter(Positions());
+
+            IEnumerable<(long?, long?, long?, long?)> Positions()
+            {
+                foreach (var location in Locations())
+                    for (int instruction = 0; instruction < location.Size; instruction++)
+                        yield return (location.Line, location.EndLine, location.Column, location.EndColumn);
+            }
 
             static PyTuple<string> NamesWithKind(PyTuple<object?> names, PyBytes kinds, int mask)
             {

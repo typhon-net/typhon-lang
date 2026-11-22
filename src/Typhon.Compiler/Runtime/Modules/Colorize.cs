@@ -41,6 +41,8 @@ namespace Typhon.Stdlib
         {
             public global::Typhon.Stdlib.argparse.Theme argparse { get; }
             public PickletoolsTheme pickletools { get; }
+            public SyntaxTheme syntax { get; }
+            public TokenizeTheme tokenize { get; }
             public TimeitTheme timeit { get; }
             public TracebackTheme traceback { get; }
 
@@ -48,6 +50,8 @@ namespace Typhon.Stdlib
             {
                 argparse = color ? global::Typhon.Stdlib.argparse.Theme.Color : global::Typhon.Stdlib.argparse.Theme.Plain;
                 pickletools = new PickletoolsTheme(color);
+                syntax = new SyntaxTheme(color);
+                tokenize = new TokenizeTheme(color);
                 timeit = new TimeitTheme(color);
                 traceback = new TracebackTheme(color);
             }
@@ -85,6 +89,30 @@ namespace Typhon.Stdlib
             public string error_highlight => _color ? ANSIColors.BOLD_RED : "";
             public string error_range => _color ? ANSIColors.RED : "";
             public string reset => _color ? ANSIColors.RESET : "";
+        }
+
+        internal sealed class SyntaxTheme(bool color)
+        {
+            string Color(string code) => color ? code : "";
+            public string prompt => Color(ANSIColors.BOLD_MAGENTA);
+            public string keyword => Color(ANSIColors.BOLD_BLUE);
+            public string keyword_constant => keyword;
+            public string builtin => Color(ANSIColors.CYAN);
+            public string comment => Color(ANSIColors.RED);
+            public string @string => Color(ANSIColors.GREEN);
+            public string number => Color(ANSIColors.YELLOW);
+            public string op => reset;
+            public string definition => Color(ANSIColors.BOLD);
+            public string soft_keyword => keyword;
+            public string reset => Color(ANSIColors.RESET);
+        }
+
+        internal sealed class TokenizeTheme(bool color)
+        {
+            public string whitespace => color ? ANSIColors.GREY : "";
+            public string error => color ? ANSIColors.BOLD_RED : "";
+            public string position => whitespace;
+            public string delimiter => color ? ANSIColors.RESET : "";
         }
 
         internal sealed class TimeitTheme

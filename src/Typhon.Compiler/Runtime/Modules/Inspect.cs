@@ -11,7 +11,7 @@ namespace Typhon.Runtime
     internal enum PyCallableKind { Ordinary, Generator, Coroutine, AsyncGenerator }
 
     /// <summary>The original location of a compiled module or function, available without a debugger.</summary>
-    [AttributeUsage(AttributeTargets.Class | AttributeTargets.Method | AttributeTargets.Property, Inherited = false)]
+    [AttributeUsage(AttributeTargets.Class | AttributeTargets.Method | AttributeTargets.Property | AttributeTargets.Enum, Inherited = false)]
     internal sealed class PySourceAttribute : Attribute
     {
         internal string Filename { get; }
@@ -51,6 +51,8 @@ namespace Typhon.Stdlib
 
     internal static partial class inspect
     {
+        public const long CO_GENERATOR = 0x20, CO_COROUTINE = 0x80, CO_ASYNC_GENERATOR = 0x200;
+
         static readonly object Missing = new();
         static readonly ConditionalWeakTable<object, object> CoroutineMarkers = new();
         static readonly object Marker = new();

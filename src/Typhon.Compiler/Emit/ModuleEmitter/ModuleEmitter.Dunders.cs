@@ -99,7 +99,7 @@ namespace Typhon.Compiler.Emit
             _w.Line($"public OrderedDictionary<string, object?> _asdict() => new OrderedDictionary<string, object?> {{ {string.Join(", ", fs.Select(f => $"[{CsString(f)}] = {F(f)}"))} }};");
             _w.Line($"internal static readonly global::Typhon.Runtime.PyTuple<string> _fields = new global::Typhon.Runtime.PyTuple<string>(new string[] {{ {string.Join(", ", fs.Select(CsString))} }});");
             if (fs.Count > 0)
-                _w.Line($"public static {self} _make(global::System.Collections.IEnumerable __items) {{ var __l = global::System.Linq.Enumerable.ToList(global::System.Linq.Enumerable.Cast<object?>(__items)); if (__l.Count != {fs.Count}) throw new global::System.ArgumentException(\"Expected {fs.Count} arguments, got \" + __l.Count); return new {self}({allocation}{string.Join(", ", fs.Select((f, i) => $"({T(f)})(dynamic)__l[{i}]!"))}); }}");
+                _w.Line($"public static {self} _make(object? __items) {{ var __l = global::System.Linq.Enumerable.ToList(global::Typhon.Runtime.Builtins.__iter_dyn(__items)); if (__l.Count != {fs.Count}) throw new global::System.ArgumentException(\"Expected {fs.Count} arguments, got \" + __l.Count); return new {self}({allocation}{string.Join(", ", fs.Select((f, i) => $"({T(f)})(dynamic)__l[{i}]!"))}); }}");
         }
 
         bool LtComparesSelf(ClassDef c, ClassContext ctx)

@@ -1,0 +1,12 @@
+# typhon: int=bigint
+from _tokenize import TokenizerIter
+from io import StringIO
+
+NAME = 1
+names = {value: name for name, value in globals().items()
+         if name.isupper() and isinstance(value, int)}
+first = next(TokenizerIter(StringIO("test\n").readline, extra_tokens=True))
+def describe(item):
+    return names[item[0]]
+
+print(describe(first), names[1], len(names))

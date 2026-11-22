@@ -15,11 +15,22 @@ namespace Typhon.Compiler.Emit
     // Constructors: inherited ones, typed variants, and Python's two-phase construction (allocate, then __init__).
     internal sealed partial class ModuleEmitter
     {
+        IReadOnlyDictionary<string, string> _inheritedTypeBindings;
+
+        string MapInheritedType(Expr annotation, ClassDef owner, IReadOnlyDictionary<string, string> bindings, bool isReturn = false)
+        {
+            var previous = _inheritedTypeBindings;
+            _inheritedTypeBindings = bindings;
+            try { return MapType(annotation, owner, isReturn); }
+            finally { _inheritedTypeBindings = previous; }
+        }
+
         /// <summary>
         /// Python inherits __init__, C# does not inherit constructors: a class without __init__ gets one constructor per
         /// constructor of its base (the nearest Typhon __init__, or the .NET base's public/protected constructors).
         /// </summary>
-        void EmitInheritedConstructors(ClassContext ctx, List<Expr> bases, ClassDef baseOwner = null, int depth = 0)
+        void EmitInheritedConstructors(ClassContext ctx, List<Expr> bases, ClassDef baseOwner = null, int depth = 0,
+            IReadOnlyDictionary<string, string> bindings = null)
         {
             // a subclass of a two-phase class allocates through it too
             if (depth == 0 && NearestInitAncestor(ctx.Def) is ClassDef twoPhaseOwner && TwoPhaseClasses.Contains(twoPhaseOwner) && !ctx.NoInitDone)
@@ -34,11 +45,22 @@ namespace Typhon.Compiler.Emit
                 if (py != null)
                 {
                     if (IsProtocol(py)) continue;
+                    var parentBindings = new Dictionary<string, string>();
+                    if (b is SubscriptExpr genericBase && py.TypeParams.Count > 0)
+                    {
+                        var arguments = genericBase.Index is TupleExpr tuple ? tuple.Elts : new List<Expr> { genericBase.Index };
+                        for (int i = 0; i < Math.Min(arguments.Count, py.TypeParams.Count); i++)
+                            parentBindings[py.TypeParams[i].Name] = resolver.MapInheritedType(arguments[i], baseOwner ?? ctx.Def, bindings);
+                    }
+                    var parentResolver = ClassDeclarationResolver(py);
+                    string ParameterType(Param parameter) => parentBindings.Count > 0
+                        ? parentResolver.MapInheritedType(parameter.Annotation, py, parentBindings)
+                        : MapType(parameter.Annotation, py);
                     var init = py.Body.OfType<FunctionDef>().FirstOrDefault(f => f.Name == "__init__");
                     if (init == null)
                     {
                         if (HasDecorator(py.Decorators, "dataclass")) return;
-                        EmitInheritedConstructors(ctx, py.Bases, py, depth + 1);
+                        EmitInheritedConstructors(ctx, py.Bases, py, depth + 1, parentBindings);
                         return;
                     }
                     var initOwner = _p.DeclaringModule(py) ?? _m;
@@ -47,19 +69,18 @@ namespace Typhon.Compiler.Emit
                     {
                         foreach (var types in baseSigs)
                         {
-                            var tps = it.Params.Select((p, i) => $"{(types[i] == TypeInference.Declared ? MapType(p.Annotation, init) : types[i])} {Esc(p.Name)}").ToList();
+                            var tps = it.Params.Select((p, i) => $"{(types[i] == TypeInference.Declared ? ParameterType(p) : types[i])} {Esc(p.Name)}").ToList();
                             var defaults = new string[tps.Count];
                             for (int i = 0; i < tps.Count; i++)
                             {
                                 var p = it.Params[i];
-                                string pt = types[i] == TypeInference.Declared ? MapType(p.Annotation, init) : types[i];
+                                string pt = types[i] == TypeInference.Declared ? ParameterType(p) : types[i];
                                 if (p.Default == null) continue;
                                 if (!ClassDeclarationResolver(py).IsConstantDefault(p.Default))
                                 {
                                     if (p.Annotation != null || InferType(p.Default) == pt)
                                     {
-                                        tps[i] = $"{NullableOf(pt)} {Esc(p.Name)}";
-                                        defaults[i] = "null";
+                                        tps[i] = DefinitionDefaultParameter(pt, Esc(p.Name), out defaults[i]);
                                     }
                                     continue;
                                 }
@@ -88,14 +109,14 @@ namespace Typhon.Compiler.Emit
                     foreach (var p in init.Params.Skip(1))
                     {
                         if (p.Kind != ParamKind.Normal) return; // *args/**kwargs: no faithful C# mirror, write an __init__
-                        string type = p.Annotation != null ? MapType(p.Annotation, init) : "dynamic";
+                        string type = p.Annotation != null ? ParameterType(p) : "dynamic";
                         // (a late-bound parameter with a number/bool/str default: C# allows only null as a dynamic parameter's
                         // default, but honours [Optional, DefaultParameterValue(...)])
                         if (p.Default != null && !ClassDeclarationResolver(py).IsConstantDefault(p.Default))
                         {
                             // The base constructor already reads its captured definition-time default when omitted.
-                            ps.Add($"{NullableOf(type)} {Esc(p.Name)}");
-                            baseDefaults.Add("null");
+                            ps.Add(DefinitionDefaultParameter(type, Esc(p.Name), out var omitted));
+                            baseDefaults.Add(omitted);
                         }
                         else if (p.Default != null && (type == "dynamic" || type == "object") && !IsNone(p.Default))
                         {
@@ -337,11 +358,14 @@ namespace Typhon.Compiler.Emit
             }
             if (superArgs != null)
             {
+                bool copyDictionary = bases[0] is NameExpr { Id: "dict" } && !IsShadowed("dict") &&
+                    superArgs.Count == 1 && superArgs[0] is Arg { Name: null, Star: false, DoubleStar: false };
                 var saved = _scope; _scope = sig.Scope;
                 var savedBaseArguments = _baseInitializerArguments;
                 _baseInitializerArguments = sig.DefaultArguments;
                 var baseInit = NearestInitAncestor(ctx.Def)?.Body.OfType<FunctionDef>().FirstOrDefault(fd => fd.Name == "__init__");
                 string kwBase = superArgs.Any(x => x.Name != null || x.DoubleStar) ? KwargsCallArgs(baseInit, 1, superArgs, constructorInitializer: true) : null;
+                if (copyDictionary) kwBase = $"{Rt("dict")}((object?){Paren(EmitValue(superArgs[0].Value))})";
                 // CLR constructor initializers require static binding even when a Python argument is dynamic.
                 bool NeedsStaticBinding(Arg arg) => IsDynamicallyDispatched(arg.Value) ||
                     arg.Value is CallExpr && IsUnknownType(InferType(arg.Value)) || InferType(arg.Value) == "dynamic";
