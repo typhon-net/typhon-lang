@@ -309,6 +309,12 @@ namespace Typhon.Runtime
             return s;
         }
     }
+    internal sealed class _IncompleteInputError : SyntaxError
+    {
+        public _IncompleteInputError(string message) : base(message) { }
+        public _IncompleteInputError(object? message, object? details) : base(message, details) { }
+    }
+
     internal class IndentationError : SyntaxError
     {
         public IndentationError() : base() { }
@@ -496,7 +502,7 @@ namespace Typhon.Runtime
         /// <summary>A character as the codec messages show it: '\xe9', '€', '\U0001f600'.</summary>
         protected static string CharRepr(string s, long i)
         {
-            int cp = char.ConvertToUtf32(s, (int)i);
+            int cp = Rune.TryGetRuneAt(s, (int)i, out Rune rune) ? rune.Value : s[(int)i];
             return cp < 0x100 ? $"'\\x{cp:x2}'" : cp < 0x10000 ? $"'\\u{cp:x4}'" : $"'\\U{cp:x8}'";
         }
     }

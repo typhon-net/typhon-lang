@@ -1,0 +1,17 @@
+from collections import namedtuple
+
+_Point = namedtuple("_Point", "x y")
+
+class Point(_Point):
+    pass
+
+Point.x.__doc__ = "horizontal coordinate"
+p = Point(4, 6)
+print(Point.x.__doc__, p.x)
+print(Point.x is _Point.x, getattr(Point, "x") is Point.x)
+print(Point.x.__get__(p, Point), Point.x.__get__((8, 9), tuple))
+print(vars(_Point)["x"] is Point.x)
+try:
+    Point.x.__set__(p, 11)
+except AttributeError:
+    print("read only")

@@ -1,0 +1,14 @@
+from collections import namedtuple
+
+_Base = namedtuple("_Base", "x y")
+
+class Point(_Base):
+    def __new__(cls, x, y, *, label="default"):
+        point = super().__new__(cls, x, y)
+        point.label = label
+        return point
+
+point = Point(4, 5, label="new")
+print(point.x, point.y, point.label)
+print(Point(2, 3).label)
+print(tuple(point))

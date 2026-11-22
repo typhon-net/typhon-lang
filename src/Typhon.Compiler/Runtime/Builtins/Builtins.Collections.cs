@@ -297,6 +297,12 @@ namespace Typhon.Runtime
         public static T pop<T>(this HashSet<T> s) { if (s.Count == 0) throw new KeyNotFoundException("pop from an empty set"); var x = s.First(); s.Remove(x); return x; }
         public static HashSet<T> copy<T>(this HashSet<T> s) => new HashSet<T>(s);
         public static void update<T>(this HashSet<T> s, params IEnumerable<T>[] others) { foreach (var o in others) s.UnionWith(o); }
+        public static void __set_update<T>(HashSet<T> set, params object?[] values)
+        {
+            foreach (var iterable in values)
+                foreach (var value in __iter_dyn(iterable))
+                    set.Add((T)value);
+        }
         public static void difference_update<T>(this HashSet<T> s, params IEnumerable<T>[] others) { foreach (var o in others) s.ExceptWith(o); }
         public static void intersection_update<T>(this HashSet<T> s, params IEnumerable<T>[] others) { foreach (var o in others) s.IntersectWith(o); }
         public static void symmetric_difference_update<T>(this HashSet<T> s, IEnumerable<T> other) => s.SymmetricExceptWith(other);

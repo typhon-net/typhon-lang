@@ -89,7 +89,7 @@ namespace Typhon.Compiler.Emit
         System.Text.RegularExpressions.Regex _internalClassNames;
         System.Text.RegularExpressions.Regex BuildInternalClassNames()
         {
-            var names = AllClasses().Where(c => Visibility(c.Name, topLevel: true) != "public" || DerivesFromRuntime(c)).Select(c => c.Name).Distinct().ToList();
+            var names = AllClasses().Where(c => Visibility(c.Name, topLevel: true) != "public" || DerivesFromInternalClass(c)).Select(c => c.Name).Distinct().ToList();
             // a type position: after a dot, a bracket, a comma or the start, followed by a non-identifier character or the end
             return names.Count == 0 ? new System.Text.RegularExpressions.Regex("(?!)")
                 : new System.Text.RegularExpressions.Regex(@"(^|[.<(,\s])(" + string.Join("|", names.Select(System.Text.RegularExpressions.Regex.Escape)) + @")(?=[>),?\[\s]|$)");
@@ -302,6 +302,9 @@ namespace Typhon.Compiler.Emit
             sig.AsyncForm = sig.IsGenerator && !f.IsAsync && GeneratorNeedsAsyncForm(f.Body);
             sig.ReceivesValues = sig.IsGenerator && !f.IsAsync && (sig.AsyncForm || GeneratorReceivesValues(f.Body));
             var scope = new Scope { Locals = locals, IsGenerator = sig.IsGenerator, IsAsync = f.IsAsync, Parent = _scope, ReceivesValues = sig.ReceivesValues, AsyncForm = sig.AsyncForm };
+            string qualifier = _scope?.FunctionQualName is string enclosing ? enclosing + ".<locals>." :
+                _cls != null ? _cls.Name + "." : "";
+            scope.FunctionQualName = qualifier + (f.PyName ?? f.Name);
             sig.Scope = scope;
 
             var ps = new List<string>();
@@ -319,7 +322,7 @@ namespace Typhon.Compiler.Emit
                 if (p.Kind == ParamKind.KwArgs)
                 {
                     // **kwargs: the extra keyword arguments as a dict (call sites pass it by name; omitted, it is empty)
-                    ps.Add($"OrderedDictionary<string, dynamic>? {Esc(p.Name)}");
+                    ps.Add($"[global::Typhon.Runtime.PyKeywordArguments] OrderedDictionary<string, dynamic>? {Esc(p.Name)}");
                     defaults.Add("null");
                     scope.Types[p.Name] = "OrderedDictionary<string, dynamic>";
                     sig.Prologue.Add($"{Esc(p.Name)} ??= new OrderedDictionary<string, dynamic>();");
@@ -504,11 +507,13 @@ namespace Typhon.Compiler.Emit
             return false;
         }
 
-        /// <summary>Does the body (outside nested functions) contain 'return None'?</summary>
-        static bool ReturnsNone(List<Stmt> body) => AstWalker.ContainsOutsideNestedScopes(body, n => n is ReturnStmt r && r.Value is ConstExpr c && c.Kind == ConstKind.None);
+        /// <summary>Does the body (outside nested functions) return None explicitly or with a bare return?</summary>
+        static bool ReturnsNone(List<Stmt> body) => AstWalker.ContainsOutsideNestedScopes(body,
+            n => n is ReturnStmt { Value: null or ConstExpr { Kind: ConstKind.None } });
 
         void EmitFunction(FunctionDef f, bool isModuleLevel)
         {
+            if (!_m.IsGdScript) EmitSignatureProvider(f);
             var t = isModuleLevel ? TargetOf(_m, null, f.Name) : null;
             if (t != null && t.InferParams && Ti.Signatures.TryGetValue(t.Key, out var sigs))
             {
@@ -541,6 +546,7 @@ namespace Typhon.Compiler.Emit
                     ? CsString(text.Str) : "null";
                 string kind = f.IsAsync ? (sig.IsGenerator ? "AsyncGenerator" : "Coroutine") : sig.IsGenerator ? "Generator" : "Ordinary";
                 _w.Line($"[global::Typhon.Runtime.PySource({CsString(_path)}, {CsString(PythonModuleName)}, global::Typhon.Runtime.PyCallableKind.{kind}, doc: {doc}, line: {f.Line})]");
+                EmitSignatureAttribute(f);
             }
             EmitAttributes(f.Decorators);
             string vis = SurfaceVisibility(Visibility(f.Name, topLevel: true), sig.ReturnType, sig.Params);
@@ -596,6 +602,16 @@ namespace Typhon.Compiler.Emit
             _lambdaLocals.Clear();
             scope.Parent = saved;
             scope.Locals = locals ?? LocalsAnalyzer.Analyze(body, scope.Params, excluded);
+            if (scope.Locals.LocalFunctions.Count > 0)
+            {
+                var callees = new HashSet<Expr>();
+                AstWalker.VisitAll(body, node =>
+                {
+                    if (node is CallExpr call) callees.Add(call.Func);
+                    if (node is NameExpr name && scope.Locals.LocalFunctions.Contains(name.Id) && !callees.Contains(name))
+                        scope.LocalFunctionObjects[name.Id] = null;
+                });
+            }
             _scope = scope;
             // locals that only ever hold non-negative ints index without the count-from-the-end check; names this body binds
             // shadow the enclosing function's
@@ -624,7 +640,7 @@ namespace Typhon.Compiler.Emit
                         type = EmptyContainerType(_scopeKey + "|" + h.Key, kind, fv);
                     }
                     // what the assignments in the body give it (whole-program inference: the names they use exist there)
-                    else if (Ti != null && Ti.Hoisted.TryGetValue(_scopeKey + "|" + h.Key, out var hoistedType) && hoistedType != "dynamic" &&
+                    else if (Ti != null && Ti.Hoisted.TryGetValue(_scopeKey + "|" + h.Key, out var hoistedType) &&
                              scope.Locals.HoistedPlain.Contains(h.Key))
                     { type = hoistedType; observed = true; }
                     else type = PyType(fv != null ? InferType(fv) : LoopVariableType(scope.Locals, h.Key));
@@ -689,16 +705,23 @@ namespace Typhon.Compiler.Emit
             var sig = BuildSignature(f, dropFirst: false);
             sig.Scope.HasSelf = false;
             bool shadowsParameter = _scope != null && _scope.Params.Contains(f.Name) && IsUnknownType(KnownTypeCore(f.Name));
-            string name = shadowsParameter ? NewTmp("fn") : Esc(f.Name);
-            if (!shadowsParameter)
+            bool bindsLocal = shadowsParameter || _scope?.Locals?.AllLocals.Contains(f.Name) == true;
+            string name = bindsLocal ? NewTmp("fn") : Esc(f.Name);
+            if (!bindsLocal)
             {
                 if (!f.IsAsync && !sig.IsGenerator) _funcReturnTypes[f.Name] = sig.ReturnType;
                 _localFunctionSigs[f.Name] = (f, sig);
+                if (f.TypeParams.Count == 0 && _scope != null && _scope.LocalFunctionObjects.ContainsKey(f.Name))
+                {
+                    string value = NewTmp("closure");
+                    _scope.LocalFunctionObjects[f.Name] = value;
+                    _w.Line($"var {value} = {ClosureCode(f, sig, name, null)};");
+                }
             }
             string asyncKw = f.IsAsync ? "async " : "";
             _w.Line($"{asyncKw}{sig.ReturnType} {name}{TypeParamList(f.TypeParams)}({sig.Params}){TypeParamConstraints(f.TypeParams, f)}");
             EmitSignatureBody(f.Body, sig);
-            if (shadowsParameter) _w.Line($"{EmitName(new NameExpr { Id = f.Name })} = {ClosureCode(f, sig, name, null)};");
+            if (bindsLocal) _w.Line($"{EmitName(new NameExpr { Id = f.Name })} = {ClosureCode(f, sig, name, null)};");
             foreach (var tp in f.TypeParams) _currentFuncTypeParams.Remove(tp.Name);
             _retKey = savedRet;
         }

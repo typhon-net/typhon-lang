@@ -27,7 +27,14 @@ namespace Typhon.Compiler.Syntax
     {
         public int Line { get; }
         public int Col { get; }
-        public SyntaxError(string message, int line, int col) : base(message) { Line = line; Col = col; }
+        public bool AtEndOfInput { get; }
+        public bool NeedsMoreInput { get; }
+        public bool IsIndentationError { get; }
+        public SyntaxError(string message, int line, int col, bool atEndOfInput = false, bool needsMoreInput = false, bool isIndentationError = false) : base(message)
+        {
+            Line = line; Col = col;
+            AtEndOfInput = atEndOfInput; NeedsMoreInput = needsMoreInput; IsIndentationError = isIndentationError;
+        }
     }
 
     /// <summary>Python-style tokenizer with INDENT/DEDENT and implicit line joining.</summary>
@@ -36,7 +43,7 @@ namespace Typhon.Compiler.Syntax
         static readonly string[] Ops =
         {
             "**=", "//=", ">>=", "<<=", "...",
-            "->", "**", "//", "<<", ">>", "<=", ">=", "==", "!=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "@=", ":=",
+            "->", "**", "//", "<<", ">>", "<=", ">=", "==", "!=", "<>", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "@=", ":=",
             "+", "-", "*", "/", "%", "@", "&", "|", "^", "~", "<", ">", "(", ")", "[", "]", "{", "}", ",", ":", ".", ";", "=",
         };
 
@@ -46,6 +53,7 @@ namespace Typhon.Compiler.Syntax
         int _line = 1;
         int _lineStart;
         int _parenDepth;
+        public bool HasOpenGrouping => _parenDepth > 0;
         readonly List<int> _indents = new List<int> { 0 };
         readonly List<Token> _tokens = new List<Token>();
 
@@ -79,7 +87,11 @@ namespace Typhon.Compiler.Syntax
                 }
                 if (c == ' ' || c == '\t' || c == '\f') { _pos++; continue; }
                 if (c == '#') { while (_pos < _src.Length && _src[_pos] != '\n') _pos++; continue; }
-                if (c == '\\' && _pos + 1 < _src.Length && _src[_pos + 1] == '\n') { _pos += 2; NewLine(); continue; }
+                if (c == '\\' && _pos + 1 < _src.Length && _src[_pos + 1] == '\n')
+                {
+                    ContinueLine();
+                    continue;
+                }
 
                 if (IsIdentStart(c))
                 {
@@ -120,6 +132,13 @@ namespace Typhon.Compiler.Syntax
 
         void NewLine() { _line++; _lineStart = _pos; }
 
+        void ContinueLine()
+        {
+            _pos += 2;
+            NewLine();
+            if (_pos == _src.Length) throw Error("unexpected end of input after line continuation", needsMoreInput: true);
+        }
+
         /// <summary>Measures indentation of the next logical line, skipping blank/comment lines. Returns false at EOF.</summary>
         bool HandleIndentation()
         {
@@ -135,7 +154,7 @@ namespace Typhon.Compiler.Syntax
                 if (p >= _src.Length) { _pos = p; return false; }
                 if (_src[p] == '\n') { _pos = p + 1; NewLine(); continue; }
                 if (_src[p] == '#') { while (p < _src.Length && _src[p] != '\n') p++; _pos = p; continue; }
-                if (_src[p] == '\\' && p + 1 < _src.Length && _src[p + 1] == '\n') { _pos = p + 2; NewLine(); continue; }
+                if (_src[p] == '\\' && p + 1 < _src.Length && _src[p + 1] == '\n') { _pos = p; ContinueLine(); continue; }
 
                 _pos = p;
                 int current = _indents[_indents.Count - 1];
@@ -151,7 +170,7 @@ namespace Typhon.Compiler.Syntax
                         _indents.RemoveAt(_indents.Count - 1);
                         Add(TokenKind.Dedent, "", p, p);
                     }
-                    if (width != _indents[_indents.Count - 1]) throw Error("unindent does not match any outer indentation level");
+                    if (width != _indents[_indents.Count - 1]) throw Error("unindent does not match any outer indentation level", isIndentationError: true);
                 }
                 return true;
             }
@@ -206,7 +225,7 @@ namespace Typhon.Compiler.Syntax
             int depth = 0;
             while (true)
             {
-                if (_pos >= _src.Length) throw new SyntaxError("unterminated string literal", startLine + _lineOffset, startCol);
+                if (_pos >= _src.Length) throw new SyntaxError("unterminated string literal", startLine + _lineOffset, startCol, atEndOfInput: true, needsMoreInput: triple);
                 char c = _src[_pos];
                 if (formatted)
                 {
@@ -291,7 +310,8 @@ namespace Typhon.Compiler.Syntax
             _tokens.Add(new Token { Kind = kind, Text = text, Line = _line + _lineOffset, Col = start - _lineStart + 1, Pos = start, EndPos = end });
         }
 
-        SyntaxError Error(string msg) => new SyntaxError(msg, _line + _lineOffset, _pos - _lineStart + 1);
+        SyntaxError Error(string msg, bool needsMoreInput = false, bool isIndentationError = false) =>
+            new SyntaxError(msg, _line + _lineOffset, _pos - _lineStart + 1, _pos == _src.Length, needsMoreInput, isIndentationError);
 
         static bool IsIdentStart(char c) => char.IsLetter(c) || c == '_';
         static bool IsIdentPart(char c) => char.IsLetterOrDigit(c) || c == '_';

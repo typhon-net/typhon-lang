@@ -101,6 +101,47 @@ namespace Typhon.Stdlib
         }
 
         /// <summary>A compiled pattern (re.Pattern).</summary>
+        // Python indexes code points. Store only surrogate pairs so matches over the same subject
+        // can share the translation between Python offsets and .NET's UTF-16 offsets.
+        internal readonly struct MatchOffsets
+        {
+            readonly List<int>? _pairs;
+            public int Length { get; }
+
+            public MatchOffsets(string text)
+            {
+                List<int>? pairs = null;
+                for (int i = 0; i < text.Length;)
+                {
+                    int next = text.AsSpan(i).IndexOfAnyInRange('\uD800', '\uDBFF');
+                    if (next < 0) break;
+                    i += next;
+                    if (char.IsSurrogatePair(text, i)) { (pairs ??= new List<int>()).Add(i); i++; }
+                    i++;
+                }
+                _pairs = pairs;
+                Length = text.Length - (pairs?.Count ?? 0);
+            }
+
+            public int ToCodeUnit(int index) => index + CountPairsBefore(index, codePoints: true);
+            public int ToCodePoint(int index) => index - CountPairsBefore(index, codePoints: false);
+            public bool IsBoundary(int index) => _pairs == null || _pairs.BinarySearch(index - 1) < 0;
+
+            int CountPairsBefore(int index, bool codePoints)
+            {
+                if (_pairs == null) return 0;
+                int start = 0, end = _pairs.Count;
+                while (start < end)
+                {
+                    int middle = start + (end - start) / 2;
+                    int pair = _pairs[middle] - (codePoints ? middle : 0);
+                    if (pair < index) start = middle + 1;
+                    else end = middle;
+                }
+                return start;
+            }
+        }
+
         internal sealed class Pattern : IPyRepr
         {
             public readonly string pattern;
@@ -144,36 +185,40 @@ namespace Typhon.Stdlib
             NetRegex Anchored => _anchored ??= new NetRegex(@"\G(?:" + _translated + ")", _options);
             NetRegex Full => _full ??= new NetRegex(@"\G(?:" + _translated + @")\z", _options);
 
-            static string Window(string s, long? endpos) => endpos is long e && e < s.Length ? s.Substring(0, (int)Math.Max(0, e)) : s;
-            static int Start(string s, long pos) => (int)Math.Clamp(pos, 0, s.Length);
+            static string Window(string s, MatchOffsets offsets, long? endpos) =>
+                endpos is long end && end < offsets.Length ? s[..offsets.ToCodeUnit((int)Math.Max(0, end))] : s;
+            static int Start(MatchOffsets offsets, long pos) => offsets.ToCodeUnit((int)Math.Clamp(pos, 0, offsets.Length));
 
-            Match? Wrap(NetMatch m, string s, long pos, long? endpos) => m.Success ? new Match(m, this, s, pos, endpos ?? s.Length) : null;
-
-            public Match? search(string @string, long pos = 0, long? endpos = null)
+            Match? Find(NetRegex regex, string s, long pos, long? endpos)
             {
-                var w = Window(@string, endpos);
-                return Wrap(_search.Match(w, Math.Min(Start(@string, pos), w.Length)), @string, pos, endpos);
-            }
-            public Match? match(string @string, long pos = 0, long? endpos = null)
-            {
-                var w = Window(@string, endpos);
-                return Wrap(Anchored.Match(w, Math.Min(Start(@string, pos), w.Length)), @string, pos, endpos);
-            }
-            public Match? fullmatch(string @string, long pos = 0, long? endpos = null)
-            {
-                var w = Window(@string, endpos);
-                return Wrap(Full.Match(w, Math.Min(Start(@string, pos), w.Length)), @string, pos, endpos);
+                var offsets = new MatchOffsets(s);
+                var window = Window(s, offsets, endpos);
+                int start = Start(offsets, pos);
+                if (start > window.Length) return null;
+                var match = regex.Match(window, start);
+                return match.Success ? new Match(match, this, s, pos, endpos, offsets) : null;
             }
 
-            IEnumerable<NetMatch> All(string s, long pos, long? endpos)
+            public Match? search(string @string, long pos = 0, long? endpos = null) => Find(_search, @string, pos, endpos);
+            public Match? match(string @string, long pos = 0, long? endpos = null) => Find(Anchored, @string, pos, endpos);
+            public Match? fullmatch(string @string, long pos = 0, long? endpos = null) => Find(Full, @string, pos, endpos);
+
+            IEnumerable<NetMatch> All(string s, long pos, long? endpos) => All(s, pos, endpos, new MatchOffsets(s));
+
+            IEnumerable<NetMatch> All(string s, long pos, long? endpos, MatchOffsets offsets)
             {
-                var w = Window(s, endpos);
-                for (var m = _search.Match(w, Math.Min(Start(s, pos), w.Length)); m.Success; m = m.NextMatch()) yield return m;
+                var window = Window(s, offsets, endpos);
+                int start = Start(offsets, pos);
+                if (start > window.Length) yield break;
+                // After an empty match .NET advances one code unit. Skip positions inside a surrogate pair.
+                for (var m = _search.Match(window, start); m.Success; m = m.NextMatch())
+                    if (m.Length != 0 || offsets.IsBoundary(m.Index)) yield return m;
             }
 
             public IEnumerable<Match> finditer(string @string, long pos = 0, long? endpos = null)
             {
-                foreach (var m in All(@string, pos, endpos)) yield return new Match(m, this, @string, pos, endpos ?? @string.Length);
+                var offsets = new MatchOffsets(@string);
+                foreach (var m in All(@string, pos, endpos, offsets)) yield return new Match(m, this, @string, pos, endpos, offsets);
             }
 
             /// <summary>findall: the matches (no group), group 1 (one group), or tuples of all groups ('' for one that did not take part).</summary>
@@ -206,11 +251,12 @@ namespace Typhon.Stdlib
             {
                 var sb = new StringBuilder();
                 int last = 0; long n = 0;
-                foreach (var m in All(s, 0, null))
+                var offsets = new MatchOffsets(s);
+                foreach (var m in All(s, 0, null, offsets))
                 {
                     if (count > 0 && n >= count) break;
                     sb.Append(s, last, m.Index - last);
-                    sb.Append(repl(new Match(m, this, s, 0, s.Length)));
+                    sb.Append(repl(new Match(m, this, s, 0, null, offsets)));
                     last = m.Index + m.Length;
                     n++;
                 }
@@ -311,11 +357,20 @@ namespace Typhon.Stdlib
         internal sealed class Match : IPyRepr
         {
             readonly NetMatch _m;
+            readonly MatchOffsets _offsets;
             public readonly Pattern re;
             public readonly string @string;
             public readonly long pos, endpos;
 
-            internal Match(NetMatch m, Pattern re, string s, long pos, long endpos) { _m = m; this.re = re; @string = s; this.pos = pos; this.endpos = endpos; }
+            internal Match(NetMatch m, Pattern re, string s, long pos, long? endpos, MatchOffsets offsets)
+            {
+                _m = m;
+                _offsets = offsets;
+                this.re = re;
+                @string = s;
+                this.pos = Math.Clamp(pos, 0, offsets.Length);
+                this.endpos = Math.Clamp(endpos ?? offsets.Length, 0, offsets.Length);
+            }
 
             int Index(object? g)
             {
@@ -346,8 +401,8 @@ namespace Typhon.Stdlib
                 return d;
             }
 
-            public long start(object? g = null) { var gr = G(g); return gr.Success ? gr.Index : -1; }
-            public long end(object? g = null) { var gr = G(g); return gr.Success ? gr.Index + gr.Length : -1; }
+            public long start(object? g = null) { var gr = G(g); return gr.Success ? _offsets.ToCodePoint(gr.Index) : -1; }
+            public long end(object? g = null) { var gr = G(g); return gr.Success ? _offsets.ToCodePoint(gr.Index + gr.Length) : -1; }
             public (long, long) span(object? g = null) => (start(g), end(g));
 
             /// <summary>The number of the last group that matched (the one that closed last), or None.</summary>
@@ -436,6 +491,10 @@ namespace Typhon.Stdlib
             }
         }
 
+        // A dot consumes one code point. The atomic group cannot split a pair during backtracking.
+        // Keep .NET's dot for other characters so it obeys global and inline single-line flags.
+        const string UnicodeDot = @"(?>[\uD800-\uDBFF][\uDC00-\uDFFF]|(?![\uD800-\uDBFF][\uDC00-\uDFFF]|(?<=[\uD800-\uDBFF])[\uDC00-\uDFFF]).)";
+
         /// <summary>
         /// Python regex syntax → .NET's. Named groups become plain numbered groups (the names kept on the side), so every
         /// group has its Python number: .NET would number named groups after all unnamed ones.
@@ -507,6 +566,9 @@ namespace Typhon.Stdlib
                 }
                 switch (c)
                 {
+                    case '.' when !binary:
+                        sb.Append(UnicodeDot);
+                        break;
                     case '[':
                         inClass = true;
                         sb.Append('[');
@@ -516,7 +578,16 @@ namespace Typhon.Stdlib
                     case '(':
                         if (i + 1 < p.Length && p[i + 1] == '?')
                         {
-                            if (i + 2 < p.Length && p[i + 2] == 'P' && i + 3 < p.Length && p[i + 3] == '<')
+                            if (i + 2 < p.Length && p[i + 2] == '#')
+                            {
+                                int close = i + 3;
+                                while (close < p.Length && p[close] != ')')
+                                    close += p[close] == '\\' && close + 1 < p.Length ? 2 : 1;
+                                if (close == p.Length) throw new error("missing ), unterminated comment", p, i);
+                                sb.Append("(?#)");
+                                i = close;
+                            }
+                            else if (i + 2 < p.Length && p[i + 2] == 'P' && i + 3 < p.Length && p[i + 3] == '<')
                             {
                                 int close = p.IndexOf('>', i + 4);
                                 if (close < 0) throw new error("missing >, unterminated name", p, i);
@@ -552,7 +623,7 @@ namespace Typhon.Stdlib
                                 else sb.Append(k.Length > 0 ? "(?" + k + ")" : "(?:)");
                                 i = j;
                             }
-                            else sb.Append('('); // (?: (?= (?! (?<= (?<! (?> (?#
+                            else sb.Append('('); // (?: (?= (?! (?<= (?<! (?>
                         }
                         else { groupCount++; sb.Append('('); }
                         break;

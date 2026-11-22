@@ -1,0 +1,11 @@
+from typing import Any
+
+def count(value: Any) -> int:
+    return len(value)
+
+def describe(value: object) -> str:
+    return type(value).__name__
+
+print(count([]), count({}), count(set()))
+print(count(value=list()), count(value=dict()), count(value=set()))
+print(describe([]), describe(value={}), describe(set()))

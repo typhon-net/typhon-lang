@@ -322,8 +322,9 @@ namespace Typhon.Stdlib
         internal class code : IPyRepr
         {
             public readonly string co_name, co_qualname, co_filename;
-            public readonly long co_firstlineno;
-            public code(string name, string file, long line) { co_name = name; co_qualname = name; co_filename = file; co_firstlineno = line; }
+            public readonly long co_firstlineno, co_flags;
+            public code(string name, string file, long line, long flags = 0)
+            { co_name = name; co_qualname = name; co_filename = file; co_firstlineno = line; co_flags = flags; }
             public string __repr__() => $"<code object {co_name} at 0x{System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(this):x}, file {Builtins.repr(co_filename)}, line {co_firstlineno}>";
             public override string ToString() => __repr__();
         }
@@ -357,8 +358,15 @@ namespace Typhon.Runtime
             __dict__ = new PyAttrDict(this);
         }
         static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, PyModule> _of = new();
+        static readonly Type NativePathModule = OperatingSystem.IsWindows() ? typeof(Typhon.Stdlib.ntpath) : typeof(Typhon.Stdlib.posixpath);
         /// <summary>A standard module used as a value (hasattr(os, "sep")): one object per module, like sys.modules' entry.</summary>
-        public static PyModule Of(Type type, string name) => _of.GetOrAdd(type, t => new PyModule(name, t));
+        public static PyModule Of(Type type, string name)
+        {
+            // os.path is the native path module, including its filesystem operations.
+            if (type == NativePathModule || type == typeof(Typhon.Stdlib.os_.path))
+                return _of.GetOrAdd(typeof(Typhon.Stdlib.os_.path), t => new PyModule(NativePathModule.Name, t));
+            return _of.GetOrAdd(type, t => new PyModule(name, t));
+        }
         public string? __file__ => _source?.Filename;
         public string? __doc__ => _source?.DocString;
         public PyAttrDict __dict__ { get; }
@@ -381,6 +389,7 @@ namespace Typhon.Runtime
             }
             result = null;
             if (_type == null || !IsModuleName(name)) return false;
+            if (_type == typeof(Typhon.Stdlib.os_) && name == "path") { result = Typhon.Stdlib.os_.__path_module__; return true; }
             if (_type.GetField(name, Members) is FieldInfo f) { result = f.GetValue(null); return true; }
             if (_type.GetProperty(name, Members) is PropertyInfo p && p.GetIndexParameters().Length == 0) { result = p.GetValue(null); return true; }
             if (_type.GetNestedType(name, BindingFlags.Public | BindingFlags.NonPublic) is Type nested) { result = nested; return true; }

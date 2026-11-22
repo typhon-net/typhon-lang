@@ -1,0 +1,90 @@
+from inspect import signature
+
+shared: list[int] = []
+
+def example(a: int, /, b=shared, *, c: str = "x", **rest) -> int:
+    return a
+
+class Demo:
+    def __init__(self, value: int = 4):
+        self.value = value
+
+    def method(self, item, /, *args, detail=None, **kw):
+        pass
+
+    @staticmethod
+    def static(value=7):
+        pass
+
+    @classmethod
+    def class_method(cls, value=8):
+        pass
+
+sig = signature(example)
+print(sig)
+print(sig.parameters["b"].default is shared)
+print(int(sig.parameters["a"].kind), int(sig.parameters["c"].kind))
+print(signature(Demo.method))
+print(signature(Demo().method))
+print(signature(Demo.static))
+print(signature(Demo.class_method))
+print(signature(Demo))
+
+from inspect import Parameter, Signature
+
+class Derived(Demo):
+    pass
+
+class WithProperty:
+    @property
+    def value(self) -> int:
+        return 7
+
+    @value.setter
+    def value(self, changed: int):
+        pass
+
+class Callable:
+    def __call__(self, value: int = 12):
+        return value
+
+def outer():
+    captured = []
+    def inner(value=captured, *, flag=None) -> "Callable":
+        pass
+    return inner
+
+def wrapper(*args, **kwargs):
+    pass
+
+setattr(wrapper, "__wrapped__", example)
+print(signature(wrapper))
+print(signature(wrapper, follow_wrapped=False))
+print(signature(Derived))
+print(signature(Callable()))
+print(signature(WithProperty.value.fget))
+print(signature(WithProperty.value.fset))
+print(signature(outer()))
+print(sig.parameters["a"].default is Parameter.empty, sig.return_annotation is int)
+print(signature(Demo.method).return_annotation is Signature.empty)
+def empty():
+    pass
+
+print(bool(signature(outer()).parameters), bool(signature(empty).parameters))
+try:
+    signature(42)
+except TypeError:
+    print("not callable")
+
+import bisect
+from bisect import bisect_left
+
+def find_right(xs, value, lookup=bisect.bisect):
+    return lookup(xs, value)
+
+def find_left(xs, value, lookup=bisect_left):
+    return lookup(xs, value)
+
+right_lookup = signature(find_right).parameters["lookup"].default
+left_lookup = signature(find_left).parameters["lookup"].default
+print(right_lookup([1, 2, 2, 3], 2), left_lookup([1, 2, 2, 3], 2))

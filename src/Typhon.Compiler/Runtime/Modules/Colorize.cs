@@ -33,6 +33,30 @@ namespace Typhon.Stdlib
             colorize || Builtins.truthy((object?)Builtins.__invoke_kw((object?)can_colorize, [], new Dictionary<string, object?> { ["file"] = file }))
                 ? new ANSIColors() : NoColors;
 
+        public static Theme get_theme(object? tty_file = null, bool force_color = false, bool force_no_color = false) =>
+            new Theme(force_color || !force_no_color && Builtins.truthy((object?)Builtins.__invoke_kw((object?)can_colorize, [],
+                new Dictionary<string, object?> { ["file"] = tty_file })));
+
+        internal sealed class Theme
+        {
+            public TimeitTheme timeit { get; }
+            internal Theme(bool color) { timeit = new TimeitTheme(color); }
+        }
+
+        internal sealed class TimeitTheme
+        {
+            readonly bool _color;
+            internal TimeitTheme(bool color) { _color = color; }
+            public string timing => _color ? ANSIColors.CYAN : "";
+            public string best => _color ? ANSIColors.BOLD_GREEN : "";
+            public string per_loop => _color ? ANSIColors.GREEN : "";
+            public string punctuation => _color ? ANSIColors.GREY : "";
+            public string warning => _color ? ANSIColors.YELLOW : "";
+            public string warning_worst => _color ? ANSIColors.MAGENTA : "";
+            public string warning_best => _color ? ANSIColors.GREEN : "";
+            public string reset => _color ? ANSIColors.RESET : "";
+        }
+
         public static string decolor(string text)
         {
             if (text.IndexOf('\x1b') < 0) return text;

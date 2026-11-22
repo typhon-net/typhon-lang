@@ -29,5 +29,7 @@ frozenset({1, 2, 3}) x
 {'A': 1, 'BB': 22} ['hello', 'world', 'bar']
 {'a': 0, 'b': 2, 'c': 3}
 array('d', [1.0, 2.0, 3.0, 4.5]) 10.5 4.0 4
+array array collections
+[1, 2]
 {1, 2, 3, 100, 8, 9, 17, -1} {2, 5, 8, 11, 14, 17, 20} {33, 10, 2, 4}
 written to sys.stdout

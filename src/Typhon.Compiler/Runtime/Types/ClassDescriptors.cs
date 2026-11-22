@@ -15,13 +15,29 @@ namespace Typhon.Runtime
     using System.Runtime.ExceptionServices;
     using Typhon.Stdlib;
 
-    internal enum PyDescriptorKind { Property, StaticMethod, ClassMethod, CachedProperty }
+    internal enum PyDescriptorKind { Property, StaticMethod, ClassMethod, CachedProperty, NamedTupleField }
 
     [AttributeUsage(AttributeTargets.Method | AttributeTargets.Property, Inherited = false)]
-    internal sealed class PyDescriptorAttribute(PyDescriptorKind kind, string? getter = null) : Attribute
+    internal sealed class PyDescriptorAttribute(PyDescriptorKind kind, string? getter = null, int index = -1) : Attribute
     {
         public PyDescriptorKind Kind { get; } = kind;
         public string? Getter { get; } = getter;
+        public int Index { get; } = index;
+    }
+
+    internal sealed class PyTupleGetter(int index)
+    {
+        public object? __doc__ { get; set; }
+
+        public object? __get__(object? instance, object? owner = null)
+        {
+            if (instance == null) return owner != null ? this : throw new InvalidCastException("__get__(None, None) is invalid");
+            if (instance is not ITuple tuple) throw new InvalidCastException("descriptor for tuple requires a tuple");
+            return tuple[index];
+        }
+
+        public void __set__(object? instance, object? value) => throw new MissingMemberException("can't set attribute");
+        public void __delete__(object? instance) => throw new MissingMemberException("can't delete attribute");
     }
 
     /// <summary>A compiled class's declared Python members and their stable descriptor objects.</summary>
@@ -66,11 +82,13 @@ namespace Typhon.Runtime
         internal static functools.cached_property CachedProperty(Type type, string name) =>
             (functools.cached_property)Namespace(type).Descriptors[name]!;
 
-        static PyClosure Callable(Type type, string name, PySourceAttribute? source, Func<object?[], IDictionary<string, object?>?, object?> invoke) =>
+        static PyClosure Callable(Type type, string name, PySourceAttribute? source, MethodInfo? method,
+            Func<object?[], IDictionary<string, object?>?, object?> invoke) =>
             new PyClosure(name, invoke)
             {
                 __module__ = source?.Module ?? Builtins.__module_of(type),
                 __doc__ = source?.DocString,
+                _signature = method != null ? PySignatureAttribute.Of(method) : null,
                 _code = source is { Line: > 0 } ? new sys_.code(name, source.Filename, source.Line) : null,
             };
 
@@ -89,7 +107,7 @@ namespace Typhon.Runtime
             throw new InvalidCastException($"{name}() requires an instance");
 
         static PyClosure InstanceFunction(Type type, string name, MethodInfo[] methods, PySourceAttribute? source) =>
-            Callable(type, name, source, (args, keywords) => Invoke(methods, name, Receiver(name, args), args[1..], keywords));
+            Callable(type, name, source, methods.FirstOrDefault(), (args, keywords) => Invoke(methods, name, Receiver(name, args), args[1..], keywords));
 
         sealed class ClassNamespace : IDictionary
         {
@@ -110,7 +128,11 @@ namespace Typhon.Runtime
                 {
                     var spec = member.GetCustomAttribute<PyDescriptorAttribute>();
                     var declaration = member.GetCustomAttribute<PySourceAttribute>();
-                    if (spec?.Kind == PyDescriptorKind.Property)
+                    if (spec?.Kind == PyDescriptorKind.NamedTupleField)
+                    {
+                        AddDescriptor(member.Name, new PyTupleGetter(spec.Index));
+                    }
+                    else if (spec?.Kind == PyDescriptorKind.Property)
                     {
                         var getter = InstanceFunction(type, member.Name, [member.GetGetMethod(true)!], declaration);
                         var setter = member.GetSetMethod(true) is { } set
@@ -134,11 +156,11 @@ namespace Typhon.Runtime
                     var metadata = method.GetCustomAttribute<PySourceAttribute>();
                     var spec = method.GetCustomAttribute<PyDescriptorAttribute>();
                     if (spec?.Kind == PyDescriptorKind.StaticMethod)
-                        AddDescriptor(method.Name, new builtins.staticmethod(Callable(type, method.Name, metadata, (a, kw) => Invoke(methods, method.Name, null, a, kw))));
+                        AddDescriptor(method.Name, new builtins.staticmethod(Callable(type, method.Name, metadata, method, (a, kw) => Invoke(methods, method.Name, null, a, kw))));
                     else if (spec?.Kind == PyDescriptorKind.ClassMethod)
                     {
                         var implementations = type.GetMethods(Declared).Where(m => m.Name == spec.Getter).ToArray();
-                        AddDescriptor(method.Name, new builtins.classmethod(Callable(type, method.Name, metadata,
+                        AddDescriptor(method.Name, new builtins.classmethod(Callable(type, method.Name, metadata, method,
                             (a, kw) => Invoke(implementations, method.Name, null, a, kw))));
                     }
                     else

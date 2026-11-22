@@ -133,11 +133,18 @@ namespace Typhon.Compiler.Emit
 
         string BoundMethodValue(Expr value)
         {
+            if (value is NameExpr nameAlias && AliasTarget(nameAlias) is AttributeExpr aliased) value = aliased;
             if (!(value is AttributeExpr a)) return null;
+            if (DottedName(a.Target) is string dotted && !IsLocal(dotted.Split('.')[0]) &&
+                TryResolveType(dotted, 0, out _, out var owner) && owner != null &&
+                MethodInHierarchy(owner, a.Name) is FunctionDef definition &&
+                !HasDecorator(definition.Decorators, "property") && !IsCachedProperty(definition) &&
+                TryTypeExpr(a.Target, out var classType))
+                return $"{Rt("getattr")}(typeof({classType}), {CsString(a.Name)})";
             if (DotNetStaticMeta(a.Target) is string meta)
             {
                 var members = _r.GetMembers(meta, a.Name);
-                if (members.Any(m => m.IsMethod && m.IsStatic && !(m.TypeParams?.Count > 0)) &&
+                if (members.Any(m => m.IsMethod && m.IsStatic && (meta.StartsWith("Typhon.Stdlib.") || !(m.TypeParams?.Count > 0))) &&
                     members.All(m => m.IsMethod) && TryTypeExpr(a.Target, out var type))
                     return $"new global::Typhon.Runtime.PyBoundMethod(typeof({type}), {CsString(a.Name)})";
                 return null;
@@ -158,7 +165,12 @@ namespace Typhon.Compiler.Emit
         void EmitAssignToName(NameExpr n, Expr value, Stmt stmt, string rawValue)
         {
             // f = obj.method of a .NET object: a callable bound method (a method group has no type C# can store here)
-            if (rawValue == null && BoundMethodValue(value) is string bound) rawValue = $"(dynamic){bound}";
+            bool boundMethod = false;
+            if (rawValue == null && BoundMethodValue(value) is string bound)
+            {
+                rawValue = $"(dynamic){bound}";
+                boundMethod = true;
+            }
             if (rawValue == null && RegexLiteral(value, out var rxPattern, out var rxFlags)) _regexLocals[n.Id] = (rxPattern, rxFlags);
             else _regexLocals.Remove(n.Id);
             {
@@ -169,7 +181,7 @@ namespace Typhon.Compiler.Emit
                         string declType = null;
                         if (_scope.Locals.Annotations.TryGetValue(n.Id, out var ann) && !TypeInference.IsBareContainer(ann)) declType = MapType(ann, stmt);
                         else if (ConflictType(n.Id) is string wider) declType = wider; // rebound to other types later (in a nested block)
-                        string inferred = rawValue != null ? null : InferType(value);
+                        string inferred = boundMethod ? "dynamic" : rawValue != null ? null : InferType(value);
                         Declared(n.Id);
                         if (declType != null)
                         {
@@ -385,9 +397,11 @@ namespace Typhon.Compiler.Emit
             {
                 case AttributeExpr at:
                 {
-                    if (at.Target is NameExpr owner && IsClassArgument(owner.Id))
+                    if (at.Target is NameExpr owner && IsClassArgument(owner.Id) || IsInstanceClassDefault(at))
                     {
-                        _w.Line($"{Rt("setattr")}({EmitName(owner)}, {CsString(at.Name)}, (object?){Paren(rawValue ?? EmitValue(value))});");
+                        string temporary = NewTmp("value");
+                        _w.Line($"object? {temporary} = {rawValue ?? EmitLooseValue(value)};");
+                        _w.Line($"{Rt("setattr")}((object?){Paren(EmitExpr(at.Target))}, {CsString(at.Name)}, {temporary});");
                         return;
                     }
                     if (Obs != null && rawValue == null) RecordExternalAttribute(at, value);
@@ -428,7 +442,7 @@ namespace Typhon.Compiler.Emit
                         (!(sub.Index is TupleExpr) || InferType(sub.Target) == "dynamic" && sub.Index is TupleExpr stk && !stk.Elts.Any(x => x is SliceExpr)))
                     {
                         // (a[x, y] = v: the key is the tuple (x, y))
-                        string key = sub.Index is TupleExpr kt && !kt.Parenthesized ? EmitExpr(new TupleExpr { Elts = kt.Elts, Parenthesized = true, Line = kt.Line, Col = kt.Col }) : EmitExpr(sub.Index);
+                        string key = sub.Index is TupleExpr kt && !kt.Parenthesized ? EmitExpr(new TupleExpr { Elts = kt.Elts, Parenthesized = true, Line = kt.Line, Col = kt.Col }) : ModuleOrClassValue(sub.Index) ?? EmitExpr(sub.Index);
                         _w.Line($"{Rt("__setitem")}((object?){Paren(EmitExpr(sub.Target))}, (object?){Paren(key)}, (object?){Paren(rawValue ?? EmitValue(value))});");
                         return;
                     }
@@ -500,9 +514,11 @@ namespace Typhon.Compiler.Emit
 
         void EmitAugAssign(AugAssignStmt a)
         {
-            if (a.Target is AttributeExpr { Target: NameExpr owner } member && IsClassArgument(owner.Id))
+            if (a.Target is AttributeExpr member &&
+                (member.Target is NameExpr owner && IsClassArgument(owner.Id) || IsInstanceClassDefault(member)))
             {
-                string receiver = EmitName(owner), name = CsString(member.Name);
+                string receiver = NewTmp("receiver"), name = CsString(member.Name);
+                _w.Line($"object? {receiver} = {EmitExpr(member.Target)};");
                 string current = $"{Rt("getattr")}({receiver}, {name})", right = EmitExpr(a.Value);
                 string combined = a.Op == "+" ? $"{Rt("__iadd")}({current}, {right})" : a.Op == "*" ? $"{Rt("mul")}({current}, {right})"
                     : AugHelpers.TryGetValue(a.Op, out var operation) ? $"{Rt(operation)}({current}, {right})" : $"({current} {a.Op} {Paren(right)})";
@@ -513,7 +529,7 @@ namespace Typhon.Compiler.Emit
             if (a.Target is SubscriptExpr ds && !(ds.Index is SliceExpr) && !(ds.Index is TupleExpr) && InferType(ds.Target) == "dynamic")
             {
                 string c = NewTmp("c"), k = NewTmp("k");
-                _w.Line($"object? {c} = {EmitExpr(ds.Target)}, {k} = {EmitExpr(ds.Index)};");
+                _w.Line($"object? {c} = {EmitExpr(ds.Target)}, {k} = {ModuleOrClassValue(ds.Index) ?? EmitExpr(ds.Index)};");
                 string cur = $"{Rt("__getitem")}({c}, {k})", val = EmitExpr(a.Value);
                 string combined = a.Op == "+" ? $"{Rt("add")}({cur}, {val})" : a.Op == "*" ? $"{Rt("mul")}({cur}, {val})"
                     : AugHelpers.TryGetValue(a.Op, out var helper) ? $"{Rt(helper)}({cur}, {val})" : $"({cur} {a.Op} {Paren(val)})";
@@ -558,6 +574,10 @@ namespace Typhon.Compiler.Emit
                 _w.Line(cast ? $"{Rt("__extend_cast")}({target}, {EmitIterable(a.Value)});" : $"global::Typhon.Runtime.Builtins.extend({target}, {EmitIterable(a.Value)});");
             }
             else if (a.Op == "+" && tt == "dynamic" && !IsNumeric(vt)) _w.Line($"{target} = {Rt("__iadd")}({target}, {value});");
+            // String repetition returns a new string, including when a late-bound count is rebound to it.
+            else if (a.Op == "*" && a.Target is NameExpr &&
+                (tt == "dynamic" && vt == "string" || tt == "string" && (IsIntegral(vt) || vt == "dynamic")))
+                _w.Line($"{target} = {Rt("mul")}({target}, {value});");
             else _w.Line($"{target} {a.Op}= {value};");
         }
 
@@ -584,7 +604,7 @@ namespace Typhon.Compiler.Emit
             {
                 if (a.Value != null)
                 {
-                    if (at.Target is NameExpr owner && IsClassArgument(owner.Id)) EmitAssignTo(at, a.Value, a);
+                    if (at.Target is NameExpr owner && IsClassArgument(owner.Id) || IsInstanceClassDefault(at)) EmitAssignTo(at, a.Value, a);
                     else _w.Line($"{EmitExpr(at)} = {EmitExpr(a.Value, targetTyped: true)};");
                 }
                 return;

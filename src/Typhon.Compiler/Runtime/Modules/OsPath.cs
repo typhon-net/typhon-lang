@@ -10,22 +10,25 @@
 #nullable enable
 #pragma warning disable
 
-namespace Typhon.Runtime
+namespace Typhon.Stdlib
 {
     using System;
     using System.Collections.Generic;
     using System.IO;
     using System.Linq;
     using System.Text;
-    using Typhon.Stdlib;
+    using Typhon.Runtime;
 
     /// <summary>posixpath's string operations (separator '/').</summary>
-    internal static class PosixPath
+    internal static class posixpath
     {
+        public const string sep = "/", pathsep = ":", curdir = ".", pardir = "..", extsep = ".", devnull = "/dev/null";
+        public static readonly string? altsep = null;
         public static string normcase(string s) => s;
+        public static PyBytes normcase(PyBytes s) => s;
         public static bool isabs(string s) => s.StartsWith('/');
 
-        public static string join(string a, string[] p)
+        public static string join(string a, params string[] p)
         {
             string path = a;
             foreach (var b in p)
@@ -81,7 +84,7 @@ namespace Typhon.Runtime
 
         public static string abspath(string path) => normpath(isabs(path) ? path : join(Environment.CurrentDirectory, new[] { path }));
 
-        public static string relpath(string path, string? start)
+        public static string relpath(string path, string? start = null)
         {
             if (path.Length == 0) throw new ArgumentException("no path specified");
             string startTail = abspath(start ?? ".").TrimStart('/'), pathTail = abspath(path).TrimStart('/');
@@ -150,7 +153,7 @@ namespace Typhon.Runtime
         }
 
         /// <summary>realpath: the absolute path with every symbolic link resolved (strict: missing parts raise).</summary>
-        public static string realpath(string filename, bool strict)
+        public static string realpath(string filename, bool strict = false)
         {
             string path = filename.StartsWith('/') ? "/" : Environment.CurrentDirectory;
             var seen = new Dictionary<string, string?>();
@@ -201,10 +204,31 @@ namespace Typhon.Runtime
     }
 
     /// <summary>ntpath's string operations (separators '\' and '/', drives and UNC shares).</summary>
-    internal static class NtPath
+    internal static partial class ntpath
     {
+        public const string sep = "\\", altsep = "/", pathsep = ";", curdir = ".", pardir = "..", extsep = ".", devnull = "nul";
         static bool IsSep(char c) => c == '\\' || c == '/';
         public static string normcase(string s) => s.Replace('/', '\\').ToLowerInvariant();
+        public static PyBytes normcase(PyBytes s)
+        {
+            // Decode one UTF-8 code point at a time, preserving bytes outside valid UTF-8 sequences.
+            var bytes = s.Data.AsSpan();
+            var result = new List<byte>(bytes.Length);
+            Span<byte> encoded = stackalloc byte[4];
+            for (int offset = 0; offset < bytes.Length;)
+            {
+                if (Rune.DecodeFromUtf8(bytes[offset..], out var rune, out int consumed) != System.Buffers.OperationStatus.Done)
+                {
+                    result.Add(bytes[offset++]);
+                    continue;
+                }
+                rune = rune.Value == '/' ? new Rune('\\') : Rune.ToLowerInvariant(rune);
+                int length = rune.EncodeToUtf8(encoded);
+                for (int i = 0; i < length; i++) result.Add(encoded[i]);
+                offset += consumed;
+            }
+            return new PyBytes(result.ToArray());
+        }
 
         public static bool isabs(string s)
         {
@@ -239,7 +263,7 @@ namespace Typhon.Runtime
 
         public static (string, string) splitdrive(string p) { var (d, r, t) = splitroot(p); return (d, r + t); }
 
-        public static string join(string path, string[] paths)
+        public static string join(string path, params string[] paths)
         {
             var (resultDrive, resultRoot, resultPath) = splitroot(path);
             foreach (var p in paths)
@@ -312,7 +336,7 @@ namespace Typhon.Runtime
             catch (Exception) { return normpath(isabs(path) ? path : join(Environment.CurrentDirectory, new[] { path })); }
         }
 
-        public static string relpath(string path, string? start)
+        public static string relpath(string path, string? start = null)
         {
             if (path.Length == 0) throw new ArgumentException("no path specified");
             string startAbs = abspath(normpath(start ?? ".")), pathAbs = abspath(normpath(path));
@@ -433,7 +457,7 @@ namespace Typhon.Runtime
             return res.ToString();
         }
 
-        public static string realpath(string path, bool strict)
+        public static string realpath(string path, bool strict = false)
         {
             string full = abspath(path);
             if (strict && !os_.LExists(full)) throw OsErrors.NotFound(path);
@@ -446,6 +470,14 @@ namespace Typhon.Runtime
             return full;
         }
     }
+
+}
+
+namespace Typhon.Runtime
+{
+    using System;
+    using System.Collections.Generic;
+    using System.Linq;
 
     /// <summary>genericpath: what posixpath and ntpath share.</summary>
     internal static class GenericPath
@@ -488,9 +520,13 @@ namespace Typhon.Stdlib
     using System.IO;
     using System.Linq;
     using Typhon.Runtime;
+    using PosixPath = Typhon.Stdlib.posixpath;
+    using NtPath = Typhon.Stdlib.ntpath;
 
     internal static partial class os_
     {
+        internal static PyModule __path_module__ => PyModule.Of(typeof(path), "os.path");
+
         /// <summary>os.path: posixpath on Linux and macOS, ntpath on Windows.</summary>
         public static class path
         {
@@ -504,6 +540,7 @@ namespace Typhon.Stdlib
             public static readonly object ALLOW_MISSING = new object();
 
             public static string normcase(string s) => Win ? NtPath.normcase(s) : s;
+            public static PyBytes normcase(PyBytes s) => Win ? NtPath.normcase(s) : s;
             public static bool isabs(string s) => Win ? NtPath.isabs(s) : PosixPath.isabs(s);
             /// <summary>join(a, *p): an absolute part starts over; join(d, "") ends in a separator.</summary>
             public static string join(string a, params string[] p) => Win ? NtPath.join(a, p) : PosixPath.join(a, p);

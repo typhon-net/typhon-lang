@@ -1,0 +1,27 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+class Example:
+    def __init__(self):
+        raise AssertionError("allocation must bypass initialization")
+
+    def __getattr__(self, name):
+        if name == "fallback":
+            return "handled"
+        raise AttributeError(name)
+
+    def __repr__(self):
+        return "example"
+
+
+allocate = object.__new__
+value = allocate(Example)
+print(object.__str__(value), object.__init__(value))
+print(object.__new__ is allocate)
+print(object.__setattr__(value, "data", 3), object.__getattribute__(value, "data"))
+print(getattr(value, "fallback"))
+try:
+    object.__getattribute__(value, "fallback")
+except AttributeError:
+    print("bypassed fallback")
+print(object.__delattr__(value, "data"), hasattr(value, "data"))

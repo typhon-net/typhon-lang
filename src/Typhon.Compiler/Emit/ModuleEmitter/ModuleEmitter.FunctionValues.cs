@@ -112,7 +112,7 @@ namespace Typhon.Compiler.Emit
         bool IsLocalFunctionName(string name)
         {
             if (_renames.ContainsKey(name)) return false;
-            foreach (var set in _lambdaParams) if (set.Contains(name)) return false;
+            foreach (var set in _lambdaParams) if (set.ContainsKey(name)) return false;
             for (var s = _scope; s != null; s = s.Parent)
             {
                 if (s.Params.Contains(name)) return false;
@@ -130,7 +130,16 @@ namespace Typhon.Compiler.Emit
         string LocalFunctionValue(NameExpr n)
         {
             if (!_localFunctionSigs.TryGetValue(n.Id, out var lf) || !IsLocalFunctionName(n.Id) || lf.Def.TypeParams.Count > 0) return null;
-            return ClosureCode(lf.Def, lf.Sig, Esc(lf.Def.Name), null);
+            return LocalFunctionObject(n.Id) ?? ClosureCode(lf.Def, lf.Sig, Esc(lf.Def.Name), null);
+        }
+
+        string LocalFunctionObject(string name)
+        {
+            if (!IsLocalFunctionName(name)) return null;
+            for (var scope = _scope; scope != null; scope = scope.Parent)
+                if (scope.Locals?.LocalFunctions.Contains(name) == true)
+                    return scope.LocalFunctionObjects.TryGetValue(name, out var value) ? value : null;
+            return null;
         }
 
         /// <summary>
@@ -176,7 +185,10 @@ namespace Typhon.Compiler.Emit
                 body.Append($"if (__p.Length {condition} {k}) {Call(k)} ");
             }
             body.Append($"throw global::Typhon.Runtime.PyClosure.ArgCountError({name}, {required}, {(varargs ? "int.MaxValue" : normal.Count.ToString())}, __p.Length);");
-            return $"new global::Typhon.Runtime.PyClosure({name}, (__a, __kw) => {{ {body} }})";
+            string doc = f.Body.FirstOrDefault() is ExprStmt { Value: ConstExpr { Kind: ConstKind.Str } text } ? CsString(text.Str) : "null";
+            string signature = _m.IsGdScript ? "" : $", _signature = () => {SignatureValue(f)}";
+            return $"new global::Typhon.Runtime.PyClosure({name}, (__a, __kw) => {{ {body} }}) " +
+                $"{{ __module__ = {CsString(PythonModuleName)}, __qualname__ = {CsString(sig.Scope.FunctionQualName)}, __doc__ = {doc}{signature} }}";
         }
 
         /// <summary>A value passed where its static type is lost (a late-bound call's argument): functions become callable objects.</summary>
@@ -255,7 +267,7 @@ namespace Typhon.Compiler.Emit
             _w.Open();
             _w.Line($"public static readonly {cls} Instance = new {cls}();");
             string doc = f.Body.Count > 0 && f.Body[0] is ExprStmt ds && ds.Value is ConstExpr dc && dc.Kind == ConstKind.Str ? CsString(dc.Str) : null;
-            string module = _m.IsGdScript ? "" : $"__module__ = {CsString(PythonModuleName)}; ";
+            string module = _m.IsGdScript ? "" : $"__module__ = {CsString(PythonModuleName)}; _signature = {SignatureProviderName(f)}; ";
             _w.Line($"{cls}() : base({CsString(f.PyName ?? f.Name)}) {{ {module}{(doc != null ? $"__doc__ = {doc}; " : "")}}}");
             if (ps.Any(p => p.Kind != ParamKind.Normal))
             {
@@ -269,6 +281,8 @@ namespace Typhon.Compiler.Emit
             // parameter names: keyword arguments of a late-bound call (f(*args, **kwargs) in a decorator's wrapper) by name
             if (ps.Count > 0 && ps.All(x => x.Kind == ParamKind.Normal))
                 _w.Line($"protected override string[] __params__ => new[] {{ {string.Join(", ", ps.Select(x => CsString(x.Name)))} }};");
+            if (ps.Any(p => p.Default != null))
+                _w.Line($"public override object? __call_kw__(object?[] args, IDictionary<string, object?>? kw) => new global::Typhon.Runtime.PyBoundMethod(typeof({ModuleClassName(_m)}), {CsString(f.Name)}, includeNonPublic: true).__call_kw__(args, kw);");
             _w.Line("public override object? __call__(object?[] a)");
             _w.Open();
             for (int n = required; n <= ps.Count; n++)
@@ -446,7 +460,10 @@ namespace Typhon.Compiler.Emit
         /// <summary>Lambdas bound to local names in this function (calls through them type their parameters).</summary>
         readonly Dictionary<string, LambdaExpr> _lambdaLocals = new Dictionary<string, LambdaExpr>();
 
-        string EmitVariadicLambda(LambdaExpr lambda)
+        Dictionary<string, string> LambdaParameters(IEnumerable<string> names) =>
+            names.Distinct().ToDictionary(p => p, p => IsLocal(p) ? NewTmp("lambda") : Esc(p));
+
+        string EmitRuntimeLambda(LambdaExpr lambda)
         {
             const string closure = "global::Typhon.Runtime.PyClosure";
             const string name = "\"<lambda>\"";
@@ -455,30 +472,41 @@ namespace Typhon.Compiler.Emit
             int count = lambda.Params.Count;
             var bindings = new Scope();
             var code = new StringBuilder();
-            code.Append($"new {closure}({name}, ({args}, {kwargs}) => {{ ");
+            var parameters = LambdaParameters(lambda.ParameterNames());
+            int required = count - lambda.Defaults.Count;
+            bool hasDefaults = required != count;
+            string defaults = NewTmp("defaults");
+            // These values are evaluated in the defining scope and captured once by the closure.
+            string captured = hasDefaults
+                ? $"new object?[] {{ {string.Join(", ", lambda.Defaults.Select(d => $"(object?){Paren(d is LambdaExpr inner ? EmitRuntimeLambda(inner) : EmitLooseValue(d))}"))} }}, "
+                : "";
+            string defaultArgument = hasDefaults ? ", " + defaults : "";
+            code.Append($"new {closure}({name}, {captured}({args}, {kwargs}{defaultArgument}) => {{ ");
             code.Append($"string[] {names} = [{string.Join(", ", lambda.Params.Select(CsString))}]; ");
-            code.Append($"var {bound} = {closure}.Args({name}, {names}, {args}, {kwargs}, {(lambda.KwArgs != null ? "true" : "false")}); ");
+            code.Append($"var {bound} = {closure}.Args({name}, {names}, {args}, {kwargs}, {(lambda.KwArgs != null ? "true" : "false")}{defaultArgument}); ");
             string condition = lambda.VarArgs == null ? "!=" : "<";
             string max = lambda.VarArgs == null ? count.ToString() : "int.MaxValue";
-            code.Append($"if ({bound}.Length {condition} {count}) throw {closure}.ArgCountError({name}, {count}, {max}, {bound}.Length); ");
+            string arity = $"{closure}.ArgCountError({name}, {required}, {max}, {bound}.Length)";
+            if (hasDefaults) arity = $"new global::System.InvalidCastException({arity}.Message)";
+            code.Append($"if ({bound}.Length {condition} {count}) throw {arity}; ");
             for (int i = 0; i < count; i++)
             {
                 bindings.Types[lambda.Params[i]] = "dynamic";
-                code.Append($"dynamic {Esc(lambda.Params[i])} = {bound}[{i}]; ");
+                code.Append($"dynamic {parameters[lambda.Params[i]]} = {bound}[{i}]; ");
             }
             if (lambda.VarArgs != null)
             {
                 string tuple = PyTuplePrefix + "dynamic>";
                 bindings.Types[lambda.VarArgs] = tuple;
-                code.Append($"var {Esc(lambda.VarArgs)} = new {tuple}({bound}[{count}..]); ");
+                code.Append($"var {parameters[lambda.VarArgs]} = new {tuple}({bound}[{count}..]); ");
             }
             if (lambda.KwArgs != null)
             {
                 bindings.Types[lambda.KwArgs] = "OrderedDictionary<string, dynamic>";
-                code.Append($"OrderedDictionary<string, dynamic> {Esc(lambda.KwArgs)} = {closure}.Kw({kwargs}, {names}); ");
+                code.Append($"OrderedDictionary<string, dynamic> {parameters[lambda.KwArgs]} = {closure}.Kw({kwargs}, {names}); ");
             }
             _comprehensionTypes.Add(bindings);
-            _lambdaParams.Push(new HashSet<string>(lambda.ParameterNames()));
+            _lambdaParams.Push(parameters);
             try { return code.Append($"return {EmitValue(lambda.Body)}; }})").ToString(); }
             finally { _lambdaParams.Pop(); _comprehensionTypes.Remove(bindings); }
         }
@@ -486,22 +514,23 @@ namespace Typhon.Compiler.Emit
         /// <summary>A lambda bound to a local name: Func&lt;T..., R&gt; when its calls give the parameter types, else a delegate of dynamic values.</summary>
         string EmitLambdaLocal(LambdaExpr lam, string key, out string code)
         {
-            if (lam.IsVariadic)
+            if (lam.RequiresArgumentBinding)
             {
-                code = EmitVariadicLambda(lam);
+                code = EmitRuntimeLambda(lam);
                 return "dynamic";
             }
             string[] sig = key != null && Ti != null && Ti.LambdaSigs.TryGetValue(key, out var ls) && ls.Length == lam.Params.Count ? ls : null;
             var bindings = new Scope();
             for (int i = 0; i < lam.Params.Count; i++) bindings.Types[lam.Params[i]] = sig?[i] ?? "dynamic";
             _comprehensionTypes.Add(bindings);
-            _lambdaParams.Push(new HashSet<string>(lam.Params));
+            var parameters = LambdaParameters(lam.Params);
+            _lambdaParams.Push(parameters);
             try
             {
                 string ret = sig != null ? PyType(InferType(lam.Body)) : null;
                 bool typed = sig != null && ret != null && ret != TypeInference.Pending && ret != "void" && !ret.Contains(TypeInference.Pending);
                 string body = typed ? EmitExpr(lam.Body, targetTyped: true) : EmitValue(lam.Body);
-                var ps = lam.Params.Select((p, i) => $"{(typed ? sig[i] : "dynamic")} {Esc(p)}");
+                var ps = lam.Params.Select((p, i) => $"{(typed ? sig[i] : "dynamic")} {parameters[p]}");
                 code = $"(({string.Join(", ", ps)}) => {body})";
                 var types = (typed ? sig : lam.Params.Select(_ => "dynamic")).Concat(new[] { typed ? ret : "dynamic" });
                 return $"global::System.Func<{string.Join(", ", types)}>";

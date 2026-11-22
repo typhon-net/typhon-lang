@@ -1,0 +1,14 @@
+True True True
+b'A/B' b'a\\b'
+True
+True True
+True
+['ba', 'bb']
+[0, 0]
+int float int str float
+['int', 'float', 'str', 'float'] CacheInfo(hits=1, misses=4, maxsize=2, currsize=2) {'maxsize': 2, 'typed': True}
+CacheInfo(hits=0, misses=0, maxsize=2, currsize=0)
+0 0 CacheInfo(hits=0, misses=2, maxsize=0, currsize=0)
+3 3 CacheInfo(hits=1, misses=1, maxsize=128, currsize=1)
+3 3 3 CacheInfo(hits=1, misses=2, maxsize=None, currsize=2)
+True False

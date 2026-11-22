@@ -1,0 +1,42 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+class Problem(Exception):
+    msg = ''
+    opt = ''
+
+    def __init__(self, msg: str, opt: str = '') -> None:
+        self.msg = msg
+        self.opt = opt
+
+    def describe(self) -> str:
+        return self.msg + '/' + self.opt
+
+
+print(repr(Problem.msg), repr(Problem.opt))
+first = Problem('first', '-x')
+second = Problem('second', '-y')
+print(first.describe(), second.describe())
+print(repr(Problem.msg), repr(Problem.opt))
+print(first.msg.upper(), second.opt, vars(first)['msg'])
+first.msg += '!'
+setattr(first, 'opt', '-changed')
+print(first.describe(), second.describe())
+Problem.msg = 'class default'
+setattr(Problem, 'opt', 'class option')
+print(first.describe(), second.describe(), Problem.msg, Problem.opt)
+first.msg = None
+print(first.msg is None)
+del first.msg, first.opt
+print(first.describe(), second.describe())
+try:
+    del first.msg
+except AttributeError:
+    print('no instance override')
+
+class Child(Problem):
+    pass
+
+child = Child('child', '-c')
+del child.msg
+print(child.describe(), Child.msg, getattr(child, 'msg'))

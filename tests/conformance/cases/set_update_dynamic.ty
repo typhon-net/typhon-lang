@@ -1,0 +1,15 @@
+from typing import Any
+
+def update_numbers(values: Any) -> list[int]:
+    result = {4}
+    result.update(values, [5])
+    return sorted(result)
+
+def update_text(values: Any) -> list[str]:
+    result = {"z"}
+    result.update(values)
+    return sorted(result)
+
+print(update_numbers({1: "first", 2: "second"}))
+print(update_numbers((1, 2)))
+print(update_text("aba"))

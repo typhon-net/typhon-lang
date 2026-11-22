@@ -122,6 +122,197 @@ public sealed class ConformanceTests(ITestOutputHelper output)
         finally { Directory.Delete(dir, recursive: true); }
     }
 
+    /// <summary>A Python source child imports beside the native members of a runtime package.</summary>
+    [Fact]
+    public void PyLibMixedPackages()
+    {
+        string? python = Suite.FindPython(out string why);
+        if (python == null) { Console.WriteLine($"PyLibMixedPackages skipped: {why}"); return; }
+        string dir = Directory.CreateTempSubdirectory("typhon-mixed-packages-").FullName;
+        string lib = Path.Combine(dir, "Lib");
+        try
+        {
+            foreach (string package in new[] { "urllib", "collections", "importlib" })
+            {
+                string folder = Path.Combine(lib, package);
+                Directory.CreateDirectory(folder);
+                File.WriteAllText(Path.Combine(folder, "__init__.py"), "raise RuntimeError('replaced runtime package')\n");
+            }
+            File.WriteAllText(Path.Combine(lib, "urllib", "request.py"), """
+                from urllib.parse import quote
+
+                print("loaded", __name__)
+
+                def escaped(path: str) -> str:
+                    return quote(path)
+                """);
+            File.WriteAllText(Path.Combine(lib, "collections", "typhon_helper.py"), """
+                from collections import deque
+
+                def gather() -> str:
+                    return str(list(deque([5, 7])))
+                """);
+            File.WriteAllText(Path.Combine(lib, "importlib", "typhon_helper.py"), """
+                from importlib import util
+
+                def normalize() -> str:
+                    return util.decode_source(b"source\r\n").strip()
+                """);
+            string script = Path.Combine(dir, "mix.ty");
+            File.WriteAllText(script, """
+                #:pylib Lib
+                import urllib.request
+                from urllib import request as renamed
+                import urllib.request as direct
+                import urllib.parse
+                import collections.typhon_helper
+                from collections import typhon_helper as helper, deque
+                import importlib.typhon_helper as direct_helper
+                from importlib import typhon_helper, util
+
+                print(urllib.request.escaped("a b"))
+                print(renamed.__package__, direct.escaped("雪"), urllib.parse.quote("c d"))
+                print(collections.typhon_helper.gather(), helper.__package__, deque([8]).pop())
+                print(direct_helper.normalize(), typhon_helper.__name__, util.decode_source(b"native"))
+                """);
+            const string inject = """
+                import collections
+                import importlib
+                import runpy
+                import sys
+                import urllib
+                from pathlib import Path
+
+                lib = Path(sys.argv[2])
+                for package in (urllib, collections, importlib):
+                    package.__path__.insert(0, str(lib / package.__name__))
+                runpy.run_path(sys.argv[1], run_name="__main__")
+                """;
+            var expected = Suite.Run(python, ["-c", inject, script, lib], TimeSpan.FromMinutes(1));
+            Assert.True(expected.ExitCode == 0, $"CPython exit code {expected.ExitCode}\n{expected.StdErr}");
+            var run = Suite.Run("dotnet", [Suite.Cli, "run", script], TimeSpan.FromMinutes(3));
+            Assert.True(run.ExitCode == 0, $"exit code {run.ExitCode}\n{run.StdErr}");
+            Assert.Equal(Suite.Normalize(expected.StdOut), Suite.Normalize(run.StdOut));
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    /// <summary>CPython's own nturl2path source handles Windows path syntax on every host.</summary>
+    [Fact]
+    public void PyLibWindowsFileUrls()
+    {
+        string? python = Suite.FindPython(out string why);
+        if (python == null) { Console.WriteLine($"PyLibWindowsFileUrls skipped: {why}"); return; }
+        var oracle = Suite.Run(python,
+            ["-c", "import sys, sysconfig; print(sysconfig.get_path('stdlib') if sys.version_info[:2] == (3, 15) else '')"],
+            TimeSpan.FromSeconds(30));
+        Assert.True(oracle.ExitCode == 0, oracle.StdErr);
+        string lib = oracle.StdOut.Trim();
+        if (lib.Length == 0) { Console.WriteLine("PyLibWindowsFileUrls requires the CPython 3.15 library"); return; }
+
+        string dir = Directory.CreateTempSubdirectory("typhon-windows-file-urls-").FullName;
+        string script = Path.Combine(dir, "file_urls.ty");
+        File.WriteAllText(script, $"#:pylib {lib}\n" + """
+            import nturl2path
+
+            for path in [r"C:\Program Files\Typhon~%+雪", r"C:temp\child", r"\\server\share name\é+.txt",
+                         r"\\?\UNC\server\share\thing.txt", r"\\?\D:\folder.txt",
+                         r"\rooted\with space", r"relative\雪"]:
+                url = nturl2path.pathname2url(path)
+                print(repr(url), repr(nturl2path.url2pathname(url)))
+
+            for url in ["//localhost/C:/a%20b", "///C|/folder+leaf", "/////server/share/a%23b",
+                        "/once%2520", "/raw%GG+text"]:
+                print(repr(nturl2path.url2pathname(url)))
+            """);
+        try
+        {
+            var run = Suite.Run("dotnet", [Suite.Cli, "run", script], TimeSpan.FromMinutes(3));
+            Assert.True(run.ExitCode == 0, $"exit code {run.ExitCode}\n{run.StdErr}");
+            var expected = Suite.Run(python, [script], TimeSpan.FromMinutes(1));
+            Assert.True(expected.ExitCode == 0, $"CPython exit code {expected.ExitCode}\n{expected.StdErr}");
+            Assert.Equal(Suite.Normalize(expected.StdOut), Suite.Normalize(run.StdOut));
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    /// <summary>Compile the stock timeit module and run callable, string and CLI paths with deterministic timers.</summary>
+    [Fact]
+    public void PyLibTimeit()
+    {
+        string? python = Suite.FindPython(out string why);
+        if (python == null) { Console.WriteLine($"PyLibTimeit skipped: {why}"); return; }
+        var oracle = Suite.Run(python,
+            ["-c", "import sys, sysconfig; print(sysconfig.get_path('stdlib') if sys.version_info[:2] == (3, 15) else '')"],
+            TimeSpan.FromSeconds(30));
+        Assert.True(oracle.ExitCode == 0, oracle.StdErr);
+        string lib = oracle.StdOut.Trim();
+        if (lib.Length == 0) { Console.WriteLine("PyLibTimeit requires the CPython 3.15 library"); return; }
+
+        string dir = Directory.CreateTempSubdirectory("typhon-timeit-").FullName;
+        string script = Path.Combine(dir, "timeit_probe.ty");
+        File.WriteAllText(script, $"#:pylib {lib}\n" + """
+            import gc
+            import timeit
+
+            class Clock:
+                def __init__(self) -> None:
+                    self.ticks = 0
+                    self.setups = 0
+
+                def now(self) -> float:
+                    return self.ticks / 10
+
+                def setup(self) -> None:
+                    self.setups += 1
+                    self.ticks += 100
+
+                def work(self) -> None:
+                    self.ticks += 2
+
+            clock = Clock()
+            timer = timeit.Timer(clock.work, clock.setup, clock.now)
+            print(round(timer.timeit(3), 4), clock.setups, gc.isenabled())
+            print([round(elapsed, 4) for elapsed in timer.repeat(2, 2)], clock.setups)
+
+            def trace(loops: int, duration: float) -> None:
+                print(loops, round(duration, 4))
+
+            loops, duration = timer.autorange(trace, 0.7)
+            print(loops, round(duration, 4), clock.setups)
+
+            namespace = {"clock": clock}
+            with_globals = timeit.Timer("clock.work()", setup="clock.setup()", timer=clock.now, globals=namespace)
+            print(round(with_globals.timeit(4), 4), clock.setups)
+
+
+
+            def wrap_timer(original):
+                ticks = iter([0.0, 0.125, 1.0, 1.5, 2.0, 2.5])
+
+                def tick() -> float:
+                    return next(ticks)
+
+                return tick
+
+            result = timeit.main(
+                ["--number", "0", "--repeat", "1", "--verbose", "--target-time", "0.25", "--unit", "sec", "pass"],
+                _wrap_timer=wrap_timer,
+            )
+            print(result)
+            """);
+        try
+        {
+            var env = new Dictionary<string, string> { ["PYTHON_COLORS"] = "0" };
+            var run = Suite.Run("dotnet", [Suite.Cli, "run", script], TimeSpan.FromMinutes(3), env);
+            Assert.True(run.ExitCode == 0, $"exit code {run.ExitCode}\n{run.StdErr}");
+            var expected = Suite.Run(python, [script], TimeSpan.FromMinutes(1), env);
+            Assert.True(expected.ExitCode == 0, $"CPython exit code {expected.ExitCode}\n{expected.StdErr}");
+            Assert.Equal(Suite.Normalize(expected.StdOut), Suite.Normalize(run.StdOut));
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
     /// <summary>Compile CPython's doctest source and execute examples with the runtime compiler.</summary>
     [Fact]
     public void PyLibDoctest()
@@ -248,6 +439,142 @@ public sealed class ConformanceTests(ITestOutputHelper output)
                 Assert.True(run.ExitCode == 0, run.StdErr);
                 Assert.Equal(Suite.Normalize(expected.StdOut), Suite.Normalize(run.StdOut));
             }
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    /// <summary>Run the unmodified CPython codeop source with Typhon's interactive compiler and warning filters.</summary>
+    [Fact]
+    public void PyLibCodeop()
+    {
+        string? python = Suite.FindPython(out string why);
+        if (python == null) { Console.WriteLine($"PyLibCodeop skipped: {why}"); return; }
+        var oracle = Suite.Run(python,
+            ["-c", "import sys, sysconfig; print(sysconfig.get_path('stdlib') if sys.version_info[:2] == (3, 15) else '')"],
+            TimeSpan.FromSeconds(30));
+        Assert.True(oracle.ExitCode == 0, oracle.StdErr);
+        string lib = oracle.StdOut.Trim();
+        if (lib.Length == 0) { Console.WriteLine("PyLibCodeop requires the CPython 3.15 library"); return; }
+        string dir = Directory.CreateTempSubdirectory("typhon-codeop-").FullName;
+        try
+        {
+            string script = Path.Combine(dir, "uses_codeop.ty");
+            File.WriteAllText(script, $"#:pylib {lib}\n" + """"
+                import __future__
+                import codeop
+
+                scope = {}
+                compiled = codeop.compile_command('answer = 21 * 2')
+                print(compiled is not None, compiled.co_filename)
+                exec(compiled, scope)
+                print(scope['answer'])
+                print(eval(codeop.compile_command('6 * 7', symbol='eval')))
+                for text in ['if True:', 'if True:\n    pass', '(6 *', '"""incomplete', 'try:\n    pass']:
+                    print(codeop.compile_command(text) is None)
+                for text in ['if True\n    pass', 'x =', 'a = (]', '1 +', "'broken", 'x:=9', '1 = 2', 'break', 'continue']:
+                    try:
+                        codeop.compile_command(text)
+                    except SyntaxError:
+                        print('syntax error')
+                compiler = codeop.Compile()
+                stateful = codeop.CommandCompiler()
+                annotation_flag = __future__.annotations.compiler_flag
+                print(bool(compiler('from __future__ import annotations', '<input>', 'exec').co_flags & annotation_flag))
+                print(bool(compiler('pass', '<input>', 'exec').co_flags & annotation_flag))
+                print(bool(stateful('from __future__ import annotations', symbol='exec').co_flags & annotation_flag))
+                print(stateful('if True:') is None, bool(stateful('pass').co_flags & annotation_flag))
+
+                stateful('from __future__ import barry_as_FLUFL', symbol='exec')
+                print(eval(stateful('1 <> 2', symbol='eval')))
+                try:
+                    stateful('1 != 2', symbol='eval')
+                except SyntaxError:
+                    print('remembered grammar')
+                print(codeop.compile_command('@decorate') is None, codeop.compile_command('match value:') is None)
+                print(codeop.compile_command('if True:\n    pass', symbol='exec') is not None)
+                print(codeop.compile_command('(', symbol='eval') is None)
+                try:
+                    codeop.compile_command('if True:', symbol='eval')
+                except SyntaxError:
+                    print('statement in eval mode')
+                try:
+                    codeop.compile_command('if True:\npass')
+                except IndentationError:
+                    print('indentation error')
+                try:
+                    codeop.compile_command('return')
+                except SyntaxError:
+                    print('invalid module return')
+                import warnings
+                with warnings.catch_warnings(record=True) as recorded:
+                    warnings.simplefilter('always')
+                    warnings.simplefilter('ignore', (SyntaxWarning, DeprecationWarning))
+                    warnings.warn('hidden', SyntaxWarning)
+                    warnings.warn('hidden', DeprecationWarning)
+                    warnings.warn('visible', RuntimeWarning)
+                    print(len(recorded), str(recorded[0].message))
+                """");
+            var expected = Suite.Run(python, [script], TimeSpan.FromMinutes(1));
+            Assert.True(expected.ExitCode == 0, expected.StdErr);
+            var run = Suite.Run("dotnet", [Suite.Cli, "run", script, "--no-cache", "--no-server"], TimeSpan.FromMinutes(3));
+            Assert.True(run.ExitCode == 0, run.StdErr);
+            Assert.Equal(Suite.Normalize(expected.StdOut), Suite.Normalize(run.StdOut));
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    /// <summary>Run CPython's completion logic on compiled functions, methods and descriptors.</summary>
+    [Fact]
+    public void PyLibRlcompleter()
+    {
+        string? python = Suite.FindPython(out string why);
+        if (python == null) { Console.WriteLine($"PyLibRlcompleter skipped: {why}"); return; }
+        var oracle = Suite.Run(python,
+            ["-c", "import sys, sysconfig; print(sysconfig.get_path('stdlib') if sys.version_info[:2] == (3, 15) else '')"],
+            TimeSpan.FromSeconds(30));
+        Assert.True(oracle.ExitCode == 0, oracle.StdErr);
+        string lib = oracle.StdOut.Trim();
+        if (lib.Length == 0) { Console.WriteLine("PyLibRlcompleter requires the CPython 3.15 library"); return; }
+        string dir = Directory.CreateTempSubdirectory("typhon-rlcompleter-").FullName;
+        try
+        {
+            string script = Path.Combine(dir, "uses_rlcompleter.ty");
+            File.WriteAllText(script, $"#:pylib {lib}\n" + """
+                import rlcompleter
+
+                def custom_empty():
+                    pass
+
+                def custom_value(value: int):
+                    pass
+
+                class Target:
+                    def first(self):
+                        pass
+
+                    def second(self, value: int):
+                        pass
+
+                    @property
+                    def failure(self) -> int:
+                        raise RuntimeError("completer must not evaluate the property")
+
+                target = Target()
+                completer = rlcompleter.Completer({"custom_empty": custom_empty, "custom_value": custom_value, "target": target})
+                print(completer.global_matches("custom_"))
+                print(completer.global_matches("retu"))
+                print(completer.attr_matches("target.fi"))
+                print(completer.attr_matches("target.se"))
+                print(completer.attr_matches("target.fa"))
+                print(completer.complete("custom_", 0))
+                print(completer.complete("custom_", 1))
+                print(completer.complete("custom_", 2))
+                """);
+            var expected = Suite.Run(python, [script], TimeSpan.FromMinutes(1));
+            Assert.True(expected.ExitCode == 0, expected.StdErr);
+            var run = Suite.Run("dotnet", [Suite.Cli, "run", script, "--no-cache", "--no-server"], TimeSpan.FromMinutes(3));
+            Assert.True(run.ExitCode == 0, run.StdErr);
+            Assert.Equal(Suite.Normalize(expected.StdOut), Suite.Normalize(run.StdOut));
         }
         finally { Directory.Delete(dir, recursive: true); }
     }

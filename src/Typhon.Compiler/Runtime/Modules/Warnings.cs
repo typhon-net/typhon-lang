@@ -31,7 +31,7 @@ namespace Typhon.Stdlib
         /// The filters, most recent first: (action, message regex or None, category, module regex or None, lineno).
         /// The first one that matches a warning decides what happens to it.
         /// </summary>
-        public static List<(string, object?, Type, object?, long)> filters = new List<(string, object?, Type, object?, long)>();
+        public static List<(string, object?, object, object?, long)> filters = new List<(string, object?, object, object?, long)>();
         /// <summary>The action for a warning that no filter matches.</summary>
         public static string defaultaction = "default";
         /// <summary>The warnings already shown by the "once" action: (text, category).</summary>
@@ -167,7 +167,7 @@ namespace Typhon.Stdlib
         }
 
         /// <summary>simplefilter(action, category=Warning, lineno=0, append=False): a filter for every message and module.</summary>
-        public static void simplefilter(string action, Type? category = null, long lineno = 0, bool append = false)
+        public static void simplefilter(string action, object? category = null, long lineno = 0, bool append = false)
         {
             CheckAction(action, lineno);
             _add_filter(action, null, category ?? typeof(Warning), null, lineno, append);
@@ -179,7 +179,7 @@ namespace Typhon.Stdlib
             if (lineno < 0) throw new ArgumentException("lineno must be an int >= 0");
         }
 
-        internal static void _add_filter(string action, object? message, Type category, object? module, long lineno, bool append)
+        internal static void _add_filter(string action, object? message, object category, object? module, long lineno, bool append)
         {
             lock (_lock)
             {
@@ -195,8 +195,8 @@ namespace Typhon.Stdlib
             }
         }
 
-        static bool SameFilter((string, object?, Type, object?, long) a, (string, object?, Type, object?, long) b) =>
-            a.Item1 == b.Item1 && PatternText(a.Item2) == PatternText(b.Item2) && a.Item3 == b.Item3 && PatternText(a.Item4) == PatternText(b.Item4) && a.Item5 == b.Item5;
+        static bool SameFilter((string, object?, object, object?, long) a, (string, object?, object, object?, long) b) =>
+            a.Item1 == b.Item1 && PatternText(a.Item2) == PatternText(b.Item2) && Builtins.eq(a.Item3, b.Item3) && PatternText(a.Item4) == PatternText(b.Item4) && a.Item5 == b.Item5;
         static string? PatternText(object? p) => p is re.Pattern rp ? rp.pattern : p as string;
 
         /// <summary>resetwarnings(): no filters at all (every warning gets the default action).</summary>
@@ -291,7 +291,7 @@ namespace Typhon.Stdlib
                 action = defaultaction;
                 foreach (var (act, msg, cat, mod, ln) in filters)
                 {
-                    if ((msg == null || Matches(msg, text)) && cat.IsAssignableFrom(category) && (ln == 0 || lineno == ln) && (mod == null || Matches(mod, module ?? filename)))
+                    if ((msg == null || Matches(msg, text)) && Builtins.issubclass(category, cat) && (ln == 0 || lineno == ln) && (mod == null || Matches(mod, module ?? filename)))
                     {
                         action = act;
                         break;
@@ -379,13 +379,13 @@ namespace Typhon.Stdlib
         internal sealed class catch_warnings : IPyRepr
         {
             readonly bool _record;
-            readonly (string action, Type? category, long lineno, bool append)? _filter;
+            readonly (string action, object? category, long lineno, bool append)? _filter;
             bool _entered;
-            List<(string, object?, Type, object?, long)>? _savedFilters;
+            List<(string, object?, object, object?, long)>? _savedFilters;
             object? _savedShow;
             List<WarningMessage>? _savedLog;
 
-            public catch_warnings(bool record = false, object? module = null, string? action = null, Type? category = null, long lineno = 0, bool append = false)
+            public catch_warnings(bool record = false, object? module = null, string? action = null, object? category = null, long lineno = 0, bool append = false)
             {
                 _record = record;
                 if (action != null) _filter = (action, category, lineno, append);
@@ -399,7 +399,7 @@ namespace Typhon.Stdlib
                 lock (_lock)
                 {
                     _savedFilters = filters;
-                    filters = new List<(string, object?, Type, object?, long)>(filters);
+                    filters = new List<(string, object?, object, object?, long)>(filters);
                     _savedShow = showwarning;
                     _savedLog = _log;
                     _filters_mutated();

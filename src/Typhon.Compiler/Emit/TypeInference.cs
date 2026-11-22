@@ -419,12 +419,12 @@ namespace Typhon.Compiler.Emit
                                     name == "defaultdict" || name == "Counter" || name == "deque" || name == "OrderedDict" || name == "DefaultDict" || name == "Deque");
         }
 
-        /// <summary>@cache / @lru_cache / @lru_cache(maxsize=...) (functools): memoization, the function keeps its types.</summary>
+        /// <summary>@cache (functools): memoization, the function keeps its types.</summary>
         public static bool IsCacheDecorator(Expr d)
         {
             if (d is CallExpr c) d = c.Func;
             string name = d is NameExpr n ? n.Id : d is AttributeExpr a && a.Target is NameExpr t && t.Id == "functools" ? a.Name : null;
-            return name == "cache" || name == "lru_cache";
+            return name == "cache";
         }
 
         static bool IsSpecialClass(ClassDef c) => c.Bases.Any(b =>

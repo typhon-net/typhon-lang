@@ -16,9 +16,9 @@ namespace Typhon.Compiler.Syntax
                 return false;
             int j = _i + 1;
             while (j < _t.Count && _t[j].Kind != TokenKind.Newline && _t[j].Kind != TokenKind.EndOfFile) j++;
-            if (j + 2 >= _t.Count || j == _i + 1) return false;
-            return _t[j - 1].Kind == TokenKind.Op && _t[j - 1].Text == ":" && _t[j + 1].Kind == TokenKind.Indent &&
-                   _t[j + 2].Kind == TokenKind.Name && _t[j + 2].Text == "case";
+            if (j <= _i + 2 || j + 1 >= _t.Count || !_t[j - 1].Is(":")) return false;
+            if (_t[j + 1].Kind == TokenKind.EndOfFile) return true;
+            return j + 2 < _t.Count && _t[j + 1].Kind == TokenKind.Indent && _t[j + 2].Kind == TokenKind.Name && _t[j + 2].Text == "case";
         }
 
         MatchStmt ParseMatch()
@@ -29,7 +29,7 @@ namespace Typhon.Compiler.Syntax
             ExpectOp(":");
             if (Cur.Kind != TokenKind.Newline) throw Err("expected a new line after 'match ...:'");
             _i++;
-            if (Cur.Kind != TokenKind.Indent) throw Err("expected an indented block of 'case' clauses");
+            if (Cur.Kind != TokenKind.Indent) throw Err("expected an indented block of 'case' clauses", needsMoreInput: AtEndOfInput, isIndentationError: true);
             _i++;
             while (Cur.Kind != TokenKind.Dedent && Cur.Kind != TokenKind.EndOfFile)
             {

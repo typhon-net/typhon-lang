@@ -152,7 +152,8 @@ namespace Typhon.Compiler.Syntax
                 if (AcceptOp("=")) ann.Value = ParseTestListOrStar(allowYield: true);
                 return ann;
             }
-            if (Cur.Kind == TokenKind.Op && Cur.Text.Length >= 2 && Cur.Text.EndsWith("=") && Cur.Text != "==" && Cur.Text != "<=" && Cur.Text != ">=" && Cur.Text != "!=")
+            if (Cur.Kind == TokenKind.Op && Cur.Text.Length >= 2 && Cur.Text.EndsWith("=") &&
+                Cur.Text != "==" && Cur.Text != "<=" && Cur.Text != ">=" && Cur.Text != "!=" && Cur.Text != ":=")
             {
                 string op = Cur.Text.Substring(0, Cur.Text.Length - 1);
                 _i++;
@@ -193,7 +194,7 @@ namespace Typhon.Compiler.Syntax
                 return body;
             }
             _i++;
-            if (Cur.Kind != TokenKind.Indent) throw Err("expected an indented block");
+            if (Cur.Kind != TokenKind.Indent) throw Err("expected an indented block", needsMoreInput: AtEndOfInput, isIndentationError: true);
             _i++;
             while (Cur.Kind != TokenKind.Dedent && Cur.Kind != TokenKind.EndOfFile)
             {
@@ -215,7 +216,7 @@ namespace Typhon.Compiler.Syntax
             if (IsKw("def")) return ParseFuncDef(decorators, false);
             if (IsKw("async")) { _i++; return ParseFuncDef(decorators, true); }
             if (IsKw("class")) return ParseClassDef(decorators);
-            throw Err("expected 'def' or 'class' after decorator");
+            throw Err("expected 'def' or 'class' after decorator", needsMoreInput: AtEndOfInput);
         }
 
         List<TypeParam> ParseTypeParams()
@@ -240,6 +241,7 @@ namespace Typhon.Compiler.Syntax
             var f = At(new FunctionDef { Name = ExpectName(), Decorators = decorators, IsAsync = isAsync }, tok);
             f.TypeParams = ParseTypeParams();
             ExpectOp("(");
+            bool keywordOnly = false;
             while (!IsOp(")"))
             {
                 var ptok = Cur;
@@ -248,9 +250,16 @@ namespace Typhon.Compiler.Syntax
                 else if (AcceptOp("*"))
                 {
                     p.Kind = ParamKind.VarArgs;
-                    if (IsOp(",")) { _i++; continue; } // bare '*' (keyword-only marker) — ignored
+                    keywordOnly = true;
+                    if (AcceptOp(",")) continue;
                 }
-                else if (AcceptOp("/")) { if (!IsOp(")")) ExpectOp(","); continue; }
+                else if (AcceptOp("/"))
+                {
+                    foreach (var previous in f.Params) previous.PositionalOnly = true;
+                    if (!IsOp(")")) ExpectOp(",");
+                    continue;
+                }
+                else p.KeywordOnly = keywordOnly;
                 p.Name = ExpectName();
                 if (AcceptOp(":")) p.Annotation = ParseTest();
                 if (AcceptOp("=")) p.Default = ParseTest();
@@ -370,8 +379,10 @@ namespace Typhon.Compiler.Syntax
                 h.Body = ParseBlock();
                 s.Handlers.Add(h);
             }
+            if (IsKw("else") && s.Handlers.Count == 0) throw Err("expected 'except' or 'finally' block");
             if (AcceptKw("else")) s.OrElse = ParseBlock();
             if (AcceptKw("finally")) s.FinalBody = ParseBlock();
+            if (s.Handlers.Count == 0 && s.FinalBody.Count == 0) throw Err("expected 'except' or 'finally' block", needsMoreInput: AtEndOfInput);
             return s;
         }
 

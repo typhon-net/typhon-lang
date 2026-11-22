@@ -266,13 +266,23 @@ namespace Typhon.Compiler.Emit
             if (superArgs != null)
             {
                 var saved = _scope; _scope = sig.Scope;
-                // a constructor initializer cannot be dispatched dynamically: late-bound arguments go as object, which binds
-                // statically to the base's dynamic constructor
-                bool lateBound = superArgs.Any(x => InferType(x.Value) == "dynamic") && superArgs.All(x => x.Name == null && !x.Star && !x.DoubleStar);
                 var baseInit = NearestInitAncestor(ctx.Def)?.Body.OfType<FunctionDef>().FirstOrDefault(fd => fd.Name == "__init__");
                 string kwBase = superArgs.Any(x => x.Name != null || x.DoubleStar) ? KwargsCallArgs(baseInit, 1, superArgs) : null;
-                // (only the late-bound ones: a typed argument keeps its type, for a base constructor typed in that parameter)
-                baseCall = " : base(" + (kwBase ?? (lateBound ? string.Join(", ", superArgs.Select(x => InferType(x.Value) == "dynamic" ? $"(object?){Paren(EmitValue(x.Value))}" : EmitValue(x.Value))) : EmitArgs(superArgs))) + ")";
+                // CLR constructor initializers require static binding even when a Python argument is dynamic.
+                bool lateBound = superArgs.Any(x => InferType(x.Value) == "dynamic") && superArgs.All(x => !x.Star && !x.DoubleStar);
+                string BaseArgument(Arg arg, int index)
+                {
+                    string value = EmitValue(arg.Value);
+                    if (InferType(arg.Value) == "dynamic")
+                    {
+                        var parameter = arg.Name == null ? baseInit?.Params.Skip(1).ElementAtOrDefault(index) :
+                            baseInit?.Params.Skip(1).FirstOrDefault(p => p.Name == arg.Name);
+                        string type = parameter?.Annotation != null ? MapType(parameter.Annotation, parameter) : null;
+                        value = $"({(type == null || type == "dynamic" ? "object?" : type)}){Paren(value)}";
+                    }
+                    return arg.Name == null ? value : $"{Esc(arg.Name)}: {value}";
+                }
+                baseCall = " : base(" + (kwBase ?? (lateBound ? string.Join(", ", superArgs.Select(BaseArgument)) : EmitArgs(superArgs))) + ")";
                 if (Obs != null && bases.Count > 0 && ResolveBase(bases[0], out var basePy, out _) && basePy != null &&
                     _p.TryFindClass(_m, basePy.Name, out var bcls, out var bowner))
                     RecordCall(InitTarget(bowner, bcls), superArgs);

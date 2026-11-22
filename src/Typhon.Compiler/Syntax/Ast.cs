@@ -73,8 +73,9 @@ namespace Typhon.Compiler.Syntax
     {
         public List<string> Params = new List<string>();
         public string VarArgs, KwArgs;
+        public List<Expr> Defaults = new List<Expr>();
         public Expr Body;
-        public bool IsVariadic => VarArgs != null || KwArgs != null;
+        public bool RequiresArgumentBinding => VarArgs != null || KwArgs != null || Defaults.Count != 0;
         public IEnumerable<string> ParameterNames()
         {
             foreach (var p in Params) yield return p;
@@ -210,7 +211,15 @@ namespace Typhon.Compiler.Syntax
 
     public enum ParamKind { Normal, VarArgs, KwArgs }
 
-    public sealed class Param : Node { public string Name; public Expr Annotation; public Expr Default; public ParamKind Kind; }
+    public sealed class Param : Node
+    {
+        public string Name;
+        public Expr Annotation;
+        public Expr Default;
+        public ParamKind Kind;
+        public bool PositionalOnly;
+        public bool KeywordOnly;
+    }
 
     public sealed class TypeParam { public string Name; public Expr Bound; }
 
@@ -248,6 +257,8 @@ namespace Typhon.Compiler.Syntax
     {
         public string Path;
         public List<Stmt> Body = new List<Stmt>();
+        /// <summary>Global names that a failed optional import would have bound.</summary>
+        public HashSet<string> FailedModuleImports = new HashSet<string>();
         /// <summary>Decorators that name Python callables but stand where Typhon does not apply them (methods, classes).</summary>
         public HashSet<Expr> UnappliedDecorators = new HashSet<Expr>();
         /// <summary>Methods decorated in Python: their decorators, outermost first (the class emits the decorated method).</summary>

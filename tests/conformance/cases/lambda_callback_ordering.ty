@@ -1,0 +1,9 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+items = ["aa", "xxxx", "b"]
+print(sorted(items, key=lambda s, extra=2: len(s) + extra))
+print(sorted(items, key=None))
+items.sort(key=lambda s, extra=2: len(s) + extra, reverse=True)
+print(items)
+print(list(map(lambda n, extra=2: n + extra, [1, 4, 10])))

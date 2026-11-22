@@ -43,7 +43,7 @@ namespace Typhon.Stdlib
     using System.Threading.Tasks;
     using Typhon.Runtime;
 
-    internal static class inspect
+    internal static partial class inspect
     {
         static readonly object Missing = new();
         static readonly ConditionalWeakTable<object, object> CoroutineMarkers = new();

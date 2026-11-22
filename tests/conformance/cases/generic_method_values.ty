@@ -1,0 +1,14 @@
+import heapq
+from time import monotonic as clock
+
+push = heapq.heappush
+pop = heapq.heappop
+values: list[int] = [2]
+push(values, 3)
+push(values, 1)
+print(pop(values), pop(values), pop(values))
+
+def has_clock(now=clock) -> bool:
+    return isinstance(now(), float)
+
+print(has_clock())

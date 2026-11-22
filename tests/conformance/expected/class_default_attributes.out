@@ -1,0 +1,10 @@
+'' ''
+first/-x second/-y
+'' ''
+FIRST -y first
+first!/-changed second/-y
+first!/-changed second/-y class default class option
+True
+class default/class option second/-y
+no instance override
+class default/-c class default class default

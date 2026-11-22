@@ -1,0 +1,23 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+from typing import Any
+
+def fallback(value: Any):
+    if not value:
+        return
+    return value
+
+def annotated(flag: bool) -> int:
+    if not flag:
+        return
+    return 7
+
+def explicit() -> None:
+    return None
+
+print(fallback("yes"), fallback(""))
+print(annotated(True), annotated(False))
+explicit()
+print(list(filter(None, ["", "foo", "0", "", "bar"])))
+print(list(filter(None, {"": 1, "kept": 2})))

@@ -1,0 +1,35 @@
+from typing import Any
+
+class Tagged:
+    name: str = 'sample'
+
+    def format(self, value: str) -> str:
+        return 'custom ' + value
+
+print('{module}.{fn}'.format(module='demo', fn='main'))
+print('{}:{label:>{width}}:{:.{precision}f}'.format('head', 1.234, label='x', width=4, precision=2))
+print('{label} {1} {0}'.format('left', 'right', label='both'))
+print('{{{record.name!r}}} {values[key]} {values[1]}'.format(record=Tagged(), values={'key': 'text', 1: 'number'}))
+print('{0!a} {name!s}'.format('é', **{'name': 12}))
+print(str.format('{0}/{site}', *[7], site='web'))
+
+def apply(template: Any) -> str:
+    return template.format(value='x')
+
+print(apply('[{value}]'), apply(Tagged()))
+
+def from_typed_template(template: str) -> str:
+    return template.format(item='a', widths={'key': 3})
+
+print(from_typed_template('{item:>{widths[key]}}'))
+print('{values[}]}'.format(values={'}': 'brace key'}))
+print('{٠}/{１}'.format('a', 'b'))
+for invalid in ('{}-{0}', '{0}-{}', '{item:{width:{depth}}}'):
+    try:
+        print(invalid.format(1, item='x', width=3, depth=2))
+    except ValueError as error:
+        print(str(error))
+try:
+    print('{missing}'.format(1, present='yes'))
+except KeyError as error:
+    print(str(error))

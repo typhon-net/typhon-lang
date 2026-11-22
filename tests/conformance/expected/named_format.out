@@ -1,0 +1,14 @@
+demo.main
+head:   x:1.23
+both right left
+{'sample'} text number
+'\xe9' 12
+7/web
+[x] custom x
+  a
+brace key
+a/b
+cannot switch from automatic field numbering to manual field specification
+cannot switch from manual field specification to automatic field numbering
+Max string recursion exceeded
+'missing'

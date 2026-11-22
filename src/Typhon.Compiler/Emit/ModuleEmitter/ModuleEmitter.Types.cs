@@ -88,7 +88,7 @@ namespace Typhon.Compiler.Emit
                     }
                 case FStringExpr tf when tf.IsTemplate: return TemplateType;
                 case FStringExpr _: return "string";
-                case LambdaExpr l when l.IsVariadic: return "dynamic";
+                case LambdaExpr l when l.RequiresArgumentBinding: return "dynamic";
                 case YieldExpr _ when _scope != null && _scope.AsyncForm: return "dynamic";
                 case NamedExpr ne: return InferType(ne.Value);
                 case ComprehensionExpr comp: return ComprehensionType(comp);
@@ -104,6 +104,9 @@ namespace Typhon.Compiler.Emit
                     if (!IsLocal(n.Id) && _moduleFieldTypes.TryGetValue(n.Id, out var mt)) return mt;
                     return null;
                 }
+                case AttributeExpr tupleField when TupleFieldOwner(tupleField) != null:
+                    return "global::Typhon.Runtime.PyTupleGetter";
+                case AttributeExpr shadowed when IsInstanceClassDefault(shadowed): return "dynamic";
                 case AttributeExpr at when at.Target is NameExpr self && self.Id == "self" && _cls != null:
                     return _cls.FieldTypes.TryGetValue(at.Name, out var ft) ? ft : InheritedFieldType(_cls.Def, at.Name) ??
                            (_m.IsGdScript ? GdSelfMemberType(at.Name) : null) ??
@@ -349,6 +352,7 @@ namespace Typhon.Compiler.Emit
                     case "float": return "double";
                     case "complex": return "global::System.Numerics.Complex";
                     case "getattr": case "vars": return "dynamic";
+                    case "dir": return "List<string>";
                     case "dict" when HasDictKeywords(call): return KeywordDictType(call);
                     case "bool": case "isinstance": case "any": case "all": return "bool";
                     case "cast": return call.Args.Count == 2 ? MapType(call.Args[0].Value, call) : null;   // typing.cast(T, x) is a C# cast to T

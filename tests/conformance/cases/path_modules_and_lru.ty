@@ -1,0 +1,55 @@
+import functools
+import itertools
+import ntpath
+import os
+import posixpath
+import re
+import sys
+from os import path as imported_path
+
+print(os.path is imported_path, os.path is (ntpath if os.name == 'nt' else posixpath), posixpath is not ntpath)
+print(posixpath.normcase(b'A/B'), ntpath.normcase(b'A/B'))
+print(getattr(os, 'path') is os.path)
+print(os.path.__name__ == ('ntpath' if os.name == 'nt' else 'posixpath'), sys.modules['os.path'] is os.path)
+print(callable(getattr(imported_path, 'exists')))
+
+match = re.compile('a').match
+print(list(itertools.filterfalse(match, ['ab', 'ba', 'bb'])))
+print(list(itertools.filterfalse(None, [0, 1, 2, 0])))
+
+calls: list[str] = []
+
+def render(value):
+    calls.append(type(value).__name__)
+    return type(value).__name__
+
+cached = functools.lru_cache(maxsize=2, typed=True)(render)
+print(cached(1), cached(1.0), cached(1), cached('x'), cached(1.0))
+print(calls, cached.cache_info(), cached.cache_parameters())
+cached.cache_clear()
+print(cached.cache_info())
+
+@functools.lru_cache(maxsize=0)
+def uncached(value):
+    return len(value)
+
+print(uncached([]), uncached([]), uncached.cache_info())
+
+@functools.lru_cache
+def default_cache(value):
+    return value + 1
+
+print(default_cache(2), default_cache(2), default_cache.cache_info())
+
+@functools.lru_cache(maxsize=None)
+def combine(left: int, right: int) -> int:
+    return left + right
+
+print(combine(left=1, right=2), combine(right=2, left=1),
+      combine(right=2, left=1), combine.cache_info())
+
+@functools.lru_cache
+def matcher(late_pattern):
+    return re.compile(late_pattern).match
+
+print(bool(matcher('a')('ab')), bool(matcher(b'a')(b'ba')))

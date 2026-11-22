@@ -1,0 +1,25 @@
+import re
+
+text = 'a😀\n𝄞b'
+print(re.findall(r'.', text))
+print(re.findall(r'.', text, re.DOTALL))
+print(re.findall(r'(?s:.)(?-s:.)', text))
+print(re.findall(r'.{2}', '😀XY𝄞!'))
+print(re.findall(r'.+?', '😀a'))
+print(re.fullmatch(r'..', '😀') is None)
+print(re.findall(r'\.[.]', '😀..'))
+print(re.findall(r'(?# dot.comment).', '😀.'))
+print(re.findall('(?x). # dot.comment\n', '😀.'))
+print(re.findall(r'(?<=.)x', '😀x'))
+print(re.findall(r'(?<=..)x', '😀x'))
+print(re.fullmatch(b'.', b'\xff') is not None, re.fullmatch(b'.', b'\n') is None,
+      re.fullmatch(b'.', b'\n', re.DOTALL) is not None)
+
+pair = re.compile(r'(?P<first>.)(?P<second>.)')
+match = pair.search('a😀𝄞b', 1, 3)
+print(match.group(), match.span(), match.span('first'), match.span('second'), match.pos, match.endpos)
+print(pair.match('😀𝄞b', -1, 20).span())
+print(pair.search('😀a', 2, 1) is None)
+print([m.span() for m in re.finditer(r'.', text)])
+print([m.span() for m in re.finditer(r'', '😀a')])
+print(re.sub(r'.', 'x', '😀𝄞'))

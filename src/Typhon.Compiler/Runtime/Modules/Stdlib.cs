@@ -464,12 +464,17 @@ namespace Typhon.Stdlib
             while (true) foreach (var x in saved) yield return x;
         }
         public static IEnumerable<string> cycle(string s) => cycle(Chars(s));
+        public static IEnumerable<object?> repeat(object? obj, long? times = null) => repeat<object?>(obj, times);
+
         public static IEnumerable<T> repeat<T>(T obj, long? times = null)
         {
             if (times == null) while (true) yield return obj;
             for (long i = 0; i < times; i++) yield return obj;
         }
         public static IEnumerable<T> islice<T>(IEnumerable<T> iterable, long? stop) => islice(iterable, 0, stop, 1);
+        public static IEnumerable<dynamic> islice(object? iterable, long? stop) => islice(Builtins.__iter_dyn(iterable), stop);
+        public static IEnumerable<dynamic> islice(object? iterable, long? start, long? stop, long? step = 1) =>
+            islice(Builtins.__iter_dyn(iterable), start, stop, step);
         public static IEnumerable<T> islice<T>(IEnumerable<T> iterable, long? start, long? stop, long? step = 1)
         {
             long s = start ?? 0, st = step ?? 1, i = 0;
@@ -503,10 +508,12 @@ namespace Typhon.Stdlib
             bool dropping = true;
             foreach (var x in iterable) { if (dropping && predicate(x)) continue; dropping = false; yield return x; }
         }
-        public static IEnumerable<T> filterfalse<T>(Func<T, bool> predicate, IEnumerable<T> iterable) => iterable.Where(x => !predicate(x));
-        public static IEnumerable<T> filterfalse<T>(PyClosure predicate, IEnumerable<T> iterable) =>
-            iterable.Where(value => !Builtins.truthy(predicate.__call__([value])));
-
+        public static IEnumerable<T> filterfalse<T>(Func<T, bool>? predicate, IEnumerable<T> iterable) =>
+            predicate == null ? filterfalse((object?)null, iterable) : iterable.Where(x => !predicate(x));
+        public static IEnumerable<T> filterfalse<T>(object? predicate, IEnumerable<T> iterable) =>
+            iterable.Where(item => !Builtins.truthy(predicate == null ? item : Builtins.__invoke(predicate, [item])));
+        public static IEnumerable<dynamic> filterfalse(object? predicate, object? iterable) =>
+            filterfalse(predicate, Builtins.__iter_dyn(iterable));
         public static IEnumerable<T> compress<T>(IEnumerable<T> data, IEnumerable<bool> selectors) => data.Zip(selectors).Where(p => p.Second).Select(p => p.First);
         public static IEnumerable<T> compress<T>(IEnumerable<T> data, IEnumerable<long> selectors) => data.Zip(selectors).Where(p => p.Second != 0).Select(p => p.First);
         public static IEnumerable<(T, T)> pairwise<T>(IEnumerable<T> iterable)
@@ -545,7 +552,7 @@ namespace Typhon.Stdlib
         public static PyOrderedDict<K, V> OrderedDict<K, V>(IEnumerable<(K, V)> pairs) where K : notnull { var o = new PyOrderedDict<K, V>(); foreach (var (k, v) in pairs) o[k] = v; return o; }
     }
 
-    /// <summary>functools (reduce, cmp_to_key; @cache / @lru_cache are lowered by the compiler).</summary>
+    /// <summary>functools function helpers, including the runtime cache wrappers.</summary>
     internal static partial class functools
     {
         /// <summary>@functools.wraps(f) on a decorator's wrapper: the wrapper takes f's name and docstring, and keeps f as __wrapped__.</summary>

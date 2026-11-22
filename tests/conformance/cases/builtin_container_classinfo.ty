@@ -1,0 +1,14 @@
+from typing import Any
+
+class NamedDict(dict[str, int]):
+    pass
+
+def classify(value: Any) -> None:
+    print(isinstance(value, dict), isinstance(value, list), isinstance(value, set))
+
+classify({"value": 3})
+classify([4, 5])
+classify({6, 7})
+classify(NamedDict())
+classify(frozenset({6, 7}))
+print(isinstance((1, 2), (dict, list, set)))

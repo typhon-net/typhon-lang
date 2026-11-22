@@ -1,0 +1,24 @@
+try:
+    import _typhon_missing_optional_xyz as native
+except ImportError:
+    available = False
+else:
+    available = True
+
+def read_option():
+    if available:
+        return native.setting
+    return "fallback"
+
+print(read_option())
+available = True
+try:
+    read_option()
+except NameError as error:
+    print(error.name, str(error))
+
+try:
+    import _typhon_missing_optional_xyz as assigned
+except ImportError:
+    assigned = "assigned by handler"
+print(assigned)

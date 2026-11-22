@@ -61,6 +61,7 @@ namespace Typhon.Compiler.Emit
             ["ModuleNotFoundError"] = "global::Typhon.Runtime.ModuleNotFoundError",
             ["ImportCycleError"] = "global::Typhon.Runtime.ImportCycleError",
             ["SyntaxError"] = "global::Typhon.Runtime.SyntaxError",
+            ["_IncompleteInputError"] = "global::Typhon.Runtime._IncompleteInputError",
             ["IndentationError"] = "global::Typhon.Runtime.IndentationError",
             ["TabError"] = "global::Typhon.Runtime.TabError",
             ["NameError"] = "global::Typhon.Runtime.NameError",
@@ -130,7 +131,7 @@ namespace Typhon.Compiler.Emit
 
         bool IsLocal(string name)
         {
-            foreach (var set in _lambdaParams) if (set.Contains(name)) return true;
+            foreach (var set in _lambdaParams) if (set.ContainsKey(name)) return true;
             if (_renames.ContainsKey(name)) return true;
             for (var s = _scope; s != null; s = s.Parent)
             {
@@ -201,6 +202,8 @@ namespace Typhon.Compiler.Emit
         string EmitName(NameExpr n)
         {
             string id = n.Id;
+            foreach (var scope in _lambdaParams)
+                if (scope.TryGetValue(id, out var lambdaParameter)) return lambdaParameter;
             if (_renames.TryGetValue(id, out var renamed)) return Esc(renamed);
             if (IsLocal(id)) return Esc(id);
             if (_m.RuntimeCodeMode != null && _m.RuntimeBindings.Contains(id))
@@ -209,12 +212,25 @@ namespace Typhon.Compiler.Emit
             if (id == "__name__") return CsString(_m.Name);
             if (id == "__package__" && !IsShadowed(id)) return _m.PackageName.Length == 0 ? "null" : CsString(_m.PackageName);
             if (id == "__file__" && !IsShadowed(id)) return CsString(System.IO.Path.GetFullPath(_path));
+            if (id == "globals" && !IsShadowed(id))
+            {
+                string args = NewTmp("globalsArgs"), kw = NewTmp("globalsKw");
+                return $"new global::Typhon.Runtime.PyClosure(\"globals\", ({args}, {kw}) => " +
+                    $"({args}.Length == 0 && ({kw} == null || {kw}.Count == 0)) ? __typhon_globals() : " +
+                    "throw new global::System.InvalidCastException(\"globals() takes no arguments\"))";
+            }
             if (PackageImportedMember(id) is string packageMember) return packageMember;
+            if (_qualifiedRuntimeModuleImports.Contains(id) && !IsShadowed(id) && _dotnetAliases.TryGetValue(id, out var runtimeModule))
+                return CsTypeName(runtimeModule);
             if (ExceptionMap.TryGetValue(id, out var ex) && !IsShadowed(id)) return ex;
             if (!IsShadowed(id))
             {
                 if (StdlibOwner(id) is string owner && _r.GetMembers(owner, id).Count > 0) return CsTypeName(owner) + "." + Esc(id);
                 if (BuiltinClashes(id)) return "global::Typhon.Runtime.Builtins." + Esc(id);
+                // An optional module that failed to import left its global name unbound.
+                if (_m.Ast.FailedModuleImports.Contains(id) && !_moduleFieldNames.Contains(id) && !_moduleAliases.ContainsKey(id) &&
+                    !_dotnetAliases.ContainsKey(id) && !_typingOnlyNames.Contains(id))
+                    return $"{Rt("__unbound_import")}({CsString(id)})";
             }
             return Esc(id);
         }

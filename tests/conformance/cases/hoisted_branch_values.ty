@@ -1,0 +1,8 @@
+def polymorphic(flag: bool):
+    if flag:
+        result = b'Hello'
+    else:
+        result = getattr('Hello', 'lower')()
+    return type(result).__name__
+
+print(polymorphic(True), polymorphic(False))

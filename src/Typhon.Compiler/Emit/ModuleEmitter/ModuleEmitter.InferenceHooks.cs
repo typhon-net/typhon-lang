@@ -66,7 +66,7 @@ namespace Typhon.Compiler.Emit
                 case NameExpr n when n.Id == "float": return "double";
                 case NameExpr n when n.Id == "str": return "string";
                 case NameExpr n when n.Id == "bool": return "bool";
-                case LambdaExpr l when !l.IsVariadic && l.Params.Count == 0: return PyType(InferType(l.Body));
+                case LambdaExpr l when !l.RequiresArgumentBinding && l.Params.Count == 0: return PyType(InferType(l.Body));
                 default: return null;
             }
         }
@@ -88,7 +88,7 @@ namespace Typhon.Compiler.Emit
                     var factory = (value as CallExpr)?.Args.FirstOrDefault(a => a.Name == null)?.Value;
                     string name = factory is NameExpr fn ? fn.Id : "function";
                     string make = factory == null ? "null" : factory is LambdaExpr fl
-                        ? fl.IsVariadic ? $"() => {FactoryCall(fl, kv[1])}" : $"() => {EmitValue(fl.Body)}"
+                        ? fl.RequiresArgumentBinding ? $"() => {FactoryCall(fl, kv[1])}" : $"() => {EmitValue(fl.Body)}"
                         : name == "int" ? (_big ? "() => global::System.Numerics.BigInteger.Zero" : "() => 0L") : name == "float" ? "() => 0.0" : name == "str" ? "() => \"\"" : name == "bool" ? "() => false"
                         : $"() => new {kv[1]}()";
                     return $"new {type}({make}, {CsString(name)})";
@@ -302,6 +302,11 @@ namespace Typhon.Compiler.Emit
                 bool qualified = module.StartsWith("global::");
                 string logicalName = (qualified ? module.Substring("global::".Length) : module).Replace("@", "");
                 var owner = qualified ? _p.FindModule(logicalName) : ModuleRef(logicalName);
+                if (!qualified && owner != null)
+                {
+                    var (exportOwner, exportName) = ProjectExport(owner, name);
+                    if (exportName != null) (owner, name) = (exportOwner, exportName);
+                }
                 if (qualified && (owner == null || ModuleClassName(owner) != module))
                     owner = _p.Modules.Values.FirstOrDefault(m => m.Classes.ContainsKey(name) && ModuleClassName(m) == module);
                 if (owner != null && owner.Classes.ContainsKey(name))

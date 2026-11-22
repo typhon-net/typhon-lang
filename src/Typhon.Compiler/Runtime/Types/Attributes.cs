@@ -25,11 +25,13 @@ namespace Typhon.Runtime
         public static dynamic? getattr(object? o, string name, object? @default) => TryGetAttr(o, name, out var v) ? v : @default;
         public static bool hasattr(object? o, string name) => TryGetAttr(o, name, out _);
 
+        public static dynamic __unbound_import(string name) => throw new NameError($"name '{name}' is not defined", name: name);
+
         /// <summary>
         /// An attribute by name: a property or field (of a class: a class variable), a method as a bound method, an
         /// attribute set on the object at run time, one of str's/list's/... Python methods, or a dynamic object's member.
         /// </summary>
-        static bool TryGetAttr(object? o, string name, out object? value)
+        static bool TryGetAttr(object? o, string name, out object? value, bool allowFallback = true)
         {
             value = null;
             if (o == null || name.StartsWith("<")) return false;
@@ -52,8 +54,7 @@ namespace Typhon.Runtime
                 if (name == "__doc__") { value = t.GetCustomAttribute<PySourceAttribute>()?.DocString; return true; }
                 if (PyClassDescriptors.TryGetAttribute(t, name, out value)) return true;
                 if (name == "__module__") { value = ModuleOfType(t); return true; }
-                if (t.GetProperty(name, StaticMembers) is PropertyInfo sp && sp.GetIndexParameters().Length == 0) { value = sp.GetValue(null); return true; }
-                if (t.GetField(name, StaticMembers) is FieldInfo sf) { value = sf.GetValue(null); return true; }
+                if (TryGetClassData(t, name, out value)) return true;
                 if (t.GetMethods(StaticMembers | InstanceMembers).Any(m => m.Name == name)) { value = new PyBoundMethod(t, name); return true; }
                 if (FindNestedType(t, name) is Type nested) { value = nested; return true; }
                 // CLR reflection consumers may also read members of the Type object itself.
@@ -62,7 +63,8 @@ namespace Typhon.Runtime
             {
                 switch (name)
                 {
-                    case "__name__": case "__qualname__": value = pf.__name__; return true;
+                    case "__name__": value = pf.__name__; return true;
+                    case "__qualname__": value = pf.__qualname__; return true;
                     case "__doc__": value = pf.__doc__; return true;
                     case "__wrapped__": if (pf.__wrapped__ == null) return false; value = pf.__wrapped__; return true;
                     case "__module__": value = pf.__module__; return true;
@@ -82,8 +84,10 @@ namespace Typhon.Runtime
             var type = o.GetType();
             if (type.GetProperty(name, InstanceMembers) is PropertyInfo p && p.GetIndexParameters().Length == 0)
             {
+                bool lateAttribute = p.IsDefined(typeof(PyLateAttributeAttribute), false);
+                if (lateAttribute && !allowFallback) return PyAttrDict.TryGetExtra(o, name, out value);
                 try { value = Unwrapped(() => p.GetValue(o)); return true; }
-                catch (MissingMemberException) when (p.IsDefined(typeof(PyLateAttributeAttribute), false)) { return false; }
+                catch (MissingMemberException) when (lateAttribute) { return false; }
             }
             if (type.GetField(name, InstanceMembers) is FieldInfo f) { value = f.GetValue(o); return true; }
             if (type.GetMethods(BindingFlags.Instance | BindingFlags.Public).Any(m => m.Name == name)) { value = new PyBoundMethod(o, name); return true; }
@@ -117,10 +121,52 @@ namespace Typhon.Runtime
                 catch (Microsoft.CSharp.RuntimeBinder.RuntimeBinderException) { }
                 catch (MissingMemberException) { }
             }
-            if (type.GetProperty(name, StaticMembers) is PropertyInfo csp && csp.GetIndexParameters().Length == 0) { value = csp.GetValue(null); return true; }
-            if (type.GetField(name, StaticMembers) is FieldInfo csf) { value = csf.GetValue(null); return true; }
+            if (TryGetClassData(type, name, out value)) return true;
             if (FindNestedType(type, name) is Type nestedType) { value = nestedType; return true; }
-            return TryFallbackAttribute(o, name, out value);
+            return allowFallback && TryFallbackAttribute(o, name, out value);
+        }
+
+        static bool TryGetClassData(Type type, string name, out object? value)
+        {
+            const BindingFlags DeclaredStatic = StaticMembers | BindingFlags.DeclaredOnly;
+            for (Type? owner = type; owner != null; owner = owner.BaseType)
+            {
+                if (owner.GetProperty(name, DeclaredStatic) is PropertyInfo property && property.GetIndexParameters().Length == 0)
+                { value = property.GetValue(null); return true; }
+                if (owner.GetField(name, DeclaredStatic) is FieldInfo field)
+                { value = field.GetValue(null); return true; }
+            }
+            value = null;
+            return false;
+        }
+
+        static readonly System.Collections.Concurrent.ConcurrentDictionary<string, PyBoundMethod> ObjectMethods = new();
+
+        public static PyBoundMethod __object_method(string helper) =>
+            ObjectMethods.GetOrAdd(helper, name => new PyBoundMethod(typeof(Builtins), name));
+
+        public static object __object_new(Type cls)
+        {
+            if (!cls.IsClass || cls.IsAbstract || cls == typeof(string) || typeof(Delegate).IsAssignableFrom(cls))
+                throw new InvalidCastException($"object.__new__({PyTypeName(cls)}) is not safe");
+            return System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(cls);
+        }
+
+        public static object? __object_init(object? value) => null;
+
+        public static object? __object_getattribute(object? obj, string name) =>
+            TryGetAttr(obj, name, out var value, allowFallback: false) ? value : throw new MissingMemberException(name);
+
+        public static object? __object_setattr(object? obj, string name, object? value)
+        {
+            setattr(obj, name, value);
+            return null;
+        }
+
+        public static object? __object_delattr(object? obj, string name)
+        {
+            delattr(obj, name);
+            return null;
         }
 
         static Type? FindNestedType(Type? type, string name)
@@ -205,7 +251,8 @@ namespace Typhon.Runtime
             {
                 switch (name)
                 {
-                    case "__name__": case "__qualname__": pf.__name__ = (string)value!; return;
+                    case "__name__": pf.__name__ = (string)value!; return;
+                    case "__qualname__": pf.__qualname__ = (string)value!; return;
                     case "__doc__": pf.__doc__ = value; return;
                     case "__wrapped__": pf.__wrapped__ = value; return;
                     case "__module__": pf.__module__ = (string)value!; return;

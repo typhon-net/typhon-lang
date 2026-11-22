@@ -1,0 +1,8 @@
+make.<locals>.describe Describe a value with the captured prefix.
+True renamed factory.describe
+make.<locals>.describe Describe a value with the captured prefix.
+True renamed factory.describe
+first: 1 'first: ' second: 2 'second: '
+:[True] [':1', ':2', 'end']
+[   ]
+[  ]

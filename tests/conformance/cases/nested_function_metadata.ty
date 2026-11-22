@@ -1,0 +1,44 @@
+from typing import Any
+
+
+def make(text):
+    def describe(value):
+        """Describe a value with the captured prefix."""
+        return text + str(value)
+
+    print(describe.__qualname__, describe.__doc__)
+    describe.__name__ = 'renamed'
+    describe.__qualname__ = 'factory.describe'
+    describe.tag = text
+    print(describe is describe, describe.__name__, describe.__qualname__)
+    return describe
+
+
+first = make('first: ')
+second = make('second: ')
+print(first(1), repr(first.tag), second(2), repr(second.tag))
+
+class Prefix:
+    def render(self, value):
+        return ':' + str(value)
+
+
+def collect(fill):
+    render = Prefix().render
+    values = [render(item) for item in (1, 2)]
+    values.append(fill)
+    return values
+
+
+print(Prefix().render([True]), collect('end'))
+
+
+def spacing(count: Any):
+    count *= ' '
+    return '[' + count + ']'
+
+
+print(spacing(3))
+space = ' '
+space *= 2
+print('[' + space + ']')

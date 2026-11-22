@@ -93,6 +93,8 @@ namespace Typhon.Runtime
                 "utf-16-le" or "utf-16le" => new UnicodeEncoding(false, false, true),
                 "utf-16-be" or "utf-16be" => new UnicodeEncoding(true, false, true),
                 "utf-32" or "utf32" => new UTF32Encoding(false, true, true),
+                "utf-32-le" or "utf-32le" => new UTF32Encoding(false, false, true),
+                "utf-32-be" or "utf-32be" => new UTF32Encoding(true, false, true),
                 _ => Encoding.GetEncoding(encoding),
             };
             if (errors == "strict") return enc;

@@ -57,7 +57,7 @@ namespace Typhon.Stdlib
     internal static class linecache
     {
         /// <summary>filename → (size, mtime, lines, fullname), like CPython's cache.</summary>
-        public static readonly OrderedDictionary<string, (long, double, List<string>, string)> cache = new OrderedDictionary<string, (long, double, List<string>, string)>();
+        public static readonly OrderedDictionary<string, (long, object?, List<string>, string)> cache = new OrderedDictionary<string, (long, object?, List<string>, string)>();
         static readonly object _lock = new object();
 
         /// <summary>getline(filename, lineno): the line with its newline, or '' when the file or line does not exist.</summary>
@@ -135,10 +135,11 @@ namespace Typhon.Stdlib
                 foreach (var name in names)
                 {
                     var (size, mtime, _, full) = cache[name];
+                    if (mtime == null) continue;
                     try
                     {
                         var info = new System.IO.FileInfo(full);
-                        if (!info.Exists || info.Length != size || (info.LastWriteTimeUtc - DateTime.UnixEpoch).TotalSeconds != mtime) cache.Remove(name);
+                        if (!info.Exists || info.Length != size || !Builtins.eq((info.LastWriteTimeUtc - DateTime.UnixEpoch).TotalSeconds, mtime)) cache.Remove(name);
                     }
                     catch (Exception) { cache.Remove(name); }
                 }
@@ -207,7 +208,7 @@ namespace Typhon.Stdlib
             }
 
             /// <summary>The frames as CPython prints them: '  File "f.py", line 3, in g\n    source\n' each.</summary>
-            public List<string> format()
+            public List<string> format(bool colorize = false)
             {
                 var result = new List<string>();
                 // CPython folds more than 3 repeats of the same frame into "[Previous line repeated N more times]"
@@ -221,14 +222,15 @@ namespace Typhon.Stdlib
                         if (repeats >= 3) result.Add($"  [Previous line repeated {repeats - 2} more time{(repeats - 2 == 1 ? "" : "s")}]\n");
                         last = key; repeats = 0;
                     }
-                    result.Add(format_frame_summary(f));
+                    result.Add(format_frame_summary(f, colorize));
                 }
                 if (repeats >= 3) result.Add($"  [Previous line repeated {repeats - 2} more time{(repeats - 2 == 1 ? "" : "s")}]\n");
                 return result;
             }
 
-            public string format_frame_summary(FrameSummary f) =>
-                $"  File \"{f.filename}\", line {f.lineno}, in {f.name}\n" + (string.IsNullOrEmpty(f.line) ? "" : $"    {f.line}\n");
+            public string format_frame_summary(FrameSummary f, bool colorize = false) =>
+                $"  File {Magenta($"\"{f.filename}\"", colorize)}, line {Magenta(f.lineno.ToString(), colorize)}, in {Magenta(f.name, colorize)}\n" +
+                (string.IsNullOrEmpty(f.line) ? "" : $"    {f.line}\n");
 
             public string __repr__() => "[" + string.Join(", ", this.Select(f => f.__repr__())) + "]";
             public override string ToString() => __repr__();
@@ -365,7 +367,16 @@ namespace Typhon.Stdlib
         public static string format_exc(object? limit = null, bool chain = true) =>
             Current is Exception e ? string.Concat(format_exception(e, limit: limit, chain: chain)) : "NoneType: None\n";
 
-        public static void print_exc(object? limit = null, object? file = null, bool chain = true) => Write(file, format_exc(limit, chain));
+        public static void print_exc(object? limit = null, object? file = null, bool chain = true, bool colorize = false) =>
+            Write(file, !colorize ? format_exc(limit, chain) : Current is Exception error
+                ? string.Concat(new TracebackException(error, limit).format(chain, colorize: true))
+                : ColoredException("NoneType", "None", true));
+
+        static string Magenta(string text, bool colorize, bool bold = false) =>
+            !colorize ? text : (bold ? _colorize.ANSIColors.BOLD_MAGENTA : _colorize.ANSIColors.MAGENTA) + text + _colorize.ANSIColors.RESET;
+
+        static string ColoredException(string type, string message, bool colorize) =>
+            Magenta(type, colorize, bold: true) + (message.Length > 0 ? ": " + Magenta(message, colorize) : "") + "\n";
 
         /// <summary>print_last(): CPython prints sys.last_exc (the last uncaught exception); Typhon has none in a running program.</summary>
         public static void print_last(object? limit = null, object? file = null, bool chain = true) =>
@@ -410,7 +421,7 @@ namespace Typhon.Stdlib
             public static TracebackException from_exception(Exception exc, object? limit = null, bool lookup_lines = true, bool capture_locals = false, bool compact = false) =>
                 new TracebackException(exc, limit);
 
-            public List<string> format_exception_only(bool show_group = false)
+            public List<string> format_exception_only(bool show_group = false, bool colorize = false)
             {
                 var result = new List<string>();
                 if (_exc is SyntaxError se && se.lineno != null)
@@ -431,24 +442,24 @@ namespace Typhon.Stdlib
                         }
                     }
                     string m = se.msg == null ? "" : Builtins.str(se.msg);
-                    result.Add(exc_type_str + (m.Length > 0 ? ": " + m : "") + "\n");
+                    result.Add(ColoredException(exc_type_str, m, colorize));
                     return result;
                 }
-                result.Add(exc_type_str + (_str.Length > 0 ? ": " + _str : "") + "\n");
+                result.Add(ColoredException(exc_type_str, _str, colorize));
                 if (show_group && exceptions != null)
                     foreach (var sub in exceptions) foreach (var line in sub.format_exception_only(true)) result.Add("   " + line);
                 return result;
             }
 
             /// <summary>The traceback's lines: the header and frames when it has any, then the exception line.</summary>
-            public IEnumerable<string> format(bool chain = true, bool _ctx = false)
+            public IEnumerable<string> format(bool chain = true, bool _ctx = false, bool colorize = false)
             {
                 if (stack.Count > 0)
                 {
                     yield return "Traceback (most recent call last):\n";
-                    foreach (var line in stack.format()) yield return line;
+                    foreach (var line in stack.format(colorize)) yield return line;
                 }
-                foreach (var line in format_exception_only()) yield return line;
+                foreach (var line in format_exception_only(colorize: colorize)) yield return line;
             }
 
             public void print(object? file = null, bool chain = true) => Write(file, string.Concat(format(chain)));

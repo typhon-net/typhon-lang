@@ -1,0 +1,18 @@
+a/b%20C%2B~%3A%E9%9B%AA a/b%20C%2B~:%E9%9B%AA
+%C3%A9+%25 %FF%3F/#
+a%20b%00%FF
+éé++%GG% 'é+ '
+� % b'\xc3\xa9\xff%GG%'
+%3F  %5Cxe9
+'X' \xff
+'\udcff' %FF
+'\ud800' %ED%A0%80
+0 1 invalid start byte
+0 2 unexpected end of data
+strict ASCII
+strict surrogate
+safe requires characters
+%FF%FEA%00 A
+%3F %00%00%00%E9 A
+('C:', '/', 'folder/file') ('//server/share', '/', 'file')
+(b'D:', b'\\', b'a\xff')

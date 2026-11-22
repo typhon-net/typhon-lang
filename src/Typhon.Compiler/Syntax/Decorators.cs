@@ -28,7 +28,7 @@ namespace Typhon.Compiler.Syntax
         public static readonly HashSet<string> Builtin = new HashSet<string>
         {
             "staticmethod", "classmethod", "property", "abstractmethod", "override", "final", "dataclass", "overload",
-            "cache", "lru_cache", "functools.cache", "functools.lru_cache",
+            "cache", "functools.cache",
             "typing.override", "typing.final", "typing.overload", "abc.abstractmethod", "dataclasses.dataclass",
             "total_ordering", "functools.total_ordering",
         };

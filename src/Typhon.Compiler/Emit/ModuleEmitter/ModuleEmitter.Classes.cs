@@ -62,8 +62,7 @@ namespace Typhon.Compiler.Emit
             if (!isInterface) EmitClassSource(c.Body, c.Line);
             EmitAttributes(c.Decorators);
             string vis = Visibility(c.Name, topLevel: true);
-            // a class deriving from one of the runtime's types (threading.Thread, UserWarning, io.RawIOBase) is internal like it
-            if (vis == "public" && DerivesFromRuntime(c)) vis = "internal";
+            if (vis == "public" && DerivesFromInternalClass(c)) vis = "internal";
             string kind = isInterface ? "partial interface" : (isAbstract ? "abstract partial class" : (ctx.IsSealed ? "sealed partial class" : "partial class"));
             var baseTypes = bases.Select(b => MapType(b, c)).ToList();
             if (!isInterface) baseTypes.AddRange(StructuralProtocols(c, bases));
@@ -196,7 +195,7 @@ namespace Typhon.Compiler.Emit
                 if (fn.Id == "float") return "0.0";
                 if (fn.Id == "str") return "\"\"";
             }
-            if (factory is LambdaExpr { IsVariadic: false } lf && lf.Params.Count == 0) return Checked(EmitExpr(lf.Body, targetTyped: true));
+            if (factory is LambdaExpr { RequiresArgumentBinding: false } lf && lf.Params.Count == 0) return Checked(EmitExpr(lf.Body, targetTyped: true));
             return Checked(EmitExpr(new CallExpr { Func = factory, Line = factory.Line, Col = factory.Col }, targetTyped: true));
         }
 
@@ -234,14 +233,15 @@ namespace Typhon.Compiler.Emit
         static bool IsRuntimeType(string meta) =>
             meta != null && (meta.StartsWith("Typhon.Runtime.") || meta.StartsWith("Typhon.Stdlib.") || meta == "memoryview");
 
-        /// <summary>Does the class derive, directly or through Typhon classes, from one of the runtime's (internal) types?</summary>
-        bool DerivesFromRuntime(ClassDef c, int depth = 0)
+        /// <summary>Does the class directly or indirectly inherit a type with restricted CLR visibility?</summary>
+        bool DerivesFromInternalClass(ClassDef c, int depth = 0)
         {
             if (depth > 20) return false;
             foreach (var b in c.Bases)
             {
                 if (!ResolveBase(b, out var py, out var meta)) continue;
-                if (py != null ? py != c && DerivesFromRuntime(py, depth + 1) : IsRuntimeType(meta)) return true;
+                if (py == null ? IsRuntimeType(meta) :
+                    py != c && (Visibility(py.Name, topLevel: true) != "public" || DerivesFromInternalClass(py, depth + 1))) return true;
             }
             return false;
         }
@@ -338,6 +338,8 @@ namespace Typhon.Compiler.Emit
             {
                 // An auto-property reserves get_name and set_name in C#. A Python data attribute can coexist with those methods.
                 bool reservesMethod = methods.Any(m => m.Name == "get_" + name || m.Name == "set_" + name);
+                if (!reservesMethod && c.NamedTupleFields?.IndexOf(name) is int index && index >= 0)
+                    _w.Line($"[global::Typhon.Runtime.PyDescriptor(global::Typhon.Runtime.PyDescriptorKind.NamedTupleField, index: {index})]");
                 if (hasGetAttr && !reservesMethod && initializer.Length == 0)
                 {
                     string key = CsString(name);
@@ -540,7 +542,13 @@ namespace Typhon.Compiler.Emit
             var propertyDone = new HashSet<string>();
             foreach (var f in methods)
             {
-                if (f.Name == "__init__") { EmitConstructor(f, ctx, bases); _w.Line(); continue; }
+                if (f.Name == "__init__")
+                {
+                    if (!_m.IsGdScript && !ctx.IsInterface) EmitSignatureProvider(f);
+                    EmitConstructor(f, ctx, bases);
+                    _w.Line();
+                    continue;
+                }
                 if (IsCachedProperty(f)) { EmitCachedProperty(f, ctx); _w.Line(); continue; }
                 bool isProp = HasDecorator(f.Decorators, "property") || f.Decorators.Any(d => DecoratorName(d)?.EndsWith(".setter") == true);
                 if (isProp)
@@ -589,7 +597,11 @@ namespace Typhon.Compiler.Emit
             bool isClassMethod = HasDecorator(f.Decorators, "classmethod");
             if (!isStaticDecl && f.Params.Count == 0) { Error(f, $"method '{f.Name}' needs a 'self' parameter (or use @staticmethod)"); return; }
             foreach (var tp in f.TypeParams) _currentFuncTypeParams.Add(tp.Name);
-            try { EmitMethodCore(f, ctx, bases, isStaticDecl, isClassMethod); }
+            try
+            {
+                if (!_m.IsGdScript && !ctx.IsInterface && !_m.Ast.MethodDecorators.ContainsKey(f)) EmitSignatureProvider(f);
+                EmitMethodCore(f, ctx, bases, isStaticDecl, isClassMethod);
+            }
             finally { foreach (var tp in f.TypeParams) _currentFuncTypeParams.Remove(tp.Name); }
         }
 
@@ -667,6 +679,7 @@ namespace Typhon.Compiler.Emit
             if (!_m.IsGdScript && !ctx.IsInterface && !decorated)
             {
                 EmitClassSource(f.Body, f.Line, CallableKind(f, sig));
+                EmitSignatureAttribute(f);
                 if (isStatic) EmitDescriptorAttribute(isClassMethod ? "ClassMethod" : "StaticMethod", classMethodBody);
             }
             string generic = TypeParamList(f.TypeParams), constraints = TypeParamConstraints(f.TypeParams, f);
@@ -761,7 +774,9 @@ namespace Typhon.Compiler.Emit
             sig.Scope.Params.Remove(f.Params[0].Name);
             string name = CsString(f.Name);
             string getter = "__cached_property_" + f.Name;
+            EmitSignatureProvider(f);
             LineDirective(f);
+            EmitSignatureAttribute(f);
             _w.Line($"private {(f.IsAsync ? "async " : "")}{sig.ReturnType} {Esc(getter)}({sig.Params})");
             EmitSignatureBody(f.Body, sig);
             EmitDocComment(f.Body);
@@ -785,6 +800,13 @@ namespace Typhon.Compiler.Emit
             gsig.Scope.HasSelf = true;
             gsig.Scope.Params.Remove(getter.Params[0].Name);
             string mods = MethodModifiers(getter, ctx, bases, out _, out bool isAbstract);
+            bool emitSignature = !_m.IsGdScript && !ctx.IsInterface && !isAbstract;
+            string setterProvider = setter != null ? SignatureProviderName(setter) + "_setter" : null;
+            if (emitSignature)
+            {
+                EmitSignatureProvider(getter);
+                if (setter != null) EmitSignatureProvider(setter, setterProvider);
+            }
             EmitDocComment(getter.Body);
             LineDirective(getter);
             if (!ctx.IsInterface)
@@ -796,6 +818,7 @@ namespace Typhon.Compiler.Emit
             _w.Line($"{mods} {gsig.ReturnType} {Esc(getter.Name)}");
             _w.Open();
             if (isAbstract) { _w.Line(setter != null ? "get; set;" : "get;"); _w.Close(); return; }
+            if (emitSignature) EmitSignatureAttribute(getter);
             _w.Line("get");
             EmitFunctionBody(getter.Body, gsig.Scope, null, gsig.Locals);
             if (setter != null)
@@ -807,6 +830,7 @@ namespace Typhon.Compiler.Emit
                 string valueName = setter.Params.Count > 1 ? setter.Params[1].Name : "value";
                 LineDirective(setter);
                 if (!ctx.IsInterface) EmitClassSource(setter.Body, setter.Line);
+                if (emitSignature) EmitSignatureAttribute(setter, setterProvider);
                 _w.Line("set");
                 EmitFunctionBody(setter.Body, ssig.Scope, null, ssig.Locals,
                     prologue: valueName != "value" ? $"var {Esc(valueName)} = value;" : null);

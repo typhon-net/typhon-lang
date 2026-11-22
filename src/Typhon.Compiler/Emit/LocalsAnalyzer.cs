@@ -41,7 +41,7 @@ namespace Typhon.Compiler.Emit
     internal sealed class LocalsAnalyzer
     {
         /// <summary>ExprStore: assigned inside an expression or a match pattern (walrus, case capture): never declares inline, but its value types a hoisted variable.</summary>
-        enum Kind { Load, DeclStore, AnnDecl, LoopTarget, WithTarget, OtherStore, ExprStore }
+        enum Kind { Load, DeclStore, AnnDecl, LoopTarget, WithTarget, OtherStore, ExprStore, FunctionStore }
 
         sealed class Occ
         {
@@ -176,6 +176,7 @@ namespace Typhon.Compiler.Emit
                 case FunctionDef fd:
                     _r.LocalFunctions.Add(fd.Name);
                     foreach (var p in fd.Params) Loads(p.Default, path);
+                    Add(fd.Name, path, Kind.FunctionStore, fd);
                     foreach (var d in fd.Decorators) Loads(d, path);
                     // free variables of the nested function count as uses at the definition site
                     var inner = Analyze(fd.Body, fd.Params.Select(p => p.Name), null);
@@ -291,6 +292,7 @@ namespace Typhon.Compiler.Emit
             {
                 case NameExpr n: Add(n.Id, path, Kind.Load, null); return;
                 case LambdaExpr l:
+                    foreach (var value in l.Defaults) Loads(value, path);
                     _shadow.Push(new HashSet<string>(l.ParameterNames()));
                     Loads(l.Body, path);
                     _shadow.Pop();
@@ -336,7 +338,16 @@ namespace Typhon.Compiler.Emit
                 string name = kv.Key;
                 var occs = kv.Value;
                 if (!occs.Any(o => o.Kind != Kind.Load)) continue;              // only read → not a local
-                if (_params.Contains(name) || _excluded.Contains(name) || _r.Globals.Contains(name) || _r.LocalFunctions.Contains(name)) continue;
+                if (_params.Contains(name) || _excluded.Contains(name) || _r.Globals.Contains(name)) continue;
+                if (_r.LocalFunctions.Contains(name))
+                {
+                    // A single unconditional def can be a CLR local function. Conditional or rebound names are variables.
+                    var stores = occs.Where(o => o.Kind != Kind.Load).ToList();
+                    if (stores.Count == 1 && stores[0].Kind == Kind.FunctionStore && stores[0].Path.Count == 1) continue;
+                    _r.AllLocals.Add(name);
+                    _r.Hoisted.Add(new KeyValuePair<string, Expr>(name, null));
+                    continue;
+                }
                 _r.AllLocals.Add(name);
 
                 var lca = occs[0].Path;
@@ -440,7 +451,7 @@ namespace Typhon.Compiler.Emit
                 case BoolOpExpr b: foreach (var v in b.Values) yield return v; break;
                 case CompareExpr c: yield return c.Left; foreach (var v in c.Comparators) yield return v; break;
                 case IfExpr i: yield return i.Test; yield return i.Body; yield return i.OrElse; break;
-                case LambdaExpr l: yield return l.Body; break;
+                case LambdaExpr l: foreach (var value in l.Defaults) yield return value; yield return l.Body; break;
                 case TupleExpr t: foreach (var v in t.Elts) yield return v; break;
                 case ListExpr t: foreach (var v in t.Elts) yield return v; break;
                 case SetExpr t: foreach (var v in t.Elts) yield return v; break;

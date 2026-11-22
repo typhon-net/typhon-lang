@@ -1,0 +1,39 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+from typing import Any
+
+class ProxyHandlers:
+    def install(self, keys: list[str]) -> None:
+        for kind in keys:
+            url = "url-" + kind
+            setattr(self, kind, lambda request, proxy=url, kind=kind, handler=self.open:
+                    handler(request, proxy, kind))
+
+    def open(self, request: str, proxy: str, kind: str) -> str:
+        return request + ":" + proxy + ":" + kind
+
+handlers = ProxyHandlers()
+handlers.install(["http", "https"])
+print(getattr(handlers, "http")("one"))
+print(getattr(handlers, "https")("two", kind="custom"))
+
+def make(value: Any):
+    return lambda start, y=value, z=None, *rest, **kw: (start, y, z, rest, kw)
+
+captured = [1]
+f = make(captured)
+captured.append(2)
+print(f("a", z="set"))
+print(f("b", 4, 5, 6, flag=True))
+
+x = "before"
+g = lambda x=x: (lambda x: x)(x)
+x = "after"
+print(g(), g(x="override"))
+print((lambda value=42: value)())
+
+try:
+    f()
+except TypeError:
+    print("missing")

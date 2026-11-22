@@ -49,7 +49,7 @@ namespace Typhon.Runtime
     {
         public string Source { get; }
         public string Mode { get; }
-        public RuntimeCode(string source, string filename, string mode) : base("<module>", filename, 1)
+        public RuntimeCode(string source, string filename, string mode, long flags) : base("<module>", filename, 1, flags)
         {
             Source = source;
             Mode = mode;
@@ -70,13 +70,26 @@ namespace Typhon.Runtime
             string kind = mode as string ?? "exec";
             if (kind is not ("exec" or "eval" or "single"))
                 throw new ArgumentException("compile() mode must be 'exec', 'eval' or 'single'");
-            if (flags < 0 || (flags & ~0x1fe0010L) != 0)
+            if (flags < 0 || (flags & ~0x1fe4210L) != 0)
                 throw new ArgumentException("compile() flags are unsupported");
             if (optimize is < -1 or > 2) throw new ArgumentException("compile(): invalid optimize value");
-            var validate = AppContext.GetData("Typhon.CheckRuntimeSyntax") as Func<string, string, string, string?>
+            var validate = AppContext.GetData("Typhon.CheckRuntimeSyntax") as
+                Func<string, string, string, long, (string? Error, int Line, int Column, int Kind, long Flags)>
                 ?? throw new NotSupportedException("compile() requires the Typhon runtime compiler host");
-            if (validate(text, path, kind) is string message) throw new SyntaxError(message);
-            return new RuntimeCode(text, path, kind);
+            var result = validate(text, path, kind, flags);
+            if (result.Error is string message)
+            {
+                var lines = text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
+                string? line = result.Line > 0 && result.Line <= lines.Length ? lines[result.Line - 1] : null;
+                var details = (path, (long)result.Line, (long)result.Column, line);
+                throw result.Kind switch
+                {
+                    1 => new _IncompleteInputError(message, details),
+                    2 => new IndentationError(message, details),
+                    _ => new SyntaxError(message, details),
+                };
+            }
+            return new RuntimeCode(text, path, kind, result.Flags);
         }
 
         public static void exec(object? source, object? globals = null, object? locals = null) =>
@@ -93,9 +106,9 @@ namespace Typhon.Runtime
             var localNames = locals == null ? globalNames :
                 locals as IDictionary ?? throw new InvalidCastException("locals must be a mapping");
             var run = AppContext.GetData("Typhon.RunRuntimeCode") as
-                Func<string, string, string, IDictionary, IDictionary, (object? Value, string? Error)>
+                Func<string, string, string, long, IDictionary, IDictionary, (object? Value, string? Error)>
                 ?? throw new NotSupportedException("exec() and eval() require the Typhon runtime compiler host");
-            var result = run(code.Source, code.co_filename, code.Mode, globalNames, localNames);
+            var result = run(code.Source, code.co_filename, code.Mode, code.co_flags, globalNames, localNames);
             return result.Error != null ? throw new SyntaxError(result.Error) : result.Value;
         }
 

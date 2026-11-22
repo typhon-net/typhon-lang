@@ -1,0 +1,9 @@
+namespace
+[None, None, None]
+None 9
+4
+'yes\n'
+'\x1b[1;35mNoneType\x1b[0m: \x1b[35mNone\x1b[0m\n'
+''
+'\x1b[1;32m'
+4.5

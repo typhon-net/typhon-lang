@@ -216,16 +216,33 @@ namespace Typhon.Compiler.Emit
 
         static bool IsNamedTupleCall(Expr e) => e is CallExpr c && (c.Func is NameExpr n && n.Id == "namedtuple" || c.Func is AttributeExpr a && a.Name == "namedtuple");
 
-        /// <summary>namedtuple("P", "x y") / ("P", "x, y") / ("P", ["x", "y"]): the field names (null if not literal).</summary>
-        static List<string> NamedTupleFieldsOf(CallExpr c)
+        /// <summary>The fields known for a tuple literal or a previously declared namedtuple.</summary>
+        static List<string> NamedTupleFieldTuple(Expr spec, Dictionary<string, List<string>> known)
+        {
+            switch (spec)
+            {
+                case TupleExpr tuple when tuple.Elts.All(x => x is ConstExpr { Kind: ConstKind.Str }):
+                    return tuple.Elts.Select(x => ((ConstExpr)x).Str).ToList();
+                case AttributeExpr { Name: "_fields", Target: NameExpr owner } when known.TryGetValue(owner.Id, out var fields):
+                    return fields;
+                case BinOpExpr { Op: "+" } sum:
+                    var left = NamedTupleFieldTuple(sum.Left, known);
+                    var right = NamedTupleFieldTuple(sum.Right, known);
+                    return left != null && right != null ? left.Concat(right).ToList() : null;
+                default:
+                    return null;
+            }
+        }
+
+        /// <summary>The fields of a namedtuple, when its field names are known during compilation.</summary>
+        static List<string> NamedTupleFieldsOf(CallExpr c, Dictionary<string, List<string>> known)
         {
             var spec = c.Args.Count > 1 && c.Args[1].Name == null ? c.Args[1].Value : c.Args.FirstOrDefault(a => a.Name == "field_names")?.Value;
             switch (spec)
             {
                 case ConstExpr s when s.Kind == ConstKind.Str: return s.Str.Replace(',', ' ').Split(new[] { ' ', '\t', '\n' }, System.StringSplitOptions.RemoveEmptyEntries).ToList();
                 case ListExpr l when l.Elts.All(x => x is ConstExpr xc && xc.Kind == ConstKind.Str): return l.Elts.Select(x => ((ConstExpr)x).Str).ToList();
-                case TupleExpr t when t.Elts.All(x => x is ConstExpr xc && xc.Kind == ConstKind.Str): return t.Elts.Select(x => ((ConstExpr)x).Str).ToList();
-                default: return null;
+                default: return NamedTupleFieldTuple(spec, known);
             }
         }
 
@@ -237,26 +254,29 @@ namespace Typhon.Compiler.Emit
         static void SynthesizeNamedTuples(ModuleInfo m)
         {
             var body = m.Ast.Body;
+            var known = new Dictionary<string, List<string>>();
             for (int i = 0; i < body.Count; i++)
             {
                 if (body[i] is AssignStmt a && a.Targets.Count == 1 && a.Targets[0] is NameExpr target && IsNamedTupleCall(a.Value) &&
-                    NamedTupleFieldsOf((CallExpr)a.Value) is List<string> fields)
+                    NamedTupleFieldsOf((CallExpr)a.Value, known) is List<string> fields)
                 {
                     var cls = new ClassDef { Name = target.Id, Line = a.Line, Col = a.Col };
                     MakeNamedTuple(cls, fields, ((CallExpr)a.Value).Args.FirstOrDefault(x => x.Name == "defaults")?.Value, annotated: null);
                     body[i] = cls;
                     m.Classes[cls.Name] = cls;
                     m.Globals.Remove(cls.Name);
+                    known[cls.Name] = fields;
                     continue;
                 }
                 if (body[i] is ClassDef c && c.NamedTupleFields == null)
                 {
                     var ntBase = c.Bases.FirstOrDefault(IsNamedTupleCall) as CallExpr;
-                    if (ntBase != null && NamedTupleFieldsOf(ntBase) is List<string> bf)
+                    if (ntBase != null && NamedTupleFieldsOf(ntBase, known) is List<string> bf)
                     {
                         c.Bases.Remove(ntBase);
                         MakeNamedTuple(c, bf, ntBase.Args.FirstOrDefault(x => x.Name == "defaults")?.Value, annotated: null);
                         RewriteNamedTupleSuperRepr(c);
+                        known[c.Name] = bf;
                         continue;
                     }
                     var typed = c.Bases.FirstOrDefault(b => b is NameExpr bn && bn.Id == "NamedTuple" || b is AttributeExpr ba && ba.Name == "NamedTuple");
@@ -266,7 +286,18 @@ namespace Typhon.Compiler.Emit
                         var anns = c.Body.OfType<AnnAssignStmt>().Where(x => x.Target is NameExpr).ToList();
                         MakeNamedTuple(c, anns.Select(x => ((NameExpr)x.Target).Id).ToList(), null, anns);
                     }
+                    var inherited = c.Bases.Count == 1 && c.Bases[0] is NameExpr baseName &&
+                        known.TryGetValue(baseName.Id, out var inheritedFields) && !ClassBinds(c, "_fields") ? inheritedFields : null;
+                    if (inherited != null && !c.Body.OfType<FunctionDef>().Any(m => m.Name == "__init__") &&
+                        c.Body.OfType<FunctionDef>().FirstOrDefault(m => m.Name == "__new__") is FunctionDef allocator)
+                        LowerNamedTupleNew(allocator, inherited, initializeBase: true);
+                    if ((c.NamedTupleFields ?? inherited) is List<string> classFields) known[c.Name] = classFields;
+                    else known.Remove(c.Name);
                 }
+                else if (body[i] is AssignStmt reassignment)
+                    foreach (var name in reassignment.Targets.OfType<NameExpr>()) known.Remove(name.Id);
+                else if (body[i] is AnnAssignStmt { Value: not null, Target: NameExpr annotation }) known.Remove(annotation.Id);
+                else if (body[i] is FunctionDef function) known.Remove(function.Name);
             }
         }
 
@@ -303,7 +334,7 @@ namespace Typhon.Compiler.Emit
         }
 
         /// <summary>Lower a namedtuple allocator that returns the instance built by a single super().__new__ call.</summary>
-        static bool LowerNamedTupleNew(FunctionDef method, List<string> fields)
+        static bool LowerNamedTupleNew(FunctionDef method, List<string> fields, bool initializeBase = false)
         {
             if (method.IsAsync || method.TypeParams.Count != 0 || method.Decorators.Count != 0 || method.Params.Count == 0 ||
                 method.Params[0].Kind != ParamKind.Normal || method.Params.Skip(1).Any(p => p.Name == "self") ||
@@ -362,7 +393,25 @@ namespace Typhon.Compiler.Emit
 
             var args = allocation.Args.Skip(1).ToList();
             var initialize = new List<Stmt>();
-            if (fields.Count > 0 && args.Count == 1 && args[0].Star)
+            if (initializeBase)
+            {
+                // A CLR base initializer precedes the constructor body. Only move an allocation that already runs first.
+                int at = method.Body.IndexOf(allocateAt);
+                if (at > 1 || at == 1 && method.Body[0] is not ExprStmt { Value: ConstExpr { Kind: ConstKind.Str } } ||
+                    args.Count != fields.Count || args.Any(a => a.Star || a.DoubleStar))
+                    return false;
+                var super = (AttributeExpr)allocation.Func;
+                initialize.Add(new ExprStmt
+                {
+                    Line = allocateAt.Line, Col = allocateAt.Col,
+                    Value = new CallExpr
+                    {
+                        Line = allocation.Line, Col = allocation.Col, Args = args,
+                        Func = new AttributeExpr { Target = super.Target, Name = "__init__", Line = super.Line, Col = super.Col },
+                    },
+                });
+            }
+            else if (fields.Count > 0 && args.Count == 1 && args[0].Star)
                 initialize.Add(Assign(new TupleExpr { Elts = fields.Select(f => (Expr)Field(f)).ToList(), Line = allocateAt.Line, Col = allocateAt.Col }, args[0].Value));
             else
             {

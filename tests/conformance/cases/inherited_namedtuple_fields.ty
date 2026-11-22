@@ -1,0 +1,17 @@
+from collections import namedtuple
+
+_Point = namedtuple("_Point", "x y")
+
+class Point(_Point):
+    def size(self) -> int:
+        return self.x + self.y
+
+_Record = namedtuple("_Record", ("name",) + Point._fields)
+
+class Record(_Record):
+    pass
+
+record = Record("sample", 4, 5)
+print(Point(3, 6).size())
+print(record.name, record.x, record.y)
+print(Record._fields)

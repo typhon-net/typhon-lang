@@ -31,6 +31,10 @@ namespace Typhon.Runtime
         /// </summary>
         internal static string ExceptionText(Exception e)
         {
+            var describe = e.GetType().GetMethod("__str__", InstanceMembers, binder: null, types: Type.EmptyTypes, modifiers: null);
+            if (describe != null)
+                return Unwrapped(() => describe.Invoke(e, null)) is string text
+                    ? text : throw new InvalidCastException("__str__ returned a non-string value");
             const string Head = "The given key '", Tail = "' was not present in the dictionary.";
             string m = e.Message;
             if (e is KeyNotFoundException && m.StartsWith(Head, StringComparison.Ordinal) && m.EndsWith(Tail, StringComparison.Ordinal))
@@ -561,30 +565,150 @@ namespace Typhon.Runtime
             return grouped.ToString();
         }
 
-        /// <summary>"{} and {:.2f}".format(a, b)</summary>
-        public static string str_format(string fmt, params object?[] args)
+        public static string str_format(string fmt, params object?[] args) => str_format(fmt, args, null);
+
+        /// <summary>str.format with positional and keyword arguments, including fields inside format specifications.</summary>
+        public static string str_format(string fmt, object?[] args, IDictionary<string, object?>? keywords)
         {
-            var sb = new StringBuilder();
             int auto = 0;
-            for (int i = 0; i < fmt.Length; i++)
+            bool manual = false;
+            return Render(fmt, 0);
+
+            object? FieldValue(string field)
             {
-                char c = fmt[i];
-                if (c == '{' && i + 1 < fmt.Length && fmt[i + 1] == '{') { sb.Append('{'); i++; continue; }
-                if (c == '}' && i + 1 < fmt.Length && fmt[i + 1] == '}') { sb.Append('}'); i++; continue; }
-                if (c != '{') { sb.Append(c); continue; }
-                int end = fmt.IndexOf('}', i);
-                string field = fmt.Substring(i + 1, end - i - 1);
-                string spec = "";
-                int colon = field.IndexOf(':');
-                if (colon >= 0) { spec = field.Substring(colon + 1); field = field.Substring(0, colon); }
-                bool conv = field.EndsWith("!r");
-                if (conv) field = field.Substring(0, field.Length - 2);
-                int index = field.Length == 0 ? auto++ : int.Parse(field, Inv);
-                object? v = args[index];
-                sb.Append(format(conv ? repr(v) : v, spec));
-                i = end;
+                int start = field.IndexOfAny(FormatAccess);
+                if (start < 0) start = field.Length;
+                string name = field.Substring(0, start);
+                object? value;
+                if (name.Length == 0)
+                {
+                    if (manual) throw new ArgumentException("cannot switch from manual field specification to automatic field numbering");
+                    value = Positional(auto++);
+                }
+                else if (TryFormatIndex(name, out var index))
+                {
+                    if (auto != 0) throw new ArgumentException("cannot switch from automatic field numbering to manual field specification");
+                    manual = true;
+                    value = Positional(index);
+                }
+                else if (keywords == null || !keywords.TryGetValue(name, out value))
+                    throw new KeyNotFoundException(repr(name));
+
+                while (start < field.Length)
+                {
+                    char access = field[start++];
+                    int end = access switch
+                    {
+                        '.' => field.IndexOfAny(FormatAccess, start),
+                        '[' => field.IndexOf(']', start),
+                        _ => throw new ArgumentException("Only '.' or '[' may follow ']' in format field specifier"),
+                    };
+                    if (end < 0) end = field.Length;
+                    string part = field.Substring(start, end - start);
+                    if (part.Length == 0) throw new ArgumentException("Empty attribute in format string");
+                    if (access == '.')
+                    {
+                        value = getattr(value, part);
+                        start = end;
+                    }
+                    else
+                    {
+                        if (end == field.Length) throw new ArgumentException("Missing ']' in format string");
+                        object key = TryFormatIndex(part, out var item)
+                            ? item <= long.MaxValue ? (object)(long)item : item
+                            : part;
+                        value = __getitem(value, key);
+                        start = end + 1;
+                    }
+                }
+                return value;
             }
-            return sb.ToString();
+
+            object? Positional(BigInteger index) => index < args.Length ? args[(int)index] :
+                throw new IndexOutOfRangeException($"Replacement index {index} out of range for positional args tuple");
+
+            string Render(string template, int depth)
+            {
+                var result = new StringBuilder();
+                for (int i = 0; i < template.Length; i++)
+                {
+                    char c = template[i];
+                    if (c is not ('{' or '}')) { result.Append(c); continue; }
+                    if (i + 1 < template.Length && template[i + 1] == c) { result.Append(c); i++; continue; }
+                    if (c == '}' || i == template.Length - 1)
+                        throw new ArgumentException($"Single '{c}' encountered in format string");
+                    if (depth > 1) throw new ArgumentException("Max string recursion exceeded");
+
+                    int start = ++i;
+                    while (i < template.Length && template[i] is not ('!' or ':' or '}'))
+                    {
+                        if (template[i] == '{') throw new ArgumentException("unexpected '{' in field name");
+                        if (template[i] == '[')
+                        {
+                            i = template.IndexOf(']', i + 1);
+                            if (i < 0) throw new ArgumentException("expected '}' before end of string");
+                        }
+                        i++;
+                    }
+                    if (i == template.Length) throw new ArgumentException("expected '}' before end of string");
+                    string field = template.Substring(start, i - start);
+                    char conversion = '\0';
+                    if (template[i] == '!')
+                    {
+                        if (++i == template.Length) throw new ArgumentException("end of string while looking for conversion specifier");
+                        conversion = template[i++];
+                        if (i == template.Length || template[i] is not (':' or '}'))
+                            throw new ArgumentException("expected ':' after conversion specifier");
+                    }
+                    object? value = FieldValue(field);
+                    value = conversion switch
+                    {
+                        '\0' => value,
+                        's' => str(value),
+                        'r' => repr(value),
+                        'a' => ascii(value),
+                        _ => throw new ArgumentException($"Unknown conversion specifier {conversion}"),
+                    };
+
+                    string spec = "";
+                    if (template[i] == ':')
+                    {
+                        start = ++i;
+                        int nested = 0;
+                        while (i < template.Length)
+                        {
+                            char token = template[i];
+                            if (token == '}' && nested == 0) break;
+                            if (token == '{') nested++;
+                            else if (token == '}') nested--;
+                            i++;
+                        }
+                        if (i == template.Length) throw new ArgumentException("unmatched '{' in format spec");
+                        spec = template.Substring(start, i - start);
+                        if (spec.Contains('{')) spec = Render(spec, depth + 1);
+                    }
+                    result.Append(format(value, spec));
+                }
+                return result.ToString();
+            }
+        }
+
+        public static dynamic? str_format_method(object? target, object?[] args, IDictionary<string, object?>? keywords) =>
+            target is string fmt ? str_format(fmt, args, keywords) : __invoke_kw((object?)getattr(target, "format"), args, keywords);
+
+        static readonly char[] FormatAccess = { '.', '[' };
+
+        static bool TryFormatIndex(string text, out BigInteger value)
+        {
+            value = BigInteger.Zero;
+            for (int i = 0; i < text.Length; i++)
+            {
+                int digit = CharUnicodeInfo.GetDecimalDigitValue(text, i);
+                if (digit < 0) return false;
+                value = value * 10 + digit;
+                if (i + 1 < text.Length && char.IsSurrogatePair(text, i)) i++;
+            }
+            return text.Length > 0;
         }
 
 

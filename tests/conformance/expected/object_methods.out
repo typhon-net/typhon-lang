@@ -1,0 +1,6 @@
+example None
+True
+None 3
+handled
+bypassed fallback
+None False

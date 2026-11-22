@@ -1,0 +1,47 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import io
+import itertools
+import linecache
+import math
+import traceback
+import _colorize
+
+tag = "namespace"
+scope = globals
+print(scope()["tag"])
+print(list(itertools.repeat(None, 3)))
+
+def choose(flag: bool):
+    callback = None
+    if flag:
+        def callback(value: int) -> int:
+            return value + 5
+    return callback
+
+print(choose(False), choose(True)(4))
+fn = math.ceil if True else math.floor
+print(fn(3.2))
+
+name = "<virtual-timeit>"
+linecache.cache[name] = (4, None, ["yes\n"], name)
+linecache.checkcache(name)
+print(repr(linecache.getline(name, 1)))
+
+output = io.StringIO()
+kwargs = {"colorize": True}
+traceback.print_exc(file=output, **kwargs)
+print(repr(output.getvalue()))
+print(repr(_colorize.get_theme(force_no_color=True).timeit.timing))
+print(repr(_colorize.get_theme(force_color=True).timeit.best))
+
+from typing import Any
+
+def typed_callback(left: int, right: float) -> float:
+    return left + right
+
+def invoke_callback(callback, value: Any):
+    return callback(1, value)
+
+print(invoke_callback(typed_callback, 3.5))

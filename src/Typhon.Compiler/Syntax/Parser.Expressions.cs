@@ -99,8 +99,13 @@ namespace Typhon.Compiler.Syntax
                 if (AcceptOp("**")) l.KwArgs = ExpectName();
                 else if (l.VarArgs != null) throw Err("keyword-only lambda parameters are not supported in Typhon");
                 else if (AcceptOp("*")) l.VarArgs = ExpectName();
-                else l.Params.Add(ExpectName());
-                if (IsOp("=")) throw Err("default values for lambda parameters are not supported in Typhon");
+                else
+                {
+                    l.Params.Add(ExpectName());
+                    if (AcceptOp("=")) l.Defaults.Add(ParseTest());
+                    else if (l.Defaults.Count != 0) throw Err("non-default argument follows default argument");
+                }
+                if (IsOp("=")) throw Err("variadic lambda parameters cannot have default values");
                 if (!AcceptOp(",")) break;
             }
             ExpectOp(":");
@@ -145,8 +150,13 @@ namespace Typhon.Compiler.Syntax
             while (true)
             {
                 string op = null;
-                if (Cur.Kind == TokenKind.Op && (Cur.Text == "<" || Cur.Text == ">" || Cur.Text == "==" || Cur.Text == ">=" || Cur.Text == "<=" || Cur.Text == "!="))
-                { op = Cur.Text; _i++; }
+                if (Cur.Kind == TokenKind.Op && (Cur.Text == "<" || Cur.Text == ">" || Cur.Text == "==" || Cur.Text == ">=" || Cur.Text == "<=" || Cur.Text == "!=" || Cur.Text == "<>"))
+                {
+                    if (Cur.Text == "!=" && _barryAsFlufl) throw Err("with Barry as BDFL, use '<>' instead of '!='");
+                    if (Cur.Text == "<>" && !_barryAsFlufl) throw Err("invalid syntax. Maybe you meant '!=' instead of '<>'?");
+                    op = Cur.Text == "<>" ? "!=" : Cur.Text;
+                    _i++;
+                }
                 else if (IsKw("in")) { op = "in"; _i++; }
                 else if (IsKw("not") && Peek().Is("in")) { op = "not in"; _i += 2; }
                 else if (IsKw("is"))

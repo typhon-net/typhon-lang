@@ -23,7 +23,8 @@ namespace Typhon.Compiler.Emit
         }
 
         bool IsProjectPackageModule(ModuleInfo module) =>
-            module.IsPackage || module.PackageName.Length > 0 && _p.FindModule(module.PackageName)?.IsPackage == true;
+            module.IsPackage || module.PackageName.Length > 0 &&
+            (_p.FindModule(module.PackageName)?.IsPackage == true || StdlibType(module.PackageName) != null);
 
         readonly HashSet<string> _qualifiedPackageImports = new HashSet<string>();
 
@@ -98,10 +99,14 @@ namespace Typhon.Compiler.Emit
             }
             if (stmt is ImportStmt direct)
                 return direct.Names.SelectMany(a => Ancestors(ResolvePsModule(a.Name))).Distinct();
-            if (stmt is ImportFromStmt from && _m.ResolveImport(from.Module, from.Level) is string absolute &&
-                ResolvePsModule(absolute) is ModuleInfo imported)
-                return Ancestors(imported).Concat(from.Names.Select(a => ProjectExport(imported, a.Name))
-                    .Where(x => x.Member == null).SelectMany(x => Ancestors(x.Owner))).Distinct();
+            if (stmt is ImportFromStmt from && _m.ResolveImport(from.Module, from.Level) is string absolute)
+            {
+                if (ResolvePsModule(absolute) is ModuleInfo imported)
+                    return Ancestors(imported).Concat(from.Names.Select(a => ProjectExport(imported, a.Name))
+                        .Where(x => x.Member == null).SelectMany(x => Ancestors(x.Owner))).Distinct();
+                if (StdlibType(absolute) is string runtime)
+                    return from.Names.SelectMany(a => Ancestors(RuntimePackageChild(absolute, runtime, a.Name))).Distinct();
+            }
             return Enumerable.Empty<ModuleInfo>();
         }
 
@@ -132,6 +137,8 @@ namespace Typhon.Compiler.Emit
                             _moduleAliases[head] = package;
                             _qualifiedPackageImports.Add(head);
                         }
+                        else if (StdlibType(head) is string runtimeParent)
+                            BindRuntimeModule(head, runtimeParent);
                     }
                     else if (local != null || !name.Contains(".") && mod.ClassName != name)
                         _usingLines.Add($"using {Esc(local ?? name)} = {ModuleClassName(mod)};");
@@ -143,8 +150,7 @@ namespace Typhon.Compiler.Emit
                     string l = local ?? name.Split('.')[0];
                     // import a.b binds a. The standard library represents b as a nested type.
                     if (local == null && name.Contains(".")) stdlib = StdlibType(l);
-                    _usingLines.Add($"using {Esc(l)} = global::{string.Join(".", stdlib.Replace('+', '.').Split('.').Select(Esc))};");
-                    _dotnetAliases[l] = stdlib;
+                    BindRuntimeModule(l, stdlib);
                     continue;
                 }
                 if (_r.TypeExists(name))
@@ -161,6 +167,24 @@ namespace Typhon.Compiler.Emit
                 Report(s, "TY0101", Severity.Error, $"No module named '{name}' (not a Typhon module in this project, a Typhon standard module, or a .NET namespace/type in the referenced assemblies)");
             }
         }
+
+        readonly HashSet<string> _qualifiedRuntimeModuleImports = new HashSet<string>();
+
+        void BindRuntimeModule(string name, string metadata)
+        {
+            // A source package child can put the same package name in the generated CLR namespace.
+            if (_p.Modules.Values.Any(module => module.Namespace == name || module.Namespace.StartsWith(name + ".", StringComparison.Ordinal)))
+                _qualifiedRuntimeModuleImports.Add(name);
+            else _usingLines.Add($"using {Esc(name)} = {CsTypeName(metadata)};");
+            _dotnetAliases[name] = metadata;
+        }
+
+        bool RuntimeExport(string module, string metadata, string name) =>
+            _r.GetMembers(metadata, name).Count > 0 || AnyArity(metadata + "+" + name, out _) ||
+            StdlibType(module + "." + name) != null;
+
+        ModuleInfo RuntimePackageChild(string package, string metadata, string name) =>
+            name != "*" && !RuntimeExport(package, metadata, name) ? _p.FindModule(package + "." + name) : null;
 
         void ProcessImportFrom(ImportFromStmt s)
         {
@@ -199,16 +223,25 @@ namespace Typhon.Compiler.Emit
                 string csName = string.Join(".", meta.Replace('+', '.').Split('.').Select(Esc));
                 _usingLines.Add($"using static global::{csName};");
                 _staticTypes.Add(meta);
-                if (meta.StartsWith("Typhon.Stdlib."))
-                    foreach (var a in s.Names)
+                foreach (var a in s.Names)
+                {
+                    if (stdlib != null)
+                    {
+                        if (RuntimePackageChild(modName, meta, a.Name) is ModuleInfo child)
+                        {
+                            string bound = a.AsName ?? a.Name;
+                            _moduleAliases[bound] = child;
+                            _qualifiedPackageImports.Add(bound);
+                            continue;
+                        }
                         if (a.Name == "*") _stdlibStar.Add(meta);
                         else if (a.AsName == null) _stdlibImported[a.Name] = meta;
-                foreach (var a in s.Names)
+                    }
                     if (a.AsName != null)
                     {
                         if (_r.TypeExists(meta + "+" + a.Name))
                         {
-                            _usingLines.Add($"using {Esc(a.AsName)} = global::{csName}.{a.Name};");
+                            _usingLines.Add($"using {Esc(a.AsName)} = {CsTypeName(meta + "+" + a.Name)};");
                             _importedTypes[a.AsName] = meta + "+" + a.Name; // a class: calling it constructs one
                         }
                         else
@@ -220,6 +253,7 @@ namespace Typhon.Compiler.Emit
                             _importAliases[a.AsName] = target;
                         }
                     }
+                }
                 return;
             }
 
@@ -301,8 +335,8 @@ namespace Typhon.Compiler.Emit
             if (ResolvePsModule(name) is ModuleInfo mod)
                 return imf.Names.All(a => a.Name == "*" || ProjectExport(mod, a.Name).Owner != null);
             if (StdlibType(name) is string meta)
-                return imf.Names.All(a => a.Name == "*" || _r.GetMembers(meta, a.Name).Count > 0 || AnyArity(meta + "+" + a.Name, out _) ||
-                                          StdlibType(name + "." + a.Name) != null);
+                return imf.Names.All(a => a.Name == "*" || RuntimeExport(name, meta, a.Name) ||
+                                          RuntimePackageChild(name, meta, a.Name) != null);
             return true; // (a .NET namespace or type: its members are checked where they are used)
         }
 
@@ -318,7 +352,7 @@ namespace Typhon.Compiler.Emit
         /// what Python runs when that import fails, the statements before it and the handler (Typhon resolves imports when
         /// it compiles, so the outcome is known then).
         /// </summary>
-        void ResolveFailingImports(List<Stmt> body)
+        void ResolveFailingImports(List<Stmt> body, bool moduleScope = true)
         {
             for (int i = 0; i < body.Count; i++)
             {
@@ -346,21 +380,26 @@ namespace Typhon.Compiler.Emit
                         if (handler != null && failing >= 0 && handler.Name == null &&
                             !t.Body.Take(failing).Any(st => st is ImportStmt || st is ImportFromStmt || st is FunctionDef || st is ClassDef))
                         {
+                            if (moduleScope && t.Body[failing] is ImportStmt { Names.Count: 1 } unavailable)
+                            {
+                                var alias = unavailable.Names[0];
+                                _m.Ast.FailedModuleImports.Add(alias.AsName ?? alias.Name.Split('.')[0]);
+                            }
                             var replacement = t.Body.Take(failing).Concat(handler.Body).ToList();
                             body.RemoveAt(i);
                             body.InsertRange(i, replacement);
                             i--;
                             continue;
                         }
-                        ResolveFailingImports(t.Body);
-                        foreach (var h in t.Handlers) ResolveFailingImports(h.Body);
-                        ResolveFailingImports(t.OrElse);
+                        ResolveFailingImports(t.Body, moduleScope);
+                        foreach (var h in t.Handlers) ResolveFailingImports(h.Body, moduleScope);
+                        ResolveFailingImports(t.OrElse, moduleScope);
                         break;
                     }
-                    case TryStmt t2: ResolveFailingImports(t2.Body); foreach (var h in t2.Handlers) ResolveFailingImports(h.Body); ResolveFailingImports(t2.OrElse); ResolveFailingImports(t2.FinalBody); break;
-                    case IfStmt ifs: ResolveFailingImports(ifs.Body); ResolveFailingImports(ifs.OrElse); break;
-                    case FunctionDef fd: ResolveFailingImports(fd.Body); break;
-                    case ClassDef cd: ResolveFailingImports(cd.Body); break;
+                    case TryStmt t2: ResolveFailingImports(t2.Body, moduleScope); foreach (var h in t2.Handlers) ResolveFailingImports(h.Body, moduleScope); ResolveFailingImports(t2.OrElse, moduleScope); ResolveFailingImports(t2.FinalBody, moduleScope); break;
+                    case IfStmt ifs: ResolveFailingImports(ifs.Body, moduleScope); ResolveFailingImports(ifs.OrElse, moduleScope); break;
+                    case FunctionDef fd: ResolveFailingImports(fd.Body, moduleScope: false); break;
+                    case ClassDef cd: ResolveFailingImports(cd.Body, moduleScope: false); break;
                 }
             }
         }

@@ -25,6 +25,22 @@ namespace Typhon.Compiler.Emit
             return ClassKeyOfType(t, out _) is string key && ClassDefOfKey(key) is ClassDef c && c.NamedTupleFields != null ? c : null;
         }
 
+        bool IsNamedTupleField(ClassDef c, string name, int depth = 0)
+        {
+            if (depth > 20) return false;
+            if (c.NamedTupleFields?.Contains(name) == true) return true;
+            return c.Bases.Any(b => ResolveBase(b, out var py, out _) && py != null && py != c && IsNamedTupleField(py, name, depth + 1));
+        }
+
+        string TupleFieldOwner(AttributeExpr attribute)
+        {
+            if (IsAttributeStore(attribute) || DottedName(attribute.Target) is not string owner ||
+                !TryResolveType(owner, 0, out _, out var cls) || cls == null ||
+                !IsNamedTupleField(cls, attribute.Name) || !TryTypeExpr(attribute.Target, out var type))
+                return null;
+            return type;
+        }
+
         /// <summary>The field types of a namedtuple type (dynamic where unknown).</summary>
         List<string> NamedTupleFieldTypes(string t)
         {

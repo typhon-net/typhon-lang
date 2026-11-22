@@ -20,7 +20,7 @@ namespace Typhon.Compiler.Emit
             if (e is UnaryExpr u && u.Op == "-" && u.Operand is ConstExpr c && c.Kind == ConstKind.Int) return "^" + EmitConst(c);
             // "wb"[flag]: a bool is the int 0 or 1
             if (InferType(e) == "bool") return $"({Paren(EmitExpr(e))} ? 1 : 0)";
-            return EmitExpr(e);
+            return ModuleOrClassValue(e) ?? EmitExpr(e);
         }
 
         string EmitSubscript(SubscriptExpr s)

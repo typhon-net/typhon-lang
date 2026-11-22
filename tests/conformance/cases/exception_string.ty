@@ -1,0 +1,21 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+from typing import Any
+
+
+class Problem(Exception):
+    def __str__(self):
+        return "custom: " + self.args[0]
+
+
+class InvalidDescription(Exception):
+    def __str__(self) -> Any:
+        return 0
+
+
+print(str(Problem("bad input")))
+try:
+    print(str(InvalidDescription()))
+except TypeError:
+    print("invalid description")

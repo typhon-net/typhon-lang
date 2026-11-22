@@ -10,18 +10,36 @@ namespace Typhon.Compiler.Syntax
     public sealed partial class Parser
     {
         readonly List<Token> _t;
+        readonly bool _openGrouping;
+        bool _barryAsFlufl;
         int _i;
 
-        public Parser(List<Token> tokens) { _t = tokens; }
+        public Parser(List<Token> tokens, bool openGrouping = false, bool barryAsFlufl = false)
+        { _t = tokens; _openGrouping = openGrouping; _barryAsFlufl = barryAsFlufl; }
 
-        public static ModuleAst ParseModule(string source, string path)
+        public static ModuleAst ParseModule(string source, string path, bool barryAsFlufl = false, bool expressionOnly = false)
         {
-            var p = new Parser(new Lexer(source).Tokenize());
+            var lexer = new Lexer(source);
+            var p = new Parser(lexer.Tokenize(), lexer.HasOpenGrouping, barryAsFlufl);
             var m = new ModuleAst { Path = path };
+            if (expressionOnly)
+            {
+                if (p.Cur.Kind == TokenKind.EndOfFile) return m;
+                var start = p.Cur;
+                var expression = p.ParseTestListOrStar();
+                p.ExpectNewline();
+                if (p.Cur.Kind != TokenKind.EndOfFile) throw p.Err("invalid syntax");
+                m.Body.Add(p.At(new ExprStmt { Value = expression }, start));
+                return m;
+            }
             while (p.Cur.Kind != TokenKind.EndOfFile)
             {
                 if (p.Cur.Kind == TokenKind.Newline) { p._i++; continue; }
-                m.Body.AddRange(p.ParseStatement());
+                var statements = p.ParseStatement();
+                foreach (var statement in statements)
+                    if (statement is ImportFromStmt import && import.Level == 0 && import.Module == "__future__" &&
+                        import.Names.Exists(name => name.Name == "barry_as_FLUFL")) p._barryAsFlufl = true;
+                m.Body.AddRange(statements);
             }
             return m;
         }
@@ -82,7 +100,10 @@ namespace Typhon.Compiler.Syntax
             }
         }
 
-        SyntaxError Err(string msg) => new SyntaxError(msg, Cur.Line, Cur.Col);
+        bool AtEndOfInput => Cur.Kind == TokenKind.EndOfFile || Cur.Pos == _t[_t.Count - 1].Pos && Cur.Pos == Cur.EndPos;
+
+        SyntaxError Err(string msg, bool needsMoreInput = false, bool isIndentationError = false) =>
+            new SyntaxError(msg, Cur.Line, Cur.Col, AtEndOfInput, needsMoreInput || AtEndOfInput && _openGrouping, isIndentationError);
 
         T At<T>(T node, Token tok) where T : Node { node.Line = tok.Line; node.Col = tok.Col; return node; }
 

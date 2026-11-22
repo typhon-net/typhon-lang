@@ -1,0 +1,20 @@
+(a: int, /, b=[], *, c: str = 'x', **rest) -> int
+True
+0 3
+(self, item, /, *args, detail=None, **kw)
+(item, /, *args, detail=None, **kw)
+(value=7)
+(value=8)
+(value: int = 4)
+(a: int, /, b=[], *, c: str = 'x', **rest) -> int
+(*args, **kwargs)
+(value: int = 4)
+(value: int = 12)
+(self) -> int
+(self, changed: int)
+(value=[], *, flag=None) -> 'Callable'
+True True
+True
+True False
+not callable
+3 1

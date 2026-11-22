@@ -1,0 +1,29 @@
+from typing import Any
+from types import MethodType
+from weakref import ref as make_reference
+import types
+import weakref
+
+class Target:
+    pass
+
+value = Target()
+reference = make_reference(value)
+print(reference() is value, make_reference is weakref.ReferenceType)
+
+def label() -> str:
+    return "a method class"
+
+typed: dict[type, Any] = {}
+typed[types.MethodType] = label
+print(typed[MethodType]())
+
+def run_dynamic(mapping: Any) -> None:
+    mapping[types.MethodType] = 40
+    mapping[types.MethodType] += 2
+    print(mapping[types.MethodType])
+    del mapping[types.MethodType]
+    print(len(mapping))
+
+other: dict[type, int] = {}
+run_dynamic(other)

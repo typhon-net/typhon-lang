@@ -218,9 +218,13 @@ namespace Typhon.Runtime
         public static bool any<T>(IEnumerable<T> xs) => xs.Any(x => truthy(x));
         public static bool all<T>(IEnumerable<T> xs) => xs.All(x => truthy(x));
 
+        public static List<T> sorted<T>(IEnumerable<T> xs, PyClosure? key, bool reverse = false) =>
+            key == null ? sorted(xs, reverse) : sorted(xs, item => key.__call__([item]), reverse);
+
         public static IEnumerable<R> map<T, R>(Func<T, R> f, IEnumerable<T> xs) => xs.Select(f);
         public static IEnumerable<dynamic?> map<T>(PyClosure f, IEnumerable<T> xs) => xs.Select(x => f.__call__([x]));
         public static IEnumerable<dynamic?> map<T>(PyBoundMethod f, IEnumerable<T> xs) => xs.Select(x => f.__call__([x]));
+        public static IEnumerable<T> __filter_truthy<T>(IEnumerable<T> xs) => xs.Where(item => truthy(item));
         public static IEnumerable<T> filter<T>(Func<T, bool> f, IEnumerable<T> xs) => xs.Where(f);
         public static IEnumerable<T> filter<T>(PyClosure f, IEnumerable<T> xs) => xs.Where(x => truthy(f.__call__([x])));
         public static IEnumerable<T> filter<T>(PyBoundMethod f, IEnumerable<T> xs) => xs.Where(x => truthy(f.__call__([x])));
@@ -477,6 +481,13 @@ namespace Typhon.Runtime
             l.Clear(); l.AddRange(s);
         }
         public static void sort<T, K>(this List<T> l, Func<T, K> key, bool reverse = false) { var s = sorted(l, key, reverse); l.Clear(); l.AddRange(s); }
+        public static void sort<T>(this List<T> items, PyClosure? key, bool reverse = false)
+        {
+            var sortedItems = sorted(items, key, reverse);
+            items.Clear();
+            items.AddRange(sortedItems);
+        }
+
         public static void reverse<T>(this List<T> l) => l.Reverse();
         public static List<T> copy<T>(this List<T> l) => new List<T>(l);
         public static void clear<T>(this ICollection<T> c) => c.Clear();

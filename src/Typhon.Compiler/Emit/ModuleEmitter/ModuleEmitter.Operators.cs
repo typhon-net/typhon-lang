@@ -267,7 +267,8 @@ namespace Typhon.Compiler.Emit
 
         string EmitComparison(Expr left, string op, Expr right)
         {
-            string l = EmitExpr(left), r = EmitExpr(right);
+            bool identity = op is "is" or "is not";
+            string l = identity ? EmitValue(left) : EmitExpr(left), r = identity ? EmitValue(right) : EmitExpr(right);
             string lt = InferType(left), rt = InferType(right);
             // big-int mode: an int compared with a float compares as floats (C# does not convert BigInteger implicitly)
             if (lt == TypeInference.BigInt && (rt == "double" || rt == "float")) l = $"((double){Paren(l)})";

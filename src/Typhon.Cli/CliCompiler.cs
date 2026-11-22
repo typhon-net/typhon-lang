@@ -148,17 +148,30 @@ internal static class CliCompiler
             return m;
         }
 
+        var runtimePackages = new Dictionary<string, bool>(StringComparer.Ordinal);
+        bool IsRuntimePackage(string name)
+        {
+            if (pylib == null || !PyLib.ProvidedByTyphon(name)) return false;
+            if (runtimePackages.TryGetValue(name, out bool cached)) return cached;
+            var (initializer, _) = PyLib.SourceCandidates(pylib, name).First();
+            bool exists = File.Exists(initializer);
+            if (exists) ReadSource(initializer, output.Probes);
+            else output.Probes.Add(new SourceProbe(initializer, null));
+            return runtimePackages[name] = exists;
+        }
+
         ModuleInfo? Discover(string name)
         {
             if (project.FindModule(name) is ModuleInfo seen) return seen;
             if (!probedModules.Add(name)) return null;
             int dot = name.LastIndexOf('.');
-            var parent = dot < 0 ? null : Discover(name[..dot]);
+            string parentName = dot < 0 ? "" : name[..dot];
+            var parent = dot < 0 ? null : Discover(parentName);
             IEnumerable<(string Path, bool Package)> choices = PyLib.SourceCandidates(dir, name, TyphonCompiler.FileExtension);
-            // A library child is visible only through its package. Local namespace directories
-            // containing .ty files continue to work on their own.
+            // A library child may be supplied by source even if its package is provided by the runtime.
             if (pylib != null && !PyLib.ProvidedByTyphon(name) &&
-                (dot < 0 || parent?.IsPackage == true && parent.Path.StartsWith(Path.EndsInDirectorySeparator(pylib) ? pylib : pylib + Path.DirectorySeparatorChar, StringComparison.Ordinal)))
+                (dot < 0 || parent?.IsPackage == true && parent.Path.StartsWith(Path.EndsInDirectorySeparator(pylib) ? pylib : pylib + Path.DirectorySeparatorChar, StringComparison.Ordinal) ||
+                 parent == null && IsRuntimePackage(parentName)))
                 choices = choices.Concat(PyLib.SourceCandidates(pylib, name));
             foreach (var (candidate, package) in choices)
             {
@@ -181,12 +194,23 @@ internal static class CliCompiler
             {
                 if (stmt is ImportStmt direct)
                     foreach (var alias in direct.Names) Import(alias.Name);
-                else if (stmt is ImportFromStmt from && m.ResolveImport(from.Module, from.Level) is string name &&
-                         Import(name) is ModuleInfo { IsPackage: true } package)
-                    foreach (var alias in from.Names)
-                        if (alias.Name != "*" && !package.Classes.ContainsKey(alias.Name) &&
-                            !package.Functions.Contains(alias.Name) && !package.Globals.Contains(alias.Name))
-                            Discover(name + "." + alias.Name);
+                else if (stmt is ImportFromStmt from && m.ResolveImport(from.Module, from.Level) is string name)
+                {
+                    var imported = Import(name);
+                    if (imported is ModuleInfo { IsPackage: true } package)
+                    {
+                        foreach (var alias in from.Names)
+                            if (alias.Name != "*" && !package.Classes.ContainsKey(alias.Name) &&
+                                !package.Functions.Contains(alias.Name) && !package.Globals.Contains(alias.Name))
+                                Discover(name + "." + alias.Name);
+                    }
+                    else if (imported == null && IsRuntimePackage(name))
+                    {
+                        foreach (var alias in from.Names)
+                            if (alias.Name != "*" && !PyLib.ProvidesExport(name, alias.Name))
+                                Discover(name + "." + alias.Name);
+                    }
+                }
             }
         }
 

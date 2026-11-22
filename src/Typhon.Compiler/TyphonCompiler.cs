@@ -33,6 +33,9 @@ namespace Typhon.Compiler
         public string Path;
         public int Line;
         public int Col;
+        public bool AtEndOfInput;
+        public bool NeedsMoreInput;
+        public bool IsIndentationError;
         public override string ToString() => $"{Path}({Line},{Col}): {Severity.ToString().ToLowerInvariant()} {Id}: {Message}";
     }
 
@@ -161,7 +164,8 @@ namespace Typhon.Compiler
             return sb.ToString();
         }
 
-        public static ModuleInfo Parse(string path, string source, string moduleName, string rootNamespace)
+        public static ModuleInfo Parse(string path, string source, string moduleName, string rootNamespace,
+            bool barryAsFlufl = false, bool runtimeCode = false, bool expressionOnly = false)
         {
             var info = new ModuleInfo { Name = moduleName, Path = path };
             int lastDot = moduleName.LastIndexOf('.');
@@ -179,12 +183,56 @@ namespace Typhon.Compiler
                     info.Ast = GdScriptParser.ParseModule(source, path, info.IsMainModule, out var gd);
                     info.GdScript = gd;
                 }
-                else info.Ast = Parser.ParseModule(source, path);
+                else info.Ast = Parser.ParseModule(source, path, barryAsFlufl, expressionOnly);
             }
             catch (SyntaxError e)
             {
-                info.ParseDiagnostics.Add(new TyDiagnostic { Id = "TY0001", Severity = Severity.Error, Message = e.Message, Path = path, Line = e.Line, Col = e.Col });
+                info.ParseDiagnostics.Add(new TyDiagnostic
+                {
+                    Id = "TY0001", Severity = Severity.Error, Message = e.Message, Path = path, Line = e.Line, Col = e.Col,
+                    AtEndOfInput = e.AtEndOfInput, NeedsMoreInput = e.NeedsMoreInput, IsIndentationError = e.IsIndentationError,
+                });
                 info.Ast = new ModuleAst { Path = path };
+            }
+            if (runtimeCode && info.ParseDiagnostics.Count == 0)
+            {
+                Node invalid = null;
+                if (AstWalker.ContainsOutsideNestedScopes(info.Ast.Body, node =>
+                {
+                    if (!(node is ReturnStmt || node is YieldExpr)) return false;
+                    invalid = node;
+                    return true;
+                }))
+                    info.ParseDiagnostics.Add(new TyDiagnostic
+                    {
+                        Id = "TY0001", Severity = Severity.Error, Path = path, Line = invalid.Line, Col = invalid.Col,
+                        Message = invalid is ReturnStmt ? "'return' outside function" : "'yield' outside function",
+                    });
+                else if (FindInvalidLoopControl(info.Ast.Body, false) is Node loopControl)
+                    info.ParseDiagnostics.Add(new TyDiagnostic
+                    {
+                        Id = "TY0001", Severity = Severity.Error, Path = path, Line = loopControl.Line, Col = loopControl.Col,
+                        Message = loopControl is BreakStmt ? "'break' outside loop" : "'continue' not properly in loop",
+                    });
+                else
+                    AstWalker.VisitAll(info.Ast.Body, statement =>
+                    {
+                        if (info.ParseDiagnostics.Count > 0) return;
+                        Expr target = statement switch
+                        {
+                            AssignStmt assign => assign.Targets.FirstOrDefault(t => !IsAssignmentTarget(t)),
+                            AugAssignStmt aug when !IsSingleAssignmentTarget(aug.Target) => aug.Target,
+                            AnnAssignStmt ann when !IsSingleAssignmentTarget(ann.Target) => ann.Target,
+                            ForStmt loop when !IsAssignmentTarget(loop.Target) => loop.Target,
+                            _ => null,
+                        };
+                        if (target != null)
+                            info.ParseDiagnostics.Add(new TyDiagnostic
+                            {
+                                Id = "TY0001", Severity = Severity.Error, Path = path, Line = target.Line, Col = target.Col,
+                                Message = "cannot assign to expression",
+                            });
+                    });
             }
             Decorators.Apply(info.Ast);
             ModuleAliases.Apply(info.Ast);
@@ -204,6 +252,34 @@ namespace Typhon.Compiler
                 }
             }
             return info;
+        }
+
+        static bool IsSingleAssignmentTarget(Expr target) => target is NameExpr || target is AttributeExpr || target is SubscriptExpr;
+
+        static bool IsAssignmentTarget(Expr target) => IsSingleAssignmentTarget(target) || (target switch
+        {
+            TupleExpr tuple => tuple.Elts.All(IsUnpackTarget),
+            ListExpr list => list.Elts.All(IsUnpackTarget),
+            _ => false,
+        });
+
+        static bool IsUnpackTarget(Expr target) => target is StarredExpr star ? IsAssignmentTarget(star.Value) : IsAssignmentTarget(target);
+
+        static Node FindInvalidLoopControl(object source, bool insideLoop)
+        {
+            if (source is System.Collections.IEnumerable items && !(source is string))
+            {
+                foreach (var item in items)
+                    if (FindInvalidLoopControl(item, insideLoop) is Node invalid) return invalid;
+                return null;
+            }
+            if (!(source is Node node)) return null;
+            if (node is BreakStmt || node is ContinueStmt) return insideLoop ? null : node;
+            if (node is FunctionDef function) return FindInvalidLoopControl(function.Body, false);
+            if (node is ClassDef type) return FindInvalidLoopControl(type.Body, false);
+            if (node is ForStmt @for) return FindInvalidLoopControl(@for.Body, true) ?? FindInvalidLoopControl(@for.OrElse, insideLoop);
+            if (node is WhileStmt @while) return FindInvalidLoopControl(@while.Body, true) ?? FindInvalidLoopControl(@while.OrElse, insideLoop);
+            return FindInvalidLoopControl(AstWalker.Children(node), insideLoop);
         }
 
         static bool UsesKnownValue(Expr expression, ModuleInfo module) => expression switch

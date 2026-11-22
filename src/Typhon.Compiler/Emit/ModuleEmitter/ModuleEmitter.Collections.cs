@@ -70,12 +70,12 @@ namespace Typhon.Compiler.Emit
                         case "abs": return arg;
                         default: return null;
                     }
-                case LambdaExpr l when !l.IsVariadic && l.Params.Count == 1 && arg != null:
+                case LambdaExpr l when !l.RequiresArgumentBinding && l.Params.Count == 1 && arg != null:
                 {
                     var bindings = new Scope();
                     bindings.Types[l.Params[0]] = arg;
                     _comprehensionTypes.Add(bindings);
-                    _lambdaParams.Push(new HashSet<string>(l.Params));
+                    _lambdaParams.Push(LambdaParameters(l.Params));
                     try { return PyType(InferType(l.Body)); }
                     finally { _lambdaParams.Pop(); _comprehensionTypes.Remove(bindings); }
                 }
@@ -375,7 +375,7 @@ namespace Typhon.Compiler.Emit
                     deconstruct = string.Join(" ", lt.Elts.Select((x, k) => $"var {Esc(((NameExpr)x).Id)} = {Rt("__unpack")}((object){param}, {k}, {lt.Elts.Count});"));
                 }
                 else { param = NewTmp("c"); deconstruct = $"var {DeconstructionPattern(g.Target)} = {param};"; }
-                _lambdaParams.Push(bound);
+                _lambdaParams.Push(bound.ToDictionary(name => name, Esc));
                 string Lambda(string body) => deconstruct == null ? $"{param} => {body}" : $"{param} => {{ {deconstruct} return {body}; }}";
                 string seq = iter;
                 foreach (var cond in g.Ifs) seq = $"{Paren(seq)}.Where({Lambda(Cond(cond))})";

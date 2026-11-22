@@ -33,7 +33,7 @@ namespace Typhon.Compiler.Emit
 
         Scope _scope;
         ClassContext _cls;
-        readonly Stack<HashSet<string>> _lambdaParams = new Stack<HashSet<string>>();
+        readonly Stack<Dictionary<string, string>> _lambdaParams = new Stack<Dictionary<string, string>>();
         int _tmp;
         string _path;
 
@@ -179,7 +179,7 @@ namespace Typhon.Compiler.Emit
             foreach (var s in body.Where(s => s is FunctionDef || s is ClassDef)) CollectFreeNames(s, usedInDefs);
             // globals() reads module names by string: every module-level name is a field then
             bool usesGlobals = false;
-            AstWalker.VisitAll(body, n => { if (n is CallExpr gc && gc.Func is NameExpr gn && gn.Id == "globals" && gc.Args.Count == 0) usesGlobals = true; });
+            AstWalker.VisitAll(body, n => { if (n is NameExpr { Id: "globals" }) usesGlobals = true; });
             if (usesGlobals || isMainModule && _p.Modules.Values.Any(source => ReadsModuleRegistry(source.Ast.Body)))
                 foreach (var s in body)
                     if (s is AssignStmt ga) foreach (var t in ga.Targets) foreach (var nm in NamesIn(t)) usedInDefs.Add(nm);
@@ -260,7 +260,7 @@ namespace Typhon.Compiler.Emit
                     // a field initializer runs before the static constructor: only while no earlier module statement had to go
                     // there, else this assignment joins them, so the module runs top to bottom like Python's
                     if (!isMainModule && value != null && execStmts.Count == 0)
-                        _w.Line($"{vis} static {type} {Esc(fieldName)} = {Checked(type != "dynamic" ? EmitExpr(value, targetTyped: true) : EmitValue(value))};");
+                        _w.Line($"{vis} static {type} {Esc(fieldName)} = {Checked(type != "dynamic" ? EmitExpr(value, targetTyped: true) : EmitLooseValue(value))};");
                     else
                     {
                         _w.Line($"{vis} static {type} {Esc(fieldName)};");
@@ -292,6 +292,7 @@ namespace Typhon.Compiler.Emit
             }
             if (fields.Count > 0) _w.Line();
             _moduleFieldNames.UnionWith(fields.Keys);
+            if (usesGlobals) _w.Line($"private static object __typhon_globals() => {EmitGlobals()};");
 
             foreach (var s in body)
             {

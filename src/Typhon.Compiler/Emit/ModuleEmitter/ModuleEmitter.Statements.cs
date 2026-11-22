@@ -206,7 +206,11 @@ namespace Typhon.Compiler.Emit
             if (Obs != null && _retKey != null)
                 Obs.AddReturn(_retKey, r.Value == null || IsNone(r.Value) ? TypeInference.NoneType :
                     bound != null ? "dynamic" : PyType(InferType(r.Value)) ?? TypeInference.Unknown);
-            if (r.Value == null) { _w.Line("return;"); return; }
+            if (r.Value == null || IsNone(r.Value))
+            {
+                _w.Line(rt is null or "void" ? "return;" : "return null;");
+                return;
+            }
             if (bound != null) { _w.Line($"return {bound};"); return; }
             if (r.Value is CallExpr { Func: AttributeExpr { Target: NameExpr { Id: "self" } } callee } call &&
                 _cls != null && MethodInHierarchy(_cls.Def, callee.Name) is FunctionDef method && !method.IsAsync &&
@@ -343,7 +347,7 @@ namespace Typhon.Compiler.Emit
         {
             foreach (var t in d.Targets)
             {
-                if (t is SubscriptExpr s && !(s.Index is SliceExpr)) _w.Line($"{Rt("delitem")}({EmitExpr(s.Target)}, {EmitExpr(s.Index)});");
+                if (t is SubscriptExpr s && !(s.Index is SliceExpr)) _w.Line($"{Rt("delitem")}({EmitExpr(s.Target)}, {ModuleOrClassValue(s.Index) ?? EmitExpr(s.Index)});");
                 else if (t is SubscriptExpr ss && ss.Index is SliceExpr sl)
                     _w.Line($"{Rt("delslice")}({EmitExpr(ss.Target)}, {(sl.Lower != null ? SliceBound(sl.Lower) : "null")}, {(sl.Upper != null ? SliceBound(sl.Upper) : "null")}, {(sl.Step != null ? SliceBound(sl.Step) : "1")});");
                 // del name: Python unbinds it (a module's clean-up of helper names, a local no longer needed); the CLR
@@ -352,6 +356,11 @@ namespace Typhon.Compiler.Emit
                 // del obj.attr: an attribute the class declares goes back to its default value; one added at run time is removed
                 else if (t is AttributeExpr da)
                 {
+                    if (IsInstanceClassDefault(da))
+                    {
+                        _w.Line($"{Rt("delattr")}((object?){Paren(EmitExpr(da.Target))}, {CsString(da.Name)});");
+                        continue;
+                    }
                     string ot = da.Target is NameExpr dsn && dsn.Id == "self" && _cls != null && HasSelfInScope() ? _cls.CsSelfType : InferType(da.Target);
                     if (ClassKeyOfType(ot, out _) is string descriptorClass && ClassDefOfKey(descriptorClass) is ClassDef cachedOwner &&
                         MethodInHierarchy(cachedOwner, da.Name) is FunctionDef cached && IsCachedProperty(cached))

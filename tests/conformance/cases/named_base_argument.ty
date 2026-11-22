@@ -1,0 +1,29 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+from typing import Any
+
+class Parent:
+    def __init__(self, payload: Any, count: int = 0, *, label: str = "unset") -> None:
+        self.payload = payload
+        self.count = count
+        self.label = label
+
+class Child(Parent):
+    def __init__(self, value: Any) -> None:
+        super(Child, self).__init__(value, label="named", count=2)
+
+child = Child("arg")
+print(child.payload, child.count, child.label)
+
+class TypedParent:
+    def __init__(self, name: str, amount: int) -> None:
+        self.name = name
+        self.amount = amount
+
+class TypedChild(TypedParent):
+    def __init__(self, amount: Any) -> None:
+        super().__init__(amount=amount, name="typed")
+
+typed = TypedChild(4)
+print(typed.name, typed.amount)

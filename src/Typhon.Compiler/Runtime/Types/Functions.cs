@@ -56,32 +56,38 @@ namespace Typhon.Runtime
             // a class's method (getattr(Cls, "m")): a static method, or an instance method with self as the first argument
             var type = _target as Type ?? _target.GetType();
             var flags = _visibility | (_target is Type ? System.Reflection.BindingFlags.Static : System.Reflection.BindingFlags.Instance);
+            var methods = type.GetMethods(flags).Where(m => m.Name == _name).ToList();
             if (_target is Type && args.Length > 0 && args[0] != null && type.IsInstanceOfType(args[0]) &&
-                !type.GetMethods(flags).Any(m => m.Name == _name))
+                methods.Count == 0)
                 return new PyBoundMethod(args[0]!, _name).__call__(args.Skip(1).ToArray());
-            foreach (var m in type.GetMethods(flags))
+            var candidates = methods.Select(m => CloseMethod(m, args, null)).OfType<System.Reflection.MethodInfo>().ToList();
+            var best = PyArgs.Best(candidates, args, null, out var fitted);
+            if (best != null) return Invoke(best, fitted);
+
+            // Preserve conversions such as a Python long for a .NET int parameter when no overload directly fits.
+            foreach (var m in candidates)
             {
-                if (m.Name != _name || m.IsGenericMethodDefinition) continue;
                 var ps = m.GetParameters();
+                if (ps.Length > 0 && ps[^1].IsDefined(typeof(PyKeywordArgumentsAttribute), false) && args.Length >= ps.Length) continue;
+                if (ps.Any(p => p.ParameterType.IsByRef || p.ParameterType == typeof(NoInit))) continue;
                 bool hasParams = ps.Length > 0 && ps[^1].GetCustomAttributes(typeof(ParamArrayAttribute), false).Length > 0;
                 int fixedCount = hasParams ? ps.Length - 1 : ps.Length;
                 int required = ps.Take(fixedCount).Count(p => !p.IsOptional);
                 if (args.Length < required || !hasParams && args.Length > fixedCount) continue;
                 var call = new object?[ps.Length];
-                for (int i = 0; i < fixedCount; i++) call[i] = i < args.Length ? Convert(args[i], ps[i].ParameterType) : ps[i].DefaultValue;
-                if (hasParams)
+                try
                 {
-                    var elem = ps[^1].ParameterType.GetElementType()!;
-                    var rest = Array.CreateInstance(elem, Math.Max(0, args.Length - fixedCount));
-                    for (int i = fixedCount; i < args.Length; i++) rest.SetValue(Convert(args[i], elem), i - fixedCount);
-                    call[^1] = rest;
+                    for (int i = 0; i < fixedCount; i++) call[i] = i < args.Length ? Convert(args[i], ps[i].ParameterType) : ps[i].DefaultValue;
+                    if (hasParams)
+                    {
+                        var elem = ps[^1].ParameterType.GetElementType()!;
+                        var rest = Array.CreateInstance(elem, Math.Max(0, args.Length - fixedCount));
+                        for (int i = fixedCount; i < args.Length; i++) rest.SetValue(Convert(args[i], elem), i - fixedCount);
+                        call[^1] = rest;
+                    }
                 }
-                try { return m.Invoke(_target is Type ? null : _target, call); }
-                catch (System.Reflection.TargetInvocationException tie) when (tie.InnerException != null)
-                {
-                    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
-                    throw;
-                }
+                catch (Exception error) when (error is InvalidCastException or FormatException or OverflowException) { continue; }
+                return Invoke(m, call);
             }
             throw new InvalidCastException($"{_name}() does not take {args.Length} arguments");
         }
@@ -93,16 +99,83 @@ namespace Typhon.Runtime
             if (kw == null || kw.Count == 0) return __call__(args);
             var type = _target as Type ?? _target.GetType();
             var flags = _visibility | (_target is Type ? System.Reflection.BindingFlags.Static : System.Reflection.BindingFlags.Instance);
-            var candidates = type.GetMethods(flags).Where(m => m.Name == _name && !m.IsGenericMethodDefinition).ToList();
+            var candidates = type.GetMethods(flags).Where(m => m.Name == _name)
+                .Select(m => CloseMethod(m, args, kw)).OfType<System.Reflection.MethodInfo>().ToList();
             var best = PyArgs.Best(candidates, args, kw, out var call) ?? throw PyArgs.NoFit(_name, kw, candidates);
-            try { return best.Invoke(_target is Type ? null : _target, call); }
+            return Invoke(best, call);
+        }
+
+        object? Invoke(System.Reflection.MethodInfo method, object?[] call)
+        {
+            try { return method.Invoke(_target is Type ? null : _target, call); }
             catch (System.Reflection.TargetInvocationException tie) when (tie.InnerException != null)
             {
                 System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
                 throw;
             }
         }
-        public override bool TryInvoke(System.Dynamic.InvokeBinder binder, object?[]? args, out object? result) { result = __call__(args ?? Array.Empty<object?>()); return true; }
+
+        static System.Reflection.MethodInfo? CloseMethod(System.Reflection.MethodInfo method, object?[] args, IDictionary<string, object?>? keywords)
+        {
+            if (!method.IsGenericMethodDefinition) return method;
+            var parameters = method.GetParameters();
+            var types = new Type?[method.GetGenericArguments().Length];
+            int fixedCount = parameters.Length;
+            Type? element = null;
+            if (fixedCount > 0 && parameters[^1].IsDefined(typeof(ParamArrayAttribute), false))
+                element = parameters[--fixedCount].ParameterType.GetElementType();
+            for (int i = 0; i < args.Length; i++)
+            {
+                Type? declared = i < fixedCount ? parameters[i].ParameterType : element;
+                if (declared == null) return null;
+                if (args[i] is object argument && !MatchArgumentType(declared, argument.GetType(), types)) return null;
+            }
+            if (keywords != null)
+                foreach (var keyword in keywords)
+                {
+                    var parameter = parameters.FirstOrDefault(p => p.Name == keyword.Key);
+                    if (parameter != null && keyword.Value is object argument && !MatchArgumentType(parameter.ParameterType, argument.GetType(), types))
+                        return null;
+                }
+            if (types.Any(t => t == null)) return null;
+            try { return method.MakeGenericMethod(types!); }
+            catch (ArgumentException) { return null; }
+        }
+
+        static bool MatchArgumentType(Type formal, Type actual, Type?[] types)
+        {
+            if (formal.IsGenericParameter && formal.DeclaringMethod != null)
+            {
+                int position = formal.GenericParameterPosition;
+                types[position] ??= actual;
+                return types[position]!.IsAssignableFrom(actual);
+            }
+            if (formal.IsArray)
+                return !actual.IsArray || MatchArgumentType(formal.GetElementType()!, actual.GetElementType()!, types);
+            if (!formal.IsGenericType || !formal.ContainsGenericParameters) return true;
+            var definition = formal.GetGenericTypeDefinition();
+            bool SameDefinition(Type t) => t.IsGenericType && t.GetGenericTypeDefinition() == definition;
+            Type? match = actual;
+            while (match != null && !SameDefinition(match)) match = match.BaseType;
+            match ??= actual.GetInterfaces().FirstOrDefault(SameDefinition);
+            if (match == null) return true;
+            var formals = formal.GetGenericArguments();
+            var actuals = match.GetGenericArguments();
+            for (int i = 0; i < formals.Length; i++)
+                if (!MatchArgumentType(formals[i], actuals[i], types)) return false;
+            return true;
+        }
+        public override bool TryInvoke(System.Dynamic.InvokeBinder binder, object?[]? args, out object? result)
+        {
+            args ??= Array.Empty<object?>();
+            var names = binder.CallInfo.ArgumentNames;
+            int positional = args.Length - names.Count;
+            if (names.Count == 0) { result = __call__(args); return true; }
+            var keywords = new Dictionary<string, object?>();
+            for (int i = 0; i < names.Count; i++) keywords[names[i]] = args[positional + i];
+            result = __call_kw__(args[..positional], keywords);
+            return true;
+        }
         public override string ToString() => $"<bound method {_name} of {Builtins.repr(_target)}>";
     }
 
@@ -138,8 +211,9 @@ namespace Typhon.Runtime
         {
             call = new object?[ps.Length];
             if (ps.Any(p => p.ParameterType.IsByRef || p.ParameterType == typeof(NoInit))) return -1;
-            bool hasParams = ps.Length > 0 && ps[ps.Length - 1].IsDefined(typeof(ParamArrayAttribute), false);
-            int fixedCount = hasParams ? ps.Length - 1 : ps.Length;
+            bool hasParams = ps.Length > 0 && ps[^1].IsDefined(typeof(ParamArrayAttribute), false);
+            bool hasKeywords = ps.Length > 0 && ps[^1].IsDefined(typeof(PyKeywordArgumentsAttribute), false);
+            int fixedCount = hasParams || hasKeywords ? ps.Length - 1 : ps.Length;
             if (!hasParams && args.Length > fixedCount) return -1;
             int score = 0, byName = 0;
             for (int i = 0; i < fixedCount; i++)
@@ -163,7 +237,15 @@ namespace Typhon.Runtime
                 score += fit;
                 call[i] = To(v, p.ParameterType);
             }
-            if (kw != null && byName != kw.Count) return -1; // a name no parameter has
+            if (kw != null && byName != kw.Count && !hasKeywords) return -1; // a name no parameter has
+            if (hasKeywords)
+            {
+                var extra = new OrderedDictionary<string, object?>();
+                if (kw != null && byName != kw.Count)
+                    foreach (var pair in kw)
+                        if (!ps.Take(fixedCount).Any(parameter => parameter.Name == pair.Key)) extra[pair.Key] = pair.Value;
+                call[^1] = extra;
+            }
             if (hasParams)
             {
                 var elem = ps[ps.Length - 1].ParameterType.GetElementType()!;
@@ -266,6 +348,12 @@ namespace Typhon.Runtime
             while (outer.DeclaringType != null) outer = outer.DeclaringType;
             if (outer.GetCustomAttributes(typeof(PySourceAttribute), inherit: false).FirstOrDefault() is PySourceAttribute source)
                 return source.Module;
+            if (t.IsGenericType)
+            {
+                var definition = t.GetGenericTypeDefinition();
+                if (definition == typeof(PyArray<>)) return "array";
+                if (definition == typeof(deque<>)) return "collections";
+            }
             if (t.Namespace is string ns && (ns == "System" || ns.StartsWith("System.") || ns.StartsWith("Microsoft.") || ns.StartsWith("Typhon."))) return "builtins";
             return outer != t ? outer.Name : t.Namespace ?? "builtins";
         }
@@ -291,6 +379,7 @@ namespace Typhon.Runtime
                 if (g == typeof(List<>)) return "list";
                 if (g == typeof(OrderedDictionary<,>) || g == typeof(Dictionary<,>)) return "dict";
                 if (g == typeof(HashSet<>)) return "set";
+                if (g == typeof(PyArray<>)) return "array";
                 if (g == typeof(PyTuple<>) || t.FullName?.StartsWith("System.ValueTuple") == true) return "tuple";
             }
             int tick = t.Name.IndexOf('`');
@@ -325,7 +414,8 @@ namespace Typhon.Runtime
                     throw;
                 }
             }
-            throw new ArgumentException($"keyword arguments to a {f?.GetType().Name ?? "None"} value are not supported");
+            if (f != null) return new PyBoundMethod(f, "__call__").__call_kw__(args, kw);
+            throw new InvalidCastException("'NoneType' object is not callable");
         }
 
         /// <summary>
@@ -395,6 +485,9 @@ namespace Typhon.Runtime
         };
     }
 
+    [AttributeUsage(AttributeTargets.Parameter)]
+    internal sealed class PyKeywordArgumentsAttribute : Attribute { }
+
     internal interface IPyKeywordCallable
     {
         object? __call_kw__(object?[] args, IDictionary<string, object?>? kwargs);
@@ -420,13 +513,14 @@ namespace Typhon.Runtime
         /// <summary>The function a decorator's wrapper wraps (set by functools.wraps).</summary>
         public object? __wrapped__;
         public string __module__ = "__main__";
-        public string __qualname__ { get => __name__; set => __name__ = value; }
+        public string __qualname__;
+        internal Func<Typhon.Stdlib.inspect.Signature>? _signature;
         internal Typhon.Stdlib.sys_.code? _code;
         public Typhon.Stdlib.sys_.code? __code__ =>
             _code ?? (GetType().GetCustomAttributes(typeof(PySourceAttribute), false).FirstOrDefault() is PySourceAttribute { Line: > 0 } source
                 ? new Typhon.Stdlib.sys_.code(__name__, source.Filename, source.Line) : null);
         internal Dictionary<string, object?>? _attrs;
-        protected PyFunction(string name) { __name__ = name; }
+        protected PyFunction(string name) { __name__ = __qualname__ = name; }
         /// <summary>Calls the function with arguments of any type (dynamic overload resolution).</summary>
         public abstract object? __call__(object?[] args);
         /// <summary>The parameter names, for keyword arguments (null: the function takes none by name).</summary>
@@ -472,6 +566,8 @@ namespace Typhon.Runtime
     {
         readonly Func<object?[], IDictionary<string, object?>?, object?> _call;
         public PyClosure(string name, Func<object?[], IDictionary<string, object?>?, object?> call) : base(name) { _call = call; }
+        public PyClosure(string name, object?[] defaults, Func<object?[], IDictionary<string, object?>?, object?[], object?> call)
+            : this(name, (args, kw) => call(args, kw, defaults)) { }
         public override object? __call__(object?[] args) => _call(args, null);
         public override object? __call_kw__(object?[] args, IDictionary<string, object?>? kw) => _call(args, kw);
 
@@ -479,22 +575,37 @@ namespace Typhon.Runtime
         /// The positional arguments with the keyword arguments for named parameters put in their places. A keyword that
         /// names no parameter is an error unless the function takes **kwargs (<paramref name="extraKeywords"/>).
         /// </summary>
-        public static object?[] Args(string fn, string[] names, object?[] args, IDictionary<string, object?>? kw, bool extraKeywords)
+        public static object?[] Args(string fn, string[] names, object?[] args, IDictionary<string, object?>? kw, bool extraKeywords) =>
+            Args(fn, names, args, kw, extraKeywords, null);
+
+        public static object?[] Args(string fn, string[] names, object?[] args, IDictionary<string, object?>? kw, bool extraKeywords,
+            object?[]? defaults)
         {
-            if (kw == null || kw.Count == 0) return args;
-            int n = args.Length;
-            foreach (var k in kw.Keys)
-            {
-                int i = Array.IndexOf(names, k);
-                if (i < 0) { if (extraKeywords) continue; throw new ArgumentException($"{fn}() got an unexpected keyword argument '{k}'"); }
-                if (i < args.Length) throw new ArgumentException($"{fn}() got multiple values for argument '{k}'");
-                n = Math.Max(n, i + 1);
-            }
+            if ((kw == null || kw.Count == 0) && (defaults == null || args.Length >= names.Length)) return args;
+            Exception Error(string message) => defaults == null ? new ArgumentException(message) : new InvalidCastException(message);
+            int n = defaults == null ? args.Length : Math.Max(args.Length, names.Length);
+            if (kw != null)
+                foreach (var k in kw.Keys)
+                {
+                    int i = Array.IndexOf(names, k);
+                    if (i < 0)
+                    {
+                        if (extraKeywords) continue;
+                        throw Error($"{fn}() got an unexpected keyword argument '{k}'");
+                    }
+                    if (i < args.Length) throw Error($"{fn}() got multiple values for argument '{k}'");
+                    n = Math.Max(n, i + 1);
+                }
             var a = new object?[n];
             Array.Copy(args, a, args.Length);
+            int required = names.Length - (defaults?.Length ?? 0);
             for (int i = args.Length; i < n; i++)
-                if (!kw.TryGetValue(names[i], out a[i]))
-                    throw new ArgumentException($"{fn}() missing required argument: '{names[i]}'");
+            {
+                if (kw != null && kw.TryGetValue(names[i], out a[i])) continue;
+                if (defaults == null || i < required)
+                    throw Error($"{fn}() missing required argument: '{names[i]}'");
+                a[i] = defaults[i - required];
+            }
             return a;
         }
 

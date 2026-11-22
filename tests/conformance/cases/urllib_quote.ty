@@ -1,0 +1,43 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+from urllib.parse import quote, quote_from_bytes, unquote, unquote_to_bytes
+import ntpath
+
+print(quote("a/b C+~:雪"), quote("a/b C+~:雪", safe="/:"))
+print(quote("é+%", b"+\xff"), quote(b"\xff?/#", safe=b"#/"))
+print(quote_from_bytes(bytearray(b"a b\x00\xff")))
+print(unquote("é%C3%A9+%2B%GG%"), repr(unquote("%E9+%20", encoding="latin-1")))
+print(unquote(b"%FF%20%"), unquote_to_bytes("é%FF%GG%"))
+print(quote("é", encoding="ascii", errors="replace"),
+      quote("é", encoding="ascii", errors="ignore"),
+      quote("é", encoding="ascii", errors="backslashreplace"))
+print(repr(unquote("%E2%82X%FF", errors="ignore")), unquote("%FF", errors="backslashreplace"))
+
+escaped = unquote("%FF", errors="surrogateescape")
+passed = unquote("%ED%A0%80", errors="surrogatepass")
+print(repr(escaped), quote(escaped, errors="surrogateescape"))
+print(repr(passed), quote(passed, errors="surrogatepass"))
+for sample in ["%FF", "%E2%82"]:
+    try:
+        print(unquote(sample, errors="strict"))
+    except UnicodeDecodeError as error:
+        print(error.start, error.end, error.reason)
+
+try:
+    quote("é", encoding="ascii")
+except UnicodeEncodeError:
+    print("strict ASCII")
+try:
+    quote(passed)
+except UnicodeEncodeError:
+    print("strict surrogate")
+try:
+    quote("a", safe=None)
+except TypeError:
+    print("safe requires characters")
+print(quote("A", encoding="UTF_16"), unquote("%FF%FEA%00", encoding="utf-16"))
+print(quote("😀", encoding="ascii", errors="replace"),
+      quote("é", encoding="utf-32-be"), unquote("%FF%FE%00%00A%00%00%00", encoding="utf-32"))
+print(ntpath.splitroot("C:/folder/file"), ntpath.splitroot("//server/share/file"))
+print(ntpath.splitroot(b"D:\\a\xff"))

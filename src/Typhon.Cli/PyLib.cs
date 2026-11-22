@@ -67,14 +67,26 @@ internal static class PyLib
     /// <summary>Is the module one Typhon provides itself (a runtime module, a typing-only one)? Those are never taken from Lib.</summary>
     public static bool ProvidedByTyphon(string module)
     {
+        // The source timeit supports the Timer class and string statements.
+        if (module == "timeit") return false;
         if (TypingOnly.Contains(module)) return true;
-        string head = module.Split('.')[0];
-        // The runtime's doctest compatibility surface only returns empty results.
-        // With #:pylib, use the source module to discover and execute examples.
-        if (head == "doctest") return false;
-        var asm = Runtime.Value;
-        return asm != null && (asm.GetType("Typhon.Stdlib." + head) != null || asm.GetType("Typhon.Stdlib." + head + "_") != null);
+        // With #:pylib, use the source doctest module to discover and execute examples.
+        return module.Split('.')[0] != "doctest" && RuntimeModule(module) != null;
     }
+
+    static Type? RuntimeModule(string module)
+    {
+        string[] parts = module.Split('.');
+        string suffix = parts.Length > 1 ? "+" + string.Join("+", parts.Skip(1)) : "";
+        string name = "Typhon.Stdlib." + parts[0];
+        var assembly = Runtime.Value;
+        return assembly?.GetType(name + suffix) ?? assembly?.GetType(name + "_" + suffix);
+    }
+
+    /// <summary>Runtime package attributes take precedence over a same-named source submodule.</summary>
+    public static bool ProvidesExport(string module, string member) =>
+        RuntimeModule(module)?.GetMember(member, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static).Length > 0 ||
+        RuntimeModule(module + "." + member) != null;
 
     /// <summary>Python's search order for a source-only package or module under this root.</summary>
     public static IEnumerable<(string Path, bool Package)> SourceCandidates(string root, string module, string extension = ".py")

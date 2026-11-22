@@ -115,7 +115,18 @@ namespace Typhon.Runtime
             if (IsIntType(of)) return IsIntType(cls) || cls == typeof(bool);
             if (of == typeof(double) || of == typeof(float)) return cls == typeof(double) || cls == typeof(float);
             if (of.IsGenericTypeDefinition) return Ancestors(cls).Any(a => a.IsGenericType && a.GetGenericTypeDefinition() == of) || cls.GetInterfaces().Any(i => i.IsGenericType && i.GetGenericTypeDefinition() == of);
-            if (of.IsGenericType && cls.IsGenericType && of.GetGenericTypeDefinition() == cls.GetGenericTypeDefinition()) return true;
+            if (of.IsGenericType)
+            {
+                var definition = of.GetGenericTypeDefinition();
+                if (definition == typeof(HashSet<>) && cls.IsGenericType &&
+                    cls.GetGenericTypeDefinition() == typeof(frozenset<>)) return false;
+                if (cls.IsGenericType && definition == cls.GetGenericTypeDefinition()) return true;
+                if (definition == typeof(Dictionary<,>) || definition == typeof(OrderedDictionary<,>))
+                    return Ancestors(cls).Any(a => a.IsGenericType &&
+                        (a.GetGenericTypeDefinition() == typeof(Dictionary<,>) || a.GetGenericTypeDefinition() == typeof(OrderedDictionary<,>)));
+                if (definition == typeof(List<>) || definition == typeof(HashSet<>))
+                    return Ancestors(cls).Any(a => a.IsGenericType && a.GetGenericTypeDefinition() == definition);
+            }
             // exceptions: the builtin hierarchy where .NET's differs
             if (of == typeof(Exception)) return typeof(Exception).IsAssignableFrom(cls) && !typeof(IPyBaseException).IsAssignableFrom(cls);
             if (of == typeof(LookupError)) return typeof(KeyNotFoundException).IsAssignableFrom(cls) || typeof(ArgumentOutOfRangeException).IsAssignableFrom(cls) || typeof(IndexOutOfRangeException).IsAssignableFrom(cls);
