@@ -62,6 +62,8 @@ namespace Typhon.Runtime
         public int GetHashCode(object? o) => Builtins.KeyHash(o);
     }
 
+    internal sealed class PyLateAttributeAttribute : Attribute { }
+
     /// <summary>
     /// obj.__dict__ / vars(obj): a live dict view of an object's attributes (its properties and fields), so
     /// __dict__.update(state) and __dict__[k] = v set them. Names the class does not declare are kept beside the object.
@@ -85,7 +87,7 @@ namespace Typhon.Runtime
             chain.Reverse();
             foreach (var t in chain)
                 foreach (var p in t.GetProperties(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.DeclaredOnly))
-                    if (p.GetIndexParameters().Length == 0 && p.CanRead && p.CanWrite && seen.Add(p.Name)) _props.Add(p);
+                    if (p.GetIndexParameters().Length == 0 && p.CanRead && p.CanWrite && !p.IsDefined(typeof(PyLateAttributeAttribute), false) && !p.IsDefined(typeof(PyDescriptorAttribute), false) && seen.Add(p.Name)) _props.Add(p);
         }
         OrderedDictionary<string, object?> Extras => Extra.GetValue(_o, _ => new OrderedDictionary<string, object?>());
         /// <summary>An attribute set on the object that its class does not declare (setattr, __dict__[k] = v).</summary>
@@ -94,6 +96,8 @@ namespace Typhon.Runtime
             value = null;
             return Extra.TryGetValue(o, out var d) && d.TryGetValue(name, out value);
         }
+        public static void SetExtra(object o, string name, object? value) =>
+            Extra.GetValue(o, _ => new OrderedDictionary<string, object?>())[name] = value;
         internal static bool RemoveExtra(object o, string name) => Extra.TryGetValue(o, out var d) && d.Remove(name);
         System.Reflection.PropertyInfo? Prop(string k) => _props.Find(p => p.Name == k);
 

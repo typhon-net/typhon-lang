@@ -197,7 +197,7 @@ namespace Typhon.Compiler.Emit
                 if (s is ClassDef cdef) foreach (var m in cdef.Body.OfType<FunctionDef>()) RegisterDefaultFields(m, cdef.Name, fields, execStmts);
                 if (s is ImportStmt || s is ImportFromStmt)
                 {
-                    if (PackageImports(s).Any()) execStmts.Add(s);
+                    if (ProjectImports(s).Any()) execStmts.Add(s);
                     continue;
                 }
                 if (s is FunctionDef || s is ClassDef)

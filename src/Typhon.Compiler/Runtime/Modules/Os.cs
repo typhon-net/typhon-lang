@@ -1158,6 +1158,42 @@ namespace Typhon.Stdlib
 
         /// <summary>scandir(path='.'): the entries of a directory as DirEntry objects (in the directory's order).</summary>
         public static ScandirIterator scandir(string path = ".") => new ScandirIterator(path, listdir(path));
+        public static BytesScandirIterator scandir(PyBytes path) => new BytesScandirIterator(path, scandir(fsdecode(path)));
+
+        internal sealed class BytesScandirIterator : IEnumerable<BytesDirEntry>, IDisposable
+        {
+            readonly PyBytes _path;
+            readonly ScandirIterator _entries;
+            internal BytesScandirIterator(PyBytes path, ScandirIterator entries) { _path = path; _entries = entries; }
+            public IEnumerator<BytesDirEntry> GetEnumerator()
+            {
+                foreach (var entry in _entries) yield return new BytesDirEntry(_path, entry);
+            }
+            IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+            public void close() => _entries.close();
+            public void Dispose() => _entries.Dispose();
+        }
+
+        internal sealed class BytesDirEntry : IPyRepr
+        {
+            readonly DirEntry _entry;
+            public readonly PyBytes name, path;
+            internal BytesDirEntry(PyBytes root, DirEntry entry)
+            {
+                _entry = entry;
+                name = fsencode(entry.name);
+                path = os_.path.join(root, name);
+            }
+            public bool is_symlink() => _entry.is_symlink();
+            public bool is_dir(bool follow_symlinks = true) => _entry.is_dir(follow_symlinks);
+            public bool is_file(bool follow_symlinks = true) => _entry.is_file(follow_symlinks);
+            public bool is_junction() => _entry.is_junction();
+            public stat_result stat(bool follow_symlinks = true) => _entry.stat(follow_symlinks);
+            public long inode() => _entry.inode();
+            public PyBytes __fspath__() => path;
+            public string __repr__() => $"<DirEntry {Builtins.repr(name)}>";
+            public override string ToString() => __repr__();
+        }
 
         /// <summary>
         /// walk(top, topdown=True, onerror=None, followlinks=False): (dirpath, dirnames, filenames) for each directory of the

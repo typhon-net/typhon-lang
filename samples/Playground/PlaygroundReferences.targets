@@ -14,7 +14,7 @@
     <PlaygroundFrameworkReference Include="System.Runtime;System.Collections;System.Linq;System.Console;Microsoft.CSharp;System.Linq.Expressions" />
     <PlaygroundFrameworkReference Include="System.Runtime.Numerics;System.Text.RegularExpressions;System.Collections.Concurrent;System.Collections.Immutable" />
     <PlaygroundFrameworkReference Include="System.Memory;System.Threading;System.Threading.Thread;System.Threading.ThreadPool;System.Runtime.InteropServices" />
-    <PlaygroundFrameworkReference Include="System.Text.Encoding.Extensions;System.Security.Cryptography;System.Diagnostics.StackTrace" />
+    <PlaygroundFrameworkReference Include="System.Text.Encoding.Extensions;System.Text.Encoding.CodePages;System.Security.Cryptography;System.Diagnostics.StackTrace" />
     <PlaygroundFrameworkReference Include="System.IO.FileSystem.DriveInfo;System.Net.NetworkInformation;System.Numerics.Vectors;System.ObjectModel" />
     <PlaygroundFrameworkReference Include="System.Diagnostics.Process;Microsoft.Win32.Primitives" />
 

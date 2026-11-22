@@ -1,0 +1,24 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+from typing import Any
+
+
+def collect(tag="default", *items, **kwargs):
+    if items:
+        items = (0,) + items
+    return tag, items, kwargs
+
+
+print(collect())
+saved: Any = collect
+print(saved())
+print(saved("call", 1, 2, style="bold"))
+print(saved(tag="named", style="plain"))
+
+
+def typed(*items: int):
+    return (1,) + items
+
+
+print(typed(3, 4))

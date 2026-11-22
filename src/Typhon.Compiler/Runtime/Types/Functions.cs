@@ -282,6 +282,7 @@ namespace Typhon.Runtime
             if (t == typeof(PyByteArray)) return "bytearray";
             if (typeof(PyFunction).IsAssignableFrom(t)) return "function";
             if (t == typeof(PyModule)) return "module";
+            if (t == typeof(Typhon.Stdlib.types.MappingProxyType)) return "mappingproxy";
             if (t == typeof(Typhon.Stdlib.types.TracebackType)) return "traceback";
             if (t.IsArray && t != typeof(byte[])) return "tuple";
             if (t.IsGenericType)
@@ -420,9 +421,10 @@ namespace Typhon.Runtime
         public object? __wrapped__;
         public string __module__ = "__main__";
         public string __qualname__ { get => __name__; set => __name__ = value; }
+        internal Typhon.Stdlib.sys_.code? _code;
         public Typhon.Stdlib.sys_.code? __code__ =>
-            GetType().GetCustomAttributes(typeof(PySourceAttribute), false).FirstOrDefault() is PySourceAttribute { Line: > 0 } source
-                ? new Typhon.Stdlib.sys_.code(__name__, source.Filename, source.Line) : null;
+            _code ?? (GetType().GetCustomAttributes(typeof(PySourceAttribute), false).FirstOrDefault() is PySourceAttribute { Line: > 0 } source
+                ? new Typhon.Stdlib.sys_.code(__name__, source.Filename, source.Line) : null);
         internal Dictionary<string, object?>? _attrs;
         protected PyFunction(string name) { __name__ = name; }
         /// <summary>Calls the function with arguments of any type (dynamic overload resolution).</summary>

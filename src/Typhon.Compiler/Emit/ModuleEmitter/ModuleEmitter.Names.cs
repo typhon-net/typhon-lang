@@ -146,10 +146,14 @@ namespace Typhon.Compiler.Emit
             return false;
         }
 
-        string ClsNameInScope()
+        bool IsClassArgument(string name)
         {
-            for (var s = _scope; s != null; s = s.Parent) if (s.ClsName != null) return s.ClsName;
-            return null;
+            for (var s = _scope; s != null; s = s.Parent)
+            {
+                if (s.ClassArgument == name) return true;
+                if (s.Params.Contains(name) || s.Locals?.AllLocals.Contains(name) == true) return false;
+            }
+            return false;
         }
 
         /// <summary>A module-level or imported name that is NOT a type (function / variable).</summary>
@@ -202,7 +206,6 @@ namespace Typhon.Compiler.Emit
             if (_m.RuntimeCodeMode != null && _m.RuntimeBindings.Contains(id))
                 return $"__typhon_execution.{(_scopeKey == RuntimeCodeScopeKey ? "Local" : "Global")}[{CsString(id)}]";
             if (id == "self" && HasSelfInScope()) return "this";
-            if (id == "cls" && ClsNameInScope() != null) return ClsNameInScope();
             if (id == "__name__") return CsString(_m.Name);
             if (id == "__package__" && !IsShadowed(id)) return _m.PackageName.Length == 0 ? "null" : CsString(_m.PackageName);
             if (id == "__file__" && !IsShadowed(id)) return CsString(System.IO.Path.GetFullPath(_path));

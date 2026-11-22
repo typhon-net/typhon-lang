@@ -180,9 +180,67 @@ public sealed class ConformanceTests(ITestOutputHelper output)
             result = doctest.testmod(report=False, exclude_empty=True)
             print(result.failed, result.attempted, result.skipped)
             """);
+        string classScript = Path.Combine(dir, "class_doctests.ty");
+        File.WriteAllText(classScript, $"#:pylib {lib}\n" + """
+            import doctest
+            import functools as tools
+            import sys
+
+            class Example:
+                '''A container with several documented member kinds.
+
+                >>> 7 + 2
+                9
+                '''
+
+                @property
+                def quantity(self) -> int:
+                    '''The property returns a quantity.
+
+                    >>> 6 * 7
+                    42
+                    '''
+                    return 42
+
+                @staticmethod
+                def twice(value: int) -> int:
+                    '''Double a number.
+
+                    >>> 3 + 3
+                    6
+                    '''
+                    return value * 2
+
+                @classmethod
+                def kind(owner) -> str:
+                    '''Name the class.
+
+                    >>> 'class'.upper()
+                    'CLASS'
+                    '''
+                    return owner.__name__
+
+                @tools.cached_property
+                def cached(self) -> int:
+                    '''Cache a count.
+
+                    >>> 2 ** 3
+                    8
+                    '''
+                    return 8
+
+            module = sys.modules['__main__']
+            finder = doctest.DocTestFinder(exclude_empty=True)
+            found = finder.find(module)
+            print([(test.name, len(test.examples)) for test in found])
+            cached = finder.find(Example.cached, name='Example.cached', module=module)
+            print([(test.name, len(test.examples)) for test in cached])
+            results = doctest.testmod(report=False, exclude_empty=True)
+            print(results.failed, results.attempted, results.skipped)
+            """);
         try
         {
-            foreach (string source in new[] { script, moduleScript })
+            foreach (string source in new[] { script, moduleScript, classScript })
             {
                 var expected = Suite.Run(python, [source], TimeSpan.FromMinutes(1));
                 Assert.True(expected.ExitCode == 0, expected.StdErr);

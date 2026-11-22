@@ -1,0 +1,37 @@
+from typing import Any
+import re
+
+binary = re.compile(b'a')
+text = re.compile('a')
+
+def locate(value: Any):
+    if isinstance(value, bytes):
+        match = binary.search(value)
+    else:
+        match = text.search(value)
+    return match is not None
+
+print(locate(b'a'), locate('a'), locate('b'))
+
+import fnmatch
+
+def filter_names(names: Any):
+    return fnmatch.filter((name for name in names), '*.txt')
+
+print(filter_names(['readme.txt', '.gitignore', 'data.txt']))
+
+import os
+import shutil
+import tempfile
+
+root = tempfile.mkdtemp()
+try:
+    binary_root = os.fsencode(root)
+    child = os.path.join(binary_root, b'subdir')
+    os.mkdir(os.fsdecode(child))
+    print(os.path.isdir(child), os.path.lexists(child), os.path.split(child)[1])
+    with os.scandir(binary_root) as directory:
+        print([(entry.name, entry.path == child, entry.is_dir()) for entry in directory])
+    print(fnmatch.filter((name for name in [b'data.txt', b'ignore']), b'*.txt'))
+finally:
+    shutil.rmtree(root)

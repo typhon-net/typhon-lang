@@ -63,6 +63,7 @@ namespace Typhon.Compiler.Emit
             if (t.StartsWith("List<") && v.StartsWith("IEnumerable<")) return true;
             bool Plain(string x) => PrimitiveCsTypes.Contains(x) || x.StartsWith("List<") || x.StartsWith("HashSet<") || IsDictType(x) || x.StartsWith("(") ||
                                     x is "global::Typhon.Runtime.PyAttrDict" or "global::Typhon.Runtime.PyBytes" or "global::Typhon.Runtime.PyByteArray" ||
+                                    x is "global::Typhon.Stdlib.re.Match" or "global::Typhon.Stdlib.re.BytesMatch" ||
                                     x.StartsWith("global::Typhon.Runtime.PyTuple<");
             return Plain(t) && Plain(v);
         }
@@ -95,7 +96,7 @@ namespace Typhon.Compiler.Emit
                 case RaiseStmt r: EmitRaise(r); break;
                 case GlobalStmt _: break;
                 case ImportStmt _:
-                case ImportFromStmt _: EmitPackageImports(s); break;
+                case ImportFromStmt _: EmitProjectImports(s); break;
                 case AssertStmt a when a.Msg == null && IsTestModule && _scope != null && AssertWithValues(a): break;
                 case AssertStmt a:
                     _w.Line($"if (!{Paren(Cond(a.Test))}) throw new global::Typhon.Runtime.AssertionError({(a.Msg != null ? "str(" + EmitExpr(a.Msg) + ")" : "\"assertion failed\"")});");
@@ -160,7 +161,8 @@ namespace Typhon.Compiler.Emit
                 case CallExpr rc when rc.Func is AttributeExpr ra && ra.Name == "register" && DottedName(ra.Target) is string rdn && !IsLocal(rdn.Split('.')[0]) &&
                                       (_typingOnlyNames.Contains(rdn.Split('.')[0]) ||
                                        // (Complex.register(complex) on a Typhon ABC that defines no register of its own)
-                                       TryResolveType(rdn, 0, out _, out var regClass) && regClass != null && !DefinesInHierarchy(regClass, "register")):
+                                       TryResolveType(rdn, 0, out _, out var regClass) && regClass != null &&
+                                       !HasVirtualSubclasses(regClass) && !DefinesInHierarchy(regClass, "register")):
                     return;
                 case CallExpr _:
                 case AwaitExpr _:
@@ -309,6 +311,7 @@ namespace Typhon.Compiler.Emit
             // (a Typhon class, or a class of the runtime or of .NET: not a generic one, nor a builtin type such as int or str)
             if (BuiltinTypeNames.Contains(cls.Id) || !TryResolveType(cls.Id, 0, out var clsMeta, out var pyClass) ||
                 (pyClass != null ? pyClass.TypeParams.Count > 0 : clsMeta == null || clsMeta.Contains('`'))) return false;
+            if (MayHaveVirtualSubclasses(clsMeta, pyClass)) return false;
             string current = KnownType(n.Id);
             type = MapType(cls, test);
             if (type == null || current == type) return false;
@@ -350,6 +353,12 @@ namespace Typhon.Compiler.Emit
                 else if (t is AttributeExpr da)
                 {
                     string ot = da.Target is NameExpr dsn && dsn.Id == "self" && _cls != null && HasSelfInScope() ? _cls.CsSelfType : InferType(da.Target);
+                    if (ClassKeyOfType(ot, out _) is string descriptorClass && ClassDefOfKey(descriptorClass) is ClassDef cachedOwner &&
+                        MethodInHierarchy(cachedOwner, da.Name) is FunctionDef cached && IsCachedProperty(cached))
+                    {
+                        _w.Line($"{Rt("delattr")}((object?){Paren(EmitExpr(da.Target))}, {CsString(da.Name)});");
+                        continue;
+                    }
                     // (a field of the class: declared in its body, set through self in a method, or created from outside)
                     bool declared = ot != null && ot != "dynamic" &&
                                     (_cls != null && ot == _cls.CsSelfType && _cls.FieldTypes.ContainsKey(da.Name) ||

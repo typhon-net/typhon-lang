@@ -1,0 +1,20 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+
+def format(value, spec):
+    return "shadowed format"
+
+
+def repr(value):
+    return "shadowed repr"
+
+
+def str(value):
+    return "shadowed str"
+
+
+label = "text"
+width = 4
+print(f"{7:0{width}d} {label!r} {label}")
+print(format(1, "d"), repr(2), str(3))

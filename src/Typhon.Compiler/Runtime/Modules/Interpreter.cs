@@ -89,7 +89,7 @@ namespace Typhon.Stdlib
         public static bool hasattr(object? o, string name) => Builtins.hasattr(o, name);
         public static void setattr(object? o, string name, object? value) => Builtins.setattr(o, name, value);
         public static void delattr(object? o, string name) => Builtins.delattr(o, name);
-        public static PyAttrDict vars(object o) => Builtins.vars(o);
+        public static dynamic vars(object o) => Builtins.vars(o);
         public static List<string> dir() => Builtins.dir();
         public static List<string> dir(object? o) => Builtins.dir(o);
         public static bool issubclass(object? cls, object? classinfo) => Builtins.issubclass(cls, classinfo);

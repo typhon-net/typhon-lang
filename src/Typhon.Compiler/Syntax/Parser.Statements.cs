@@ -273,7 +273,13 @@ namespace Typhon.Compiler.Syntax
             {
                 while (!IsOp(")"))
                 {
-                    if (Cur.Kind == TokenKind.Name && Peek().Is("=")) { _i += 2; ParseTest(); } // metaclass=..., ignored
+                    if (Cur.Kind == TokenKind.Name && Peek().Is("="))
+                    {
+                        string keyword = ExpectName();
+                        ExpectOp("=");
+                        var value = ParseTest();
+                        if (keyword == "metaclass") c.Metaclass = value;
+                    }
                     else c.Bases.Add(ParseTest());
                     if (!AcceptOp(",")) break;
                 }

@@ -303,6 +303,49 @@ namespace Typhon.Stdlib
             System.IO.Directory.CreateDirectory(path);
             return path;
         }
+        internal sealed class TemporaryDirectory
+        {
+            public readonly string name;
+            readonly bool _ignoreCleanupErrors;
+            readonly bool _delete;
+
+            public TemporaryDirectory(string? suffix = null, string? prefix = null, string? dir = null,
+                bool ignore_cleanup_errors = false, bool delete = true)
+            {
+                name = System.IO.Path.GetFullPath(mkdtemp(suffix ?? "", prefix ?? "tmp", dir));
+                _ignoreCleanupErrors = ignore_cleanup_errors;
+                _delete = delete;
+            }
+
+            public string __enter__() => name;
+
+            public bool __exit__(object? type, object? exc, object? traceback)
+            {
+                if (_delete) cleanup();
+                return false;
+            }
+
+            public void cleanup()
+            {
+                Remove(_ignoreCleanupErrors);
+                GC.SuppressFinalize(this);
+            }
+
+            void Remove(bool ignoreErrors)
+            {
+                if (name == null) return;
+                try { System.IO.Directory.Delete(name, recursive: true); }
+                catch (System.IO.DirectoryNotFoundException) { }
+                catch (System.IO.IOException) when (ignoreErrors) { }
+                catch (UnauthorizedAccessException) when (ignoreErrors) { }
+            }
+
+            ~TemporaryDirectory()
+            {
+                if (_delete) Remove(ignoreErrors: true);
+            }
+        }
+
         public static (long, string) mkstemp(string suffix = "", string prefix = "tmp", string? dir = null)
         {
             string path = System.IO.Path.Combine(dir ?? gettempdir(), prefix + System.IO.Path.GetRandomFileName().Replace(".", "") + suffix);
@@ -440,6 +483,12 @@ namespace Typhon.Stdlib
             }
         }
         public static IEnumerable<T> chain<T>(params IEnumerable<T>[] iterables) { foreach (var it in iterables) foreach (var x in it) yield return x; }
+        public static IEnumerable<dynamic> chain(params object?[] iterables)
+        {
+            foreach (var iterator in iterables)
+                foreach (var item in Builtins.__iter_dyn(iterator))
+                    yield return item;
+        }
         public static IEnumerable<T> chain_from_iterable<T>(IEnumerable<IEnumerable<T>> iterables) { foreach (var it in iterables) foreach (var x in it) yield return x; }
         public static IEnumerable<long> accumulate(IEnumerable<long> xs) { long s = 0; bool any = false; foreach (var x in xs) { s = any ? checked(s + x) : x; any = true; yield return s; } }
         public static IEnumerable<double> accumulate(IEnumerable<double> xs) { double s = 0; bool any = false; foreach (var x in xs) { s = any ? s + x : x; any = true; yield return s; } }
@@ -455,6 +504,9 @@ namespace Typhon.Stdlib
             foreach (var x in iterable) { if (dropping && predicate(x)) continue; dropping = false; yield return x; }
         }
         public static IEnumerable<T> filterfalse<T>(Func<T, bool> predicate, IEnumerable<T> iterable) => iterable.Where(x => !predicate(x));
+        public static IEnumerable<T> filterfalse<T>(PyClosure predicate, IEnumerable<T> iterable) =>
+            iterable.Where(value => !Builtins.truthy(predicate.__call__([value])));
+
         public static IEnumerable<T> compress<T>(IEnumerable<T> data, IEnumerable<bool> selectors) => data.Zip(selectors).Where(p => p.Second).Select(p => p.First);
         public static IEnumerable<T> compress<T>(IEnumerable<T> data, IEnumerable<long> selectors) => data.Zip(selectors).Where(p => p.Second != 0).Select(p => p.First);
         public static IEnumerable<(T, T)> pairwise<T>(IEnumerable<T> iterable)

@@ -47,10 +47,15 @@ namespace Typhon.Runtime
             if (o is Type t)
             {
                 if (name == "__name__" || name == "__qualname__") { value = PyTypeName(t); return true; }
+                if (name == "__dict__") { value = PyClassDescriptors.Dictionary(t); return true; }
+                if (name == "__module__") { value = __module_of(t); return true; }
+                if (name == "__doc__") { value = t.GetCustomAttribute<PySourceAttribute>()?.DocString; return true; }
+                if (PyClassDescriptors.TryGetAttribute(t, name, out value)) return true;
                 if (name == "__module__") { value = ModuleOfType(t); return true; }
                 if (t.GetProperty(name, StaticMembers) is PropertyInfo sp && sp.GetIndexParameters().Length == 0) { value = sp.GetValue(null); return true; }
                 if (t.GetField(name, StaticMembers) is FieldInfo sf) { value = sf.GetValue(null); return true; }
                 if (t.GetMethods(StaticMembers | InstanceMembers).Any(m => m.Name == name)) { value = new PyBoundMethod(t, name); return true; }
+                if (FindNestedType(t, name) is Type nested) { value = nested; return true; }
                 // CLR reflection consumers may also read members of the Type object itself.
             }
             if (o is PyFunction pf)
@@ -64,11 +69,26 @@ namespace Typhon.Runtime
                 }
                 if (pf._attrs != null && pf._attrs.TryGetValue(name, out value)) return true;
             }
+            if (o is System.Collections.IDictionary mapping && name is ("__getitem__" or "__contains__"))
+            {
+                value = new PyClosure(name, (args, keywords) =>
+                {
+                    if (args.Length != 1 || keywords?.Count > 0)
+                        throw PyClosure.ArgCountError(name, 1, 1, args.Length);
+                    return name == "__getitem__" ? (object?)__getitem(mapping, args[0]) : mapping.Contains(KeyFor(mapping, args[0]));
+                });
+                return true;
+            }
             var type = o.GetType();
-            if (type.GetProperty(name, InstanceMembers) is PropertyInfo p && p.GetIndexParameters().Length == 0) { value = p.GetValue(o); return true; }
+            if (type.GetProperty(name, InstanceMembers) is PropertyInfo p && p.GetIndexParameters().Length == 0)
+            {
+                try { value = Unwrapped(() => p.GetValue(o)); return true; }
+                catch (MissingMemberException) when (p.IsDefined(typeof(PyLateAttributeAttribute), false)) { return false; }
+            }
             if (type.GetField(name, InstanceMembers) is FieldInfo f) { value = f.GetValue(o); return true; }
             if (type.GetMethods(BindingFlags.Instance | BindingFlags.Public).Any(m => m.Name == name)) { value = new PyBoundMethod(o, name); return true; }
             if (PyAttrDict.TryGetExtra(o, name, out value)) return true;
+            if (PyClassDescriptors.TryGetAttribute(type, name, out value, instance: true)) return true;
             switch (name)
             {
                 case "__class__": value = type; return true;
@@ -99,8 +119,37 @@ namespace Typhon.Runtime
             }
             if (type.GetProperty(name, StaticMembers) is PropertyInfo csp && csp.GetIndexParameters().Length == 0) { value = csp.GetValue(null); return true; }
             if (type.GetField(name, StaticMembers) is FieldInfo csf) { value = csf.GetValue(null); return true; }
-            return false;
+            if (FindNestedType(type, name) is Type nestedType) { value = nestedType; return true; }
+            return TryFallbackAttribute(o, name, out value);
         }
+
+        static Type? FindNestedType(Type? type, string name)
+        {
+            for (Type? current = type; current != null; current = current.BaseType)
+                if (current.GetNestedType(name, BindingFlags.Public | BindingFlags.NonPublic) is Type nested)
+                    return nested;
+            return null;
+        }
+
+        public static object? __read_instance_attr(object instance, string name)
+        {
+            if (PyAttrDict.TryGetExtra(instance, name, out var value)) return value;
+            if (FallbackAttributeMethod(instance, name) is MethodInfo getter)
+                return Unwrapped(() => getter.Invoke(instance, [name]));
+            throw new MissingMemberException($"'{PyTypeName(instance.GetType())}' object has no attribute '{name}'");
+        }
+
+        static bool TryFallbackAttribute(object instance, string name, out object? value)
+        {
+            value = null;
+            if (FallbackAttributeMethod(instance, name) is not MethodInfo getter) return false;
+            try { value = Unwrapped(() => getter.Invoke(instance, [name])); return true; }
+            catch (MissingMemberException) { return false; }
+        }
+
+        static MethodInfo? FallbackAttributeMethod(object instance, string name) =>
+            PyArgs.Best(instance.GetType().GetMethods(InstanceMembers).Where(method => method.Name == "__getattr__"),
+                [name], null, out _);
 
         /// <summary>A generic extension method closed over the receiver's element type (count&lt;T&gt;(this List&lt;T&gt;, T) for a List&lt;long&gt;).</summary>
         static MethodInfo? CloseFor(MethodInfo m, Type receiver)

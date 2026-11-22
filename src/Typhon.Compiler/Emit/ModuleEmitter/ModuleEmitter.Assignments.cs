@@ -148,7 +148,7 @@ namespace Typhon.Compiler.Emit
                 ClassKeyOfType(InferType(a.Target), out _) is string key ? ClassDefOfKey(key) : null;
             if (cls == null || MethodInHierarchy(cls, a.Name) is not FunctionDef method ||
                 HasDecorator(method.Decorators, "staticmethod") || HasDecorator(method.Decorators, "classmethod") ||
-                HasDecorator(method.Decorators, "property")) return null;
+                HasDecorator(method.Decorators, "property") || IsCachedProperty(method)) return null;
             return $"new global::Typhon.Runtime.PyBoundMethod((object){Paren(EmitExpr(a.Target))}, {CsString(a.Name)}, includeNonPublic: true)";
         }
 
@@ -385,6 +385,11 @@ namespace Typhon.Compiler.Emit
             {
                 case AttributeExpr at:
                 {
+                    if (at.Target is NameExpr owner && IsClassArgument(owner.Id))
+                    {
+                        _w.Line($"{Rt("setattr")}({EmitName(owner)}, {CsString(at.Name)}, (object?){Paren(rawValue ?? EmitValue(value))});");
+                        return;
+                    }
                     if (Obs != null && rawValue == null) RecordExternalAttribute(at, value);
                     string ft = null;
                     if (at.Target is NameExpr tn && tn.Id == "self" && _cls != null) ft = InferType(at);
@@ -495,6 +500,15 @@ namespace Typhon.Compiler.Emit
 
         void EmitAugAssign(AugAssignStmt a)
         {
+            if (a.Target is AttributeExpr { Target: NameExpr owner } member && IsClassArgument(owner.Id))
+            {
+                string receiver = EmitName(owner), name = CsString(member.Name);
+                string current = $"{Rt("getattr")}({receiver}, {name})", right = EmitExpr(a.Value);
+                string combined = a.Op == "+" ? $"{Rt("__iadd")}({current}, {right})" : a.Op == "*" ? $"{Rt("mul")}({current}, {right})"
+                    : AugHelpers.TryGetValue(a.Op, out var operation) ? $"{Rt(operation)}({current}, {right})" : $"({current} {a.Op} {Paren(right)})";
+                _w.Line($"{Rt("setattr")}({receiver}, {name}, (object?){Paren(combined)});");
+                return;
+            }
             // d[k] += v on a late-bound container: read, combine, write back (the container and key evaluated once)
             if (a.Target is SubscriptExpr ds && !(ds.Index is SliceExpr) && !(ds.Index is TupleExpr) && InferType(ds.Target) == "dynamic")
             {
@@ -568,7 +582,11 @@ namespace Typhon.Compiler.Emit
             }
             if (a.Target is AttributeExpr at)
             {
-                if (a.Value != null) _w.Line($"{EmitExpr(at)} = {EmitExpr(a.Value, targetTyped: true)};");
+                if (a.Value != null)
+                {
+                    if (at.Target is NameExpr owner && IsClassArgument(owner.Id)) EmitAssignTo(at, a.Value, a);
+                    else _w.Line($"{EmitExpr(at)} = {EmitExpr(a.Value, targetTyped: true)};");
+                }
                 return;
             }
             Unsupported(a, "this annotated assignment target");

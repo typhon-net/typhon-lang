@@ -1,0 +1,5 @@
+True True False
+['readme.txt', 'data.txt']
+True True b'subdir'
+[(b'subdir', True, True)]
+[b'data.txt']

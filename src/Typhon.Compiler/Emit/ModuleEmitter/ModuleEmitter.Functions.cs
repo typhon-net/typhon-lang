@@ -204,16 +204,16 @@ namespace Typhon.Compiler.Emit
         void EmitSignatureBody(List<Stmt> body, Signature sig)
         {
             foreach (var kv in sig.Renames) _renames[kv.Key] = kv.Value;
-            if (sig.ReceivesValues)
+            if (sig.IsGenerator && !sig.IsAsync)
             {
-                // the generator object, then its body as a local iterator that reads what send() / throw() pass in
+                // A Python generator has one cursor, including when its CLR signature only promises an enumerable.
                 _w.Open();
-                _w.Line($"var {GenVar} = new {sig.ReturnType}();");
+                _w.Line($"var {GenVar} = new {PyGeneratorPrefix}{sig.ElementType}>();");
                 // (the async form: an async method that awaits each yield, so yields may stand in try/except/finally and
                 // inside expressions)
                 _w.Line(sig.AsyncForm ? "async global::System.Threading.Tasks.Task<object?> __body()" : $"IEnumerable<{sig.ElementType}> __body()");
                 EmitFunctionBody(body, sig.Scope, null, sig.Locals, extraPrologue: () => { foreach (var line in sig.Prologue) _w.Line(line); });
-                _w.Line(sig.AsyncForm ? $"{GenVar}.__start_async(__body);" : $"{GenVar}.__start(__body());");
+                _w.Line(sig.AsyncForm ? $"{GenVar}.__start_async(__body);" : $"{GenVar}.__start(__body(), plain: {(!sig.ReceivesValues ? "true" : "false")});");
                 _w.Line($"return {GenVar};");
                 _w.Close();
             }
@@ -345,15 +345,22 @@ namespace Typhon.Compiler.Emit
                     : ImplicitDynamic(p, $"parameter '{p.Name}'");
                 if (type == "void") type = "object";
                 scope.Types[p.Name] = type;
-                string decl;
                 if (p.Kind == ParamKind.VarArgs)
                 {
                     if (p.Annotation == null) type = "object";
-                    decl = packedVarArgs ? $"{type}[]? {Esc(p.Name)}" : $"params {type}[] {Esc(p.Name)}";
-                    if (packedVarArgs) { sig.Prologue.Add($"{Esc(p.Name)} ??= global::System.Array.Empty<{type}>();"); defaults.Add("null"); ps.Add(decl); scope.Types[p.Name] = type + "[]"; continue; }
-                    scope.Types[p.Name] = type + "[]";
+                    string argument = Esc(p.Name);
+                    ps.Add(packedVarArgs ? $"{type}[]? {argument}" : $"params {type}[] {argument}");
+                    defaults.Add(packedVarArgs ? "null" : null);
+                    var tupleType = $"{PyTuplePrefix}{(type == "object" ? "dynamic" : type)}>";
+                    string localType = ConflictType(p.Name) ?? tupleType;
+                    string local = p.Name + "__tuple";
+                    string array = packedVarArgs ? $"{argument} ?? global::System.Array.Empty<{type}>()" : argument;
+                    sig.Prologue.Add($"{localType} {Esc(local)} = new {tupleType}({array});");
+                    sig.Renames[p.Name] = local;
+                    scope.Types[p.Name] = localType;
+                    continue;
                 }
-                else decl = $"{type} {Esc(p.Name)}";
+                string decl = $"{type} {Esc(p.Name)}";
                 // an inferred overload keeps a default only if the default has the overload's parameter type
                 // (a method's late-bound version beside typed overloads takes no defaults: a call leaving a parameter out
                 // binds to the typed overload, C# would find the two ambiguous)

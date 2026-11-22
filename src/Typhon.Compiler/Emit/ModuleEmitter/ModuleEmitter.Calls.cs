@@ -319,6 +319,8 @@ namespace Typhon.Compiler.Emit
                     : a.Value is NameExpr fv && FunctionValueLambda(fv) is string lambda ? lambda
                     : a.Value is NameExpr mg && FunctionRef(mg, out _, out _) ? EmitName(mg) // a method group, for a delegate parameter
                     : ModuleOrClassValue(a.Value) is string objectValue ? objectValue // hasattr(os, "sep"), {weakref.ref: ...}
+                    : !dynamicCall && a.Value is AttributeExpr methodArg && paramsHere != null && paramsHere.Any(p => p.TakesFunction)
+                    ? EmitAttribute(methodArg, allowMethodGroup: true)
                     : EmitExpr(a.Value);
                 // a dynamically dispatched call cannot take a lambda as such: give it a delegate type of dynamic values
                 if (dynamicCall && a.Value is LambdaExpr dl && !dl.IsVariadic)
@@ -456,6 +458,16 @@ namespace Typhon.Compiler.Emit
 
         string EmitCall(CallExpr c, bool targetTyped)
         {
+            if (c.Func is AttributeExpr nested && IsNestedTypeAccess(nested))
+            {
+                string nestedCallee = $"(object?){Paren(EmitAttribute(nested))}";
+                var nestedArguments = c.Args.Where(a => a.Name == null && !a.DoubleStar)
+                    .Select(a => a.Star ? $".. {Rt("__iter_dyn")}((object){Paren(EmitExpr(a.Value))})" : $"(object?){Paren(EmitLooseValue(a.Value))}");
+                string nestedPositional = $"[{string.Join(", ", nestedArguments)}]";
+                return c.Args.Any(a => a.Name != null || a.DoubleStar)
+                    ? $"{Rt("__invoke_kw")}({nestedCallee}, {nestedPositional}, {KeywordArgs(c.Args)})"
+                    : $"{Rt("__invoke")}({nestedCallee}, {nestedPositional})";
+            }
             if (c.Func is NameExpr aliasName && AliasTarget(aliasName) is Expr aliasTarget)
                 return EmitCall(new CallExpr { Func = aliasTarget, Args = c.Args, Line = c.Line, Col = c.Col }, targetTyped);
             if (CallableObjectCall(c) is CallExpr objectCall) return EmitCall(objectCall, targetTyped);
@@ -478,7 +490,8 @@ namespace Typhon.Compiler.Emit
             if (SpecialFormCall(c, targetTyped) is string special) return special;
             if (PythonCall(c, targetTyped) is string python) return python;
             // a call that is none of those: a Typhon function or class, a .NET method or constructor, typed by its arguments
-            string func = c.Func is NameExpr cfn ? EmitName(cfn) : StaticThroughInstance(c.Func) ?? EmitCallee(c.Func);
+            string instanceStatic = StaticThroughInstance(c.Func, out bool classMethodBinding);
+            string func = c.Func is NameExpr cfn ? EmitName(cfn) : instanceStatic ?? EmitCallee(c.Func);
             if (c.Func is LambdaExpr || c.Func is IfExpr) func = Paren(func);
             var typedAt = TypedParamPositions(c);
             if (typedAt == null && c.Func is AttributeExpr pm && RuntimeExtensionMethods.Contains(pm.Name) && IsPythonContainer(InferType(pm.Target)) &&
@@ -487,13 +500,18 @@ namespace Typhon.Compiler.Emit
             // standard-library functions are generic: an empty [] takes the element type the other arguments give
             if (typedAt == null && StdlibModuleOf(c, out _) != null) typedAt = i => true;
             // a call with a late-bound argument or receiver is dispatched dynamically: lambdas need a delegate type there
-            bool dynamicCall = c.Args.Any(a => InferType(a.Value) == "dynamic") || c.Func is AttributeExpr da && InferType(da.Target) == "dynamic";
+            bool dynamicCall = classMethodBinding || c.Args.Any(a => InferType(a.Value) == "dynamic") || c.Func is AttributeExpr da && InferType(da.Target) == "dynamic";
             var typhonTarget = CallTarget(c, out _);
             bool typedFunctionArgs = typhonTarget != null && TypedCall(typhonTarget, c.Args);
             var overloads = DotNetOverloads(c);
             // which parameters take functions: the .NET overloads, or a builtin's (print(f), str(f) take the function object)
             var shapes = overloads ?? (c.Func is NameExpr bfn && !IsShadowed(bfn.Id) && c.Args.Any(x => x.Value is NameExpr || x.Value is AttributeExpr)
                 ? _r.GetMembers("Typhon.Runtime.Builtins", bfn.Id).Where(m => m.IsMethod && m.IsStatic).ToList() : null);
+            if ((shapes == null || shapes.Count == 0) && c.Func is AttributeExpr extension &&
+                RuntimeExtensionMethods.Contains(extension.Name) && IsPythonContainer(InferType(extension.Target)))
+                shapes = _r.GetMembers("Typhon.Runtime.Builtins", extension.Name)
+                    .Where(method => method.IsMethod && method.IsStatic && method.Parameters.Count > 0)
+                    .Select(method => new Semantics.MemberSig { Parameters = method.Parameters.Skip(1).ToList() }).ToList();
             // d.get(k) / s.expandtabs(n) with a late-bound argument on a typed receiver: the runtime's extension method called as
             // the static method it is (C# cannot dispatch an extension method dynamically, CS1973; a static one it can)
             if (dynamicCall && c.Func is AttributeExpr em && InferType(em.Target) is string emt && emt != "dynamic" && !emt.Contains("dynamic>") &&
@@ -506,7 +524,11 @@ namespace Typhon.Compiler.Emit
                 // (by its full name: using static does not bring extension methods in as plain names)
                 return $"global::Typhon.Runtime.Builtins.{Esc(em.Name)}({EmitExpr(em.Target)}{(rest.Length > 0 ? ", " + rest : "")})";
             }
-            return $"{func}({EmitArgs(c.Args, overloads: overloads, targetTypedAt: typedAt, dynamicCall: dynamicCall, typedKeywords: name => TypedKeyword(c, name), paramTypeAt: (i, name) => ParamTypeOf(c, i, name), typedFunctionArgs: typedFunctionArgs, functionShapes: shapes, typhonCallee: typhonTarget != null)})";
+            Func<int, bool> iterableAt = null;
+            if (StdlibModuleOf(c, out string iterableName) == "Typhon.Stdlib.itertools" &&
+                iterableName is "filterfalse" or "takewhile" or "dropwhile")
+                iterableAt = i => i == 1;
+            return $"{func}({EmitArgs(c.Args, iterableAt: iterableAt, overloads: overloads, targetTypedAt: typedAt, dynamicCall: dynamicCall, typedKeywords: name => TypedKeyword(c, name), paramTypeAt: (i, name) => ParamTypeOf(c, i, name), typedFunctionArgs: typedFunctionArgs, functionShapes: shapes, typhonCallee: typhonTarget != null)})";
         }
 
         /// <summary>
@@ -612,6 +634,9 @@ namespace Typhon.Compiler.Emit
                         string Is(Expr t)
                         {
                             string mt = MapType(t, c);
+                            if (DottedName(t) is string abcName && TryResolveType(abcName, 0, out var abcMeta, out var abc) &&
+                                MayHaveVirtualSubclasses(abcMeta, abc))
+                                return $"global::Typhon.Stdlib.builtins.isinstance((object?){Paren(v)}, typeof({mt}))";
                             // a class whose members were copied into classes with several bases: their objects are instances too
                             if (DottedName(t) is string tn && TryResolveType(tn, 0, out _, out var mixin) && mixin != null && _p.MixedInto.TryGetValue(mixin, out var into))
                                 return "(" + string.Join(" || ", new[] { $"{v} is {mt}" }.Concat(into.Select(x => $"{v} is {ModuleClassName(x.Module)}.{Esc(x.Class.Name)}"))) + ")";
@@ -761,11 +786,12 @@ namespace Typhon.Compiler.Emit
         }
 
         /// <summary>
-        /// obj.m(...) / self.m(...) where m is a @staticmethod or @classmethod of obj's Typhon class: C# calls static methods
-        /// through the type (the receiver, a name or self, has no side effects to keep). Null for anything else.
+        /// obj.m(...) / self.m(...) where m is a @staticmethod or @classmethod of obj's Typhon class.
+        /// A classmethod binds to the receiver's actual class, including a subclass.
         /// </summary>
-        string StaticThroughInstance(Expr func)
+        string StaticThroughInstance(Expr func, out bool classMethodBinding)
         {
+            classMethodBinding = false;
             if (!(func is AttributeExpr a) || !(a.Target is NameExpr tn)) return null;
             if (TryResolveType(tn.Id, 0, out _, out _) && !IsLocal(tn.Id)) return null; // already through the class
             string t = tn.Id == "self" && _cls != null && HasSelfInScope() ? _cls.CsSelfType : InferType(a.Target);
@@ -774,7 +800,10 @@ namespace Typhon.Compiler.Emit
             {
                 var m = k.Body.OfType<FunctionDef>().FirstOrDefault(f => f.Name == a.Name);
                 if (m == null) continue;
-                return HasDecorator(m.Decorators, "staticmethod") || HasDecorator(m.Decorators, "classmethod") ? $"{t}.{Esc(a.Name)}" : null;
+                classMethodBinding = HasDecorator(m.Decorators, "classmethod");
+                if (classMethodBinding)
+                    return $"{Rt("getattr")}((object?){Paren(EmitExpr(a.Target))}, {CsString(a.Name)})";
+                return HasDecorator(m.Decorators, "staticmethod") ? $"{t}.{Esc(a.Name)}" : null;
             }
             return null;
         }
@@ -916,6 +945,12 @@ namespace Typhon.Compiler.Emit
         /// </summary>
         string PythonCall(CallExpr c, bool targetTyped)
         {
+            if (c.Func is AttributeExpr { Name: "register" } reg && DottedName(reg.Target) is string name &&
+                TryResolveType(name, 0, out _, out var abc) && abc != null && HasVirtualSubclasses(abc) &&
+                !DefinesInHierarchy(abc, "register") && c.Args.Count == 1 &&
+                c.Args[0] is Arg { Name: null, Star: false, DoubleStar: false } subtype)
+                return $"{Rt("__register_abc")}(typeof({MapType(reg.Target, reg)}), (global::System.Type){Paren(EmitValue(subtype.Value))})";
+
             // int32(x), uint8(x), ...: explicit (checked) conversions to .NET's fixed-size numbers, for .NET APIs that need them
             if (c.Func is NameExpr cv && !IsShadowed(cv.Id) && NumericConversions.TryGetValue(cv.Id, out var convType) &&
                 c.Args.Count == 1 && c.Args[0].Name == null && !c.Args[0].Star && !c.Args[0].DoubleStar)

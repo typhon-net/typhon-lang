@@ -1,0 +1,73 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+from functools import cached_property
+from inspect import getattr_static, ismethod
+from types import MappingProxyType
+
+class Sample:
+    """A sample with three method descriptors."""
+
+    default = 1
+
+    def __init__(self, value: int) -> None:
+        self.value = value
+        self.calls = 0
+
+    @property
+    def item(self) -> int:
+        """Read the value."""
+        return self.value
+
+    @item.setter
+    def item(self, value: int) -> None:
+        self.value = value
+
+    @staticmethod
+    def times(value: int, scale: int = 2) -> int:
+        return value * scale
+
+    @classmethod
+    def identify(cls) -> str:
+        return cls.__name__
+
+    @classmethod
+    def change_default(owner, value: int) -> None:
+        owner.default = value
+        owner.default += 1
+
+    @cached_property
+    def cached(self) -> int:
+        self.calls += 1
+        return self.value
+
+class Derived(Sample):
+    pass
+
+sample = Sample(8)
+members = Sample.__dict__
+print(isinstance(vars(Sample), MappingProxyType), type(members).__name__, members["default"])
+print(members is Sample.__dict__)
+Sample.change_default(10)
+print(members["default"])
+try:
+    members["default"] = 30
+except TypeError:
+    print("read-only class namespace")
+getter = members["item"].fget
+static = members["times"].__func__
+classfunc = members["identify"].__func__
+cache = members["cached"]
+print(isinstance(members["item"], property), members["item"] is Sample.item)
+print(getter.__doc__, getter(sample))
+print(static(7, scale=3), classfunc(Derived), Derived.identify())
+derived = Derived(0)
+print(sample.times(5), derived.identify(), ismethod(Sample.identify))
+print(getattr_static(sample, "times") is members["times"])
+print(isinstance(cache, cached_property), cache is Sample.cached)
+print(sample.cached, sample.cached, sample.calls)
+sample.cached = 12
+print(sample.cached, sample.calls)
+del sample.cached
+sample.item = 10
+print(sample.cached, sample.calls, sample.__dict__["cached"])

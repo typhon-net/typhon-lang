@@ -1,0 +1,39 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import os
+import tempfile
+from itertools import filterfalse
+from typing import Any
+
+
+class Deferred:
+    def __init__(self):
+        self.count = 0
+
+    def prepare(self):
+        self.cached = None
+
+    def __getattr__(self, name):
+        if name != "cached":
+            raise AttributeError(name)
+        self.count += 1
+        self.prepare()
+        return getattr(self, name)
+
+
+obj = Deferred()
+print("cached" in vars(obj), obj.count)
+print(obj.cached, obj.cached, obj.count)
+print("cached" in vars(obj), getattr(obj, "missing", "fallback"))
+
+a: Any = {"left": "first", "common": "both"}
+b: Any = {"right": "second", "common": "both"}
+print(list(map(a.__getitem__, filterfalse(b.__contains__, a))))
+
+with tempfile.TemporaryDirectory(prefix="typhon-", suffix="-check") as root:
+    target = os.path.join(root, "example.txt")
+    with open(target, "w") as file:
+        file.write("contents")
+    print(os.path.exists(target), root.endswith("-check"))
+print(os.path.exists(root))

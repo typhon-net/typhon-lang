@@ -70,7 +70,42 @@ namespace Typhon.Runtime
         public static bool issubclass(object? cls, object? classinfo) =>
             cls is Type t ? issubclass(t, classinfo) : throw new InvalidCastException("issubclass() arg 1 must be a class");
 
+        static readonly List<(WeakReference<Type> Base, WeakReference<Type> Subclass)> VirtualBases = new();
+
+        public static Type __register_abc(Type abc, Type subclass)
+        {
+            lock (VirtualBases)
+            {
+                if (IsSubclass(subclass, abc)) return subclass;
+                if (IsSubclass(abc, subclass)) throw new InvalidOperationException("Refusing to create an inheritance cycle");
+                VirtualBases.RemoveAll(rule => !rule.Base.TryGetTarget(out _) || !rule.Subclass.TryGetTarget(out _));
+                VirtualBases.Add((new WeakReference<Type>(abc), new WeakReference<Type>(subclass)));
+                return subclass;
+            }
+        }
+
         static bool IsSubclass(Type cls, Type of)
+        {
+            if (DirectSubclass(cls, of)) return true;
+            lock (VirtualBases)
+            {
+                if (VirtualBases.Count == 0) return false;
+                var pending = new Queue<Type>();
+                var seen = new HashSet<Type> { cls };
+                pending.Enqueue(cls);
+                while (pending.TryDequeue(out var candidate))
+                    foreach (var rule in VirtualBases)
+                        if (rule.Base.TryGetTarget(out var parent) && rule.Subclass.TryGetTarget(out var child) &&
+                            DirectSubclass(candidate, child) && seen.Add(parent))
+                        {
+                            if (DirectSubclass(parent, of)) return true;
+                            pending.Enqueue(parent);
+                        }
+                return false;
+            }
+        }
+
+        static bool DirectSubclass(Type cls, Type of)
         {
             if (of == typeof(object)) return true;
             if (cls == of) return true;

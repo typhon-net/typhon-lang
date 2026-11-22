@@ -295,14 +295,15 @@ namespace Typhon.Compiler.Emit
             if (_m.Classes.ContainsKey(csType)) { sameModule = true; return TypeInference.ClassKey(_m, csType); }
             if (_importedFromModules.TryGetValue(csType, out var imp) && imp.Key.Classes.ContainsKey(imp.Value)) return TypeInference.ClassKey(imp.Key, imp.Value);
             int dot = csType.LastIndexOf('.');
-            if (dot > "global::".Length && csType.StartsWith("global::"))
+            if (dot > 0)
             {
                 string module = csType.Substring(0, dot);
                 string name = csType.Substring(dot + 1).TrimStart('@');
-                string logicalName = module.Substring("global::".Length);
-                var owner = _p.FindModule(logicalName);
-                if (owner == null || ModuleClassName(owner) != module)
-                    owner = _p.Modules.Values.FirstOrDefault(m => m.Classes.ContainsKey(name) && IsProjectPackageModule(m) && ModuleClassName(m) == module);
+                bool qualified = module.StartsWith("global::");
+                string logicalName = (qualified ? module.Substring("global::".Length) : module).Replace("@", "");
+                var owner = qualified ? _p.FindModule(logicalName) : ModuleRef(logicalName);
+                if (qualified && (owner == null || ModuleClassName(owner) != module))
+                    owner = _p.Modules.Values.FirstOrDefault(m => m.Classes.ContainsKey(name) && ModuleClassName(m) == module);
                 if (owner != null && owner.Classes.ContainsKey(name))
                 {
                     sameModule = owner == _m;

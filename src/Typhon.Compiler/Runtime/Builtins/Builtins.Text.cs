@@ -596,6 +596,7 @@ namespace Typhon.Runtime
         public static IEnumerable<dynamic> __iter_dyn(object? o) => o switch
         {
             string s => new StrChars(s),
+            PyAttrDict attrs => attrs.Keys,
             IDictionary d => d.Keys.Cast<object>(),
             ITuple t => Enumerable.Range(0, t.Length).Select(i => t[i]!),
             IEnumerable e => e.Cast<object>(),

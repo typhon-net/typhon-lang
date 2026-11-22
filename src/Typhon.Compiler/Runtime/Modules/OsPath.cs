@@ -507,6 +507,8 @@ namespace Typhon.Stdlib
             public static bool isabs(string s) => Win ? NtPath.isabs(s) : PosixPath.isabs(s);
             /// <summary>join(a, *p): an absolute part starts over; join(d, "") ends in a separator.</summary>
             public static string join(string a, params string[] p) => Win ? NtPath.join(a, p) : PosixPath.join(a, p);
+            public static PyBytes join(PyBytes a, params PyBytes[] p) =>
+                PyBytes.Latin1(join(a.decode("latin-1"), p.Select(part => part.decode("latin-1")).ToArray()));
             public static string __join_paths(object? paths)
             {
                 var parts = Builtins.__iter_dyn(paths).Select(part => os_.__path((object?)part)).ToArray();
@@ -514,6 +516,11 @@ namespace Typhon.Stdlib
                 return join(parts[0], parts[1..]);
             }
             public static (string, string) split(string p) => Win ? NtPath.split(p) : PosixPath.split(p);
+            public static (PyBytes, PyBytes) split(PyBytes p)
+            {
+                var (head, tail) = split(p.decode("latin-1"));
+                return (PyBytes.Latin1(head), PyBytes.Latin1(tail));
+            }
             public static (string, string) splitext(string p) => Win ? GenericPath.splitext(p, '\\', '/') : GenericPath.splitext(p, '/', null);
             public static (string, string) splitdrive(string p) => Win ? NtPath.splitdrive(p) : ("", p);
             public static (PyBytes, PyBytes) splitdrive(PyBytes p)
@@ -541,8 +548,10 @@ namespace Typhon.Stdlib
             public static bool exists(long fd) { try { fstat(fd); return true; } catch (IOException) { return false; } }
             /// <summary>lexists(path): exists, or a broken symbolic link.</summary>
             public static bool lexists(string p) => p.Length > 0 && LExists(p);
+            public static bool lexists(PyBytes p) => lexists(os_.fsdecode(p));
             public static bool isfile(string p) => File.Exists(p);
             public static bool isdir(string p) => Directory.Exists(p);
+            public static bool isdir(PyBytes p) => isdir(os_.fsdecode(p));
             public static bool islink(string p) => IsLink(p);
             public static bool isjunction(string p) => false;
             public static bool isdevdrive(string p) => false;

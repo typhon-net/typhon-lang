@@ -85,11 +85,15 @@ namespace Typhon.Runtime
     {
         object? IPyGenerator.ThrowIn(Exception e) => @throw(e);
         IEnumerator<T>? _body;
-        bool _started, _done;
+        bool _started, _done, _plain;
         public object? __sent;
         Exception? _pending;
         public object? __return;
-        public void __start(IEnumerable<T> body) => _body = body.GetEnumerator();
+        public void __start(IEnumerable<T> body, bool plain = false)
+        {
+            _body = body.GetEnumerator();
+            _plain = plain;
+        }
 
         // the async form: the body's task, the continuation of its pending yield, the value it yielded
         Func<System.Threading.Tasks.Task<object?>>? _asyncBody;
@@ -152,6 +156,7 @@ namespace Typhon.Runtime
         public T __next__() { __sent = null; if (Step()) return Current; throw new StopIteration(__return); }
         public T @throw(Exception e)
         {
+            if (_plain) { close(); throw e; }
             // not started or already finished: the exception comes straight back out
             if (!_started || _done) { _done = true; throw e; }
             _pending = e;
@@ -161,6 +166,12 @@ namespace Typhon.Runtime
         public void close()
         {
             if (!_started || _done) { _done = true; return; }
+            if (_plain)
+            {
+                _done = true;
+                _body!.Dispose();
+                return;
+            }
             _pending = new GeneratorExit();
             try { if (Step()) throw new InvalidOperationException("generator ignored GeneratorExit"); }
             catch (GeneratorExit) { }
@@ -205,8 +216,13 @@ namespace Typhon.Runtime
         }
 
         /// <summary>obj.__dict__ / vars(obj): a live view of the object's attributes.</summary>
-        public static PyAttrDict __dict__(object o) => o is PyModule module ? module.__dict__ : new PyAttrDict(o);
-        public static PyAttrDict vars(object o) => __dict__(o);
+        public static dynamic __dict__(object o) => o switch
+        {
+            PyModule module => module.__dict__,
+            Type type => PyClassDescriptors.Dictionary(type),
+            _ => new PyAttrDict(o),
+        };
+        public static dynamic vars(object o) => __dict__(o);
         public static frozenset<string> frozenset(string s) => new frozenset<string>(chars(s));
         public static frozenset<object> frozenset() => new frozenset<object>();
         public static OrderedDictionary<K, V> dict<K, V>(IEnumerable<(K, V)> xs) where K : notnull { var d = new OrderedDictionary<K, V>(); foreach (var (k, v) in xs) d[k] = v; return d; }

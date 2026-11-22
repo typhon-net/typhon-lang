@@ -114,7 +114,7 @@ namespace Typhon.Compiler.Emit
                     int pos = int.Parse(mp.Name.Substring(LocalsAnalyzer.MatchPositionPrefix.Length));
                     return names != null && pos < names.Count ? InferType(new AttributeExpr { Target = mp.Target, Name = names[pos] }) : null;
                 }
-                case AttributeExpr dict0 when dict0.Name == "__dict__": return "global::Typhon.Runtime.PyAttrDict";
+                case AttributeExpr dict0 when dict0.Name == "__dict__": return "dynamic";
                 case AttributeExpr oa:
                 {
                     // Cls.ATTR / self.__class__.ATTR / type(self).ATTR: a class variable's type
@@ -255,6 +255,8 @@ namespace Typhon.Compiler.Emit
                 {
                     if (d.Keys.Count == 0 || d.Keys.Any(k => k == null)) return null;
                     var ks = d.Keys.Select(InferType).Distinct().ToList();
+                    if (d.Values.Any(x => ClassBodyMethod(x) != null))
+                        return $"OrderedDictionary<{(ks.Count == 1 ? PyType(ks[0]) ?? "dynamic" : "dynamic")}, dynamic>";
                     var vs = d.Values.Select(InferType).Distinct().ToList();
                     if (ks.Count == 1 && ks[0] != null && vs.Count == 1 && vs[0] != null) return $"OrderedDictionary<{ks[0]}, {vs[0]}>";
                     if (ks.Count == 1 && ks[0] != null && d.Values.All(IsNone)) return $"OrderedDictionary<{PyType(ks[0])}, dynamic>";
@@ -346,7 +348,7 @@ namespace Typhon.Compiler.Emit
                     case "len": case "ord": case "hash": return "long";
                     case "float": return "double";
                     case "complex": return "global::System.Numerics.Complex";
-                    case "getattr": return "dynamic";
+                    case "getattr": case "vars": return "dynamic";
                     case "dict" when HasDictKeywords(call): return KeywordDictType(call);
                     case "bool": case "isinstance": case "any": case "all": return "bool";
                     case "cast": return call.Args.Count == 2 ? MapType(call.Args[0].Value, call) : null;   // typing.cast(T, x) is a C# cast to T

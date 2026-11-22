@@ -25,6 +25,14 @@ namespace Typhon.Compiler.Emit
             }
         }
 
+        bool HasVirtualSubclasses(ClassDef c, int depth = 0) =>
+            depth < 20 && (DottedName(c.Metaclass) is "ABCMeta" or "abc.ABCMeta" ||
+                c.Bases.Any(b => DottedName(b) is "ABC" or "abc.ABC") ||
+                TyphonBases(c).Any(b => HasVirtualSubclasses(b, depth + 1)));
+
+        bool MayHaveVirtualSubclasses(string meta, ClassDef c) =>
+            c != null ? HasVirtualSubclasses(c) : meta?.StartsWith("Typhon.Stdlib.numbers+", StringComparison.Ordinal) == true;
+
         void EmitClass(ClassDef c)
         {
             var bases = new List<Expr>();
@@ -51,6 +59,7 @@ namespace Typhon.Compiler.Emit
 
             EmitDocComment(c.Body);
             LineDirective(c);
+            if (!isInterface) EmitClassSource(c.Body, c.Line);
             EmitAttributes(c.Decorators);
             string vis = Visibility(c.Name, topLevel: true);
             // a class deriving from one of the runtime's types (threading.Thread, UserWarning, io.RawIOBase) is internal like it
@@ -324,15 +333,24 @@ namespace Typhon.Compiler.Emit
         void EmitClassBody(ClassDef c, ClassContext ctx, List<Expr> bases, bool isAbstract)
         {
             var methods = c.Body.OfType<FunctionDef>().ToList();
+            bool hasGetAttr = DefinesInHierarchy(c, "__getattr__");
             string InstanceStorage(string name, string type, string visibility, string initializer = "")
             {
                 // An auto-property reserves get_name and set_name in C#. A Python data attribute can coexist with those methods.
                 bool reservesMethod = methods.Any(m => m.Name == "get_" + name || m.Name == "set_" + name);
+                if (hasGetAttr && !reservesMethod && initializer.Length == 0)
+                {
+                    string key = CsString(name);
+                    return $"[global::Typhon.Runtime.PyLateAttribute] {SurfaceVisibility(visibility, type)} {type} {Esc(name)} " +
+                        $"{{ get => ({type}){Rt("__read_instance_attr")}(this, {key}); " +
+                        $"set => global::Typhon.Runtime.PyAttrDict.SetExtra(this, {key}, value); }}";
+                }
                 string suffix = reservesMethod ? (initializer.Length == 0 ? ";" : initializer) : " { get; set; }" + initializer;
                 return $"{SurfaceVisibility(visibility, type)} {type} {Esc(name)}{suffix}";
             }
 
             var declared = new HashSet<string>();
+            foreach (var property in methods.Where(IsCachedProperty)) ctx.FieldTypes[property.Name] = "dynamic";
             foreach (var m in methods)
                 if (m.Returns != null && !m.IsAsync && m.TypeParams.Count == 0 && !AstWalker.ContainsOutsideNestedScopes(m.Body, n => n is YieldExpr))
                     ctx.MethodReturnTypes[m.Name] = MapType(m.Returns, m, isReturn: true);
@@ -523,6 +541,7 @@ namespace Typhon.Compiler.Emit
             foreach (var f in methods)
             {
                 if (f.Name == "__init__") { EmitConstructor(f, ctx, bases); _w.Line(); continue; }
+                if (IsCachedProperty(f)) { EmitCachedProperty(f, ctx); _w.Line(); continue; }
                 bool isProp = HasDecorator(f.Decorators, "property") || f.Decorators.Any(d => DecoratorName(d)?.EndsWith(".setter") == true);
                 if (isProp)
                 {
@@ -622,7 +641,12 @@ namespace Typhon.Compiler.Emit
             var sig = BuildSignature(f, dropFirst: !isStaticDecl, paramTypes: paramTypes, retKey: retKey);
             string mods = MethodModifiers(f, ctx, bases, out bool isStatic, out bool isAbstract);
             if (!isStatic) { sig.Scope.HasSelf = true; sig.Scope.Params.Remove(f.Params[0].Name); }
-            if (isClassMethod) { sig.Scope.ClsName = ctx.CsSelfType; sig.Scope.Params.Remove(f.Params[0].Name); }
+            if (isClassMethod)
+            {
+                sig.Scope.ClassArgument = f.Params[0].Name;
+                sig.Scope.Params.Add(sig.Scope.ClassArgument);
+                sig.Scope.Types[sig.Scope.ClassArgument] = "global::System.Type";
+            }
             if (f.IsAsync && sig.IsGenerator) mods = mods.Replace("async", "async");
 
             EmitDocComment(f.Body);
@@ -639,9 +663,24 @@ namespace Typhon.Compiler.Emit
             bool decorated = _m.Ast.MethodDecorators.TryGetValue(f, out var decorators);
             if (decorated) { mods = isStatic ? "internal static" : "internal"; if (f.IsAsync) mods += " async"; }
             string methodName = decorated ? Decorators.UndecoratedPrefix + f.Name : f.Name;
-            string header = $"{mods} {sig.ReturnType} {Esc(methodName)}{TypeParamList(f.TypeParams)}({sig.Params}){TypeParamConstraints(f.TypeParams, f)}";
+            string classMethodBody = isClassMethod ? "__typhon_classmethod_" + methodName : null;
+            if (!_m.IsGdScript && !ctx.IsInterface && !decorated)
+            {
+                EmitClassSource(f.Body, f.Line, CallableKind(f, sig));
+                if (isStatic) EmitDescriptorAttribute(isClassMethod ? "ClassMethod" : "StaticMethod", classMethodBody);
+            }
+            string generic = TypeParamList(f.TypeParams), constraints = TypeParamConstraints(f.TypeParams, f);
+            string header = $"{(isClassMethod ? mods.Replace("async ", "") : mods)} {sig.ReturnType} {Esc(methodName)}{generic}({sig.Params}){constraints}";
             if (isAbstract) { _w.Line(header + ";"); return; }
-            _w.Line(header);
+            if (isClassMethod)
+            {
+                var arguments = f.Params.Skip(1).Select(p => sig.Scope.Aliases.ContainsKey(p.Name) ? "__alias_" + p.Name : Esc(p.Name));
+                string forwarded = string.Join(", ", new[] { $"typeof({ctx.CsSelfType})" }.Concat(arguments));
+                _w.Line($"{header} => {Esc(classMethodBody)}{generic}({forwarded});");
+                string parameters = "global::System.Type " + Esc(sig.Scope.ClassArgument) + (sig.Params.Length == 0 ? "" : ", " + sig.Params);
+                _w.Line($"private static {(f.IsAsync ? "async " : "")}{sig.ReturnType} {Esc(classMethodBody)}{generic}({parameters}){constraints}");
+            }
+            else _w.Line(header);
             EmitSignatureBody(f.Body, sig);
             if (decorated) EmitDecoratedMethod(f, ctx, sig, decorators, isStatic);
         }
@@ -690,6 +729,53 @@ namespace Typhon.Compiler.Emit
         /// <summary>A decorator expression as a callee value (a module function as a function value).</summary>
         string EmitDecoratorCallee(Expr d) => d is NameExpr dn && FunctionValue(dn, typed: false) is string fv ? fv : EmitExpr(d);
 
+        static string CallableKind(FunctionDef function, Signature sig) => function.IsAsync
+            ? (sig.IsGenerator ? "AsyncGenerator" : "Coroutine") : sig.IsGenerator ? "Generator" : "Ordinary";
+
+        void EmitClassSource(List<Stmt> body, int line, string kind = "Ordinary")
+        {
+            if (_m.IsGdScript) return;
+            string doc = body.FirstOrDefault() is ExprStmt statement && statement.Value is ConstExpr { Kind: ConstKind.Str } text
+                ? CsString(text.Str) : "null";
+            _w.Line($"[global::Typhon.Runtime.PySource({CsString(_path)}, {CsString(PythonModuleName)}, global::Typhon.Runtime.PyCallableKind.{kind}, doc: {doc}, line: {line})]");
+        }
+
+        void EmitDescriptorAttribute(string kind, string getter = null)
+        {
+            if (_m.IsGdScript) return;
+            string argument = getter == null ? "" : ", " + CsString(getter);
+            _w.Line($"[global::Typhon.Runtime.PyDescriptor(global::Typhon.Runtime.PyDescriptorKind.{kind}{argument})]");
+        }
+
+        bool IsCachedProperty(FunctionDef function) => !_m.IsGdScript && function.IsCachedProperty;
+
+        void EmitCachedProperty(FunctionDef f, ClassContext ctx)
+        {
+            if (f.Params.Count == 0 || ctx.IsInterface)
+            {
+                Error(f, "cached_property needs an instance method");
+                return;
+            }
+            var sig = BuildSignature(f, dropFirst: true);
+            sig.Scope.HasSelf = true;
+            sig.Scope.Params.Remove(f.Params[0].Name);
+            string name = CsString(f.Name);
+            string getter = "__cached_property_" + f.Name;
+            LineDirective(f);
+            _w.Line($"private {(f.IsAsync ? "async " : "")}{sig.ReturnType} {Esc(getter)}({sig.Params})");
+            EmitSignatureBody(f.Body, sig);
+            EmitDocComment(f.Body);
+            LineDirective(f);
+            EmitClassSource(f.Body, f.Line, CallableKind(f, sig));
+            EmitDescriptorAttribute("CachedProperty", getter);
+            EmitAttributes(f.Decorators.Where(d => !Decorators.IsCachedProperty(d, _m.Ast)).ToList());
+            _w.Line($"{Visibility(f.Name, false)} dynamic {Esc(f.Name)}");
+            _w.Open();
+            _w.Line($"get => {Rt("__cached_property_get__")}(this, typeof({ctx.CsSelfType}), {name});");
+            _w.Line($"set => {Rt("__cached_property_set__")}(this, {name}, (object?)value);");
+            _w.Close();
+        }
+
         void EmitProperty(List<FunctionDef> defs, ClassContext ctx, List<Expr> bases)
         {
             var getter = defs.FirstOrDefault(d => HasDecorator(d.Decorators, "property"));
@@ -701,6 +787,11 @@ namespace Typhon.Compiler.Emit
             string mods = MethodModifiers(getter, ctx, bases, out _, out bool isAbstract);
             EmitDocComment(getter.Body);
             LineDirective(getter);
+            if (!ctx.IsInterface)
+            {
+                EmitClassSource(getter.Body, getter.Line);
+                EmitDescriptorAttribute("Property");
+            }
             EmitAttributes(getter.Decorators);
             _w.Line($"{mods} {gsig.ReturnType} {Esc(getter.Name)}");
             _w.Open();
@@ -715,6 +806,7 @@ namespace Typhon.Compiler.Emit
                 ssig.Scope.Params.Remove(setter.Params[0].Name);
                 string valueName = setter.Params.Count > 1 ? setter.Params[1].Name : "value";
                 LineDirective(setter);
+                if (!ctx.IsInterface) EmitClassSource(setter.Body, setter.Line);
                 _w.Line("set");
                 EmitFunctionBody(setter.Body, ssig.Scope, null, ssig.Locals,
                     prologue: valueName != "value" ? $"var {Esc(valueName)} = value;" : null);

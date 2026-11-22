@@ -1,0 +1,14 @@
+class Item:
+    def __init__(self, priority: int, name: str) -> None:
+        self.priority = priority
+        self.name = name
+
+    @staticmethod
+    def _key(value):
+        return value.priority
+
+items: list[Item] = [Item(2, "second"), Item(1, "first")]
+items.sort(key=Item._key)
+print([item.name for item in items])
+stored = Item._key
+print(stored(items[0]))

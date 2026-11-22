@@ -1,0 +1,61 @@
+import gettext
+import os
+import shutil
+import struct
+import tempfile
+
+
+def catalog(entries: dict[str, str], byte_order: str) -> bytes:
+    original_start = 28
+    translation_start = original_start + 8 * len(entries)
+    strings_start = translation_start + 8 * len(entries)
+    original = b''
+    translated = b''
+    original_index = b''
+    translated_index = b''
+    for key in sorted(entries):
+        data = key.encode('utf-8')
+        original_index += struct.pack(byte_order + 'II', len(data), strings_start + len(original))
+        original += data + b'\0'
+    for key in sorted(entries):
+        data = entries[key].encode('utf-8')
+        translated_index += struct.pack(byte_order + 'II', len(data), strings_start + len(original) + len(translated))
+        translated += data + b'\0'
+    header = struct.pack(byte_order + '7I', 0x950412de, 0, len(entries), original_start, translation_start, 0, 0)
+    return header + original_index + translated_index + original + translated
+
+
+def write_catalogue(root: str, locale: str, data: bytes) -> str:
+    directory = os.path.join(root, locale, 'LC_MESSAGES')
+    os.makedirs(directory)
+    path = os.path.join(directory, 'example.mo')
+    with open(path, 'wb') as stream:
+        stream.write(data)
+    return path
+
+
+metadata = 'Content-Type: text/plain; charset=UTF-8\nPlural-Forms: nplurals=3; plural=n == 1 ? 0 : n == 2 ? 1 : 2;\n'
+root = tempfile.mkdtemp()
+try:
+    little = write_catalogue(root, 'zz_ZZ', catalog({
+        '': metadata,
+        'Hello': 'Héllo',
+        'menu\x04Open': 'Open menu',
+        'file\0files': 'one file\0two files\0many files',
+    }, '<'))
+    write_catalogue(root, 'yy_YY', catalog({'': metadata, 'Fallback': 'Fallback translation'}, '>'))
+    language = ['zz_ZZ', 'yy_YY']
+    trans = gettext.translation('example', root, language)
+    print(trans.gettext('Hello'), trans.gettext('Fallback'), trans.gettext('Absent'))
+    print(trans.pgettext('menu', 'Open'), trans.pgettext('window', 'Open'))
+    print([trans.ngettext('file', 'files', count) for count in [1, 2, 5]])
+    with open(little, 'rb') as stream:
+        direct = gettext.GNUTranslations(stream)
+    print(direct.charset(), direct.gettext('Hello'))
+    print(len(gettext.find('example', root, language, all=True)))
+    print(gettext.translation('missing', root, language, fallback=True).gettext('Missing'))
+    os.environ['LANGUAGE'] = 'zz_ZZ:yy_YY'
+    print(gettext.bindtextdomain('example', root) == root, gettext.textdomain('example'))
+    print(gettext.gettext('Hello'), gettext.ngettext('file', 'files', 2), gettext.gettext('Fallback'))
+finally:
+    shutil.rmtree(root)

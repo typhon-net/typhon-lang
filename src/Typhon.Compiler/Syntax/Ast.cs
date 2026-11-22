@@ -223,6 +223,7 @@ namespace Typhon.Compiler.Syntax
         public List<Stmt> Body = new List<Stmt>();
         public List<Expr> Decorators = new List<Expr>();
         public bool IsAsync;
+        public bool IsCachedProperty;
         /// <summary>The name Python sees (its __name__) when Name was changed: a decorated function's undecorated body.</summary>
         public string PyName;
     }
@@ -232,6 +233,7 @@ namespace Typhon.Compiler.Syntax
         public string Name;
         public List<TypeParam> TypeParams = new List<TypeParam>();
         public List<Expr> Bases = new List<Expr>();
+        public Expr Metaclass;
         public List<Stmt> Body = new List<Stmt>();
         public List<Expr> Decorators = new List<Expr>();
         /// <summary>Set for a class made from namedtuple(...) / typing.NamedTuple: its fields in order (it behaves like a tuple of them).</summary>

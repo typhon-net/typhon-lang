@@ -25,7 +25,12 @@ namespace Typhon.Compiler.Emit
 
         HashSet<string> FunctionValueKeys => _p.FunctionValueKeys ??= ComputeFunctionValueKeys(_p);
 
-        internal static bool IsFunctionValueCandidate(FunctionDef f) => f.TypeParams.Count == 0 && f.Decorators.Count == 0 && f.Params.All(p => p.Kind == ParamKind.Normal);
+        internal static bool IsFunctionValueCandidate(FunctionDef f)
+        {
+            if (f.TypeParams.Count != 0 || f.Decorators.Count != 0) return false;
+            int rest = f.Params.FindIndex(p => p.Kind != ParamKind.Normal);
+            return rest < 0 || f.Params.Skip(rest).All(p => p.Kind != ParamKind.Normal);
+        }
 
         static HashSet<string> ComputeFunctionValueKeys(ProjectContext p)
         {
@@ -152,18 +157,24 @@ namespace Typhon.Compiler.Emit
                 if (varargs)
                 {
                     var vp = all.First(p => p.Kind == ParamKind.VarArgs);
-                    string vt = sig.Scope.Types.TryGetValue(vp.Name, out var t) && t.EndsWith("[]") ? t.Substring(0, t.Length - 2) : "object";
-                    args.Add(vt == "object" || vt == "dynamic" ? $"__p[{normal.Count}..]" : $"global::System.Linq.Enumerable.ToArray(global::System.Linq.Enumerable.Select(__p[{normal.Count}..], __x => ({vt})(dynamic?)__x))");
+                    string vt = vp.Annotation == null ? "object" : MapType(vp.Annotation, vp);
+                    string rest = count < normal.Count ? $"global::System.Array.Empty<{vt}>()" :
+                        vt == "object" || vt == "dynamic" ? $"__p[{normal.Count}..]"
+                        : $"global::System.Linq.Enumerable.ToArray(global::System.Linq.Enumerable.Select(__p[{normal.Count}..], __x => ({vt})(dynamic?)__x))";
+                    args.Add($"{Esc(vp.Name)}: {rest}");
                 }
-                if (kwargs) args.Add($"global::Typhon.Runtime.PyClosure.Kw(__kw, {names})");
+                if (kwargs) args.Add($"{Esc(all.Single(p => p.Kind == ParamKind.KwArgs).Name)}: global::Typhon.Runtime.PyClosure.Kw(__kw, {names})");
                 string call = $"{(selfType != null ? "__self." : "")}{callee}({string.Join(", ", args)})";
                 return sig.ReturnType == "void" ? $"{{ {call}; return null; }}" : $"return {call};";
             }
             var body = new StringBuilder();
             if (selfType != null) body.Append($"var __self = ({selfType})__a[0]!; __a = __a[1..]; ");
             body.Append($"var __p = global::Typhon.Runtime.PyClosure.Args({name}, {names}, __a, __kw, {(kwargs ? "true" : "false")}); ");
-            if (varargs) body.Append($"if (__p.Length >= {normal.Count}) {Call(normal.Count)} ");
-            else for (int k = required; k <= normal.Count; k++) body.Append($"if (__p.Length == {k}) {Call(k)} ");
+            for (int k = required; k <= normal.Count; k++)
+            {
+                string condition = varargs && k == normal.Count ? ">=" : "==";
+                body.Append($"if (__p.Length {condition} {k}) {Call(k)} ");
+            }
             body.Append($"throw global::Typhon.Runtime.PyClosure.ArgCountError({name}, {required}, {(varargs ? "int.MaxValue" : normal.Count.ToString())}, __p.Length);");
             return $"new global::Typhon.Runtime.PyClosure({name}, (__a, __kw) => {{ {body} }})";
         }
@@ -186,6 +197,12 @@ namespace Typhon.Compiler.Emit
             if (c.Func is NameExpr fn && !IsLocal(fn.Id) && !_moduleFieldTypes.ContainsKey(fn.Id)) return null; // a plain call by name
             if (c.Args.Any(a => a.Star || a.DoubleStar)) return null; // f(*args, **kwargs): made at run time (PythonCall)
             if (!FunctionOfType(InferType(c.Func), out var owner, out var def)) return null;
+            if (def.Params.Any(p => p.Kind != ParamKind.Normal))
+            {
+                string function = EmitExpr(c.Func);
+                var positional = c.Args.Where(a => a.Name == null).Select(a => $"(object?){Paren(EmitLooseValue(a.Value))}");
+                return $"{Rt("__invoke_kw")}({function}, [{string.Join(", ", positional)}], {KeywordArgs(c.Args)})";
+            }
             var target = TargetOf(owner, null, def.Name);
             if (Obs != null && target != null) RecordCall(target, c.Args);
             return $"{ModuleClassName(owner)}.{Esc(def.Name)}({EmitArgs(c.Args, typedFunctionArgs: target != null && TypedCall(target, c.Args), typhonCallee: true, paramTypeAt: (i, name) => AnnotatedParamType(def, i, name))})";
@@ -240,6 +257,15 @@ namespace Typhon.Compiler.Emit
             string doc = f.Body.Count > 0 && f.Body[0] is ExprStmt ds && ds.Value is ConstExpr dc && dc.Kind == ConstKind.Str ? CsString(dc.Str) : null;
             string module = _m.IsGdScript ? "" : $"__module__ = {CsString(PythonModuleName)}; ";
             _w.Line($"{cls}() : base({CsString(f.PyName ?? f.Name)}) {{ {module}{(doc != null ? $"__doc__ = {doc}; " : "")}}}");
+            if (ps.Any(p => p.Kind != ParamKind.Normal))
+            {
+                var signature = BuildSignature(f, dropFirst: false);
+                _w.Line($"static readonly global::Typhon.Runtime.PyClosure __closure = {ClosureCode(f, signature, Esc(f.Name), null)};");
+                _w.Line("public override object? __call__(object?[] args) => __closure.__call__(args);");
+                _w.Line("public override object? __call_kw__(object?[] args, IDictionary<string, object?>? kwargs) => __closure.__call_kw__(args, kwargs);");
+                _w.Close();
+                return;
+            }
             // parameter names: keyword arguments of a late-bound call (f(*args, **kwargs) in a decorator's wrapper) by name
             if (ps.Count > 0 && ps.All(x => x.Kind == ParamKind.Normal))
                 _w.Line($"protected override string[] __params__ => new[] {{ {string.Join(", ", ps.Select(x => CsString(x.Name)))} }};");

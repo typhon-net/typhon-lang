@@ -39,9 +39,16 @@ namespace Typhon.Compiler.Emit
             if (module == null) return null;
             var pos = call.Args.Where(a => a.Name == null && !a.Star).Select(a => a.Value).ToList();
             string Elem(int i) => i < pos.Count ? PyType(ElementTypeOf(InferType(pos[i]))) : null;
+            Expr FirstArg(string keyword) => call.Args.FirstOrDefault(a => a.Name == keyword)?.Value ?? pos.FirstOrDefault();
             string Wrap(string e, string fmt) => e == null || e == TypeInference.Pending ? e : string.Format(fmt, e);
             switch (module + "." + name)
             {
+                case "Typhon.Stdlib.os_.fspath":
+                {
+                    var path = pos.Count > 0 ? InferType(pos[0]) : null;
+                    return path == "string" || IsBytesType(path) ? path :
+                        path == "global::Typhon.Runtime.Path" ? "string" : "dynamic";
+                }
                 case "Typhon.Stdlib.itertools.permutations": case "Typhon.Stdlib.itertools.combinations":
                 case "Typhon.Stdlib.itertools.combinations_with_replacement": case "Typhon.Stdlib.itertools.batched":
                     return Wrap(Elem(0), "IEnumerable<global::Typhon.Runtime.PyTuple<{0}>>");
@@ -65,7 +72,7 @@ namespace Typhon.Compiler.Emit
                     return pos.Count == 3 ? PyType(InferType(pos[2])) : Elem(1);
                 case "Typhon.Stdlib.re.compile":
                 {
-                    var pattern = call.Args.FirstOrDefault(a => a.Name == "pattern")?.Value ?? pos.FirstOrDefault();
+                    var pattern = FirstArg("pattern");
                     if (pattern == null) break;
                     return InferType(pattern) switch
                     {
@@ -74,6 +81,18 @@ namespace Typhon.Compiler.Emit
                         _ => null,
                     };
                 }
+                case "Typhon.Stdlib.os_+path.join":
+                    return PathSequenceType(InferType(FirstArg("a")), elements: 1);
+                case "Typhon.Stdlib.os_+path.split":
+                case "Typhon.Stdlib.os_+path.splitdrive":
+                    return PathSequenceType(InferType(FirstArg("p")), elements: 2);
+                case "Typhon.Stdlib.os_.scandir":
+                    return call.Args.Count == 0 ? "global::Typhon.Stdlib.os_.ScandirIterator" : InferType(FirstArg("path")) switch
+                    {
+                        "string" => "global::Typhon.Stdlib.os_.ScandirIterator",
+                        PyBytesType => "global::Typhon.Stdlib.os_.BytesScandirIterator",
+                        _ => null,
+                    };
                 case "Typhon.Stdlib.fractions.Fraction": return "global::Typhon.Runtime.Fraction";
                 case "Typhon.Stdlib.pathlib.Path": return "global::Typhon.Runtime.Path";
             }
@@ -82,6 +101,10 @@ namespace Typhon.Compiler.Emit
             var plain = _r.GetMembers(module, name).Where(m => m.IsMethod && m.IsStatic).ToList();
             return plain.Count > 0 && plain.All(m => m.ReturnsDynamic) ? "dynamic" : null;
         }
+
+        static string PathSequenceType(string type, int elements) => type is "string" or PyBytesType
+            ? elements == 1 ? type : $"({type}, {type})"
+            : type == "dynamic" ? "dynamic" : null;
 
         //
         // Some library results depend on a literal argument: re.findall gives strs or tuples by the pattern's group count,

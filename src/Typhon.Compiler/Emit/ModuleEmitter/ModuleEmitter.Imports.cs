@@ -80,14 +80,15 @@ namespace Typhon.Compiler.Emit
             return owner == null ? null : member == null ? ModuleClassName(owner) : ModuleClassName(owner) + "." + Esc(member);
         }
 
-        IEnumerable<ModuleInfo> PackageImports(Stmt stmt)
+        IEnumerable<ModuleInfo> ProjectImports(Stmt stmt)
         {
             IEnumerable<ModuleInfo> Ancestors(ModuleInfo module)
             {
                 var parents = new Stack<ModuleInfo>();
-                while (module != null && IsProjectPackageModule(module))
+                while (module != null)
                 {
                     if (module != _m) parents.Push(module);
+                    if (!IsProjectPackageModule(module)) break;
                     string parent = module.IsPackage
                         ? module.Name.Substring(0, Math.Max(0, module.Name.LastIndexOf('.')))
                         : module.PackageName;
@@ -104,9 +105,9 @@ namespace Typhon.Compiler.Emit
             return Enumerable.Empty<ModuleInfo>();
         }
 
-        void EmitPackageImports(Stmt stmt)
+        void EmitProjectImports(Stmt stmt)
         {
-            foreach (var module in PackageImports(stmt))
+            foreach (var module in ProjectImports(stmt))
                 _w.Line($"global::System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(typeof({ModuleClassName(module)}).TypeHandle);");
         }
 

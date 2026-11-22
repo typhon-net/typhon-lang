@@ -1,0 +1,24 @@
+from itertools import chain
+
+
+def numbers():
+    try:
+        yield 10
+        yield 20
+        yield 30
+    finally:
+        print('finished')
+
+
+items = numbers()
+first = next(items)
+print(list(chain((first,), items)))
+print(list(items))
+
+items = numbers()
+for value in items:
+    print(value)
+    break
+print(next(items))
+items.close()
+print(list(items))

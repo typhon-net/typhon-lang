@@ -271,6 +271,14 @@ namespace Typhon.Compiler.Emit
                     return $"{Rt("__dict_merge_as")}<{Unify(kts, "the key type of a merged dict")}, {Unify(vts, "the value type of a merged dict")}>({string.Join(", ", parts)})";
                 return $"{Rt("__dict_merge")}({string.Join(", ", parts)})";
             }
+            if (d.Values.Any(x => ClassBodyMethod(x) != null))
+            {
+                string key = DictTypes(InferType(d))?[0] ?? "dynamic";
+                string Item(Expr value) => ClassBodyMethod(value) is string method
+                    ? $"new global::Typhon.Runtime.PyBoundMethod(typeof({_cls.CsSelfType}), {CsString(method)}, includeNonPublic: true)"
+                    : EmitLooseValue(value);
+                return $"new OrderedDictionary<{key}, dynamic> {{ {string.Join(", ", d.Keys.Select((k, i) => $"[{EmitValue(k)}] = {Item(d.Values[i])}"))} }}";
+            }
             if (targetTyped && d.Keys.Count > 0 && DictTypes(InferType(d)) is List<string> tdk && tdk[1].StartsWith(PyTuplePrefix))
                 return "new() { " + string.Join(", ", d.Keys.Select((k, i) => $"[{EmitExpr(k, targetTyped: true)}] = {EmitAsPyTuple(d.Values[i], tdk[1])}")) + " }";
             if (targetTyped)

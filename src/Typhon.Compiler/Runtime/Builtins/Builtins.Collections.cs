@@ -72,6 +72,7 @@ namespace Typhon.Runtime
         public static bool contains(ITuple t, object? x) { for (int i = 0; i < t.Length; i++) if (eq(t[i], x)) return true; return false; }
         public static bool contains(object c, object x)
         {
+            if (c is PyAttrDict attrs) return x is string name && attrs.ContainsKey(name);
             if (c is IDictionary d) return d.Contains(KeyFor(d, x));
             if (c is IEnumerable e) { foreach (var item in e) if (eq(item, x)) return true; return false; }
             return ((dynamic)c).__contains__((dynamic)x);

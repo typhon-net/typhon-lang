@@ -11,7 +11,7 @@ namespace Typhon.Runtime
     internal enum PyCallableKind { Ordinary, Generator, Coroutine, AsyncGenerator }
 
     /// <summary>The original location of a compiled module or function, available without a debugger.</summary>
-    [AttributeUsage(AttributeTargets.Class | AttributeTargets.Method, Inherited = false)]
+    [AttributeUsage(AttributeTargets.Class | AttributeTargets.Method | AttributeTargets.Property, Inherited = false)]
     internal sealed class PySourceAttribute : Attribute
     {
         internal string Filename { get; }
@@ -65,12 +65,20 @@ namespace Typhon.Stdlib
             _ => false,
         };
 
-        public static bool ismethod(object? @object) =>
+        public static bool ismethod(object? @object) => @object is types.MethodType ||
             @object is PyBoundMethod method && method.Target is not Type && DefinedInPython(MethodOf(method)?.DeclaringType);
 
-        public static bool ismethoddescriptor(object? @object) =>
-            (@object is MethodInfo { IsStatic: false } || @object is PyBoundMethod { Target: Type }) &&
-            MethodOf(@object) is { IsStatic: false } method && !DefinedInPython(method.DeclaringType);
+        public static bool ismethoddescriptor(object? @object)
+        {
+            if (@object is MethodInfo { IsStatic: false } or PyBoundMethod { Target: Type })
+                return MethodOf(@object) is { IsStatic: false } method && !DefinedInPython(method.DeclaringType);
+            if (@object == null || isclass(@object) || isfunction(@object) || ismethod(@object)) return false;
+            var type = @object.GetType();
+            return HasDescriptorMethod(type, "__get__") && !HasDescriptorMethod(type, "__set__") && !HasDescriptorMethod(type, "__delete__");
+        }
+
+        static bool HasDescriptorMethod(Type type, string name) =>
+            type.GetMethods(BindingFlags.Public | BindingFlags.Instance).Any(method => method.Name == name);
 
         public static bool ismethodwrapper(object? @object) =>
             @object is PyBoundMethod method && method.Target is not Type && IsDunder(method.Name) &&
@@ -89,9 +97,8 @@ namespace Typhon.Stdlib
             isfunction(@object) || ismethod(@object) || isbuiltin(@object) || ismethoddescriptor(@object) || ismethodwrapper(@object);
 
         public static bool isdatadescriptor(object? @object) =>
-            @object is PropertyInfo || @object is FieldInfo { IsStatic: false } || @object != null &&
-            @object.GetType().GetMethod("__get__") != null &&
-            (@object.GetType().GetMethod("__set__") != null || @object.GetType().GetMethod("__delete__") != null);
+            @object is PropertyInfo || @object is FieldInfo { IsStatic: false } || @object != null && !isclass(@object) &&
+            (HasDescriptorMethod(@object.GetType(), "__set__") || HasDescriptorMethod(@object.GetType(), "__delete__"));
 
         public static bool isgetsetdescriptor(object? @object) =>
             @object is PropertyInfo property && !DefinedInPython(property.DeclaringType);
@@ -186,6 +193,8 @@ namespace Typhon.Stdlib
         public static dynamic? getmodule(object? @object, string? _filename = null)
         {
             if (@object is PyModule module) return module;
+            if (@object is functools.cached_property cached && cached.__module__ is string cachedModule) return ModuleByName(cachedModule);
+            if (@object is builtins.MethodDescriptor descriptor) return ModuleByName(descriptor.__module__);
             if (@object is types.TracebackType traceback) @object = traceback.tb_frame;
             if (@object is sys_.frame frame && frame.f_globals["__name__"] is string frameModule)
                 return ModuleByName(frameModule);
@@ -328,6 +337,8 @@ namespace Typhon.Stdlib
             if (instance && obj != null && PyAttrDict.TryGetExtra(obj, attr, out var extra)) return extra;
             for (; type != null; type = type.BaseType)
             {
+                if (type.IsDefined(typeof(PySourceAttribute)) && PyClassDescriptors.TryGetDeclaredDescriptor(type, attr, out var descriptor))
+                    return descriptor;
                 if (type.GetField(attr, DeclaredMembers) is { } field && (field.IsStatic || instance))
                     return field.GetValue(field.IsStatic ? null : obj);
                 if (type.GetProperty(attr, DeclaredMembers) is { } property)

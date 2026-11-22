@@ -352,7 +352,47 @@ namespace Typhon.Stdlib
         public static bool fnmatch(string name, string pat) => FnPattern.FnMatch(name, pat);
         public static bool fnmatchcase(string name, string pat) => FnPattern.FnMatchCase(name, pat);
         public static List<string> filter(IEnumerable<string> names, string pat) => names.Where(n => FnPattern.FnMatch(n, pat)).ToList();
+        public static List<string> filter(object names, string pat) => filter(Names<string>(names), pat);
         public static List<string> filterfalse(IEnumerable<string> names, string pat) => names.Where(n => !FnPattern.FnMatch(n, pat)).ToList();
+        public static List<string> filterfalse(object names, string pat) => filterfalse(Names<string>(names), pat);
+        public static bool fnmatch(PyBytes name, PyBytes pat) => FnPattern.FnMatchCase(NormalizeBytes(name), NormalizeBytes(pat));
+        public static bool fnmatchcase(PyBytes name, PyBytes pat) => FnPattern.FnMatchCase(name.decode("latin-1"), pat.decode("latin-1"));
+        public static List<PyBytes> filter(IEnumerable<PyBytes> names, PyBytes pat) => FilterBytes(names, pat, invert: false);
+        public static List<PyBytes> filter(object names, PyBytes pat) => filter(Names<PyBytes>(names), pat);
+        public static List<PyBytes> filterfalse(IEnumerable<PyBytes> names, PyBytes pat) => FilterBytes(names, pat, invert: true);
+        public static List<PyBytes> filterfalse(object names, PyBytes pat) => filterfalse(Names<PyBytes>(names), pat);
         public static (List<string>, List<long>) _translate(string pat, string star, string question_mark) => FnPattern.Of(pat).RegexParts(star, question_mark);
+
+        static IEnumerable<T> Names<T>(object names) => Builtins.__iter_dyn(names).Select(name =>
+            (object)name is T typed ? typed : throw new InvalidCastException(typeof(T) == typeof(string)
+                ? "cannot use a string pattern on a bytes-like object" : "cannot use a bytes pattern on a string-like object"));
+
+        static List<PyBytes> FilterBytes(IEnumerable<PyBytes> names, PyBytes pattern, bool invert)
+        {
+            var matcher = FnPattern.Of(NormalizeBytes(pattern));
+            return names.Where(name => matcher.Match(NormalizeBytes(name)) != invert).ToList();
+        }
+
+        static string NormalizeBytes(PyBytes name)
+        {
+            if (!OperatingSystem.IsWindows()) return name.decode("latin-1");
+            // Windows normalizes valid UTF-8 code points and leaves undecodable bytes unmodified.
+            var data = name.Data.AsSpan();
+            Span<byte> encoded = stackalloc byte[4];
+            var result = new StringBuilder(data.Length);
+            for (int offset = 0; offset < data.Length;)
+            {
+                if (Rune.DecodeFromUtf8(data[offset..], out var rune, out int consumed) != System.Buffers.OperationStatus.Done)
+                {
+                    result.Append((char)data[offset++]);
+                    continue;
+                }
+                rune = rune.Value == '/' ? new Rune('\\') : Rune.ToLowerInvariant(rune);
+                int length = rune.EncodeToUtf8(encoded);
+                for (int i = 0; i < length; i++) result.Append((char)encoded[i]);
+                offset += consumed;
+            }
+            return result.ToString();
+        }
     }
 }

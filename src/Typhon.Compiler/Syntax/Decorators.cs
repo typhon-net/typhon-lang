@@ -50,6 +50,16 @@ namespace Typhon.Compiler.Syntax
 
         static string Root(Expr d) => Name(d)?.Split('.')[0];
 
+        public static bool IsCachedProperty(Expr decorator, ModuleAst module)
+        {
+            if (decorator is NameExpr name)
+                return module.Body.OfType<ImportFromStmt>().Any(import => import.Level == 0 && import.Module == "functools" &&
+                    import.Names.Any(imported => imported.Name == "cached_property" && (imported.AsName ?? imported.Name) == name.Id));
+            return decorator is AttributeExpr { Name: "cached_property", Target: NameExpr owner } &&
+                module.Body.OfType<ImportStmt>().Any(import => import.Names.Any(imported => imported.Name == "functools" &&
+                    (imported.AsName ?? imported.Name) == owner.Id));
+        }
+
         static bool IsPythonDecorator(Expr d, HashSet<string> names)
         {
             string name = Name(d);
@@ -95,7 +105,8 @@ namespace Typhon.Compiler.Syntax
                         foreach (var m in c.Body.OfType<FunctionDef>())
                         {
                             Rewrite(m.Body, names, module);
-                            var python = m.Decorators.Where(d => IsPythonDecorator(d, names)).ToList();
+                            m.IsCachedProperty = m.Decorators.Any(d => IsCachedProperty(d, module));
+                            var python = m.Decorators.Where(d => !IsCachedProperty(d, module) && IsPythonDecorator(d, names)).ToList();
                             if (python.Count == 0) continue;
                             // @deco on a method, or @staticmethod above it: the class emits the decorated method;
                             // mixed with @classmethod / @property / Typhon's other decorators: not supported yet

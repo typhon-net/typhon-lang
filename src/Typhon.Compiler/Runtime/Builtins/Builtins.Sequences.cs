@@ -444,7 +444,8 @@ namespace Typhon.Runtime
         /// <summary>A list of late-bound (or wider) items extended with typed ones: List&lt;dynamic&gt; += List&lt;long&gt;.</summary>
         public static void __extend_cast<T, U>(List<T> l, IEnumerable<U> xs) { foreach (var x in xs) l.Add((T)(dynamic)x!); }
         /// <summary>Is a late-bound value one of Python's built-in values (str, list, dict, set, tuple, number), whose methods are the runtime's static ones?</summary>
-        public static bool __is_pyvalue(object? o) => o is string || o is System.Collections.IList || o is System.Collections.IDictionary || o is IConvertible ||
+        public static bool __is_pyvalue(object? o) => o is string || o is System.Collections.IList ||
+            o is System.Collections.IDictionary and not Typhon.Stdlib.types.MappingProxyType || o is IConvertible ||
             o is BigInteger || o is ITuple || o != null && o.GetType().IsGenericType && o.GetType().GetGenericTypeDefinition() == typeof(HashSet<>);
 
         /// <summary>a += b on late-bound values: a list extends in place (Python's list.__iadd__), anything else adds.</summary>

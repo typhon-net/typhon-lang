@@ -1,0 +1,31 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+from abc import ABCMeta
+
+
+class Root(metaclass=ABCMeta):
+    pass
+
+
+class Branch(Root):
+    pass
+
+
+class Candidate:
+    pass
+
+
+class Leaf(Candidate):
+    pass
+
+
+print(Branch.register(Candidate) is Candidate)
+print(issubclass(Leaf, Branch), issubclass(Leaf, Root), isinstance(Leaf(), Root))
+print(isinstance(10, Root))
+Branch.register(int)
+print(isinstance(10, Root), isinstance(True, Branch), isinstance(1.5, Root))
+try:
+    Branch.register(object)
+except RuntimeError:
+    print("cycle")
