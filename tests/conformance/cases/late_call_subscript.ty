@@ -1,0 +1,12 @@
+from typing import Any
+
+class Formatter:
+    def describe(self, value):
+        return str(value), True, False
+
+def result_for(value: Any):
+    descriptor = Formatter()
+    return descriptor.describe(value)[0], descriptor.describe(value)[1]
+
+print(result_for(23))
+print(result_for(["e", "f"]))

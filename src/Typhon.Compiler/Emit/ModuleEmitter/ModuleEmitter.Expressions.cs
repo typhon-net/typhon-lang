@@ -70,9 +70,10 @@ namespace Typhon.Compiler.Emit
                 case null: return "default";
                 case ConstExpr c: return EmitConst(c);
                 case NameExpr n when _narrowed.Contains(n.Id) && KnownTypeCore(n.Id) is string ot && ot.EndsWith("?"): return EmitName(n) + ".Value";
+                case NameExpr late when LateClassSlot(late.Id) is string storage: return EmitLateClassName(late.Id, storage);
                 case NameExpr ia when ImportAlias(ia) is Expr importTarget: return EmitExpr(importTarget, targetTyped);
                 case NameExpr method when ClassBodyMethod(method):
-                    return $"new global::Typhon.Runtime.PyBoundMethod(typeof({_cls.CsSelfType}), {CsString(method.Id)}, includeNonPublic: true)";
+                    return $"{Rt("getattr")}(typeof({_cls.CsSelfType}), {CsString(method.Id)})";
                 case NameExpr fv when FunctionValue(fv, typed: _fnTypedUse) is string fvalue: return fvalue;
                 // a nested function as a value where no delegate type is expected (returned as dynamic, stored, a decorator's result)
                 case NameExpr lfv when !targetTyped && LocalFunctionValue(lfv) is string closure: return closure;
@@ -146,12 +147,13 @@ namespace Typhon.Compiler.Emit
                     // (*a, b): a tuple of computed length
                     if (t.Elts.Any(x => x is StarredExpr)) return $"{Rt("tuple")}({EmitSpread(t.Elts, "List", t)})";
                     if (InferType(t) is string tpt && tpt.StartsWith(PyTuplePrefix)) return EmitAsPyTuple(t, tpt);
+                    string Item(Expr value) => !targetTyped && BoundMethodValue(value) is string method ? method : EmitValue(value);
                     if (t.Elts.Count == 0) return "ValueTuple.Create()";
-                    if (t.Elts.Count == 1) return $"ValueTuple.Create({EmitValue(t.Elts[0])})";
+                    if (t.Elts.Count == 1) return $"ValueTuple.Create({Item(t.Elts[0])})";
                     // (None, None) where nothing gives the tuple a type: C# needs typed nulls
                     if (!targetTyped && t.Elts.Any(x => x is ConstExpr nc && nc.Kind == ConstKind.None))
-                        return "(" + string.Join(", ", t.Elts.Select(x => x is ConstExpr nc2 && nc2.Kind == ConstKind.None ? "(object?)null" : EmitValue(x))) + ")";
-                    return "(" + string.Join(", ", t.Elts.Select(x => EmitValue(x))) + ")";
+                        return "(" + string.Join(", ", t.Elts.Select(x => x is ConstExpr nc2 && nc2.Kind == ConstKind.None ? "(object?)null" : Item(x))) + ")";
+                    return "(" + string.Join(", ", t.Elts.Select(Item)) + ")";
                 case ListExpr l: return EmitList(l, targetTyped);
                 case SetExpr s:
                     if (s.Elts.Any(x => x is StarredExpr)) return EmitSpread(s.Elts, "HashSet", s);
@@ -332,11 +334,32 @@ namespace Typhon.Compiler.Emit
             return !BaseHasMember(bases, name, requireOverridable: false);
         }
 
+        bool IsNarrowedInstanceAttribute(AttributeExpr attribute)
+        {
+            if (_m.IsGdScript || attribute.Target is not NameExpr receiver ||
+                !_renames.TryGetValue(receiver.Id, out var narrowed) || !_narrowedInstanceVariables.Contains(narrowed) ||
+                _lambdaParams.Any(parameters => parameters.ContainsKey(receiver.Id)) ||
+                KnownType(receiver.Id) is not string type || ClassKeyOfType(type, out _) is not string key ||
+                ClassDefOfKey(key) is not ClassDef definition) return false;
+
+            string name = attribute.Name;
+            if (MemberType(type, name, method: false) != null || DefinesInHierarchy(definition, name) ||
+                ClassVariableOwner(definition, name) != null || CollectImplicitFields(definition).ContainsKey(name) ||
+                _r.HasMember("System.Object", name)) return false;
+
+            // A type test only establishes the base type. Members added to a Python instance
+            // or declared on the actual subclass still need ordinary attribute lookup.
+            var bases = definition.Bases.Where(b => DottedName(b is SubscriptExpr sub ? sub.Target : b) is not
+                ("object" or "ABC" or "abc.ABC" or "Protocol" or "typing.Protocol" or "Generic" or "typing.Generic")).ToList();
+            return bases.All(b => ResolveBase(b, out _, out _)) && !BaseHasMember(bases, name, requireOverridable: false);
+        }
+
         ClassDef ClassVariableOwner(ClassDef c, string name, int depth = 0)
         {
             if (c == null || depth > 20) return null;
             bool declares = Ti != null && _p.TryFindClass(_m, c.Name, out var sc0, out var so0) && sc0 == c && Ti.ExternalFields.ContainsKey(TypeInference.ClassKey(so0, c.Name) + "|static|" + name) ||
-                            c.Body.Any(st => st is AssignStmt sa && sa.Targets.Count == 1 && sa.Targets[0] is NameExpr sn && sn.Id == name ||
+                            ExecutableClassStatements(c).Any(st => NamesInClassStatement(st).Contains(name)) ||
+                            c.Body.Any(st => st is AssignStmt sa && sa.Targets.SelectMany(NamesIn).Contains(name) ||
                                              st is AnnAssignStmt aa && aa.Target is NameExpr an && an.Id == name && aa.Annotation is SubscriptExpr cv &&
                                              (DottedName(cv.Target) == "ClassVar" || DottedName(cv.Target) == "typing.ClassVar"));
             if (declares) return c;
@@ -360,14 +383,17 @@ namespace Typhon.Compiler.Emit
         bool IsInstanceClassDefault(AttributeExpr a)
         {
             if (_m.IsGdScript) return false;
-            if (a.Target is NameExpr { Id: "self" } && _cls != null && HasSelfInScope())
-                return ClassVariableOwner(_cls.Def, a.Name) != null;
             string receiverType = InferType(a.Target);
-            var cls = ClassKeyOfType(receiverType, out _) is string key ? ClassDefOfKey(key) : null;
+            ClassDef cls = a.Target is NameExpr { Id: "self" } && _cls != null && HasSelfInScope() ? _cls.Def
+                : ClassKeyOfType(receiverType, out _) is string key ? ClassDefOfKey(key) : null;
             // A constructor through a project-module alias can yield a non-global qualified name.
             if (cls == null && receiverType != null && receiverType.Contains(".") && !receiverType.StartsWith("global::"))
                 TryResolveType(receiverType.Replace("@", ""), 0, out _, out cls);
-            return cls != null && ClassVariableOwner(cls, a.Name) != null;
+            if (cls == null) return false;
+            if (ClassVariableOwner(cls, a.Name) != null) return true;
+            // A subclass may supply a different class member, even if the base declared a descriptor.
+            return AllClasses().Any(subclass => subclass != cls && ClassVariableOwner(subclass, a.Name) == subclass &&
+                DerivesFrom(subclass, cls));
         }
 
         /// <summary>
@@ -570,7 +596,8 @@ namespace Typhon.Compiler.Emit
             {
                 // (the class the factory returns, named like it: deque<T> deque<T>(...) → typeof(deque<object>))
                 string made = _r.GetMembers(fmeta, fa.Name).Where(x => x.IsMethod).Select(x => x.GenericType ?? x.Type)
-                    .FirstOrDefault(t => t != null && t.Split('<')[0].EndsWith("." + fa.Name));
+                    .FirstOrDefault(t => t != null && (t.Split('<')[0].EndsWith("." + fa.Name) ||
+                        fmeta == "Typhon.Stdlib.collections" && fa.Name == "OrderedDict" && t.Split('<')[0].EndsWith(".PyOrderedDict")));
                 if (made != null)
                 {
                     string open = made.Split('<')[0];
@@ -595,6 +622,7 @@ namespace Typhon.Compiler.Emit
 
         string BaseObjectMethod(AttributeExpr attr) =>
             attr is { Target: NameExpr { Id: "int" }, Name: "__new__" } && !IsShadowed("int") ? "__int_new" :
+            attr is { Target: NameExpr { Id: "str" }, Name: "__new__" } && !IsShadowed("str") ? "__str_new" :
             attr.Target is NameExpr { Id: "object" } && !IsShadowed("object") ? attr.Name switch
             {
                 "__new__" => "__object_new",
@@ -614,7 +642,15 @@ namespace Typhon.Compiler.Emit
                 return $"{Rt("getattr")}((object?){Paren(EmitValue(a.Target))}, {CsString(a.Name)})";
             if (!Receivers.Contains(a) && BaseObjectMethod(a) is string objectMethod)
                 return $"global::Typhon.Runtime.Builtins.__object_method({CsString(objectMethod)})";
-            if (a.Name is "__mro__" or "__getstate__" && !IsAttributeStore(a))
+            if (a.Name == "__repr__" && !IsAttributeStore(a) &&
+                a.Target is not CallExpr { Func: NameExpr { Id: "super" } })
+            {
+                string receiver = (a.Target is NameExpr builtin ? BuiltinTypeValue(builtin) : null) ??
+                    ModuleOrClassValue(a.Target) ??
+                    (TryTypeExpr(a.Target, out string type) ? $"typeof({type})" : EmitValue(a.Target));
+                return $"{Rt("getattr")}((object?){Paren(receiver)}, {CsString(a.Name)})";
+            }
+            if (a.Name is "__mro__" or "__getstate__" or "__dataclass_params__" && !IsAttributeStore(a))
             {
                 string receiver = (a.Target is NameExpr builtin ? BuiltinTypeValue(builtin) : null) ?? EmitValue(a.Target);
                 return $"{Rt("getattr")}((object?){Paren(receiver)}, {CsString(a.Name)})";
@@ -641,13 +677,13 @@ namespace Typhon.Compiler.Emit
                     return $"new global::Typhon.Runtime.PyBoundMethod(typeof({runtimeOwner}), {CsString(export.Member)})";
                 return runtimeOwner + "." + Esc(export.Member);
             }
-            if (DottedName(a.Target) is string prefix && ModuleRef(prefix) is ModuleInfo projectModule &&
-                IsProjectPackageModule(projectModule))
+            if (DottedName(a.Target) is string prefix && ModuleRef(prefix) is ModuleInfo projectModule)
             {
                 if (a.Name == "__name__") return CsString(projectModule.Name);
                 if (a.Name == "__package__") return CsString(projectModule.PackageName);
                 if (a.Name == "__file__") return CsString(System.IO.Path.GetFullPath(projectModule.Path));
-                if (ProjectPackageMember(prefix + "." + a.Name) is string member) return member;
+                if (!IsAttributeStore(a) && UsesRuntimeProjectMember(projectModule, a.Name)) return RuntimeProjectMember(projectModule, a.Name);
+                if (IsProjectPackageModule(projectModule) && ProjectPackageMember(prefix + "." + a.Name) is string member) return member;
             }
             if (a.Name is "errno" or "strerror" or "filename" or "filename2" or "winerror" &&
                 InferType(a.Target) is ("global::System.IO.IOException" or "System.IO.IOException"))
@@ -675,6 +711,11 @@ namespace Typhon.Compiler.Emit
             // Function metadata is writable. A nested function's attributes and later reads share one function object.
             if (a.Target is NameExpr fa && (LocalFunctionObject(fa.Id) ?? FunctionValue(fa, typed: false)) is string fav)
                 return a.Name is "__name__" or "__doc__" or "__wrapped__" or "__module__" or "__qualname__" ? $"{fav}.{a.Name}" : $"((dynamic){fav}).{Esc(a.Name)}";
+            // An alternate branch can read members beyond a specialization's known members.
+            if (!IsAttributeStore(a) && Receivers.Contains(a) && a.Target is NameExpr local && IsLocal(local.Id) &&
+                InferType(local) is string localType && a.Name.Length > 0 && char.IsLower(a.Name[0]) && !IsRuntimeMethod(a.Name) &&
+                (PrimitiveCsTypes.Contains(localType) || FunctionOfType(localType, out _, out _)))
+                return $"((dynamic){Paren(EmitExpr(local))}).{Esc(a.Name)}";
             // type(x).__name__, x.__class__, SomeClass.__name__
             if (a.Name == "__class__")
             {
@@ -710,7 +751,7 @@ namespace Typhon.Compiler.Emit
                 return $"{Rt("getattr")}((object?){Paren(EmitName(classArgument))}, {CsString(a.Name)})";
             if (TupleFieldOwner(a) is string tupleType)
                 return $"((global::Typhon.Runtime.PyTupleGetter){Rt("getattr")}(typeof({tupleType}), {CsString(a.Name)}))";
-            if (!IsAttributeStore(a) && (IsInstanceClassDefault(a) || TypeObjectMember(a)))
+            if (!IsAttributeStore(a) && (IsInstanceClassDefault(a) || TypeObjectMember(a) || IsNarrowedInstanceAttribute(a)))
                 return $"{Rt("getattr")}((object?){Paren(EmitExpr(a.Target))}, {CsString(a.Name)})";
             if (!IsAttributeStore(a) && DottedName(a.Target) is string conditionalOwner &&
                 TryResolveType(conditionalOwner, 0, out _, out var conditionalType) && conditionalType != null &&

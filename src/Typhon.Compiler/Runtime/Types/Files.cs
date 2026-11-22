@@ -102,6 +102,8 @@ namespace Typhon.Runtime
     internal sealed class PyTextStream : io.TextIOWrapper
     {
         readonly int _which; // 0 stdout, 1 stderr, 2 stdin
+        static readonly Lazy<System.IO.TextReader> TerminalInput = new(() => System.IO.TextReader.Synchronized(
+            new System.IO.StreamReader(os_.OpenTerminalInput(), Console.InputEncoding)));
         bool _closed;
         public PyTextStream(int which)
         {
@@ -125,7 +127,10 @@ namespace Typhon.Runtime
         {
             if (_which != 2) throw io.Unsupported("not readable");
             _checkClosed();
-            var input = Console.In;
+            // Read a Unix terminal through its stream so Console's line editor does not replace
+            // the terminal mode that a Python caller set with termios.
+            var input = termios.Available && os_.isatty(0)
+                ? TerminalInput.Value : Console.In;
             bool translate = OperatingSystem.IsWindows();
             if (!line && size < 0)
             {

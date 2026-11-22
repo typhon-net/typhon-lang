@@ -1,0 +1,32 @@
+from inspect import getattr_static
+
+def enabled() -> bool:
+    return False
+
+class Dispatch:
+    routes = {}
+    if enabled():
+        def run(self, name: str = "default") -> str:
+            return "a " + name
+    else:
+        def run(self, name: str = "default") -> str:
+            return "b " + name
+
+        def bye(self) -> str:
+            return "goodbye"
+
+        routes["run"] = run
+    alias = run
+
+class Absent:
+    if enabled():
+        def run(self):
+            return "unreachable"
+
+d = Dispatch()
+print(d.run(), d.run(name="user"), d.bye())
+print(Dispatch.run(d, "class"))
+print(Dispatch.routes["run"] is Dispatch.run, d.alias("alias"))
+print(Dispatch.run.__name__, Dispatch.run.__qualname__, "run" in Dispatch.__dict__)
+print(hasattr(Absent, "run"), hasattr(Absent(), "run"), "run" in Absent.__dict__)
+print(getattr_static(Absent(), "run", "missing"))

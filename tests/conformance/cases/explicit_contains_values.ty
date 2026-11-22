@@ -1,0 +1,18 @@
+calls: list[str] = []
+
+class MemberCheck:
+    def __iter__(self):
+        calls.append("iter")
+        yield 1
+
+    def __contains__(self, value: int) -> bool:
+        calls.append("contains")
+        return value == 5
+
+def check(container):
+    print(1 in container, 5 in container)
+
+check(MemberCheck())
+values = MemberCheck()
+print(1 in values, 5 in values)
+print(calls)

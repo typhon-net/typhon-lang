@@ -1,0 +1,20 @@
+class Message:
+    def __str__(self) -> str:
+        return "message"
+
+    def __format__(self, spec: str) -> str:
+        if spec == "X":
+            return "MESSAGE"
+        return super().__format__(spec)
+
+class Versioned(Message):
+    version = 8
+
+def report(item: Message) -> None:
+    print(item.version, format(item, "X"), format(item))
+    try:
+        print(format(item, "missing"))
+    except TypeError as err:
+        print(str(err))
+
+report(Versioned())

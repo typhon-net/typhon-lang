@@ -1,0 +1,6 @@
+Record(visible=3) True
+Record.__repr__ __create_fn__.<locals>.__repr__
+True
+Record(visible=3)
+Node(child=...)
+False True

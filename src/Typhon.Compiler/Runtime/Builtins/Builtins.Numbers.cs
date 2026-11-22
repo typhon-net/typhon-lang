@@ -81,7 +81,7 @@ namespace Typhon.Runtime
         {
             string s => @int(s), double d => @int(d), float f => @int((double)f), bool b => b ? 1 : 0, decimal m => @int(m),
             BigInteger big => checked((long)big), char c => @int(c),
-            PyBytes or PyByteArray => checked((long)ParseByteInteger(o)), _ => Convert.ToInt64(o, Inv),
+            PyBytes or PyByteArray => checked((long)ParseByteInteger(o)), _ => checked((long)IntFromProtocol(o)),
         };
 
         public static double @float(string s)
@@ -283,13 +283,43 @@ namespace Typhon.Runtime
             }
             return neg ? -v : v;
         }
+        public static BigInteger __bigint(object text, long @base) => text switch
+        {
+            string value => __bigint(value, @base),
+            PyBytes or PyByteArray => __bigint(Encoding.ASCII.GetString(ByteOps.From(text)), @base),
+            _ => throw new InvalidCastException("int() can't convert non-string with explicit base"),
+        };
+
         public static BigInteger __bigint(char c) => __bigint(c.ToString());
         public static BigInteger __bigint(decimal m) => new BigInteger(Math.Truncate(m));
         public static BigInteger __bigint(object o) => o switch
         {
             BigInteger b => b, string s => __bigint(s), double d => __bigint(d), bool b => __bigint(b),
-            PyBytes or PyByteArray => ParseByteInteger(o), _ => new BigInteger(Convert.ToInt64(o, Inv)),
+            PyBytes or PyByteArray => ParseByteInteger(o), _ => IntFromProtocol(o),
         };
+
+        static BigInteger IntFromProtocol(object value)
+        {
+            string method = "__int__";
+            if (!TryGetAttr(value, method, out var convert))
+            {
+                method = "__index__";
+                if (!TryGetAttr(value, method, out convert)) return new BigInteger(Convert.ToInt64(value, Inv));
+            }
+            return IntProtocolResult(value, method, (object?)__invoke(convert, []));
+        }
+
+        static BigInteger IntProtocolResult(object value, string method, object? result)
+        {
+            return result switch
+            {
+                BigInteger n => n,
+                bool n => n ? 1 : 0,
+                sbyte or byte or short or ushort or int or uint or long or ulong =>
+                    new BigInteger(Convert.ToDecimal(result, Inv)),
+                _ => throw new InvalidCastException($"{PyTypeName(value.GetType())}.{method}() must return an int, not {(result == null ? "NoneType" : PyTypeName(result.GetType()))}"),
+            };
+        }
 
         static BigInteger ParseByteInteger(object buffer)
         {
@@ -427,6 +457,7 @@ namespace Typhon.Runtime
         /// <summary>a + b with late-bound operands: list concatenation (str and numbers bind normally).</summary>
         public static dynamic add(dynamic a, dynamic b)
         {
+            if (a is ITuple && b is ITuple) return __tupcat<object?>((object)a, (object)b);
             if (a is IList la && b is IList lb && !(a is string) && !(a is IDictionary))
             {
                 if (la.GetType() != lb.GetType() || la.IsFixedSize) return __concat_any(la, lb);

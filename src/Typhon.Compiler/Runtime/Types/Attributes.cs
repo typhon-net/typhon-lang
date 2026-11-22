@@ -76,6 +76,7 @@ namespace Typhon.Runtime
                 }
                 if (name == "__doc__") { value = t.GetCustomAttribute<PySourceAttribute>()?.DocString; return true; }
                 if (PyClassDescriptors.TryGetAttribute(t, name, out value)) return true;
+                if (name == "__repr__") { value = ReprSlot(t); return true; }
                 if (name == "__module__") { value = ModuleOfType(t); return true; }
                 if (TryGetClassData(t, name, out value)) return true;
                 if (t.GetMethods(StaticMembers | InstanceMembers).Any(m => m.Name == name)) { value = new PyBoundMethod(t, name); return true; }
@@ -83,6 +84,7 @@ namespace Typhon.Runtime
                 if (name == "__new__")
                 {
                     if (t == typeof(long)) { value = __object_method("__int_new"); return true; }
+                    if (t == typeof(string)) { value = __object_method("__str_new"); return true; }
                     if (t == typeof(object) || t.IsDefined(typeof(PySourceAttribute), false) &&
                         !typeof(System.Runtime.CompilerServices.ITuple).IsAssignableFrom(t))
                     { value = __object_method("__object_new"); return true; }
@@ -116,6 +118,13 @@ namespace Typhon.Runtime
             var type = o.GetType();
             if (type.GetProperty(name, InstanceMembers) is PropertyInfo p && p.GetIndexParameters().Length == 0)
             {
+                // Python locates the first definition in the class hierarchy before applying descriptor rules.
+                if (p.DeclaringType != type && type.IsDefined(typeof(PySourceAttribute), false) &&
+                    TryGetClassData(type, name, out var shadow, before: p.DeclaringType))
+                {
+                    if (!PyAttrDict.TryGetExtra(o, name, out value)) value = shadow;
+                    return true;
+                }
                 bool lateAttribute = p.IsDefined(typeof(PyLateAttributeAttribute), false);
                 if (lateAttribute && !allowFallback) return PyAttrDict.TryGetExtra(o, name, out value);
                 try { value = Unwrapped(() => p.GetValue(o)); return true; }
@@ -128,6 +137,12 @@ namespace Typhon.Runtime
                 return true;
             }
             if (PyAttrDict.TryGetExtra(o, name, out value)) return true;
+            if (name == "__repr__" && PyClassDescriptors.TryGetAttribute(type, name, out var representation) &&
+                representation is PyFunction { __wrapped__: not null } reprFunction)
+            {
+                value = new Typhon.Stdlib.types.MethodType(reprFunction, o);
+                return true;
+            }
             if (type.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
                 .Any(m => m.Name == name && (m.IsPublic || m.IsDefined(typeof(PySourceAttribute), false))))
             {
@@ -174,8 +189,13 @@ namespace Typhon.Runtime
                 catch (Microsoft.CSharp.RuntimeBinder.RuntimeBinderException) { }
                 catch (MissingMemberException) { }
             }
-            if (TryGetClassData(type, name, out value)) return true;
+            if (TryGetClassData(type, name, out value))
+            {
+                if (value is PyFunction function) value = new Typhon.Stdlib.types.MethodType(function, o);
+                return true;
+            }
             if (FindNestedType(type, name) is Type nestedType) { value = nestedType; return true; }
+            if (name == "__repr__") { value = ReprSlot(type).__get__(o, type); return true; }
             if (name == "__getstate__")
             {
                 value = new Typhon.Stdlib.types.MethodType(__object_method("__object_getstate"), o);
@@ -184,13 +204,20 @@ namespace Typhon.Runtime
             return allowFallback && TryFallbackAttribute(o, name, out value);
         }
 
-        static bool TryGetClassData(Type type, string name, out object? value)
+        static bool TryGetClassData(Type type, string name, out object? value, Type? before = null)
         {
             const BindingFlags DeclaredStatic = StaticMembers | BindingFlags.DeclaredOnly;
-            for (Type? owner = type; owner != null; owner = owner.BaseType)
+            for (Type? owner = type; owner != null && owner != before; owner = owner.BaseType)
             {
                 if (owner.GetProperty(name, DeclaredStatic) is PropertyInfo property && property.GetIndexParameters().Length == 0)
-                { value = property.GetValue(null); return true; }
+                {
+                    if (property.GetCustomAttribute<PyClassSlotAttribute>() is not { } slot)
+                    {
+                        value = property.GetValue(null);
+                        return true;
+                    }
+                    if (PyClassDescriptors.TryReadSlot(property, slot, out value)) return true;
+                }
                 if (owner.GetField(name, DeclaredStatic) is FieldInfo field)
                 { value = field.GetValue(null); return true; }
             }
@@ -234,6 +261,7 @@ namespace Typhon.Runtime
             {
                 "__object_new" => typeof(object),
                 "__int_new" => typeof(long),
+                "__str_new" => typeof(string),
                 _ => null,
             }));
 
@@ -242,6 +270,12 @@ namespace Typhon.Runtime
             if (!cls.IsClass || cls.IsAbstract || cls == typeof(string) || typeof(Delegate).IsAssignableFrom(cls))
                 throw new InvalidCastException($"object.__new__({PyTypeName(cls)}) is not safe");
             return System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(cls);
+        }
+
+        public static dynamic __str_new(Type cls, object? value)
+        {
+            string raw = str(value);
+            return cls == typeof(string) ? raw : PyStrEnum.Allocate(cls, raw);
         }
 
         public static object? __object_init(object? value) => null;
@@ -362,23 +396,30 @@ namespace Typhon.Runtime
         }
 
         /// <summary>Python instances can acquire attributes, while CLR receivers keep their normal setter behavior.</summary>
-        public static void __setattr_late(object? value, object? receiver, string name, Action<dynamic, dynamic> clrSet)
+        public static void __setattr_late(object? value, object? receiver, string name, Action<dynamic, dynamic> clrSet, bool freshEmptyDict = false)
         {
             if (receiver == null || (receiver as Type ?? receiver.GetType()).IsDefined(typeof(PySourceAttribute), false))
-                setattr(receiver, name, value);
+                SetAttribute(receiver, name, value, freshEmptyDict);
             else
                 clrSet(receiver, value);
         }
 
         /// <summary>setattr(obj, name, value): a declared property or field (converted to its type), else an attribute kept beside the object.</summary>
-        public static void setattr(object? o, string name, object? value)
+        public static void setattr(object? o, string name, object? value) => SetAttribute(o, name, value, freshEmptyDict: false);
+
+        static void SetAttribute(object? o, string name, object? value, bool freshEmptyDict)
         {
             if (o == null) throw new MissingMemberException($"'NoneType' object has no attribute '{name}'");
+            if (name == "__class__")
+            {
+                if (value is Type same && same == o.GetType()) return;
+                throw new InvalidCastException("__class__ assignment requires a compatible object layout");
+            }
             if (o is PyLocalDataClass local) { local.Members[name] = value; return; }
             if (o is Type t)
             {
-                if (t.GetProperty(name, StaticMembers) is PropertyInfo sp && sp.CanWrite) { sp.SetValue(null, ConvertTo(value, sp.PropertyType)); return; }
-                if (t.GetField(name, StaticMembers) is FieldInfo sf && !sf.IsInitOnly) { sf.SetValue(null, ConvertTo(value, sf.FieldType)); return; }
+                if (t.GetProperty(name, StaticMembers) is PropertyInfo sp && sp.CanWrite) { sp.SetValue(null, AttributeValue(value, sp.PropertyType, freshEmptyDict)); return; }
+                if (t.GetField(name, StaticMembers) is FieldInfo sf && !sf.IsInitOnly) { sf.SetValue(null, AttributeValue(value, sf.FieldType, freshEmptyDict)); return; }
                 throw new MissingMemberException($"type object '{PyTypeName(t)}' has no attribute '{name}' (Typhon classes cannot gain attributes at run time)");
             }
             if (o is PyFunction pf)
@@ -395,17 +436,33 @@ namespace Typhon.Runtime
                 return;
             }
             var type = o.GetType();
-            if (type.GetProperty(name, InstanceMembers) is PropertyInfo p && p.CanWrite && p.GetIndexParameters().Length == 0) { p.SetValue(o, ConvertTo(value, p.PropertyType)); return; }
-            if (type.GetField(name, InstanceMembers) is FieldInfo f && !f.IsInitOnly) { f.SetValue(o, ConvertTo(value, f.FieldType)); return; }
+            if (type.GetProperty(name, InstanceMembers) is PropertyInfo p && p.CanWrite && p.GetIndexParameters().Length == 0) { p.SetValue(o, AttributeValue(value, p.PropertyType, freshEmptyDict)); return; }
+            if (type.GetField(name, InstanceMembers) is FieldInfo f && !f.IsInitOnly) { f.SetValue(o, AttributeValue(value, f.FieldType, freshEmptyDict)); return; }
             new PyAttrDict(o)[name] = value;
         }
 
         public static void delattr(object? o, string name)
         {
             if (o is PyLocalDataClass local && local.Members.Remove(name)) return;
+            if (o is Type type && PyClassDescriptors.DeleteSlot(type, name)) return;
             if (o != null && PyAttrDict.RemoveExtra(o, name)) return;
             if (o is PyFunction pf && pf._attrs != null && pf._attrs.Remove(name)) return;
             throw new MissingMemberException($"'{(o == null ? "NoneType" : PyTypeName(o.GetType()))}' object has no attribute '{name}' (or it is declared by its class)");
+        }
+
+        // A literal {} has no aliases. Construct it with the receiver's closed mapping type when the C# field requires one.
+        static object? AttributeValue(object? value, Type type, bool freshEmptyDict)
+        {
+            if (freshEmptyDict && value is System.Collections.IDictionary { Count: 0 } &&
+                !type.IsInstanceOfType(value) && type.IsGenericType)
+            {
+                var definition = type.GetGenericTypeDefinition();
+                if (definition == typeof(OrderedDictionary<,>) || definition == typeof(IDictionary<,>) ||
+                    definition == typeof(IReadOnlyDictionary<,>))
+                    return typeof(Builtins).GetMethod(nameof(__newdict))!.MakeGenericMethod(type.GetGenericArguments()).Invoke(null, [0]);
+                if (definition == typeof(Dictionary<,>)) return Activator.CreateInstance(type);
+            }
+            return ConvertTo(value, type);
         }
 
         static object? ConvertTo(object? v, Type t) =>

@@ -1,0 +1,57 @@
+from abc import ABC, abstractmethod
+from typing import Any
+import asyncio
+
+
+class SyncContract(ABC):
+    @abstractmethod
+    def collect(self, left: int, right: int, end: int) -> int:
+        pass
+
+
+class SyncCollector(SyncContract):
+    def collect(self, *values: int) -> int:
+        return sum(values)
+
+
+def use_base(collector: SyncContract) -> int:
+    return collector.collect(1, 3, 5)
+
+
+class AsyncContract(ABC):
+    @abstractmethod
+    async def combine(self, prefix: str, first: str, last: str) -> Any:
+        pass
+
+
+class AsyncCollector(AsyncContract):
+    async def combine(self, *values: str) -> str:
+        return "/".join(values)
+
+
+async def use_async_base(collector: AsyncContract) -> str:
+    return await collector.combine("base", "two", "three")
+
+
+async def exercise():
+    collector: AsyncCollector = AsyncCollector()
+    print(await use_async_base(collector))
+    print(await collector.combine("child"))
+    print(await collector.combine("child", "two", "three"))
+    print(await collector.combine("a", "b", "c", "d"))
+
+
+collector: SyncCollector = SyncCollector()
+print(use_base(collector), collector.collect(7), collector.collect(1, 2, 4), collector.collect(1, 2, 3, 4))
+asyncio.run(exercise())
+
+
+def apply_dynamic(target, arguments, keywords):
+    return target.collect(*arguments, **keywords)
+
+
+print(apply_dynamic(collector, (2, 4, 6), {}))
+try:
+    apply_dynamic(collector, (), {"left": 2, "right": 4, "end": 6})
+except TypeError:
+    print("keyword arguments rejected")

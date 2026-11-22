@@ -127,7 +127,7 @@ namespace Typhon.Compiler.Emit
             string t = InferType(e);
             if (t is "dynamic" or "object" or "object?")
                 return $"{Rt("__iter_dyn")}((object){Paren(code)})";
-            if (e is CallExpr { Func: AttributeExpr } && IsDynamicallyDispatched(e))
+            if (e is CallExpr && IsDynamicallyDispatched(e))
             {
                 string late = $"{Rt("__iter_dyn")}((object){Paren(code)})";
                 string elem = IterElementType(t);
@@ -273,13 +273,13 @@ namespace Typhon.Compiler.Emit
                     return $"{Rt("__dict_merge_as")}<{Unify(kts, "the key type of a merged dict")}, {Unify(vts, "the value type of a merged dict")}>({string.Join(", ", parts)})";
                 return $"{Rt("__dict_merge")}({string.Join(", ", parts)})";
             }
-            if (d.Values.Any(x => ClassBodyMethod(x) != null))
+            var boundMethods = d.Values.Select(value => ClassBodyMethod(value) is string method
+                ? $"new global::Typhon.Runtime.PyBoundMethod(typeof({_cls.CsSelfType}), {CsString(method)}, includeNonPublic: true)"
+                : targetTyped ? null : BoundMethodValue(value)).ToArray();
+            if (boundMethods.Any(method => method != null))
             {
                 string key = DictTypes(InferType(d))?[0] ?? "dynamic";
-                string Item(Expr value) => ClassBodyMethod(value) is string method
-                    ? $"new global::Typhon.Runtime.PyBoundMethod(typeof({_cls.CsSelfType}), {CsString(method)}, includeNonPublic: true)"
-                    : EmitLooseValue(value);
-                return $"new OrderedDictionary<{key}, dynamic> {{ {string.Join(", ", d.Keys.Select((k, i) => $"[{EmitValue(k)}] = {Item(d.Values[i])}"))} }}";
+                return $"new OrderedDictionary<{key}, dynamic> {{ {string.Join(", ", d.Keys.Select((k, i) => $"[{EmitValue(k)}] = {boundMethods[i] ?? EmitLooseValue(d.Values[i])}"))} }}";
             }
             if (targetTyped && d.Keys.Count > 0 && DictTypes(InferType(d)) is List<string> tdk && tdk[1].StartsWith(PyTuplePrefix))
                 return "new() { " + string.Join(", ", d.Keys.Select((k, i) => $"[{EmitExpr(k, targetTyped: true)}] = {EmitAsPyTuple(d.Values[i], tdk[1])}")) + " }";

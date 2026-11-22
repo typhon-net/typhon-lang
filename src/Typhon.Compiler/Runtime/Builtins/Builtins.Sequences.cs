@@ -68,6 +68,7 @@ namespace Typhon.Runtime
                 case string s when IsIndex(key): return str_at(s, __pos(key is bool kb ? (kb ? 1L : 0L) : key!, s.Length));
                 case IList list when IsIndex(key): return list[__pos(key is bool lb ? (lb ? 1L : 0L) : key!, list.Count)];
                 case ITuple t when IsIndex(key): return t[__pos(key is bool tb ? (tb ? 1L : 0L) : key!, t.Length)];
+                case Typhon.Stdlib.collections.abc.Mapping mappingValue: return mappingValue.Item(key);
                 case null: throw new NullReferenceException("'NoneType' object is not subscriptable");
             }
             if (IsIndex(key) && o is not IDictionary)
@@ -245,9 +246,13 @@ namespace Typhon.Runtime
         public static List<T> sorted<T>(IEnumerable<T> xs, PyClosure? key, bool reverse = false) =>
             key == null ? sorted(xs, reverse) : sorted(xs, item => key.__call__([item]), reverse);
 
+        public static List<T> sorted<T>(IEnumerable<T> xs, object? key, bool reverse = false) =>
+            key == null ? sorted(xs, reverse) : sorted(xs, item => (object?)__invoke(key, [item]), reverse);
+
         public static IEnumerable<R> map<T, R>(Func<T, R> f, IEnumerable<T> xs) => xs.Select(f);
         public static IEnumerable<dynamic?> map<T>(PyClosure f, IEnumerable<T> xs) => xs.Select(x => f.__call__([x]));
         public static IEnumerable<dynamic?> map<T>(PyBoundMethod f, IEnumerable<T> xs) => xs.Select(x => f.__call__([x]));
+        public static IEnumerable<dynamic?> map<T>(object f, IEnumerable<T> xs) => xs.Select(x => __invoke(f, [x]));
         public static IEnumerable<T> __filter_truthy<T>(IEnumerable<T> xs) => xs.Where(item => truthy(item));
         public static IEnumerable<T> filter<T>(Func<T, bool> f, IEnumerable<T> xs) => xs.Where(f);
         public static IEnumerable<T> filter<T>(PyClosure f, IEnumerable<T> xs) => xs.Where(x => truthy(f.__call__([x])));
@@ -373,6 +378,8 @@ namespace Typhon.Runtime
                 for (int i = 0; i < items.Length; i++) items[i] = tuple[i];
                 return new PyTuple<object?>(slice((IList<object?>)items, start, stop, step));
             }
+            if (TryGetAttr(o, "__getitem__", out var index, allowFallback: false))
+                return __invoke(index, [new PySlice(start, stop, step)]);
             if (step != 1) throw new NotSupportedException("stepped slices are only supported on str, list and arrays");
             Index s = start == null ? Index.Start : start.Value < 0 ? Index.FromEnd(checked((int)-start.Value)) : Index.FromStart(checked((int)start.Value));
             Index e = stop == null ? Index.End : stop.Value < 0 ? Index.FromEnd(checked((int)-stop.Value)) : Index.FromStart(checked((int)stop.Value));

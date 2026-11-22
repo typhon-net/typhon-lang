@@ -1,0 +1,8 @@
+True True True
+dict_keys dict_values dict_items
+True
+dict_keys(['a', 'b', 'c']) dict_values([1, 2, 3]) dict_items([('a', 1), ('b', 2), ('c', 3)])
+3 [('a', 1), ('b', 2), ('c', 3)]
+MappingView({'a': 1, 'b': 2, 'c': 3}) ItemsView({'a': 1, 'b': 2, 'c': 3})
+['a', 'b', 'c'] [1, 2, 3]
+dict_keys(['a', 'b', 'c']) dict_values([1, 2, 3]) dict_items([('a', 1), ('b', 2), ('c', 3)])

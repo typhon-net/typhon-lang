@@ -1,0 +1,27 @@
+import collections
+
+print(dict.__repr__ is type({"a": 1}).__repr__)
+print(list.__repr__ is type([1, 2]).__repr__)
+print(tuple.__repr__ is type((1, 2)).__repr__)
+print(set.__repr__ is frozenset.__repr__)
+print(str.__repr__("quoted"))
+print(list.__repr__([1, 2]))
+print(int.__repr__(True))
+print(type(dict.__repr__).__name__, dict.__repr__.__objclass__.__name__)
+print(collections.OrderedDict.__repr__ is type(collections.OrderedDict({"a": 1})).__repr__)
+
+class Custom:
+    def __repr__(self) -> str:
+        return "Custom!"
+
+print(Custom.__repr__ is type(Custom()).__repr__)
+print(Custom().__repr__())
+
+value = [3, 4]
+bound = value.__repr__
+print(bound())
+print(list.__repr__.__get__(value)())
+try:
+    print(list.__repr__("not a list"))
+except TypeError as error:
+    print(str(error))

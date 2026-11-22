@@ -185,6 +185,24 @@ namespace Typhon.Compiler.Emit
                 call.Args.Any(a => a.Star || a.DoubleStar));
         }
 
+        readonly Dictionary<ModuleInfo, ModuleEmitter> _constructorResolvers = new Dictionary<ModuleInfo, ModuleEmitter>();
+
+        // Base names belong to the defining module, even while scanning another module for deferred construction.
+        ModuleEmitter ConstructorBaseResolver(ClassDef cls)
+        {
+            var owner = _p.DeclaringModule(cls);
+            if (owner == null || owner == _m && _scope == null) return this;
+            if (_constructorResolvers.TryGetValue(owner, out var resolver)) return resolver;
+            resolver = new ModuleEmitter(owner, _p, new List<TyDiagnostic>(), dryRun: true);
+            foreach (var import in TyphonCompiler.Imports(owner))
+            {
+                if (import is ImportStmt plain) resolver.ProcessImport(plain);
+                else if (import is ImportFromStmt from) resolver.ProcessImportFrom(from);
+            }
+            _constructorResolvers[owner] = resolver;
+            return resolver;
+        }
+
         /// <summary>The nearest Typhon ancestor (along first bases) that defines __init__; null if none (or a .NET base comes first).</summary>
         ClassDef NearestInitAncestor(ClassDef c)
         {
@@ -192,7 +210,7 @@ namespace Typhon.Compiler.Emit
             for (int depth = 0; depth < 50; depth++)
             {
                 if (k.Bases.Count == 0) return null;
-                if (!ResolveBase(k.Bases[0], out var py, out _) || py == null) return null;
+                if (!ConstructorBaseResolver(k).ResolveBase(k.Bases[0], out var py, out _) || py == null) return null;
                 if (py.Body.OfType<FunctionDef>().Any(f => f.Name == "__init__")) return py;
                 k = py;
             }
@@ -271,7 +289,7 @@ namespace Typhon.Compiler.Emit
                 var savedBaseArguments = _baseInitializerArguments;
                 _baseInitializerArguments = sig.DefaultArguments;
                 var baseInit = NearestInitAncestor(ctx.Def)?.Body.OfType<FunctionDef>().FirstOrDefault(fd => fd.Name == "__init__");
-                string kwBase = superArgs.Any(x => x.Name != null || x.DoubleStar) ? KwargsCallArgs(baseInit, 1, superArgs) : null;
+                string kwBase = superArgs.Any(x => x.Name != null || x.DoubleStar) ? KwargsCallArgs(baseInit, 1, superArgs, constructorInitializer: true) : null;
                 // CLR constructor initializers require static binding even when a Python argument is dynamic.
                 bool lateBound = superArgs.Any(x => InferType(x.Value) == "dynamic") && superArgs.All(x => !x.Star && !x.DoubleStar);
                 string BaseArgument(Arg arg, int index)

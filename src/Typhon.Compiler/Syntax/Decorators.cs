@@ -50,6 +50,11 @@ namespace Typhon.Compiler.Syntax
 
         static string Root(Expr d) => Name(d)?.Split('.')[0];
 
+        internal static bool IsStringEnumDecorator(Expr expression) =>
+            expression is CallExpr { Args.Count: 1 } decorator &&
+            Name(decorator.Func) is "_simple_enum" or "enum._simple_enum" &&
+            Name(decorator.Args[0].Value) is "StrEnum" or "enum.StrEnum";
+
         public static bool IsCachedProperty(Expr decorator, ModuleAst module)
         {
             if (decorator is NameExpr name)
@@ -108,11 +113,11 @@ namespace Typhon.Compiler.Syntax
                             m.IsCachedProperty = m.Decorators.Any(d => IsCachedProperty(d, module));
                             var python = m.Decorators.Where(d => !IsCachedProperty(d, module) && IsPythonDecorator(d, names)).ToList();
                             if (python.Count == 0) continue;
-                            // @deco on a method, or @staticmethod above it: the class emits the decorated method;
-                            // mixed with @classmethod / @property / Typhon's other decorators: not supported yet
+                            // A single outer descriptor can wrap the result of the Python decorators.
                             var rest = m.Decorators.Where(d => !python.Contains(d)).ToList();
-                            bool staticOutside = rest.Count == 1 && Name(rest[0]) == "staticmethod" && m.Decorators.IndexOf(rest[0]) == 0;
-                            if (rest.Count == 0 || staticOutside)
+                            bool descriptorOutside = rest.Count == 1 && Name(rest[0]) is "staticmethod" or "property" &&
+                                m.Decorators.IndexOf(rest[0]) == 0;
+                            if (rest.Count == 0 || descriptorOutside)
                             {
                                 module.MethodDecorators[m] = python;
                                 m.Decorators = rest;
@@ -122,7 +127,7 @@ namespace Typhon.Compiler.Syntax
                         foreach (var nested in c.Body.OfType<ClassDef>()) Rewrite(new List<Stmt> { nested }, names, module);
                         // a class decorator runs where the class is defined, with the class (registries, markers); its result
                         // must be the class itself (Typhon classes are not rebound)
-                        var classPython = c.Decorators.Where(d => IsPythonDecorator(d, names)).ToList();
+                        var classPython = c.Decorators.Where(d => !IsStringEnumDecorator(d) && IsPythonDecorator(d, names)).ToList();
                         if (classPython.Count > 0)
                         {
                             Expr applied = new NameExpr { Id = c.Name, Line = c.Line, Col = c.Col };

@@ -83,6 +83,39 @@ public sealed class ConformanceTests(ITestOutputHelper output)
         finally { Directory.Delete(dir, recursive: true); }
     }
 
+    [Fact]
+    public void ImportedDeferredConstructor()
+    {
+        string directory = Directory.CreateTempSubdirectory("typhon-imported-constructor-").FullName;
+        try
+        {
+            File.WriteAllText(Path.Combine(directory, "component.ty"), """
+                class Parent:
+                    def __init__(self, value):
+                        self.value = value + self.offset
+
+                class Deferred(Parent):
+                    def __init__(self, value):
+                        self.offset = 4
+                        super().__init__(value)
+                """);
+            string main = Path.Combine(directory, "main.ty");
+            File.WriteAllText(main, """
+                from component import Deferred
+
+                class First:
+                    def __init__(self):
+                        self.ready = True
+
+                print(First().ready, Deferred(7).value)
+                """);
+            var result = Suite.Run("dotnet", [Suite.Cli, "run", main], TimeSpan.FromMinutes(2));
+            Assert.True(result.ExitCode == 0, result.StdErr);
+            Assert.Equal("True 11\n", Suite.Normalize(result.StdOut));
+        }
+        finally { Directory.Delete(directory, recursive: true); }
+    }
+
     /// <summary>
     /// #:pylib: modules Typhon's runtime lacks (graphlib, colorsys, shlex, quopri) are compiled from CPython's standard library source, with
     /// the program, and print what CPython prints.
@@ -373,18 +406,18 @@ public sealed class ConformanceTests(ITestOutputHelper output)
         finally { Directory.Delete(dir, recursive: true); }
     }
 
-    /// <summary>A package run through runpy resolves relative imports using the executed code's package.</summary>
+    /// <summary>A package run through runpy resolves relative and absolute imports from source.</summary>
     [Fact]
-    public void PyLibRunpyRelativeImports()
+    public void PyLibRunpySourceImports()
     {
         string? python = Suite.FindPython(out string why);
-        if (python == null) { Console.WriteLine($"PyLibRunpyRelativeImports skipped: {why}"); return; }
+        if (python == null) { Console.WriteLine($"PyLibRunpySourceImports skipped: {why}"); return; }
         var oracle = Suite.Run(python,
             ["-c", "import sys, sysconfig; print(sysconfig.get_path('stdlib') if sys.version_info[:2] == (3, 15) else '')"],
             TimeSpan.FromSeconds(30));
         Assert.True(oracle.ExitCode == 0, oracle.StdErr);
         string lib = oracle.StdOut.Trim();
-        if (lib.Length == 0) { Console.WriteLine("PyLibRunpyRelativeImports requires the CPython 3.15 library"); return; }
+        if (lib.Length == 0) { Console.WriteLine("PyLibRunpySourceImports requires the CPython 3.15 library"); return; }
 
         string dir = Directory.CreateTempSubdirectory("typhon-runpy-relative-").FullName;
         try
@@ -393,7 +426,10 @@ public sealed class ConformanceTests(ITestOutputHelper output)
             Directory.CreateDirectory(package);
             File.WriteAllText(Path.Combine(package, "__init__.py"), "initialized = 'parent initialized'\n");
             File.WriteAllText(Path.Combine(package, "helper.py"), "value = 42\n");
+            File.WriteAllText(Path.Combine(dir, "loose_helper.py"), "def bump(value):\n    return value + 3\n");
             File.WriteAllText(Path.Combine(package, "__main__.py"), """
+                import math, loose_helper
+                from loose_helper import bump
                 from .helper import value
                 from . import helper
 
@@ -403,6 +439,7 @@ public sealed class ConformanceTests(ITestOutputHelper output)
 
                 via_parent = helper.value + 2
                 via_function = local_import()
+                absolute_value = math.floor(2.9) + bump(value)
                 """);
             string script = Path.Combine(dir, "probe.ty");
             File.WriteAllText(script, $"#:pylib {lib}\n" + """
@@ -414,6 +451,83 @@ public sealed class ConformanceTests(ITestOutputHelper output)
                 print(getattr(sys.modules["source_package"], "initialized"))
                 print(getattr(sys.modules["source_package.helper"], "value"))
                 print(result["via_parent"], result["via_function"], sys.modules["source_package.helper"] is result["helper"])
+                print(result["absolute_value"], sys.modules["loose_helper"] is result["loose_helper"])
+                """);
+            var expected = Suite.Run(python, [script], TimeSpan.FromMinutes(1));
+            Assert.True(expected.ExitCode == 0, $"CPython exit code {expected.ExitCode}\n{expected.StdErr}");
+            var run = Suite.Run("dotnet", [Suite.Cli, "run", script, "--no-cache", "--no-server"], TimeSpan.FromMinutes(3));
+            Assert.True(run.ExitCode == 0, $"exit code {run.ExitCode}\n{run.StdErr}");
+            Assert.Equal(Suite.Normalize(expected.StdOut), Suite.Normalize(run.StdOut));
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    /// <summary>Check the original pkgutil source against real package files.</summary>
+    [Fact]
+    public void PyLibPkgutilSource()
+    {
+        string? python = Suite.FindPython(out string why);
+        if (python == null) { Console.WriteLine($"PyLibPkgutilSource skipped: {why}"); return; }
+        var oracle = Suite.Run(python,
+            ["-c", "import sys, sysconfig; print(sysconfig.get_path('stdlib') if sys.version_info[:2] == (3, 15) else '')"],
+            TimeSpan.FromSeconds(30));
+        Assert.True(oracle.ExitCode == 0, oracle.StdErr);
+        string lib = oracle.StdOut.Trim();
+        if (lib.Length == 0) { Console.WriteLine("PyLibPkgutilSource requires the CPython 3.15 library"); return; }
+
+        string dir = Directory.CreateTempSubdirectory("typhon-pkgutil-").FullName;
+        try
+        {
+            string source = Path.Combine(lib, "pkgutil.py");
+            File.Copy(source, Path.Combine(dir, "raw_pkgutil.py"));
+            File.Copy(source, Path.Combine(dir, "raw_pkgutil.ty"));
+            string entries = Path.Combine(dir, "entries");
+            string package = Path.Combine(entries, "beta");
+            Directory.CreateDirectory(package);
+            File.WriteAllText(Path.Combine(entries, "alpha.py"), "answer = 19\n");
+            File.WriteAllText(Path.Combine(package, "__init__.py"), "fact = 42\n");
+            File.WriteAllText(Path.Combine(package, "child.py"), "item = 3\n");
+            File.WriteAllText(Path.Combine(package, "message.txt"), "beta data");
+            using (var archive = System.IO.Compression.ZipFile.Open(Path.Combine(dir, "entries.zip"), System.IO.Compression.ZipArchiveMode.Create))
+            {
+                void WriteMember(string name, byte[] data)
+                {
+                    using var member = archive.CreateEntry(name).Open();
+                    member.Write(data);
+                }
+                WriteMember("zip_leaf.py", "value = 31\n"u8.ToArray());
+                WriteMember("zip_parent/__init__.py", "answer = 43\n"u8.ToArray());
+                WriteMember("zip_parent/child.py", "item = 5\n"u8.ToArray());
+                WriteMember("zip_parent/message.bin", "zip\0data"u8.ToArray());
+                WriteMember("zip_namespace/child.py", "item = 7\n"u8.ToArray());
+            }
+            string script = Path.Combine(dir, "probe.ty");
+            File.WriteAllText(script, """
+                import os
+                import raw_pkgutil
+                import sys
+
+                entries = os.path.join(os.path.dirname(__file__), "entries")
+                sys.path.insert(0, entries)
+                try:
+                    shown = list(raw_pkgutil.iter_modules([entries], "pre."))
+                    print(sorted((item.name, item.ispkg) for item in shown))
+                    print(type(shown[0].module_finder).__name__, raw_pkgutil.get_importer(entries) is shown[0].module_finder)
+                    print(sorted((item.name, item.ispkg) for item in raw_pkgutil.walk_packages([entries])))
+                    print(raw_pkgutil.resolve_name("alpha:answer"), raw_pkgutil.resolve_name("beta:fact", strict=True))
+                    print(raw_pkgutil.get_data("beta", "message.txt"))
+                finally:
+                    sys.path.remove(entries)
+
+                archive = os.path.join(os.path.dirname(__file__), "entries.zip")
+                sys.path.insert(0, archive)
+                try:
+                    print([(item.name, item.ispkg) for item in raw_pkgutil.iter_modules([archive], "pre.")])
+                    print([(item.name, item.ispkg) for item in raw_pkgutil.walk_packages([archive])])
+                    print(raw_pkgutil.resolve_name("zip_leaf:value"), raw_pkgutil.resolve_name("zip_parent:answer"))
+                    print(raw_pkgutil.get_data("zip_parent", "message.bin"))
+                finally:
+                    sys.path.remove(archive)
                 """);
             var expected = Suite.Run(python, [script], TimeSpan.FromMinutes(1));
             Assert.True(expected.ExitCode == 0, $"CPython exit code {expected.ExitCode}\n{expected.StdErr}");
@@ -1057,6 +1171,7 @@ public sealed class ConformanceTests(ITestOutputHelper output)
     /// </summary>
     [Theory]
     [MemberData(nameof(UntypedCases))]
+    [InlineData("optional_field_inference")]
     public void UntypedCompilesStrict(string name)
     {
         var run = Suite.Run("dotnet", [Suite.Cli, "check", "--strict", Suite.CasePath(name)], TimeSpan.FromMinutes(2));

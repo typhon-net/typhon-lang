@@ -1,0 +1,10 @@
+['before', 'value', 'key', 'left', 'middle', 'right', 'shared', 'condition', 'branch', 'last']
+left middle right
+shared shared
+called
+True
+True
+3 branch
+bound
+True
+[]

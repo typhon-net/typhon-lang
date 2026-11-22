@@ -127,6 +127,34 @@ public sealed class DotNetInteropTests
             "guest 3 untitled 0.5\n", stdout);
     }
 
+    [Fact]
+    public void AsyncMethodAssignmentsKeepInferredTaskFields()
+    {
+        const string source = """
+            from System.Threading.Tasks import Task
+
+            class Worker:
+                def __init__(self) -> None:
+                    self.running = Task.CompletedTask
+
+                async def run(self) -> None:
+                    await Task.CompletedTask
+
+                def start(self) -> None:
+                    self.running = self.run()
+
+            def identity(value):
+                return value
+
+            w = Worker()
+            w.start()
+            print(identity(w.running) is not None)
+            """;
+        string stdout = RunStrict(source, out int exit, out string stderr);
+        Assert.True(exit == 0, stderr);
+        Assert.Equal("True\n", stdout);
+    }
+
     static string RunStrict(string source, out int exitCode, out string stdErr)
     {
         string dir = Path.Combine(Suite.RepoRoot, "artifacts", "interop-tests", Guid.NewGuid().ToString("N")[..8]);

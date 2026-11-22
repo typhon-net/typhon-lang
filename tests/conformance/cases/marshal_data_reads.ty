@@ -1,0 +1,13 @@
+from io import BytesIO
+import marshal
+
+# A CPython marshal version 5 payload with shared and recursive records.
+payload = bytes.fromhex("fbda06736861726564db02000000f402000000c3a9a902e9070000004eda05616c6961737202000000da056379636c65db010000007208000000da056c61726765ec0500000007000000000000000200da0474696d65e7000000000000f23fda056279746573f30200000000ff30")
+stream = BytesIO(payload + payload)
+for _ in range(2):
+    record = marshal.load(stream)
+    print(record["alias"] is record["shared"], record["cycle"][0] is record["cycle"])
+    print(record["shared"], record["large"], record["time"], record["bytes"])
+print(stream.read() == b"")
+roundtrip = marshal.loads(marshal.dumps(("town", 4, 0.5)))
+print(roundtrip)

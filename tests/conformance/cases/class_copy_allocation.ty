@@ -1,0 +1,18 @@
+class Message:
+    def __init__(self, content: str):
+        self.content = content
+        self.prefix = self.suffix = None
+
+    def copy(self):
+        cls = self.__class__
+        other = cls.__new__(cls)
+        other.content = self.content
+        other.prefix = self.prefix
+        other.suffix = self.suffix
+        return other
+
+message = Message('original')
+copy = message.copy()
+copy.content = 'copy'
+print(message.content, copy.content)
+print(message.prefix, copy.suffix, type(copy).__name__)

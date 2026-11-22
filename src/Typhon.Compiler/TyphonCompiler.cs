@@ -50,6 +50,8 @@ namespace Typhon.Compiler
         public readonly HashSet<string> Functions = new HashSet<string>();
         public readonly HashSet<string> Globals = new HashSet<string>();
         internal readonly HashSet<string> ConditionalGlobals = new HashSet<string>();
+        /// <summary>The source changes its module namespace through globals()[key].</summary>
+        internal bool WritesModuleGlobals;
         /// <summary>Module-level type aliases: EdgeT = tuple[int, int], Matrix = list[list[float]], X: TypeAlias = ...</summary>
         public readonly Dictionary<string, Expr> TypeAliases = new Dictionary<string, Expr>();
         public readonly List<TyDiagnostic> ParseDiagnostics = new List<TyDiagnostic>();
@@ -130,6 +132,21 @@ namespace Typhon.Compiler
             new Dictionary<Syntax.ClassDef, List<(Syntax.ClassDef, ModuleInfo)>>();
 
         public ModuleInfo FindModule(string dotted) => dotted != null && Modules.TryGetValue(dotted, out var m) ? m : null;
+
+        Dictionary<ClassDef, ModuleInfo> _classModules;
+
+        internal ModuleInfo DeclaringModule(ClassDef cls)
+        {
+            if (_classModules == null)
+            {
+                _classModules = new Dictionary<ClassDef, ModuleInfo>();
+                foreach (var owner in Modules.Values)
+                    foreach (var declaration in owner.Classes.Values)
+                        _classModules[declaration] = owner;
+            }
+            return _classModules.TryGetValue(cls, out var module) ? module : null;
+        }
+
 
         /// <summary>Find a Typhon class by simple name across modules (used for base-class lookups).</summary>
         public bool TryFindClass(ModuleInfo module, string className, out ClassDef cls, out ModuleInfo owner)
@@ -275,7 +292,7 @@ namespace Typhon.Compiler
                     case AnnAssignStmt a: if (a.Target is NameExpr an) info.Globals.Add(an.Id); break;
                 }
             }
-            var branches = info.Ast.Body.OfType<IfStmt>().Cast<Stmt>().ToList();
+            var branches = info.Ast.Body.Where(s => s is IfStmt or TryStmt).ToList();
             if (branches.Count > 0)
             {
                 var locals = LocalsAnalyzer.Analyze(branches, Enumerable.Empty<string>(), null);
@@ -293,6 +310,16 @@ namespace Typhon.Compiler
                 }
                 info.Globals.UnionWith(info.ConditionalGlobals);
             }
+            bool WritesGlobals(Expr target) => target is SubscriptExpr
+                { Target: CallExpr { Func: NameExpr { Id: "globals" }, Args.Count: 0 } };
+            AstWalker.VisitAll(info.Ast.Body, statement =>
+            {
+                if (statement is AssignStmt assign && assign.Targets.Any(WritesGlobals) ||
+                    statement is AnnAssignStmt ann && WritesGlobals(ann.Target) ||
+                    statement is AugAssignStmt aug && WritesGlobals(aug.Target) ||
+                    statement is DelStmt del && del.Targets.Any(WritesGlobals))
+                    info.WritesModuleGlobals = true;
+            });
             return info;
         }
 

@@ -14,7 +14,7 @@ namespace Typhon.Stdlib
     using System.Text.RegularExpressions;
     using Typhon.Runtime;
 
-    internal static class tokenize
+    internal static partial class tokenize
     {
         static readonly Regex Cookie = new Regex(@"\A[ \t\f]*#.*?coding[=:][ \t]*([-\w.]+)", RegexOptions.CultureInvariant | RegexOptions.ECMAScript);
         static readonly Regex CommentOrBlank = new Regex(@"\A[ \t\f]*(?:#|[\r\n]|\z)", RegexOptions.CultureInvariant);
@@ -97,10 +97,25 @@ namespace Typhon.Stdlib
         }
     }
 
-    internal static class importlib
+    internal static partial class importlib
     {
-        internal static class machinery
+        public static dynamic import_module(string name, string? package = null)
         {
+            if (name.StartsWith('.'))
+            {
+                if (string.IsNullOrEmpty(package)) throw new InvalidCastException("the 'package' argument is required to perform a relative import");
+                int level = 0;
+                while (level < name.Length && name[level] == '.') level++;
+                name = SourceImport.ResolveRelative(name[level..], package, level);
+            }
+            return SourceImport.ImportModule(name);
+        }
+
+        internal static partial class machinery
+        {
+            public static readonly List<string> SOURCE_SUFFIXES = OperatingSystem.IsWindows() ? new() { ".py", ".pyw" } : new() { ".py" };
+            public static readonly List<string> BYTECODE_SUFFIXES = new() { ".pyc" };
+
             internal sealed class ModuleSpec : IPyRepr, IEquatable<ModuleSpec>
             {
                 public string name;
@@ -153,8 +168,15 @@ namespace Typhon.Stdlib
             }
         }
 
+        internal static class _bootstrap
+        {
+            public static object _load(machinery.ModuleSpec spec) => SourceImport.Load(spec);
+        }
+
         internal static class util
         {
+            public static readonly PyBytes MAGIC_NUMBER = new PyBytes(new byte[] { 0x52, 0x0e, 0x0d, 0x0a });
+
             public static machinery.ModuleSpec? find_spec(string name, string? package = null)
             {
                 if (name.StartsWith('.'))
@@ -164,20 +186,48 @@ namespace Typhon.Stdlib
                     while (level < name.Length && name[level] == '.') level++;
                     name = SourceImport.ResolveRelative(name[level..], package, level);
                 }
-                if (name.Length == 0 || name.IndexOfAny(new[] { '/', '\\', '\0' }) >= 0 || name.Split('.').Any(s => s.Length == 0)) return null;
-                if (sys_.modules.TryGetValue(name, out var module))
-                {
-                    if (module == null) return null;
-                    if ((object?)Builtins.getattr(module, "__spec__", null) is machinery.ModuleSpec known) return known;
-                    throw new ArgumentException(Builtins.hasattr(module, "__spec__") ? $"{name}.__spec__ is None" : $"{name}.__spec__ is not set");
-                }
+                if (!IsModuleName(name)) return null;
+                if (TryLoadedSpec(name, out var spec)) return (machinery.ModuleSpec?)spec;
                 int parentDelimiter = name.LastIndexOf('.');
-                if (parentDelimiter < 0) return SourceImport.Find(name, sys_.path);
+                if (parentDelimiter < 0) return FindOnPath(name, null);
                 string parent = name[..parentDelimiter];
                 object owner = SourceImport.ImportModule(parent);
                 object? search = Builtins.getattr(owner, "__path__", null);
                 if (search == null) throw new ModuleNotFoundError($"__path__ attribute not found on '{parent}' while trying to find '{name}'", name);
-                return SourceImport.Find(name, Builtins.__iter_dyn(search).Cast<string>());
+                return FindOnPath(name, search);
+            }
+
+            public static dynamic? _find_spec_from_path(string name, object? path = null)
+            {
+                if (TryLoadedSpec(name, out var spec)) return spec;
+                return IsModuleName(name) ? FindOnPath(name, path) : null;
+            }
+
+            static bool IsModuleName(string name) => name.Length > 0 &&
+                name.IndexOfAny(new[] { '/', '\\', '\0' }) < 0 && name.Split('.').All(part => part.Length > 0);
+
+            static bool TryLoadedSpec(string name, out object? spec)
+            {
+                spec = null;
+                if (sys_.modules.TryGetValue(name, out var module))
+                {
+                    if (module == null) return true;
+                    spec = Builtins.getattr(module, "__spec__", null);
+                    if (spec == null) throw new ArgumentException(Builtins.hasattr(module, "__spec__") ? $"{name}.__spec__ is None" : $"{name}.__spec__ is not set");
+                    return true;
+                }
+                return false;
+            }
+
+            static machinery.ModuleSpec? FindOnPath(string name, object? path)
+            {
+                foreach (object? finder in sys_.meta_path.ToArray())
+                {
+                    object? find = Builtins.getattr(finder, "find_spec", null);
+                    if (find != null && (object?)Builtins.__invoke(find, new object?[] { name, path, null }) is machinery.ModuleSpec spec)
+                        return spec;
+                }
+                return SourceImport.Find(name, path == null ? sys_.path : Builtins.__iter_dyn(path).OfType<string>());
             }
 
             public static dynamic module_from_spec(machinery.ModuleSpec spec)

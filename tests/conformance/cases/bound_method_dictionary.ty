@@ -1,0 +1,23 @@
+class Dispatcher:
+    def __init__(self, base: int):
+        self.base = base
+        self.operations = {'add': self.add, 'subtract': self.subtract}
+
+    def add(self, value: int) -> int:
+        return self.base + value
+
+    def subtract(self, value: int) -> int:
+        return self.base - value
+
+    def dispatch(self, operation: str, value: int):
+        handler = self.operations[operation]
+        return handler(value)
+
+first = Dispatcher(10)
+second = Dispatcher(20)
+print(first.dispatch('add', 3), second.dispatch('subtract', 3))
+first.base = 100
+print(first.dispatch('subtract', 4), second.dispatch('add', 4))
+
+operations = (first.add, second.subtract)
+print(operations[0](2), operations[1](2))

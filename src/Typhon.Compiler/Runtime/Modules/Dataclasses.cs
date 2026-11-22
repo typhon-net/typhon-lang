@@ -9,6 +9,31 @@
 #nullable enable
 #pragma warning disable
 
+namespace Typhon.Runtime
+{
+    [System.AttributeUsage(System.AttributeTargets.Property | System.AttributeTargets.Field, Inherited = false)]
+    internal sealed class PyDataclassReprExcludedAttribute : System.Attribute { }
+
+    [System.AttributeUsage(System.AttributeTargets.Method, Inherited = false)]
+    internal sealed class PyDataclassReprAttribute(string body) : System.Attribute
+    {
+        public string Body { get; } = body;
+    }
+
+    internal static partial class Builtins
+    {
+        [System.ThreadStatic] static System.Collections.Generic.HashSet<object>? _dataclassReprInstances;
+
+        public static string __dataclass_repr(object instance, System.Func<string> repr)
+        {
+            var active = _dataclassReprInstances ??= new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+            if (!active.Add(instance)) return "...";
+            try { return repr(); }
+            finally { active.Remove(instance); }
+        }
+    }
+}
+
 namespace Typhon.Stdlib
 {
     using System;
@@ -21,6 +46,11 @@ namespace Typhon.Stdlib
 
     internal static class dataclasses
     {
+        internal sealed class _DataclassParams(bool repr)
+        {
+            public bool repr { get; } = repr;
+        }
+
         /// <summary>A dataclass's fields in order (null if the type is not a dataclass).</summary>
         static string[]? FieldNames(Type t) => t.GetField("__dataclass_fields__", BindingFlags.Public | BindingFlags.Static)?.GetValue(null) as string[];
 
@@ -68,7 +98,13 @@ namespace Typhon.Stdlib
         {
             public readonly string name;
             public readonly Type type;
-            public Field(string name, Type type) { this.name = name; this.type = type; }
+            public readonly bool repr;
+            public Field(string name, Type type, bool repr = true)
+            {
+                this.name = name;
+                this.type = type;
+                this.repr = repr;
+            }
             public string __repr__() => $"Field(name={Builtins.repr(name)})";
             public override string ToString() => __repr__();
         }
@@ -77,7 +113,12 @@ namespace Typhon.Stdlib
         {
             var t = obj as Type ?? obj.GetType();
             var names = FieldNames(t) ?? throw new InvalidCastException("must be called with a dataclass type or instance");
-            return new PyTuple<Field>(names.Select(n => new Field(n, t.GetProperty(n)?.PropertyType ?? typeof(object))).ToArray());
+            return new PyTuple<Field>(names.Select(name =>
+            {
+                var property = t.GetProperty(name);
+                bool include = property?.IsDefined(typeof(PyDataclassReprExcludedAttribute), false) != true;
+                return new Field(name, property?.PropertyType ?? typeof(object), include);
+            }).ToArray());
         }
 
         static readonly MethodInfo Clone = typeof(object).GetMethod("MemberwiseClone", BindingFlags.NonPublic | BindingFlags.Instance)!;

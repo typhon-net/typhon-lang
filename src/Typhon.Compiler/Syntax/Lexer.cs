@@ -40,13 +40,6 @@ namespace Typhon.Compiler.Syntax
     /// <summary>Python-style tokenizer with INDENT/DEDENT and implicit line joining.</summary>
     public sealed class Lexer
     {
-        static readonly string[] Ops =
-        {
-            "**=", "//=", ">>=", "<<=", "...",
-            "->", "**", "//", "<<", ">>", "<=", ">=", "==", "!=", "<>", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "@=", ":=",
-            "+", "-", "*", "/", "%", "@", "&", "|", "^", "~", "<", ">", "(", ")", "[", "]", "{", "}", ",", ":", ".", ";", "=",
-        };
-
         readonly string _src;
         readonly int _lineOffset;
         int _pos;
@@ -176,12 +169,7 @@ namespace Typhon.Compiler.Syntax
             }
         }
 
-        string MatchOp()
-        {
-            foreach (var op in Ops)
-                if (string.CompareOrdinal(_src, _pos, op, 0, op.Length) == 0) return op;
-            return null;
-        }
+        string MatchOp() => Typhon.Shared.PythonLexical.MatchOperator(_src, _pos, legacyNotEqual: true);
 
         void LexNumber()
         {

@@ -1,0 +1,27 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+from functools import singledispatch
+
+@singledispatch
+def describe(value):
+    return "fallback"
+
+int_type = type(0)
+
+@describe.register(int_type)
+def int_value(value) -> str:
+    return "integer"
+
+class Label:
+    pass
+
+class Tagged(Label):
+    pass
+
+def labeled(value: Label) -> str:
+    return "label"
+
+describe.register(Label, labeled)
+print(describe("text"), describe(7), describe(True), describe(Tagged()))
+print(describe.dispatch(int_type).__name__, int_type in describe.registry)

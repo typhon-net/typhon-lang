@@ -60,6 +60,9 @@ namespace Typhon.Compiler.Emit
         public bool IsSealed;
         public readonly HashSet<string> Members = new HashSet<string>();
         public readonly Dictionary<string, string> FieldTypes = new Dictionary<string, string>();
+        public readonly Dictionary<string, string> LateClassSlots = new Dictionary<string, string>();
+        public readonly Dictionary<string, Expr> InferredFieldInitializers = new Dictionary<string, Expr>();
+        public readonly Dictionary<FunctionDef, string> ClassBodyImplementations = new Dictionary<FunctionDef, string>();
         public readonly HashSet<string> TypeParams = new HashSet<string>();
         public string IterElementType;
         public readonly Dictionary<string, string> MethodReturnTypes = new Dictionary<string, string>();

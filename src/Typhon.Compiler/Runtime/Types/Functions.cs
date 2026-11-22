@@ -58,7 +58,7 @@ namespace Typhon.Runtime
             // a class's method (getattr(Cls, "m")): a static method, or an instance method with self as the first argument
             var type = _target as Type ?? _target.GetType();
             var flags = _visibility | (_target is Type ? System.Reflection.BindingFlags.Static : System.Reflection.BindingFlags.Instance);
-            var methods = type.GetMethods(flags).Where(m => m.Name == _name).ToList();
+            var methods = type.GetMethods(flags).Where(IsPythonMethod).ToList();
             if (_target is Type && args.Length > 0 && args[0] != null && type.IsInstanceOfType(args[0]) &&
                 methods.Count == 0)
                 return new PyBoundMethod(args[0]!, _name, includeNonPublic: IncludesNonPublic).__call__(args.Skip(1).ToArray());
@@ -93,6 +93,9 @@ namespace Typhon.Runtime
             }
             throw new InvalidCastException($"{_name}() does not take {args.Length} arguments");
         }
+        bool IsPythonMethod(System.Reflection.MethodInfo method) =>
+            method.Name == _name && !method.IsDefined(typeof(PyOverrideBridgeAttribute), false);
+
         static object? Convert(object? v, Type t) => v == null || t.IsInstanceOfType(v) || t == typeof(object) ? v : System.Convert.ChangeType(v, Nullable.GetUnderlyingType(t) ?? t, CultureInfo.InvariantCulture);
 
         /// <summary>obj.m(x, **kwargs): the method whose parameters take these arguments, positional ones first, then by name.</summary>
@@ -101,7 +104,7 @@ namespace Typhon.Runtime
             if (kw == null || kw.Count == 0) return __call__(args);
             var type = _target as Type ?? _target.GetType();
             var flags = _visibility | (_target is Type ? System.Reflection.BindingFlags.Static : System.Reflection.BindingFlags.Instance);
-            var candidates = type.GetMethods(flags).Where(m => m.Name == _name)
+            var candidates = type.GetMethods(flags).Where(IsPythonMethod)
                 .Select(m => CloseMethod(m, args, kw)).OfType<System.Reflection.MethodInfo>().ToList();
             var best = PyArgs.Best(candidates, args, kw, out var call) ?? throw PyArgs.NoFit(_name, kw, candidates);
             return Invoke(best, call);
@@ -295,6 +298,11 @@ namespace Typhon.Runtime
         /// </summary>
         static object Construct(Type t, object?[] args)
         {
+            if (typeof(PyStrEnum).IsAssignableFrom(t))
+            {
+                if (args.Length != 1) throw new InvalidCastException($"{t.Name}() expected one value");
+                return PyStrEnum.Lookup(t, args[0]);
+            }
             if (t == typeof(frozendict<object, object>)) return ConstructFrozenDict(args, null);
             if (t == typeof(OrderedDictionary<object, object>)) return dict(ConstructFrozenDict(args, null, "dict"));
             if (t == typeof(List<object>) || t == typeof(HashSet<object>) || t == typeof(frozenset<object>) || t == typeof(ITuple))
@@ -412,6 +420,8 @@ namespace Typhon.Runtime
             if (t == typeof(object)) return "object";
             if (t == typeof(Typhon.Stdlib.types.UnionType)) return "Union";
             if (t == typeof(Typhon.Stdlib.types.BuiltinFunctionType)) return "builtin_function_or_method";
+            if (t == typeof(Typhon.Stdlib.types.WrapperDescriptorType)) return "wrapper_descriptor";
+            if (PyDictViews.Name(t) is string view) return view;
             if (t == typeof(Type)) return "type";
             if (t == typeof(PyRange)) return "range";
             if (t == typeof(PySlice)) return "slice";
@@ -557,6 +567,10 @@ namespace Typhon.Runtime
             _ => new PyBoundMethod(f, "__call__").__call__(args),
         };
     }
+
+    /// <summary>A CLR virtual slot used to forward to a different Python signature.</summary>
+    [AttributeUsage(AttributeTargets.Method)]
+    internal sealed class PyOverrideBridgeAttribute : Attribute { }
 
     /// <summary>Marks *args when a following parameter prevents the array from being declared as C# params.</summary>
     [AttributeUsage(AttributeTargets.Parameter)]

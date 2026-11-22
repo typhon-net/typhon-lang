@@ -28,10 +28,12 @@ namespace Typhon.Stdlib
                           UNICODE = 32, U = 32, VERBOSE = 64, X = 64, DEBUG = 128, ASCII = 256, A = 256;
 
         /// <summary>re.error: an invalid pattern (a ValueError-like exception).</summary>
-        internal sealed class error : ArgumentException
+        public static Type error => typeof(PatternError);
+
+        internal sealed class PatternError : ArgumentException
         {
             public readonly string msg; public readonly string? pattern; public readonly long? pos;
-            public error(string msg, string? pattern = null, long? pos = null) : base(msg) { this.msg = msg; this.pattern = pattern; this.pos = pos; }
+            public PatternError(string msg, string? pattern = null, long? pos = null) : base(msg) { this.msg = msg; this.pattern = pattern; this.pos = pos; }
         }
 
         static readonly Dictionary<(string, long), Pattern> Cache = new Dictionary<(string, long), Pattern>();
@@ -176,9 +178,9 @@ namespace Typhon.Stdlib
                     if ((f & VERBOSE) != 0) _options |= RegexOptions.IgnorePatternWhitespace;
                     _search = new NetRegex(_translated, _options);
                 }
-                catch (ArgumentException e) when (e is not error)
+                catch (ArgumentException e) when (e is not PatternError)
                 {
-                    throw new error(e.Message, pattern);
+                    throw new PatternError(e.Message, pattern);
                 }
             }
 
@@ -445,10 +447,10 @@ namespace Typhon.Stdlib
                     if (e == 'g' && i + 1 < repl.Length && repl[i + 1] == '<')
                     {
                         int close = repl.IndexOf('>', i + 2);
-                        if (close < 0) throw new error("missing >, unterminated name", repl, i);
+                        if (close < 0) throw new PatternError("missing >, unterminated name", repl, i);
                         string name = repl.Substring(i + 2, close - i - 2);
                         int g = int.TryParse(name, out var num) ? num : p.groupindex.TryGetValue(name, out var gi) ? (int)gi : throw new IndexOutOfRangeException($"unknown group name '{name}'");
-                        if (g > p.groups) throw new error($"invalid group reference {g}", repl, i);
+                        if (g > p.groups) throw new PatternError($"invalid group reference {g}", repl, i);
                         Flush(); t._parts.Add(g);
                         i = close;
                     }
@@ -456,7 +458,7 @@ namespace Typhon.Stdlib
                     {
                         int g = e - '0';
                         if (i + 1 < repl.Length && char.IsAsciiDigit(repl[i + 1]) && g * 10 + (repl[i + 1] - '0') <= p.groups) g = g * 10 + (repl[++i] - '0');
-                        if (g > p.groups) throw new error($"invalid group reference {g}", repl, i);
+                        if (g > p.groups) throw new PatternError($"invalid group reference {g}", repl, i);
                         Flush(); t._parts.Add(g);
                     }
                     else
@@ -472,7 +474,7 @@ namespace Typhon.Stdlib
                             case 'b': lit.Append('\b'); break;
                             case '\\': lit.Append('\\'); break;
                             default:
-                                if (char.IsAsciiLetter(e)) throw new error($"bad escape \\{e}", repl, i - 1);
+                                if (char.IsAsciiLetter(e)) throw new PatternError($"bad escape \\{e}", repl, i - 1);
                                 lit.Append('\\').Append(e); // \& and other unknown non-letter escapes stay as written
                                 break;
                         }
@@ -583,14 +585,14 @@ namespace Typhon.Stdlib
                                 int close = i + 3;
                                 while (close < p.Length && p[close] != ')')
                                     close += p[close] == '\\' && close + 1 < p.Length ? 2 : 1;
-                                if (close == p.Length) throw new error("missing ), unterminated comment", p, i);
+                                if (close == p.Length) throw new PatternError("missing ), unterminated comment", p, i);
                                 sb.Append("(?#)");
                                 i = close;
                             }
                             else if (i + 2 < p.Length && p[i + 2] == 'P' && i + 3 < p.Length && p[i + 3] == '<')
                             {
                                 int close = p.IndexOf('>', i + 4);
-                                if (close < 0) throw new error("missing >, unterminated name", p, i);
+                                if (close < 0) throw new PatternError("missing >, unterminated name", p, i);
                                 names[p.Substring(i + 4, close - i - 4)] = ++groupCount;
                                 sb.Append('(');
                                 i = close;
@@ -598,9 +600,9 @@ namespace Typhon.Stdlib
                             else if (i + 2 < p.Length && p[i + 2] == 'P' && i + 3 < p.Length && p[i + 3] == '=')
                             {
                                 int close = p.IndexOf(')', i + 4);
-                                if (close < 0) throw new error("missing ), unterminated name", p, i);
+                                if (close < 0) throw new PatternError("missing ), unterminated name", p, i);
                                 string name = p.Substring(i + 4, close - i - 4);
-                                if (!names.TryGetValue(name, out var g)) throw new error($"unknown group name '{name}'", p, i);
+                                if (!names.TryGetValue(name, out var g)) throw new PatternError($"unknown group name '{name}'", p, i);
                                 sb.Append(@"\k<").Append(g).Append('>');
                                 i = close;
                             }

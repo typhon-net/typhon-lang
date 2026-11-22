@@ -118,7 +118,14 @@ namespace Typhon.Compiler.Emit
                 case MatchStmt m: EmitMatch(m); break;
                 case TryStmt t: EmitTry(t); break;
                 case WithStmt w: EmitWith(w); break;
+                case FunctionDef f when _classFieldInitializer && _cls.ClassBodyImplementations.TryGetValue(f, out string implementation):
+                    _w.Line($"{Esc(f.Name)} = global::Typhon.Runtime.PyClassDescriptors.ClassBodyFunction(" +
+                        $"typeof({_cls.CsSelfType}), {CsString(f.Name)}, {CsString(implementation)});");
+                    break;
                 case FunctionDef f: EmitLocalFunction(f); break;
+                case ClassBodyInitialization initialization:
+                    _w.Line($"global::System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(typeof({Esc(initialization.Definition.Name)}).TypeHandle);");
+                    break;
                 case ClassDef c: EmitLocalDataClass(c); break;
                 default: Unsupported(s, s.GetType().Name); break;
             }
@@ -135,7 +142,7 @@ namespace Typhon.Compiler.Emit
             // statement, not a conditional expression, chooses between the runtime's method and the object's own
             // (also on an attribute of a value whose type is not known: late-bound in C# then too, pred_info.successors.append(x))
             if (e.Value is CallExpr dc && dc.Func is AttributeExpr dm &&
-                (InferType(dm.Target) == "dynamic" || InferType(dm.Target) == null && dm.Target is AttributeExpr dmt && InferType(dmt.Target) == null && !(dmt.Target is NameExpr dts && dts.Id == "self")) &&
+                LatePythonMethodReceiver(dm.Target, statement: true) &&
                 !(dm.Target is NameExpr dmn && (ModuleRef(dmn.Id) != null || _dotnetAliases.ContainsKey(dmn.Id) || TryResolveType(dmn.Id, 0, out _, out _))) &&
                 !(dm.Target is CallExpr dsc && dsc.Func is NameExpr dsn && dsn.Id == "super") && !dc.Args.Any(a => a.Star || a.DoubleStar) && IsRuntimeMethod(dm.Name, dc.Args))
             {
@@ -184,6 +191,24 @@ namespace Typhon.Compiler.Emit
         }
 
 
+        bool KnownNoneResult(CallExpr call)
+        {
+            if (TryTypeExpr(call.Func, out _) || TyphonCallee(call, out _) is not FunctionDef callee || callee.IsAsync ||
+                _p.Modules.Values.Any(module => module.Ast?.MethodDecorators.ContainsKey(callee) == true) ||
+                AstWalker.ContainsOutsideNestedScopes(callee.Body, node => node is YieldExpr))
+                return false;
+            if (call.Func is AttributeExpr attribute)
+            {
+                if (InstanceMethodMayBeShadowed(attribute)) return false;
+                var receiver = attribute.Target is NameExpr { Id: "self" } ? _cls?.Def :
+                    ClassKeyOfType(InferType(attribute.Target), out _) is string key ? ClassDefOfKey(key) : null;
+                if (receiver != null && FamilyReturnsValue(receiver, callee.Name)) return false;
+            }
+            return IsNone(callee.Returns) || callee.Returns == null &&
+                !AstWalker.ContainsOutsideNestedScopes(callee.Body, node => node is ReturnStmt { Value: not null } result && !IsNone(result.Value)) &&
+                (CanFallThrough(callee.Body) || AstWalker.ContainsOutsideNestedScopes(callee.Body, node => node is ReturnStmt));
+        }
+
         void EmitReturn(ReturnStmt r)
         {
             if (_scope != null && _scope.IsGenerator)
@@ -204,8 +229,10 @@ namespace Typhon.Compiler.Emit
             }
             string rt = _scope?.ReturnType;
             string bound = rt is null or "dynamic" or "object" ? BoundMethodValue(r.Value) : null;
+            var call = r.Value as CallExpr;
+            bool returnsNone = call != null && KnownNoneResult(call);
             if (Obs != null && _retKey != null)
-                Obs.AddReturn(_retKey, r.Value == null || IsNone(r.Value) ? TypeInference.NoneType :
+                Obs.AddReturn(_retKey, r.Value == null || IsNone(r.Value) || returnsNone ? TypeInference.NoneType :
                     bound != null ? "dynamic" : PyType(InferType(r.Value)) ?? TypeInference.Unknown);
             if (r.Value == null || IsNone(r.Value))
             {
@@ -213,14 +240,10 @@ namespace Typhon.Compiler.Emit
                 return;
             }
             if (bound != null) { _w.Line($"return {ProfileReturn(bound)};"); return; }
-            if (r.Value is CallExpr { Func: AttributeExpr { Target: NameExpr { Id: "self" } } callee } call &&
-                _cls != null && MethodInHierarchy(_cls.Def, callee.Name) is FunctionDef method && !method.IsAsync &&
-                !_m.Ast.MethodDecorators.ContainsKey(method) &&
-                (IsNone(method.Returns) || method.Returns == null && !FamilyReturnsValue(_cls.Def, method.Name) &&
-                    (CanFallThrough(method.Body) || AstWalker.ContainsOutsideNestedScopes(method.Body, n => n is ReturnStmt { Value: null }))))
+            if (returnsNone)
             {
-                _w.Line($"{EmitExpr(call)};");
-                _w.Line(rt == "void" ? "return;" : "return null;");
+                EmitExprStmt(new ExprStmt { Value = call });
+                _w.Line(rt is null or "void" ? "return;" : $"return {ProfileReturn("null")};");
                 return;
             }
             _w.Line($"return {ProfileReturn(EmitExpr(r.Value, targetTyped: rt != null && rt != "dynamic" && rt != "void"))};");
@@ -275,6 +298,8 @@ namespace Typhon.Compiler.Emit
             _w.Line($"throw {EmitExpr(r.Exc)};");
         }
 
+        readonly HashSet<string> _narrowedInstanceVariables = new HashSet<string>();
+
         void EmitIf(IfStmt i, bool isElif)
         {
             // if isinstance(x, C): in the block, x is a C (a pattern variable of that type)
@@ -286,9 +311,11 @@ namespace Typhon.Compiler.Emit
                 bool hadType = _scope.Types.TryGetValue(nn.Id, out var oldType);
                 _renames[nn.Id] = pv;
                 _scope.Types[nn.Id] = ncls;
+                _narrowedInstanceVariables.Add(pv);
                 try { EmitBlock(i.Body); }
                 finally
                 {
+                    _narrowedInstanceVariables.Remove(pv);
                     if (hadRename) _renames[nn.Id] = oldRename; else _renames.Remove(nn.Id);
                     if (hadType) _scope.Types[nn.Id] = oldType; else _scope.Types.Remove(nn.Id);
                 }
@@ -316,7 +343,14 @@ namespace Typhon.Compiler.Emit
             name = null; type = null;
             if (!(test is CallExpr c && c.Func is NameExpr f && f.Id == "isinstance" && !IsShadowed("isinstance") && c.Args.Count == 2 &&
                   c.Args[0].Value is NameExpr n && c.Args[1].Value is NameExpr cls && IsLocal(n.Id) && !AssignsName(body, n.Id))) return false;
-            // (a Typhon class, or a class of the runtime or of .NET: not a generic one, nor a builtin type such as int or str)
+            if (!IsShadowed(cls.Id) && cls.Id is "str" or "bytes" or "bytearray")
+            {
+                type = MapType(cls, test);
+                if (type == KnownType(n.Id)) return false;
+                name = n;
+                return true;
+            }
+            // Open generic containers and the Python numeric hierarchy need their runtime isinstance behavior.
             if (BuiltinTypeNames.Contains(cls.Id) || !TryResolveType(cls.Id, 0, out var clsMeta, out var pyClass) ||
                 (pyClass != null ? pyClass.TypeParams.Count > 0 : clsMeta == null || clsMeta.Contains('`'))) return false;
             if (MayHaveVirtualSubclasses(clsMeta, pyClass)) return false;

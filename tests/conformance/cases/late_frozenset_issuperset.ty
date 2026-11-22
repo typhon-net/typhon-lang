@@ -1,0 +1,12 @@
+from typing import Any
+
+def allows(characters: Any, text: Any) -> bool:
+    return characters.issuperset(text)
+
+allowed = frozenset("012ab")
+print(allows(allowed, "aba"))
+print(allows(allowed, "abc"))
+print(allows(allowed, ["b", "1"]))
+print(allows(allowed, [1]))
+print(allowed.issuperset("2"))
+print(allows(frozenset([None]), [None]))

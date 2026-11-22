@@ -1,0 +1,14 @@
+# typhon: int=bigint
+from typing import Any
+
+def sequence(start: Any, stop: Any, step: Any) -> list[int]:
+    seen: list[int] = []
+    for item in range(start, stop, step):
+        seen.append(item)
+    return seen
+
+first: int = 3
+last: int = -4
+stride: int = -2
+print(sequence(first, last, stride))
+print(sequence(last, first, 3))

@@ -1,0 +1,51 @@
+from typing import Any
+
+
+class Unit:
+    def __init__(self):
+        self.message = "compiled"
+
+
+class Factory:
+    def __init__(self, make: Any):
+        self.make = make
+
+    def create(self):
+        return self.make()
+
+
+def replacement():
+    return "function"
+
+
+print(Factory(Unit).create().message, Factory(replacement).create())
+
+
+class CodeHolder:
+    def __init__(self):
+        self.command = ""
+
+    def update(self, command: Any):
+        self.command = command
+
+
+holder = CodeHolder()
+command = compile("answer = 23", "<scope>", "exec")
+holder.update(command)
+namespace: dict[str, object] = {}
+exec(holder.command, namespace)
+print(namespace["answer"])
+
+
+class Records:
+    def __init__(self):
+        self.values: dict[str, int] = {"before": 8}
+
+
+def clear(slot: Any):
+    slot.values = {}
+
+
+records = Records()
+clear(records)
+print(records.values)

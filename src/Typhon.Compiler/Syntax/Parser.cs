@@ -105,7 +105,22 @@ namespace Typhon.Compiler.Syntax
         SyntaxError Err(string msg, bool needsMoreInput = false, bool isIndentationError = false) =>
             new SyntaxError(msg, Cur.Line, Cur.Col, AtEndOfInput, needsMoreInput || AtEndOfInput && _openGrouping, isIndentationError);
 
-        T At<T>(T node, Token tok) where T : Node { node.Line = tok.Line; node.Col = tok.Col; return node; }
+        T At<T>(T node, Token tok) where T : Node
+        {
+            node.Line = tok.Line;
+            node.Col = tok.Col;
+            node.StartOffset = tok.Pos;
+            node.EndOffset = tok.EndPos;
+            return node;
+        }
+
+        T Spanned<T>(T node) where T : Node
+        {
+            int last = _i - 1;
+            while (last >= 0 && (_t[last].Kind == TokenKind.Newline || _t[last].Kind == TokenKind.Dedent)) last--;
+            if (last >= 0) node.EndOffset = System.Math.Max(node.EndOffset, _t[last].EndPos);
+            return node;
+        }
 
         static readonly HashSet<string> Keywords = new HashSet<string>
         {

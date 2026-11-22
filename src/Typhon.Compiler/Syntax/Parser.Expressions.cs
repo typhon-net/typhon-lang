@@ -17,7 +17,7 @@ namespace Typhon.Compiler.Syntax
             {
                 var target = At(new NameExpr { Id = ExpectName() }, tok);
                 _i++; // ':='
-                return At(new NamedExpr { Target = target, Value = ParseTest() }, tok);
+                return Spanned(At(new NamedExpr { Target = target, Value = ParseTest() }, tok));
             }
             var e = ParseTest();
             if (IsOp(":=")) throw Err("the target of ':=' must be a name");
@@ -28,7 +28,7 @@ namespace Typhon.Compiler.Syntax
         Expr ParseNamedExprOrStar()
         {
             var tok = Cur;
-            if (AcceptOp("*")) return At(new StarredExpr { Value = ParseOrExpr() }, tok);
+            if (AcceptOp("*")) return Spanned(At(new StarredExpr { Value = ParseOrExpr() }, tok));
             return ParseNamedExprTest();
         }
 
@@ -42,7 +42,7 @@ namespace Typhon.Compiler.Syntax
                 var y = At(new YieldExpr(), tok);
                 if (AcceptKw("from")) { y.From = true; y.Value = ParseTest(); }
                 else if (!AtStatementEnd() && !IsOp(")")) y.Value = ParseTestListOrStar();
-                return y;
+                return Spanned(y);
             }
             var first = ParseTestOrStar();
             if (!IsOp(",")) return first;
@@ -53,13 +53,13 @@ namespace Typhon.Compiler.Syntax
                 if (!StartsExpression()) break;
                 tuple.Elts.Add(ParseTestOrStar());
             }
-            return tuple;
+            return Spanned(tuple);
         }
 
         Expr ParseTestOrStar()
         {
             var tok = Cur;
-            if (AcceptOp("*")) return At(new StarredExpr { Value = ParseOrExpr() }, tok);
+            if (AcceptOp("*")) return Spanned(At(new StarredExpr { Value = ParseOrExpr() }, tok));
             return ParseTest();
         }
 
@@ -83,7 +83,7 @@ namespace Typhon.Compiler.Syntax
                 var test = ParseOrTest();
                 ExpectKw("else");
                 var orElse = ParseTest();
-                return At(new IfExpr { Test = test, Body = e, OrElse = orElse }, tok);
+                return Spanned(At(new IfExpr { Test = test, Body = e, OrElse = orElse }, tok));
             }
             return e;
         }
@@ -110,7 +110,7 @@ namespace Typhon.Compiler.Syntax
             }
             ExpectOp(":");
             l.Body = ParseTest();
-            return l;
+            return Spanned(l);
         }
 
         Expr ParseOrTest()
@@ -121,7 +121,7 @@ namespace Typhon.Compiler.Syntax
             var b = At(new BoolOpExpr { Op = "or" }, tok);
             b.Values.Add(e);
             while (AcceptKw("or")) b.Values.Add(ParseAndTest());
-            return b;
+            return Spanned(b);
         }
 
         Expr ParseAndTest()
@@ -132,13 +132,13 @@ namespace Typhon.Compiler.Syntax
             var b = At(new BoolOpExpr { Op = "and" }, tok);
             b.Values.Add(e);
             while (AcceptKw("and")) b.Values.Add(ParseNotTest());
-            return b;
+            return Spanned(b);
         }
 
         Expr ParseNotTest()
         {
             var tok = Cur;
-            if (AcceptKw("not")) return At(new UnaryExpr { Op = "not", Operand = ParseNotTest() }, tok);
+            if (AcceptKw("not")) return Spanned(At(new UnaryExpr { Op = "not", Operand = ParseNotTest() }, tok));
             return ParseComparison();
         }
 
@@ -169,7 +169,7 @@ namespace Typhon.Compiler.Syntax
                 cmp.Ops.Add(op);
                 cmp.Comparators.Add(ParseOrExpr());
             }
-            return (Expr)cmp ?? left;
+            return cmp == null ? left : Spanned(cmp);
         }
 
         Expr ParseOrExpr() => ParseBinary(0);
@@ -194,7 +194,7 @@ namespace Typhon.Compiler.Syntax
                 var opTok = Cur;
                 _i++;
                 var right = ParseBinary(level + 1);
-                left = At(new BinOpExpr { Op = opTok.Text, Left = left, Right = right }, tok);
+                left = Spanned(At(new BinOpExpr { Op = opTok.Text, Left = left, Right = right }, tok));
             }
             return left;
         }
@@ -205,7 +205,7 @@ namespace Typhon.Compiler.Syntax
             if (Cur.Kind == TokenKind.Op && (Cur.Text == "-" || Cur.Text == "+" || Cur.Text == "~"))
             {
                 _i++;
-                return At(new UnaryExpr { Op = tok.Text, Operand = ParseFactor() }, tok);
+                return Spanned(At(new UnaryExpr { Op = tok.Text, Operand = ParseFactor() }, tok));
             }
             return ParsePower();
         }
@@ -214,14 +214,15 @@ namespace Typhon.Compiler.Syntax
         {
             var tok = Cur;
             Expr e;
-            if (AcceptKw("await")) e = At(new AwaitExpr { Value = ParsePrimary() }, tok);
+            if (AcceptKw("await")) e = Spanned(At(new AwaitExpr { Value = ParsePrimary() }, tok));
             else e = ParsePrimary();
-            if (AcceptOp("**")) return At(new BinOpExpr { Op = "**", Left = e, Right = ParseFactor() }, tok);
+            if (AcceptOp("**")) return Spanned(At(new BinOpExpr { Op = "**", Left = e, Right = ParseFactor() }, tok));
             return e;
         }
 
         Expr ParsePrimary()
         {
+            int start = Cur.Pos;
             var e = ParseAtom();
             while (true)
             {
@@ -248,6 +249,8 @@ namespace Typhon.Compiler.Syntax
                     e = sub;
                 }
                 else return e;
+                e.StartOffset = start;
+                Spanned(e);
             }
         }
 
@@ -294,7 +297,7 @@ namespace Typhon.Compiler.Syntax
                 if (IsOp("]")) break;
                 tuple.Elts.Add(ParseSubscript());
             }
-            return tuple;
+            return Spanned(tuple);
         }
 
         Expr ParseSubscript()
@@ -309,7 +312,7 @@ namespace Typhon.Compiler.Syntax
             {
                 if (!IsOp("]") && !IsOp(",")) s.Step = ParseTest();
             }
-            return s;
+            return Spanned(s);
         }
 
         Expr ParseAtom()
@@ -323,7 +326,7 @@ namespace Typhon.Compiler.Syntax
                                    (tok.Text.Contains(".") || tok.Text.Contains("e") || tok.Text.Contains("E"));
                     return At(new ConstExpr { Kind = isFloat ? ConstKind.Float : ConstKind.Int, Raw = tok.Text }, tok);
                 case TokenKind.String:
-                    return ParseStrings();
+                    return Spanned(ParseStrings());
                 case TokenKind.Name:
                     if (tok.Text == "None") { _i++; return At(new ConstExpr { Kind = ConstKind.None, Raw = "None" }, tok); }
                     if (tok.Text == "True" || tok.Text == "False") { _i++; return At(new ConstExpr { Kind = ConstKind.Bool, Raw = tok.Text }, tok); }
@@ -343,7 +346,7 @@ namespace Typhon.Compiler.Syntax
         Expr ParseParenAtom()
         {
             var tok = ExpectOp("(");
-            if (AcceptOp(")")) return At(new TupleExpr { Parenthesized = true }, tok);
+            if (AcceptOp(")")) return Spanned(At(new TupleExpr { Parenthesized = true }, tok));
             if (IsKw("yield"))
             {
                 var y = ParseTestListOrStar(allowYield: true);
@@ -355,7 +358,7 @@ namespace Typhon.Compiler.Syntax
             {
                 var g = ParseComprehensionTail(ComprehensionKind.Generator, first, null, tok);
                 ExpectOp(")");
-                return g;
+                return Spanned(g);
             }
             if (AcceptOp(")")) return first; // grouping
             var tuple = At(new TupleExpr { Parenthesized = true }, tok);
@@ -366,20 +369,20 @@ namespace Typhon.Compiler.Syntax
                 tuple.Elts.Add(ParseNamedExprOrStar());
             }
             ExpectOp(")");
-            return tuple;
+            return Spanned(tuple);
         }
 
         Expr ParseListAtom()
         {
             var tok = ExpectOp("[");
             var list = At(new ListExpr(), tok);
-            if (AcceptOp("]")) return list;
+            if (AcceptOp("]")) return Spanned(list);
             var first = ParseNamedExprOrStar();
             if (IsKw("for") || IsKw("async"))
             {
                 var c = ParseComprehensionTail(ComprehensionKind.List, first, null, tok);
                 ExpectOp("]");
-                return c;
+                return Spanned(c);
             }
             list.Elts.Add(first);
             while (AcceptOp(","))
@@ -388,13 +391,13 @@ namespace Typhon.Compiler.Syntax
                 list.Elts.Add(ParseNamedExprOrStar());
             }
             ExpectOp("]");
-            return list;
+            return Spanned(list);
         }
 
         Expr ParseBraceAtom()
         {
             var tok = ExpectOp("{");
-            if (AcceptOp("}")) return At(new DictExpr(), tok);
+            if (AcceptOp("}")) return Spanned(At(new DictExpr(), tok));
             if (IsOp("**")) return ParseDictDisplay(tok, null, null);
             var first = ParseNamedExprOrStar();
             if (!(first is StarredExpr) && AcceptOp(":"))
@@ -404,7 +407,7 @@ namespace Typhon.Compiler.Syntax
                 {
                     var c = ParseComprehensionTail(ComprehensionKind.Dict, first, value, tok);
                     ExpectOp("}");
-                    return c;
+                    return Spanned(c);
                 }
                 return ParseDictDisplay(tok, first, value);
             }
@@ -412,7 +415,7 @@ namespace Typhon.Compiler.Syntax
             {
                 var c = ParseComprehensionTail(ComprehensionKind.Set, first, null, tok);
                 ExpectOp("}");
-                return c;
+                return Spanned(c);
             }
             var set = At(new SetExpr(), tok);
             set.Elts.Add(first);
@@ -422,7 +425,7 @@ namespace Typhon.Compiler.Syntax
                 set.Elts.Add(ParseNamedExprOrStar());
             }
             ExpectOp("}");
-            return set;
+            return Spanned(set);
         }
 
         /// <summary>The rest of a dict display after its first item; `**mapping` items are stored with a null key.</summary>
@@ -440,7 +443,7 @@ namespace Typhon.Compiler.Syntax
                 dict.Values.Add(ParseTest());
             }
             ExpectOp("}");
-            return dict;
+            return Spanned(dict);
         }
     }
 }

@@ -1,0 +1,25 @@
+import io
+
+class Saved:
+    def __init__(self) -> None:
+        self.text = ""
+
+    def read(self, value: str | None) -> bool:
+        if value is None:
+            return False
+        self.text = value
+        return True
+
+    def update(self) -> None:
+        stream = io.StringIO()
+        stream.write("updated")
+        self.text = stream.getvalue()
+
+def observed(value):
+    return value
+
+saved = Saved()
+print(saved.read(None), repr(saved.text))
+print(saved.read("ready"), saved.text)
+saved.update()
+print(observed(saved.text))

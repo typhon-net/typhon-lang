@@ -41,10 +41,12 @@ namespace Typhon.Runtime
             if (value == null) return typeof(Typhon.Stdlib.types.NoneType);
             if (value is Type) return typeof(Type);
             if (value is PyModule) return typeof(Typhon.Stdlib.types.ModuleType);
+            if (value is ReprDescriptor) return typeof(Typhon.Stdlib.types.WrapperDescriptorType);
             if (value is PyFunction) return typeof(Typhon.Stdlib.types.FunctionType);
             if (value is PyBoundMethod { BuiltinOwner: not null })
                 return typeof(Typhon.Stdlib.types.BuiltinFunctionType);
             Type actual = value.GetType();
+            if (PyDictViews.CanonicalType(actual) is Type view) return view;
             if (actual == typeof(ValueTuple)) return typeof(ITuple);
             if (!actual.IsGenericType) return actual;
             Type definition = actual.GetGenericTypeDefinition();
@@ -141,6 +143,12 @@ namespace Typhon.Runtime
         {
             if (of == typeof(object)) return true;
             if (cls == of) return true;
+            if (PyDictViews.Name(cls) is string view && (PyDictViews.Name(of) == view ||
+                of == typeof(Typhon.Stdlib.collections.abc.MappingView) ||
+                view == "dict_keys" && of == typeof(Typhon.Stdlib.collections.abc.KeysView) ||
+                view == "dict_values" && of == typeof(Typhon.Stdlib.collections.abc.ValuesView) ||
+                view == "dict_items" && of == typeof(Typhon.Stdlib.collections.abc.ItemsView)))
+                return true;
             if (of == typeof(Typhon.Stdlib.types.ModuleType) && cls == typeof(PyModule)) return true;
             if (of == typeof(Typhon.Stdlib.collections.abc.Mapping) && (typeof(IDictionary).IsAssignableFrom(cls) ||
                 cls.GetInterfaces().Any(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IReadOnlyDictionary<,>)))) return true;
@@ -280,7 +288,11 @@ namespace Typhon.Runtime
             var parts = name.Split('.');
             bool wantsLeaf = fromlist is IEnumerable fl && fl.Cast<object?>().Any();
             Type? top = StdlibModuleType(parts[0]);
-            if (top == null) throw new ModuleNotFoundError($"No module named '{name}'", name);
+            if (top == null)
+            {
+                object loaded = Typhon.Stdlib.SourceImport.ImportModule(name);
+                return wantsLeaf || parts.Length == 1 ? loaded : Typhon.Stdlib.SourceImport.ImportModule(parts[0]);
+            }
             Type current = top;
             for (int i = 1; i < parts.Length; i++)
             {

@@ -1,0 +1,21 @@
+class Label:
+    def __init__(self, value: int):
+        self.value = value
+
+class Base:
+    @property
+    def factory(self):
+        raise NotImplementedError("no factory")
+
+    def make(self, n: int) -> Label:
+        return self.factory(n)
+
+class Derived(Base):
+    factory = Label
+
+label = Derived().make(23)
+print(label.value, isinstance(label, Label))
+try:
+    print(Base().factory)
+except NotImplementedError as error:
+    print(str(error))

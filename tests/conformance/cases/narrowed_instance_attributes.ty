@@ -1,0 +1,30 @@
+class Node:
+    def kind(self) -> str:
+        return "node"
+
+class Specific(Node):
+    def __init__(self):
+        self.label = "subclass"
+
+def attach(value, field, data):
+    setattr(value, field, data)
+
+def render(value: object):
+    if isinstance(value, Node):
+        print(value.kind(), value.label)
+        print(value.convert(suffix="!"))
+
+def finish(suffix: str) -> str:
+    return "called" + suffix
+
+first = Node()
+second = Specific()
+for item in (first, second):
+    attach(item, "convert", finish)
+attach(first, "label", "added")
+render(first)
+render(second)
+try:
+    render(Node())
+except AttributeError:
+    print("missing")

@@ -1,0 +1,112 @@
+from dataclasses import dataclass
+from enum import StrEnum, _simple_enum
+from functools import cmp_to_key
+from typing import Any
+import re
+
+
+@_simple_enum(StrEnum)
+class Order:
+    RECENT = "recent", "fresh"
+    OLDEST = "oldest", "first"
+
+    def __new__(cls, *values):
+        value = values[0]
+        member = str.__new__(cls, value)
+        member._value_ = value
+        for alias in values[1:]:
+            cls._value2member_map_[alias] = member
+        return member
+
+
+print(Order("fresh") is Order.RECENT, Order("first").name, repr(Order.RECENT), Order.OLDEST == "oldest")
+
+
+class Numerically:
+    def compare(self, left, right):
+        return left - right
+
+
+def in_order(data: list):
+    data.sort(key=cmp_to_key(Numerically().compare))
+    return data
+
+
+print(in_order([4, 1, 3]))
+
+
+@dataclass
+class Entry:
+    count: int
+
+
+@dataclass
+class Report:
+    entries: dict[str, Entry]
+
+
+def construct(key: Any):
+    rows = {}
+    result = Report(rows)
+    rows[key] = Entry(8)
+    return result.entries is rows, result.entries[key].count
+
+
+print(Report({}).entries, construct("leaf"))
+
+
+class Metrics:
+    def __init__(self, *samples, label=None):
+        self.samples = samples
+        self.label = label
+        self.total = 0
+
+    def combine(self, amount: Any):
+        self.total += amount
+
+
+class DetailedMetrics(Metrics):
+    def __init__(self, *samples, label=None):
+        super().__init__(*samples, label=label)
+
+
+counter = DetailedMetrics(4, 11, label="run")
+counter.combine(2.5)
+print(counter.samples, counter.label, counter.total)
+print(DetailedMetrics().samples)
+
+print(re.error is re.PatternError)
+try:
+    re.compile("[")
+except re.PatternError as error:
+    print(type(error).__name__)
+
+
+class Segments:
+    def add(self, item):
+        raise AssertionError("runtime tuple concatenation called a Python method")
+
+    def joined(self, segment: Any):
+        values = ()
+        for _ in range(1):
+            values = values + segment
+        return values
+
+
+print(Segments().joined((7, "row")))
+
+
+class Measures:
+    def __init__(self, counts):
+        self.counts = counts
+
+
+def display(*values):
+    for record in reversed(values):
+        if isinstance(record, str):
+            record = Measures({record: 1})
+        for name, count in record.counts.items():
+            print(name, count)
+
+
+display(Measures({"leaf": 5}), "run")

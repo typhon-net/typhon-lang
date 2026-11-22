@@ -1,0 +1,9 @@
+b'YWJj\nZGVm\nZ2g'
+b'__0'
+b'\xff\xed'
+b'\xab\xcd'
+256 b'A Z' bytearray(b'ZA')
+b'ab\xff'
+Padding not allowed
+Non-zero padding bits
+Padding not allowed

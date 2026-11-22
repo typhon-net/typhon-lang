@@ -54,6 +54,10 @@ namespace Typhon.Compiler.Emit
             if (at.Target is NameExpr self && self.Id == "self")
             {
                 if (_cls == null) return;
+                if (_cls.InferredFieldInitializers.TryGetValue(at.Name, out var initial) && initial != value &&
+                    (!TypeInference.IsEmptyContainer(value) || !TypeInference.IsEmptyContainer(initial) ||
+                     TypeInference.ContainerKind(initial) != TypeInference.ContainerKind(value)))
+                    Obs.AddExternal(TypeInference.ClassKey(_m, _cls.Name) + "|" + at.Name, vt);
                 foreach (var parent in TyphonBases(_cls.Def))
                 {
                     if (ImplicitFieldOwner(parent, at.Name) is ClassDef declared &&

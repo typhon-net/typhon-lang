@@ -1,0 +1,35 @@
+import io
+import tokenize
+
+for source in (
+    '', '# final note', ' # c\r\n\t\r\n',
+    'if ready:\n\tcount = (\n # join\n1 + 2\n)\n\tcopy = count\ncount\n',
+    'base \\\r\n   + 3.5e-2j',
+    'r"x\\y"; q = """multi\nline"""; π = q\n',
+    'f"{{ok}}{a!r:{b}}"\n', 't"x{a}"\n', 'word = "🙂"; e\u0301 = 1\n',
+    'if ok:\n\tx\n        y\n', 'if ok:\n  x\n y\n',
+    'x=(\n y\n', "s='open", "s='''a\n", 'x=0xzy',
+):
+    print(repr(source))
+    try:
+        for item in tokenize.generate_tokens(io.StringIO(source).readline):
+            print(tokenize.tok_name[item.type], repr(item.string), item.start, item.end, repr(item.line), item.exact_type)
+    except (tokenize.TokenError, IndentationError) as error:
+        print(type(error).__name__, error.args)
+
+lines = iter(['name = 1\n'])
+tokens = tokenize.generate_tokens(lines.__next__)
+first = next(tokens)
+print(repr(first))
+print([item.type for item in tokens])
+
+read_count = []
+source_lines = iter(['first\n', 'second\n'])
+
+def readline() -> str:
+    read_count.append(1)
+    return next(source_lines, '')
+
+tokens = tokenize.generate_tokens(readline)
+print(len(read_count), next(tokens).string, len(read_count))
+print(next(tokens).type, len(read_count), next(tokens).string, len(read_count))

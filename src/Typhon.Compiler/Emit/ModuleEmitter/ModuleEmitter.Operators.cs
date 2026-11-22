@@ -198,6 +198,8 @@ namespace Typhon.Compiler.Emit
             }
             if (b.Op == "+" && TupleElementTypes(lType) is List<string> lItems && TupleElementTypes(rType) is List<string> rItems)
             {
+                if (lItems.Count == 0 || rItems.Count == 0)
+                    return $"(({l}, {r}) switch {{ var (__ta, __tb) => {(lItems.Count == 0 ? "__tb" : "__ta")} }})";
                 var items = lItems.Select((_, i) => $"__ta.Item{i + 1}").Concat(rItems.Select((_, i) => $"__tb.Item{i + 1}"));
                 return $"(({l}, {r}) switch {{ var (__ta, __tb) => ({string.Join(", ", items)}) }})";
             }
@@ -223,8 +225,7 @@ namespace Typhon.Compiler.Emit
                 case "*" when IsSequenceLiteral(b.Left) || IsSequenceLiteral(b.Right) || IsSequenceTyped(b.Left) || IsSequenceTyped(b.Right): return $"{Rt("__repeat")}({l}, {r})";
                 // late-bound operands may be a str or list at run time: "ab" * 2 must repeat, not fail in the binder
                 case "*" when InferType(b.Left) == "dynamic" || InferType(b.Right) == "dynamic": return $"{Rt("mul")}({l}, {r})";
-                case "+" when lType == "dynamic" && (rType == "dynamic" || IsListy(b.Right)) ||
-                              rType == "dynamic" && IsListy(b.Left):
+                case "+" when lType == "dynamic" || rType == "dynamic":
                     return $"{Rt("add")}((object?){Paren(l)}, (object?){Paren(r)})";
                 // lists of different item types: a list of dynamic values (C# lists are invariant)
                 case "+" when (IsListy(b.Left) || IsListy(b.Right)) && ListConcatMismatch(b): return $"{Rt("__concat_any")}({l}, {r})";
@@ -309,6 +310,8 @@ namespace Typhon.Compiler.Emit
                 case "is not":
                 {
                     bool negated = op == "is not";
+                    l = BoundMethodValue(left) ?? l;
+                    r = BoundMethodValue(right) ?? r;
                     string none = negated ? "not null" : "null";
                     if (IsNone(right)) return $"((object?){Paren(l)} is {none})";
                     if (IsNone(left)) return $"((object?){Paren(r)} is {none})";

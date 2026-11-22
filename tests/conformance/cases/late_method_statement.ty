@@ -1,0 +1,11 @@
+from dataclasses import dataclass, field
+
+@dataclass
+class Basket:
+    items: list = field(default_factory=list)
+
+basket = Basket()
+basket.items.append("statement")
+result = basket.items.append("expression")
+print(basket.items)
+print(result is None)

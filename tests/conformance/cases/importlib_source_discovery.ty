@@ -1,0 +1,59 @@
+from importlib.machinery import ModuleSpec
+from importlib.util import _find_spec_from_path, module_from_spec
+from zipfile import ZipFile
+import os
+import sys
+import tempfile
+
+with tempfile.TemporaryDirectory() as root:
+    folder = os.path.join(root, "browser_pkg")
+    os.mkdir(folder)
+    with open(os.path.join(folder, "__init__.py"), "wb") as f:
+        f.write(b"raise RuntimeError('do not execute')\n")
+    with open(os.path.join(folder, "child.py"), "wb") as f:
+        f.write(b"# coding: latin-1\r\nvalue = 'caf\xe9'\r\n")
+
+    assert _find_spec_from_path("browser_pkg", []) is None
+    package = _find_spec_from_path("browser_pkg", [root])
+    print(package.name, package.parent, os.path.basename(package.origin), package.has_location)
+    child = _find_spec_from_path("browser_pkg.child", package.submodule_search_locations)
+    print(child.name, child.parent, os.path.basename(child.loader.get_filename(child.name)))
+    print(child.loader.get_source(child.name), end="")
+    print("browser_pkg" in sys.modules, "browser_pkg.child" in sys.modules)
+    print(_find_spec_from_path("browser_pkg.child", [root]) is None)
+    try:
+        child.loader.get_filename("browser_pkg.other")
+    except ImportError as e:
+        print(e.name, str(e))
+
+    null_spec = module_from_spec(ModuleSpec("browser_meta_missing", None))
+    null_spec.__spec__ = None
+    sys.modules["browser_meta_missing"] = null_spec
+    try:
+        _find_spec_from_path("browser_meta_missing", [root])
+    except ValueError as e:
+        print(str(e))
+
+    archive = os.path.join(root, "sources.zip")
+    with ZipFile(archive, "w") as z:
+        z.writestr("browser_zip.py", "six = 6\r\n")
+    zip_spec = _find_spec_from_path("browser_zip", [archive])
+    print(zip_spec.name, zip_spec.origin == zip_spec.loader.get_filename(zip_spec.name))
+    print(repr(zip_spec.loader.get_source(zip_spec.name)))
+
+class Finder:
+    def find_spec(self, fullname, path, target=None):
+        if fullname == "browser_meta":
+            print(fullname, path, target)
+            return ModuleSpec(fullname, None, origin="meta")
+
+finder = Finder()
+sys.meta_path.insert(0, finder)
+try:
+    spec = _find_spec_from_path("browser_meta", ["custom"])
+    print(spec.origin, "browser_meta" in sys.modules)
+    sys.modules["browser_meta"] = module_from_spec(spec)
+    print(_find_spec_from_path("browser_meta", []) is spec)
+finally:
+    sys.meta_path.remove(finder)
+    sys.modules.pop("browser_meta", None)

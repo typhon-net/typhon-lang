@@ -15,7 +15,14 @@ namespace Typhon.Runtime
     using System.Runtime.ExceptionServices;
     using Typhon.Stdlib;
 
-    internal enum PyDescriptorKind { Property, StaticMethod, ClassMethod, CachedProperty, NamedTupleField, ConditionalMethod }
+    [AttributeUsage(AttributeTargets.Property, Inherited = false)]
+    internal sealed class PyClassSlotAttribute(string storageName) : Attribute
+    {
+        internal FieldInfo Storage(PropertyInfo property) => property.DeclaringType!.GetField(storageName,
+            BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.DeclaredOnly)!;
+    }
+
+    internal enum PyDescriptorKind { Property, StaticMethod, ClassMethod, CachedProperty, NamedTupleField }
 
     [AttributeUsage(AttributeTargets.Method | AttributeTargets.Property, Inherited = false)]
     internal sealed class PyDescriptorAttribute(PyDescriptorKind kind, string? getter = null, int index = -1) : Attribute
@@ -50,6 +57,32 @@ namespace Typhon.Runtime
 
         internal static types.MappingProxyType Dictionary(Type type) => new(Namespace(type));
 
+        internal static readonly object Unassigned = new();
+
+        internal static dynamic? ReadBodyName(object? value, string name, Type module, string moduleName)
+        {
+            if (!ReferenceEquals(value, Unassigned)) return value;
+            if (PyModule.Of(module, moduleName).TryGetNamespaceMember(name, out object? global)) return global;
+            object? builtin = Builtins.getattr(typeof(builtins), name, Unassigned);
+            return !ReferenceEquals(builtin, Unassigned) ? builtin : Builtins.__unbound_import(name);
+        }
+
+        internal static bool TryReadSlot(PropertyInfo property, PyClassSlotAttribute slot, out object? value)
+        {
+            value = slot.Storage(property).GetValue(null);
+            return !ReferenceEquals(value, Unassigned);
+        }
+
+        internal static bool DeleteSlot(Type type, string name)
+        {
+            if (type.GetProperty(name, Declared) is not { } property ||
+                property.GetCustomAttribute<PyClassSlotAttribute>() is not { } slot ||
+                !TryReadSlot(property, slot, out _)) return false;
+            slot.Storage(property).SetValue(null, Unassigned);
+            return true;
+        }
+
+
         internal static bool TryGetDeclaredDescriptor(Type type, string name, out object? value) =>
             Namespace(type).Descriptors.TryGetValue(name, out value);
 
@@ -59,7 +92,7 @@ namespace Typhon.Runtime
             {
                 if (!declaration.IsDefined(typeof(PySourceAttribute))) continue;
                 var ns = Namespace(declaration);
-                if (!ns.Contains(name)) continue;
+                if (!ns.TryRead(name, out var binding)) continue;
                 if (ns.Descriptors.TryGetValue(name, out value))
                 {
                     if (instance && value is not builtins.MethodDescriptor) break;
@@ -72,7 +105,7 @@ namespace Typhon.Runtime
                     return true;
                 }
                 if (instance) break;
-                value = ns[name];
+                value = binding;
                 return true;
             }
             value = null;
@@ -87,6 +120,7 @@ namespace Typhon.Runtime
             new PyClosure(name, invoke)
             {
                 __module__ = source?.Module ?? Builtins.__module_of(type),
+                __qualname__ = Builtins.PyTypeName(type) + "." + name,
                 __doc__ = source?.DocString,
                 _signature = method != null ? PySignatureAttribute.Of(method) : null,
                 _code = source is { Line: > 0 } ? new sys_.code(name, source.Filename, source.Line) : null,
@@ -106,19 +140,27 @@ namespace Typhon.Runtime
         static object Receiver(string name, object?[] args) => args.Length > 0 && args[0] != null ? args[0]! :
             throw new InvalidCastException($"{name}() requires an instance");
 
-        static PyClosure InstanceFunction(Type type, string name, MethodInfo[] methods, PySourceAttribute? source) =>
-            Callable(type, name, source, methods.FirstOrDefault(), (args, keywords) => Invoke(methods, name, Receiver(name, args), args[1..], keywords));
+        static PyClosure InstanceFunction(Type type, string name, MethodInfo[] methods, PySourceAttribute? source)
+        {
+            var method = methods.FirstOrDefault();
+            var callable = Callable(type, name, source, method,
+                (args, keywords) => Invoke(methods, name, Receiver(name, args), args[1..], keywords));
+            if (method?.GetCustomAttribute<PyDataclassReprAttribute>() is { } generated &&
+                type.GetMethod(generated.Body, Declared) is MethodInfo implementation)
+            {
+                callable.__qualname__ = Builtins.PyTypeName(type) + "." + name;
+                var wrapped = Callable(type, name, source, implementation,
+                    (args, keywords) => Invoke([implementation], name, Receiver(name, args), args[1..], keywords));
+                wrapped.__qualname__ = "__create_fn__.<locals>." + name;
+                callable.__wrapped__ = wrapped;
+            }
+            return callable;
+        }
 
-        internal static PyClosure ConditionalFunction(Type type, string name, string implementation)
+        internal static PyClosure ClassBodyFunction(Type type, string name, string implementation)
         {
             var methods = type.GetMethods(Declared).Where(m => m.Name == implementation).ToArray();
             return InstanceFunction(type, name, methods, methods.FirstOrDefault()?.GetCustomAttribute<PySourceAttribute>());
-        }
-
-        internal static object? BindConditionalMethod(object? value, object instance, string name)
-        {
-            if (PyAttrDict.TryGetExtra(instance, name, out var local)) return local;
-            return value is PyFunction function ? new types.MethodType(function, instance) : value;
         }
 
         sealed class ClassNamespace : IDictionary
@@ -133,7 +175,7 @@ namespace Typhon.Runtime
                 _bindings["__qualname__"] = () => Builtins.PyTypeName(type);
                 _bindings["__doc__"] = () => source?.DocString;
                 foreach (var field in type.GetFields(Declared).Where(f => f.IsStatic && !f.Name.StartsWith("<", StringComparison.Ordinal) &&
-                    !f.Name.StartsWith("__typhon_branch_", StringComparison.Ordinal)))
+                    !f.Name.StartsWith("__typhon_branch_", StringComparison.Ordinal) && !f.IsDefined(typeof(CompilerGeneratedAttribute))))
                     _bindings[field.Name] = () => field.GetValue(null);
                 foreach (var nested in type.GetNestedTypes(Declared))
                     if (nested.IsDefined(typeof(PySourceAttribute))) _bindings[nested.Name] = () => nested;
@@ -141,15 +183,14 @@ namespace Typhon.Runtime
                 {
                     var spec = member.GetCustomAttribute<PyDescriptorAttribute>();
                     var declaration = member.GetCustomAttribute<PySourceAttribute>();
-                    if (spec?.Kind == PyDescriptorKind.NamedTupleField)
+                    if (member.GetCustomAttribute<PyClassSlotAttribute>() is { } slot)
+                    {
+                        var storage = slot.Storage(member);
+                        _bindings[member.Name] = () => storage.GetValue(null);
+                    }
+                    else if (spec?.Kind == PyDescriptorKind.NamedTupleField)
                     {
                         AddDescriptor(member.Name, new PyTupleGetter(spec.Index));
-                    }
-                    else if (spec?.Kind == PyDescriptorKind.ConditionalMethod)
-                    {
-                        object? value = type.GetField(spec.Getter!, Declared)?.GetValue(null);
-                        Descriptors[member.Name] = value;
-                        _bindings[member.Name] = () => value;
                     }
                     else if (spec?.Kind == PyDescriptorKind.Property)
                     {
@@ -191,20 +232,31 @@ namespace Typhon.Runtime
             static Func<object?> Bind(object value) => () => value;
             void AddDescriptor(string name, object value) { Descriptors[name] = value; _bindings[name] = Bind(value); }
 
+            internal bool TryRead(string name, out object? value)
+            {
+                if (_bindings.TryGetValue(name, out var binding))
+                {
+                    value = binding();
+                    return !ReferenceEquals(value, Unassigned);
+                }
+                value = null;
+                return false;
+            }
+
             public object? this[object key]
             {
-                get => key is string name && _bindings.TryGetValue(name, out var binding) ? binding() : null;
+                get => key is string name && TryRead(name, out object? value) ? value : null;
                 set => throw new NotSupportedException();
             }
 
-            public ICollection Keys => _bindings.Keys;
-            public ICollection Values => _bindings.Values.Select(read => read()).ToArray();
-            public int Count => _bindings.Count;
+            public ICollection Keys => _bindings.Keys.Where(name => TryRead(name, out _)).ToArray();
+            public ICollection Values => Snapshot().Values;
+            public int Count => Keys.Count;
             public bool IsReadOnly => true;
             public bool IsFixedSize => true;
             public bool IsSynchronized => false;
             public object SyncRoot => this;
-            public bool Contains(object key) => key is string name && _bindings.ContainsKey(name);
+            public bool Contains(object key) => key is string name && TryRead(name, out _);
             public void Add(object key, object? value) => throw new NotSupportedException();
             public void Clear() => throw new NotSupportedException();
             public void Remove(object key) => throw new NotSupportedException();
@@ -212,7 +264,8 @@ namespace Typhon.Runtime
             IDictionary Snapshot()
             {
                 var result = new OrderedDictionary<string, object?>();
-                foreach (var (name, read) in _bindings) result[name] = read();
+                foreach (var name in _bindings.Keys)
+                    if (TryRead(name, out var value)) result[name] = value;
                 return result;
             }
 

@@ -28,6 +28,7 @@
   <ItemGroup>
     <!-- The runtime is C# source that gets compiled into each Typhon assembly, not into the compiler -->
     <Compile Remove="Runtime/**" />
+    <Compile Include="Runtime/Types/PythonLexical.cs" />
     <!-- every runtime file, under a name that keeps its folder (TyphonCompiler.RuntimeSource reads them all) -->
     <EmbeddedResource Include="Runtime/**/*.cs" LogicalName="Typhon.Compiler.Runtime/%(RecursiveDir)%(Filename)%(Extension)" />
     <None Include="Runtime/**" />

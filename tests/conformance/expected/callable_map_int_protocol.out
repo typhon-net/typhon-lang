@@ -1,0 +1,3 @@
+[255, 42]
+13 41
+Invalid.__int__() must return an int, not str

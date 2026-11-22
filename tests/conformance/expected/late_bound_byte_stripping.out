@@ -1,0 +1,4 @@
+dA bG9uZ2Vy
+b'-' b'-aba' b'ab-'
+bytearray(b'-') bytearray(b'-ba') bytearray(b'ba-')
+case b'case'

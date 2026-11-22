@@ -177,6 +177,14 @@ namespace Typhon.Stdlib
                 __func__ = function; __self__ = instance;
             }
             public string __name__ => __func__ is PyFunction f ? f.__name__ : "method";
+
+            static readonly object MissingAttribute = new();
+            public override bool TryGetMember(System.Dynamic.GetMemberBinder binder, out object? result)
+            {
+                result = Builtins.getattr(__func__, binder.Name, MissingAttribute);
+                return !ReferenceEquals(result, MissingAttribute);
+            }
+
             public object? __call__(params object?[] args) => __call_kw__(args, null);
             public object? __call_kw__(object?[] args, IDictionary<string, object?>? kwargs) =>
                 Builtins.__invoke_kw(__func__, [__self__, .. args], kwargs);

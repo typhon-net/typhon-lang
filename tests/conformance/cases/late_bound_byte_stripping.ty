@@ -1,0 +1,23 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import base64
+from typing import Any
+
+
+def encode(source: Any):
+    return base64.urlsafe_b64encode(source).rstrip(b"=").decode("ascii")
+
+
+def trim(source: Any):
+    print(source.strip(b"ab"), source.lstrip(b"ab"), source.rstrip(b"ab"))
+
+
+def whitespace(source: Any):
+    return source.strip()
+
+
+print(encode(b"t"), encode(b"longer"))
+trim(b"ab-aba")
+trim(bytearray(b"ba-ba"))
+print(whitespace("  case  "), whitespace(b"  case  "))

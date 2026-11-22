@@ -22,6 +22,14 @@ namespace Typhon.Compiler.Emit
         }
 
 
+        const string TaskTypeName = "global::System.Threading.Tasks.Task";
+
+        string AnnotatedCallResult(FunctionDef function)
+        {
+            string type = MapType(function.Returns, function, isReturn: true);
+            return function.IsAsync ? type == "void" ? TaskTypeName : $"{TaskTypeName}<{type}>" : type;
+        }
+
         readonly Dictionary<string, string> _funcReturnTypes = new Dictionary<string, string>();
         readonly Dictionary<string, string> _moduleFieldTypes = new Dictionary<string, string>();
 
@@ -92,7 +100,9 @@ namespace Typhon.Compiler.Emit
                 case YieldExpr _ when _scope != null && _scope.AsyncForm: return "dynamic";
                 case NamedExpr ne: return InferType(ne.Value);
                 case ComprehensionExpr comp: return ComprehensionType(comp);
+                case NameExpr { Id: "__debug__" }: return "bool";
                 case NameExpr n when n.Id == "__file__" && !IsShadowed(n.Id): return "string";
+                case NameExpr late when LateClassSlot(late.Id) != null: return "dynamic";
                 case NameExpr ian when ImportAlias(ian) is Expr importTarget: return InferType(importTarget);
                 case NameExpr n:
                 {
@@ -102,13 +112,15 @@ namespace Typhon.Compiler.Emit
                     if (n.Id == "self" && _cls != null && SelfInScope()) return _cls.CsSelfType;
                     if (FunctionRef(n, out var fnOwner, out var fnDef)) return FunctionValueType(fnOwner, fnDef.Name);
                     if (!IsLocal(n.Id) && _moduleFieldTypes.TryGetValue(n.Id, out var mt)) return mt;
+                    if (!IsLocal(n.Id) && _runtimeProjectBindings.ContainsKey(n.Id)) return "dynamic";
                     return null;
                 }
+                case AttributeExpr { Name: "__class__" }: return "global::System.Type";
                 case AttributeExpr reflected when TypeObjectMember(reflected):
                     return "dynamic";
                 case AttributeExpr tupleField when TupleFieldOwner(tupleField) != null:
                     return "global::Typhon.Runtime.PyTupleGetter";
-                case AttributeExpr shadowed when IsInstanceClassDefault(shadowed): return "dynamic";
+                case AttributeExpr shadowed when IsInstanceClassDefault(shadowed) || IsNarrowedInstanceAttribute(shadowed): return "dynamic";
                 case AttributeExpr sm when InstanceMethodMayBeShadowed(sm): return "dynamic";
                 case AttributeExpr at when at.Target is NameExpr self && self.Id == "self" && _cls != null:
                     return _cls.FieldTypes.TryGetValue(at.Name, out var ft) ? ft : InheritedFieldType(_cls.Def, at.Name) ??
@@ -121,6 +133,8 @@ namespace Typhon.Compiler.Emit
                     return names != null && pos < names.Count ? InferType(new AttributeExpr { Target = mp.Target, Name = names[pos] }) : null;
                 }
                 case AttributeExpr dict0 when dict0.Name == "__dict__": return "dynamic";
+                case AttributeExpr exported when DottedName(exported.Target) is string moduleName && ModuleRef(moduleName) is ModuleInfo exportedModule &&
+                    UsesRuntimeProjectMember(exportedModule, exported.Name): return "dynamic";
                 case AttributeExpr oa:
                 {
                     // Cls.ATTR / self.__class__.ATTR / type(self).ATTR: a class variable's type
@@ -168,7 +182,8 @@ namespace Typhon.Compiler.Emit
                 case AwaitExpr aw:
                 {
                     var t = InferType(aw.Value);
-                    return t != null && t.StartsWith("Task<") && t.EndsWith(">") ? GenericArg(t) : null;
+                    return t != null && (t.StartsWith("Task<") || t.StartsWith(TaskTypeName + "<")) &&
+                        t.EndsWith(">") ? GenericArg(t) : null;
                 }
                 case SubscriptExpr sub when sub.Index is SliceExpr:
                 {
@@ -282,8 +297,9 @@ namespace Typhon.Compiler.Emit
                         string itemType = items.Count == 1 && !UnsureType(items[0]) ? items[0] : "dynamic";
                         return PyTuplePrefix + itemType + ">";
                     }
-                    if (t.Elts.Count == 0) return null;
-                    if (t.Elts.Count == 1) { var one = PyType(InferType(t.Elts[0])); return one == null || one == TypeInference.Pending ? one : $"ValueTuple<{one}>"; }
+                    if (t.Elts.Count == 0) return "ValueTuple";
+                    string ItemType(Expr value) => InferType(value) ?? (BoundMethodValue(value) != null ? "dynamic" : null);
+                    if (t.Elts.Count == 1) { var one = PyType(ItemType(t.Elts[0])); return one == null || one == TypeInference.Pending ? one : $"ValueTuple<{one}>"; }
                     // a long tuple of one item type is a data sequence (a table of numbers), not a record: PyTuple<T>
                     if (t.Elts.Count >= 8 && !t.Elts.Any(x => x is StarredExpr))
                     {
@@ -291,7 +307,7 @@ namespace Typhon.Compiler.Emit
                         if (its.Count == 1 && its[0] != null && its[0] != TypeInference.Pending) return PyTuplePrefix + its[0] + ">";
                         if (its.All(x => x == "long" || x == "double")) return PyTuplePrefix + "double>";
                     }
-                    var ts = t.Elts.Select(e => InferType(e) ?? (e is ListExpr { Elts.Count: 0 } ? "List<dynamic>" : null)).ToList();
+                    var ts = t.Elts.Select(e => ItemType(e) ?? (e is ListExpr { Elts.Count: 0 } ? "List<dynamic>" : null)).ToList();
                     return ts.All(x => x != null) ? "(" + string.Join(", ", ts) + ")" : null;
                 }
                 default: return null;
@@ -511,7 +527,8 @@ namespace Typhon.Compiler.Emit
                 return PyTuplePrefix + (hl == hr ? hl : (hl == "long" || hl == "double") && (hr == "long" || hr == "double") ? "double" : "dynamic") + ">";
             if (b.Op == "*" && (HomogeneousTupleItem(l) is string rep && IsIntegral(r) || HomogeneousTupleItem(r) is string rep2 && IsIntegral(l)))
                 return PyTuplePrefix + (HomogeneousTupleItem(l) ?? HomogeneousTupleItem(r)) + ">";
-            if (b.Op == "+" && TupleElementTypes(l) is List<string> tl && TupleElementTypes(r) is List<string> tr) return "(" + string.Join(", ", tl.Concat(tr)) + ")";
+            if (b.Op == "+" && TupleElementTypes(l) is List<string> tl && TupleElementTypes(r) is List<string> tr)
+                return tl.Count == 0 ? r : tr.Count == 0 ? l : "(" + string.Join(", ", tl.Concat(tr)) + ")";
             if (b.Op == "|" && IsDictType(l) && IsDictType(r)) return l;
             if (ArithmeticOps.Contains(b.Op) || IsBitwiseOperator(b.Op) &&
                 (l == "bool" && IsIntegral(r) || r == "bool" && IsIntegral(l)))

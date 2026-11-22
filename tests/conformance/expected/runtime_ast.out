@@ -1,0 +1,15 @@
+Module
+['Import', 'ImportFrom', 'If', 'ClassDef']
+import one alias 19
+from pkg 1 other None
+class First 4 9 4 22
+['alias.Base[T, 2 + 3]']
+async method 6 9 8 22
+self 3
+def nested 7 8 12 20
+class Second 11 11 0 25
+['First']
+café 5 1 8 25
+list[(1 + 2) * 3]
+T[a[1:3], value + 5]
+SyntaxError 1

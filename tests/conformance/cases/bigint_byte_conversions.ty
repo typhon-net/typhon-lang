@@ -1,0 +1,17 @@
+# typhon: int=bigint
+
+def parse(hex_text: object) -> int:
+    return int(hex_text, 16)
+
+marker: int = 2 ** 96 + 17
+length: int = 13
+print(parse("1000000000000000000000011") == marker)
+print(parse(b"1000000000000000000000011") == marker)
+print(marker.to_bytes(length).hex())
+print(marker.to_bytes(length, "little").hex())
+print(int.from_bytes(marker.to_bytes(length)) == marker)
+print((11).to_bytes().hex())
+try:
+    parse(19)
+except TypeError as error:
+    print(str(error))

@@ -1,0 +1,17 @@
+import collections
+
+data = collections.UserDict({"one": 1})
+data["two"] = 2
+print(data, list(data), data["two"], data.get("absent"))
+sequence = collections.UserList([1, 2])
+sequence.append(3)
+print(sequence, type(sequence[1:]).__name__, list(sequence[1:]))
+word = collections.UserString("AbC")
+print(word, repr(word), word.lower(), list(word), type(word[1]).__name__)
+first = {"name": 3, "z": 0}
+second = {"name": 9, "a": 1}
+overlaid = collections.ChainMap(first, second)
+overlaid["name"] = 5
+print(list(overlaid), overlaid["name"], overlaid["a"], first["name"], second["name"])
+print(overlaid.parents["name"], overlaid.new_child({"name": 11})["name"])
+print(collections.defaultdict.__repr__ is type(collections.defaultdict(list)).__repr__)

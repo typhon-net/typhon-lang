@@ -1,0 +1,26 @@
+from dataclasses import dataclass, field
+
+@dataclass
+class Record:
+    visible: int
+    hidden: int = field(repr=False)
+
+sample = Record(3, 4)
+print(repr(sample), sample.__dataclass_params__.repr)
+print(Record.__repr__.__qualname__, Record.__repr__.__wrapped__.__qualname__)
+print(sample.__repr__.__wrapped__ is Record.__repr__.__wrapped__)
+print(Record.__repr__.__wrapped__(sample))
+
+@dataclass
+class Node:
+    child: object = None
+
+node = Node()
+node.child = node
+print(repr(node))
+
+@dataclass(repr=False)
+class Silent:
+    visible: int
+
+print(Silent.__dataclass_params__.repr, Silent.__repr__ is object.__repr__)

@@ -9,6 +9,8 @@ namespace Typhon.Compiler.Syntax
     {
         public int Line;
         public int Col;
+        public int StartOffset;
+        public int EndOffset;
     }
 
     // ───────────────────────────── Expressions ─────────────────────────────
@@ -139,14 +141,15 @@ namespace Typhon.Compiler.Syntax
 
     public sealed class DelStmt : Stmt { public List<Expr> Targets = new List<Expr>(); }
 
-    public sealed class ImportAlias { public string Name; public string AsName; }
+    public sealed class ImportAlias : Node { public string Name; public string AsName; }
 
-    public sealed class ImportStmt : Stmt { public List<ImportAlias> Names = new List<ImportAlias>(); }
+    public sealed class ImportStmt : Stmt { public List<ImportAlias> Names = new List<ImportAlias>(); public bool IsLazy; }
 
     public sealed class ImportFromStmt : Stmt
     {
         public string Module;   // dotted, may be empty for "from . import x"
         public int Level;       // number of leading dots
+        public bool IsLazy;
         public List<ImportAlias> Names = new List<ImportAlias>(); // Name "*" for wildcard
     }
 

@@ -1,0 +1,15 @@
+import binascii
+
+print(binascii.b2a_base64(b'abcdefgh', padded=False, wrapcol=5, newline=False))
+alphabet = binascii.BASE64_ALPHABET[:-2] + b'-_'
+print(binascii.b2a_base64(b'\xff\xfd', padded=False, alphabet=alphabet, newline=False))
+print(binascii.a2b_base64(b'_-*0', padded=False, alphabet=alphabet, ignorechars=b'*'))
+print(binascii.unhexlify(b'AB - CD', ignorechars=b' -'))
+mapping = bytes.maketrans(b'az', b'AZ')
+print(len(mapping), b'a z!'.translate(mapping, b'!'), bytearray(b'za').translate(mapping))
+print(b'a b\xff'.translate(None, b' '))
+for payload in (b'TR==', b'TR', b'TQ=='):
+    try:
+        print(binascii.a2b_base64(payload, strict_mode=True, padded=False, canonical=True))
+    except binascii.Error as error:
+        print(str(error))

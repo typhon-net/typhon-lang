@@ -1,0 +1,8 @@
+import os
+
+def probe():
+    print(os.path.join("a", "b", "c").replace(os.sep, "/"),
+          os.path.join("a", "").replace(os.sep, "/"),
+          os.path.split(os.path.join("a", "b")))
+
+probe()

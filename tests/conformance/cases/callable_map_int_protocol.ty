@@ -1,0 +1,24 @@
+class Codec:
+    @classmethod
+    def parse(cls, text: str) -> int:
+        return int(text, 16)
+
+    def __index__(self) -> int:
+        return 13
+
+class Priority(Codec):
+    def __int__(self) -> int:
+        return 41
+
+class Invalid:
+    def __int__(self) -> str:
+        return "23"
+
+decoder: object = getattr(Codec, "parse")
+numbers: list[str] = ["ff", "2a"]
+print(list(map(decoder, numbers)))
+print(int(Codec()), int(Priority()))
+try:
+    print(int(Invalid()))
+except TypeError as error:
+    print(str(error))

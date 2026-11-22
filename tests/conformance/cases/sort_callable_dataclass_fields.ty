@@ -1,0 +1,31 @@
+from dataclasses import dataclass, field, fields as dataclass_fields
+from typing import Any
+
+@dataclass
+class Record:
+    name: str
+    hidden: int = field(repr=False)
+
+def public_fields(record: Any):
+    return [f.name for f in dataclass_fields(record) if f.repr]
+
+class Key:
+    def __init__(self, value: str):
+        self.value = value
+
+    def __lt__(self, other: "Key") -> bool:
+        return self.value < other.value
+
+def backwards(value: str):
+    return -len(value)
+
+def choose_sort(values: list[str], backwards_order: bool):
+    key = Key
+    if backwards_order:
+        key = backwards
+    return sorted(values, key=key)
+
+print(public_fields(Record("name", 1)))
+print(choose_sort(["bb", "aaa", "a"], False))
+print(choose_sort(["bb", "aaa", "a"], True))
+print(sorted(["bb", "a", "aaa"], key=Key))

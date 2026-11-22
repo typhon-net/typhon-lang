@@ -68,16 +68,45 @@ namespace Typhon.Runtime
     /// <summary>collections.defaultdict: reading a missing key stores and returns default_factory().</summary>
     internal sealed class defaultdict<K, V> : OrderedDictionary<K, V>, IPyMissingKey, IPyRepr where K : notnull
     {
-        readonly string _factoryName;
-        public Func<V>? default_factory { get; }
-        public defaultdict(Func<V>? factory, string factoryName) { default_factory = factory; _factoryName = factoryName; }
+        readonly object? _initialFactory;
+        readonly Func<V>? _compiledFactory;
+
+        public object? default_factory { get; set; }
+
+        public defaultdict(Func<V>? factory, string factoryName)
+        {
+            _compiledFactory = factory;
+            _initialFactory = default_factory = factory == null ? null : factoryName switch
+            {
+                "int" => typeof(long),
+                "float" => typeof(double),
+                "str" => typeof(string),
+                "bool" => typeof(bool),
+                "list" => typeof(List<object>),
+                "set" => typeof(HashSet<object>),
+                "dict" => typeof(OrderedDictionary<object, object>),
+                "tuple" => typeof(System.Runtime.CompilerServices.ITuple),
+                _ => factory,
+            };
+        }
+
+        public defaultdict(object? factory = null, object? mapping = null)
+        {
+            if (factory != null && !Builtins.callable(factory))
+                throw new InvalidCastException("first argument must be callable or None");
+            default_factory = factory;
+            if (mapping != null)
+                foreach (var entry in Builtins.frozendict(mapping, new Dictionary<string, object?>()))
+                    this[(K)(dynamic)entry.Key] = (V)(dynamic?)entry.Value;
+        }
         public new V this[K key]
         {
             get
             {
                 if (TryGetValue(key, out var v)) return v;
                 if (default_factory == null) throw new KeyNotFoundException(Builtins.repr(key));
-                v = default_factory();
+                v = _compiledFactory != null && ReferenceEquals(default_factory, _initialFactory)
+                    ? _compiledFactory() : (V)Builtins.__invoke(default_factory, Array.Empty<object?>());
                 base[key] = v;
                 return v;
             }
@@ -88,7 +117,8 @@ namespace Typhon.Runtime
         public IEnumerable<K> keys() => Keys;
         public IEnumerable<V> values() => Values;
 
-        public string __repr__() => $"defaultdict(<class '{_factoryName}'>, {{" + string.Join(", ", this.Select(kv => Builtins.repr(kv.Key) + ": " + Builtins.repr(kv.Value))) + "})";
+        public string __repr__() => $"defaultdict({Builtins.repr(default_factory)}, {{" +
+            string.Join(", ", this.Select(kv => Builtins.repr(kv.Key) + ": " + Builtins.repr(kv.Value))) + "})";
         public override string ToString() => __repr__();
     }
 
@@ -641,6 +671,16 @@ namespace Typhon.Stdlib
             return acc;
         }
         public static Func<T, CmpKey<T>> cmp_to_key<T>(Func<T, T, long> mycmp) => x => new CmpKey<T>(x, mycmp);
+        public static PyClosure __cmp_to_key(object mycmp)
+        {
+            long Compare(object? left, object? right) => Builtins.@int((object)Builtins.__invoke(mycmp, [left, right]));
+            return new PyClosure("cmp_to_key", (args, keywords) =>
+            {
+                if (args.Length != 1 || keywords?.Count > 0)
+                    throw PyClosure.ArgCountError("cmp_to_key", 1, 1, args.Length);
+                return new CmpKey<object?>(args[0], Compare);
+            });
+        }
     }
 
     /// <summary>operator: the operators as functions (for reduce, map, sorted keys).</summary>

@@ -107,17 +107,42 @@ namespace Typhon.Compiler.Emit
             EmitLoopElse(f.OrElse, flag);
         }
 
+        void EmitBigRangeLoop(ForStmt f, NameExpr target, List<Expr> args)
+        {
+            string Bound(Expr value) => $"(object?){Paren(EmitExpr(value))}";
+            string start = args.Count >= 2 ? Bound(args[0]) : "0L";
+            string stop = Bound(args.Count >= 2 ? args[1] : args[0]);
+            string step = args.Count == 3 ? Bound(args[2]) : "1L";
+            bool inline = IsInline(f, target.Id);
+            bool direct = inline && !AssignsName(f.Body, target.Id);
+            string item = direct ? Esc(target.Id) : NewTmp("i");
+            _w.Line($"foreach (var {item} in {Rt("__iter_big_range")}({start}, {stop}, {step}))");
+            string prologue = null;
+            if (direct) SetType(target.Id, IntT);
+            else if (inline)
+            {
+                string targetType = ConflictType(target.Id);
+                SetType(target.Id, targetType ?? IntT);
+                prologue = $"{targetType ?? "var"} {Esc(target.Id)} = {item};";
+            }
+            else prologue = $"{EmitName(target)} = {item};";
+            EmitBlock(f.Body, prologue);
+        }
+
         void EmitForLoop(ForStmt f)
         {
 
             // Fast path: for i in range(...) → a plain counting loop (no enumerator allocation).
             if (!f.IsAsync && f.Target is NameExpr tn && IsBuiltinRange(f.Iter, out var args))
             {
-                // big-int mode: the counter stays a long (a range cannot have 2**63 steps); BigInteger bounds are narrowed
-                string Bound(Expr e) => _big && InferType(e) == TypeInference.BigInt && !IsIntLiteral(e) ? $"checked((long)({EmitExpr(e)}))" : EmitExpr(e);
-                string start = args.Count >= 2 ? Bound(args[0]) : "0";
-                string stop = Bound(args.Count >= 2 ? args[1] : args[0]);
-                string step = args.Count == 3 ? Bound(args[2]) : "1";
+                if (_big)
+                {
+                    EmitBigRangeLoop(f, tn, args);
+                    return;
+                }
+                string start = args.Count >= 2 ? EmitExpr(args[0]) : "0";
+                string stop = EmitExpr(args.Count >= 2 ? args[1] : args[0]);
+                string step = args.Count == 3 ? EmitExpr(args[2]) : "1";
                 bool inline = IsInline(f, tn.Id);
                 bool direct = inline && !AssignsName(f.Body, tn.Id);
                 string iv = direct ? Esc(tn.Id) : NewTmp("i");
@@ -220,7 +245,7 @@ namespace Typhon.Compiler.Emit
                 // (also a call dispatched dynamically, enumerate(u) with u late-bound: its C# type is dynamic, whatever it returns)
                 string loopElem = IterElementType(IterableType(f.Iter));
                 // (also when the loop iterates late-bound itself, for bit, char in table with table an object: __iter_dyn(table))
-                if ((tup.Elts.Count < 2 || loopElem == "dynamic" || IsDynamicallyDispatched(f.Iter) || IsUnknownType(IterableType(f.Iter)) && !(f.Iter is NameExpr) ||
+                if ((tup.Elts.Count < 2 || HasLateNestedUnpack(tup.Elts, loopElem) || loopElem == "dynamic" || IsDynamicallyDispatched(f.Iter) || IsUnknownType(IterableType(f.Iter)) && !(f.Iter is NameExpr) ||
                      iter.StartsWith(Rt("__iter_dyn") + "(") ||
                      (loopElem == null || loopElem == "object") && f.Iter is CallExpr && UnpackPartTypes(loopElem, tup.Elts.Count) == null) &&
                     !tup.Elts.Any(e => e is StarredExpr))
@@ -263,6 +288,20 @@ namespace Typhon.Compiler.Emit
             Unsupported(f.Target, "this loop target");
         }
 
+        // A typed outer tuple can contain a dynamic item. C# cannot deconstruct that item as part of the same pattern.
+        bool HasLateNestedUnpack(List<Expr> targets, string type)
+        {
+            var parts = UnpackPartTypes(type, targets.Count);
+            for (int i = 0; i < targets.Count; i++)
+            {
+                var inner = targets[i] is TupleExpr tuple ? tuple.Elts : (targets[i] as ListExpr)?.Elts;
+                if (inner == null) continue;
+                if (parts == null || UnpackPartTypes(parts[i], inner.Count) == null || HasLateNestedUnpack(inner, parts[i]))
+                    return true;
+            }
+            return false;
+        }
+
         /// <summary>The types n unpacked names get from a value of this type: a tuple's items, or n times the item type of a computed-length tuple.</summary>
         List<string> UnpackPartTypes(string t, int n)
         {
@@ -275,6 +314,7 @@ namespace Typhon.Compiler.Emit
         /// <summary>"(long, string)" or "(long num1, long num2)" → its element types; null if not a tuple type.</summary>
         static List<string> TupleElementTypes(string t)
         {
+            if (t == "ValueTuple") return new List<string>();
             if (t != null && t.StartsWith("ValueTuple<") && t.EndsWith(">") && SplitTypeArgs(GenericArg(t)).Count == 1) return new List<string> { GenericArg(t) };
             if (t == null || !t.StartsWith("(") || !t.EndsWith(")")) return null;
             var parts = SplitTypeArgs(t.Substring(1, t.Length - 2));

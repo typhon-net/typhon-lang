@@ -45,6 +45,8 @@ namespace Typhon.Runtime
             if (a is null || b is null) return false;
             if (IntLike(a, out var x) && IntLike(b, out var y)) return x == y;
             if (IsNumber(a) && IsNumber(b)) return Convert.ToDouble(a, Inv) == Convert.ToDouble(b, Inv);
+            if (a is PyStrEnum leftEnum) a = leftEnum.value;
+            if (b is PyStrEnum rightEnum) b = rightEnum.value;
             if (a is string sa) return b is string sb && sa == sb;
             if (a is char ca) return b is char cb ? ca == cb : b is string sc && sc.Length == 1 && sc[0] == ca;
             if (b is char) return eq(b, a);

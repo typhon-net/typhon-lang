@@ -116,12 +116,21 @@ namespace Typhon.Runtime
 
         static readonly object MissingImportAttribute = new object();
 
-        public static dynamic? __runtime_relative_import(IDictionary globals, string module, long level, string member)
+        public static dynamic? __runtime_source_import(IDictionary globals, string module, long level, string? member, bool bindRoot)
         {
-            if (globals["__package__"] is not string package || package.Length == 0)
-                throw new ImportError("attempted relative import with no known parent package");
-            string absolute = SourceImport.ResolveRelative(module, package, checked((int)level));
+            string absolute = module;
+            if (level != 0)
+            {
+                if (globals["__package__"] is not string package || package.Length == 0)
+                    throw new ImportError("attempted relative import with no known parent package");
+                absolute = SourceImport.ResolveRelative(module, package, checked((int)level));
+            }
             object imported = SourceImport.ImportModule(absolute);
+            if (member == null)
+            {
+                int dot = absolute.IndexOf('.');
+                return bindRoot && dot >= 0 ? SourceImport.ImportModule(absolute[..dot]) : imported;
+            }
             object? value = getattr(imported, member, MissingImportAttribute);
             if (!ReferenceEquals(value, MissingImportAttribute)) return value;
             if (hasattr(imported, "__path__"))

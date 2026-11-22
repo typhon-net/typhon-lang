@@ -1,0 +1,27 @@
+# typhon: int=bigint
+
+class Bound:
+    def __init__(self, value: int):
+        self.value = value
+
+    def __index__(self) -> int:
+        return self.value
+
+origin: int = 2 ** 128
+
+def collect(base: int) -> list[int]:
+    seen: list[int] = []
+    for item in range(Bound(base + 5), base, -2):
+        seen.append(item - base)
+    seen.append(item - base)
+    return seen
+
+print(collect(origin))
+for position in range(origin, origin + 2):
+    print(position - origin)
+
+try:
+    for unused in range(0, 3, 0):
+        print(unused)
+except ValueError as error:
+    print(str(error))

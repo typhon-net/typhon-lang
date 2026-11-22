@@ -26,7 +26,7 @@ namespace Typhon.Stdlib
             /// <summary>The read-only mapping mixin implemented by __getitem__, __iter__, and __len__.</summary>
             public abstract class Mapping : IEnumerable<object?>
             {
-                object? Item(object? key) => Builtins.__invoke(Builtins.getattr(this, "__getitem__"), new[] { key });
+                internal object? Item(object? key) => Builtins.__invoke(Builtins.getattr(this, "__getitem__"), new[] { key });
 
                 IEnumerable<object?> Keys() =>
                     Builtins.__iter_dyn(Builtins.__invoke(Builtins.getattr(this, "__iter__"), Array.Empty<object?>()));
@@ -43,20 +43,54 @@ namespace Typhon.Stdlib
                     catch (KeyNotFoundException) { return false; }
                 }
 
-                public virtual IEnumerable<object?> keys() => new View<object?>(this, Keys);
-                public virtual IEnumerable<object?> values() => new View<object?>(this, () => Keys().Select(Item));
-                public virtual IEnumerable<(object?, object?)> items() =>
-                    new View<(object?, object?)>(this, () => Keys().Select(key => (key, Item(key))));
+                public virtual IEnumerable<object?> keys() => new KeysView(this);
+                public virtual IEnumerable<object?> values() => new ValuesView(this);
+                public virtual IEnumerable<(object?, object?)> items() => new ItemsView(this);
 
                 IEnumerator<object?> IEnumerable<object?>.GetEnumerator() => Keys().GetEnumerator();
                 IEnumerator IEnumerable.GetEnumerator() => Keys().GetEnumerator();
 
-                sealed class View<T>(Mapping mapping, Func<IEnumerable<T>> values) : IEnumerable<T>, IPyLen
+            }
+
+            public class MappingView(object mapping) : IPyLen, IPyRepr
+            {
+                public object _mapping = mapping;
+
+                public long __len__() => Builtins.len(_mapping);
+                protected IEnumerable<object?> Keys() => Builtins.__iter_dyn(_mapping);
+                protected object? Item(object? key) => Builtins.__getitem(_mapping, key);
+                public string __repr__() => $"{Builtins.PyTypeName(GetType())}({Builtins.repr(_mapping)})";
+                public override string ToString() => __repr__();
+            }
+
+            public class KeysView(object mapping) : MappingView(mapping), IEnumerable<object?>
+            {
+                public bool __contains__(object? key) => _mapping is Mapping mapping
+                    ? mapping.__contains__(key) : Builtins.contains(_mapping, key!);
+                public IEnumerator<object?> GetEnumerator() => Keys().GetEnumerator();
+                IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+            }
+
+            public class ValuesView(object mapping) : MappingView(mapping), IEnumerable<object?>
+            {
+                public bool __contains__(object? value) => Keys().Any(key => Builtins.eq(Item(key), value));
+                public IEnumerator<object?> GetEnumerator() => Keys().Select(Item).GetEnumerator();
+                IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+            }
+
+            public class ItemsView(object mapping) : MappingView(mapping), IEnumerable<(object?, object?)>
+            {
+                public bool __contains__(object? item)
                 {
-                    public long __len__() => Builtins.len(mapping);
-                    public IEnumerator<T> GetEnumerator() => values().GetEnumerator();
-                    IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+                    var pair = Builtins.__iter_dyn(item).Take(3).ToArray();
+                    if (pair.Length < 2) throw new ArgumentException($"not enough values to unpack (expected 2, got {pair.Length})");
+                    if (pair.Length > 2) throw new ArgumentException("too many values to unpack (expected 2)");
+                    try { return Builtins.eq(Item((object?)pair[0]), (object?)pair[1]); }
+                    catch (KeyNotFoundException) { return false; }
                 }
+
+                public IEnumerator<(object?, object?)> GetEnumerator() => Keys().Select(key => (key, Item(key))).GetEnumerator();
+                IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
             }
         }
     }

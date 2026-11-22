@@ -41,6 +41,9 @@ namespace Typhon.Runtime
             return (byte)x;
         }
 
+        internal static byte[] Buffer(object? value) => value is PyBytes or PyByteArray or byte[] or global::memoryview
+            ? From(value) : throw new InvalidCastException("object supporting the buffer API required");
+
         public static byte[] From(object? o) => o switch
         {
             null => Array.Empty<byte>(),
@@ -326,6 +329,30 @@ namespace Typhon.Runtime
             result.Add(new PyBytes(Data[start..]));
             return result;
         }
+        public static PyBytes maketrans(object from, object to)
+        {
+            byte[] source = global::Typhon.Stdlib.binascii.Data(from), target = global::Typhon.Stdlib.binascii.Data(to);
+            if (source.Length != target.Length) throw new ArgumentException("maketrans arguments must have same length");
+            var mapping = new byte[256];
+            for (int i = 0; i < mapping.Length; i++) mapping[i] = (byte)i;
+            for (int i = 0; i < source.Length; i++) mapping[source[i]] = target[i];
+            return new PyBytes(mapping);
+        }
+
+        public PyBytes translate(object? table, object? delete = null)
+        {
+            byte[]? mapping = table == null ? null : global::Typhon.Stdlib.binascii.Data(table);
+            if (mapping != null && mapping.Length != 256) throw new ArgumentException("translation table must be 256 characters long");
+            byte[] deletion = delete == null ? Array.Empty<byte>() : global::Typhon.Stdlib.binascii.Data(delete);
+            var dropped = new bool[256];
+            foreach (byte value in deletion) dropped[value] = true;
+            var result = new byte[Data.Length];
+            int count = 0;
+            foreach (byte value in Data)
+                if (!dropped[value]) result[count++] = mapping == null ? value : mapping[value];
+            return new PyBytes(count == result.Length ? result : result[..count]);
+        }
+
         public PyBytes strip(PyBytes? chars = null) => lstrip(chars).rstrip(chars);
         public PyBytes lstrip(PyBytes? chars = null)
         {
@@ -534,6 +561,9 @@ namespace Typhon.Runtime
         public PyByteArray capitalize() => A(B.capitalize());
         public PyByteArray swapcase() => A(B.swapcase());
         public PyByteArray title() => A(B.title());
+        public static PyBytes maketrans(object from, object to) => PyBytes.maketrans(from, to);
+        public PyByteArray translate(object? table, object? delete = null) => A(B.translate(table, delete));
+
         public PyByteArray strip(PyBytes? chars = null) => A(B.strip(chars));
         public PyByteArray lstrip(PyBytes? chars = null) => A(B.lstrip(chars));
         public PyByteArray rstrip(PyBytes? chars = null) => A(B.rstrip(chars));
@@ -569,7 +599,12 @@ namespace Typhon.Runtime
         public PyHash(string name, object? data = null) { this.name = name; if (data != null) update(data); }
         public long digest_size => name switch { "md5" => 16, "sha1" => 20, "sha256" => 32, "sha384" => 48, "sha512" => 64, _ => 0 };
         public long block_size => name is "sha384" or "sha512" ? 128 : 64;
-        public void update(object data) => _data.Write(ByteOps.From(data));
+        public object? update(object? data)
+        {
+            if (data is string) throw new InvalidCastException("Strings must be encoded before hashing");
+            _data.Write(ByteOps.Buffer(data));
+            return null;
+        }
         public PyBytes digest()
         {
             var bytes = _data.ToArray();

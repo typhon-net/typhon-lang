@@ -1,0 +1,45 @@
+import ast
+
+source = """import one as alias
+from .pkg import other
+if True:
+    class First(alias.Base[T, 2 + 3]):
+        @dec
+        async def method(self, /, arg=3):
+            def nested():
+                pass
+            return arg
+
+class Second(First): pass
+"""
+class Visitor(ast.NodeVisitor):
+    def visit_ClassDef(self, node):
+        print("class", node.name, node.lineno, node.end_lineno, node.col_offset, node.end_col_offset)
+        print([ast.unparse(base) for base in node.bases])
+        self.generic_visit(node)
+    def visit_FunctionDef(self, node):
+        print("def", node.name, node.lineno, node.end_lineno, node.col_offset, node.end_col_offset)
+        self.generic_visit(node)
+    def visit_AsyncFunctionDef(self, node):
+        print("async", node.name, node.lineno, node.end_lineno, node.col_offset, node.end_col_offset)
+        print(node.args.posonlyargs[0].arg, node.args.defaults[0].value)
+        self.generic_visit(node)
+    def visit_Import(self, node):
+        print("import", node.names[0].name, node.names[0].asname, node.end_col_offset)
+    def visit_ImportFrom(self, node):
+        print("from", node.module, node.level, node.names[0].name, node.names[0].asname)
+
+tree = ast.parse(source)
+print(type(tree).__name__)
+print([type(node).__name__ for node in ast.iter_child_nodes(tree)])
+Visitor().visit(tree)
+
+code = ast.parse("café = list[(1 + 2) * 3]", "x.py")
+assign = code.body[0]
+print(assign.targets[0].id, assign.targets[0].end_col_offset, assign.value.lineno, assign.value.col_offset, assign.value.end_col_offset)
+print(ast.unparse(assign.value))
+print(ast.unparse(ast.parse("T[a[1:3], value + 5]", mode="eval")))
+try:
+    ast.parse("def wrong()\n")
+except SyntaxError as e:
+    print(type(e).__name__, e.lineno)

@@ -1,0 +1,40 @@
+option = "module"
+
+def enabled() -> bool:
+    return False
+
+class Parent:
+    option = "inherited"
+
+class Child(Parent):
+    if enabled():
+        option = None
+        missing = "unused"
+    else:
+        present = None
+    following = option
+
+print(Child.following, Child.option, Child().option)
+print(hasattr(Child, "missing"), "missing" in Child.__dict__)
+print(hasattr(Child, "present"), Child.present is None)
+data = Child.__dict__
+Child.missing = None
+print("missing" in data, Child().missing is None)
+delattr(Child, "missing")
+print("missing" in data, hasattr(Child(), "missing"))
+
+class Selected:
+    if not enabled():
+        selected = ["first"]
+        selected.append("second")
+    after = selected
+
+print(Selected.after, Selected.selected is Selected.after)
+
+total = 10
+
+class Rebound:
+    if not enabled():
+        total += 5
+
+print(total, Rebound.total)

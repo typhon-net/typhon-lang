@@ -27,6 +27,13 @@ namespace Typhon.Compiler.Emit
             (_p.FindModule(module.PackageName)?.IsPackage == true || StdlibType(module.PackageName) != null);
 
         readonly HashSet<string> _qualifiedPackageImports = new HashSet<string>();
+        readonly Dictionary<string, (ModuleInfo Owner, string Name, string Storage)> _runtimeProjectBindings = new();
+
+        string RuntimeProjectMember(ModuleInfo module, string name) =>
+            $"{Rt("getattr")}(global::Typhon.Runtime.PyModule.Of(typeof({ModuleClassName(module)}), {CsString(module.Name)}), {CsString(name)})";
+
+        bool UsesRuntimeProjectMember(ModuleInfo module, string name) => module.WritesModuleGlobals &&
+            ProjectExport(module, name).Owner == null && RuntimeReExport(module, name).Module == null;
 
         string PackageImportedMember(string name)
         {
@@ -93,7 +100,13 @@ namespace Typhon.Compiler.Emit
                 if (path == null) continue;
                 foreach (var alias in import.Names)
                 {
-                    if (alias.Name == "*" || (alias.AsName ?? alias.Name) != name) continue;
+                    if (alias.Name == "*")
+                    {
+                        if (!name.StartsWith("_") && _p.FindModule(path) == null && StdlibType(path) is string starMeta &&
+                            RuntimeExport(path, starMeta, name)) return (path, name);
+                        continue;
+                    }
+                    if ((alias.AsName ?? alias.Name) != name) continue;
                     if (_p.FindModule(path) is ModuleInfo source)
                     {
                         var result = RuntimeReExport(source, alias.Name, seen);
@@ -135,10 +148,38 @@ namespace Typhon.Compiler.Emit
             return Enumerable.Empty<ModuleInfo>();
         }
 
+        IEnumerable<string> PlatformModules(Stmt statement)
+        {
+            if (statement is ImportStmt direct)
+                return direct.Names.Select(alias => alias.Name).Where(name => name is "termios" or "msvcrt" && ResolvePsModule(name) == null);
+            if (statement is ImportFromStmt from && _m.ResolveImport(from.Module, from.Level) is string module &&
+                module is "termios" or "msvcrt" && ResolvePsModule(module) == null) return new[] { module };
+            return Enumerable.Empty<string>();
+        }
+
         void EmitProjectImports(Stmt stmt)
         {
+            foreach (var module in PlatformModules(stmt))
+                _w.Line($"global::Typhon.Runtime.Builtins.__import_platform_module({CsString(module)});");
             foreach (var module in ProjectImports(stmt))
                 _w.Line($"global::System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(typeof({ModuleClassName(module)}).TypeHandle);");
+            if (stmt is ImportFromStmt from && _m.ResolveImport(from.Module, from.Level) is string absolute &&
+                ResolvePsModule(absolute) is ModuleInfo importedSource)
+                foreach (var alias in from.Names)
+                    if (_runtimeProjectBindings.TryGetValue(alias.AsName ?? alias.Name, out var binding) &&
+                        binding.Owner == importedSource && binding.Name == alias.Name)
+                        _w.Line($"{binding.Storage} = global::Typhon.Runtime.PyModule.Of(typeof({ModuleClassName(importedSource)}), {CsString(importedSource.Name)}).ImportAttribute({CsString(alias.Name)});");
+            if (stmt is not ImportStmt imported) return;
+            foreach (var alias in imported.Names)
+            {
+                string binding = alias.AsName ?? alias.Name.Split('.')[0];
+                if (!_lateModuleFields.Contains(binding)) continue;
+                string moduleName = alias.AsName == null ? binding : alias.Name;
+                if (ResolvePsModule(moduleName) is ModuleInfo source)
+                    _w.Line($"{Esc(binding)} = global::Typhon.Runtime.PyModule.Of(typeof({ModuleClassName(source)}), {CsString(source.Name)});");
+                else if (StdlibType(moduleName) is string runtime)
+                    _w.Line($"{Esc(binding)} = global::Typhon.Runtime.PyModule.Of(typeof({CsTypeName(runtime)}), {CsString(moduleName)});");
+            }
         }
 
         static readonly HashSet<string> IgnoredModules = new HashSet<string> { "typing", "abc", "enum", "__future__", "collections.abc", "typing_extensions", "clr" };
@@ -229,7 +270,8 @@ namespace Typhon.Compiler.Emit
                 string runtime = publicModule == "collections.abc" ? StdlibType(modName) : null;
                 foreach (var a in s.Names)
                 {
-                    if (runtime != null && _r.GetMembers(runtime, a.Name).Any(member => member.IsStatic && member.IsMethod))
+                    if (runtime != null && (_r.GetMembers(runtime, a.Name).Any(member => member.IsStatic && member.IsMethod) ||
+                        a.Name != "Mapping" && _r.TypeExists(runtime + "+" + a.Name)))
                     {
                         ProcessImportFrom(new ImportFromStmt
                         {
@@ -264,6 +306,8 @@ namespace Typhon.Compiler.Emit
                                 Module = export.Module, Line = s.Line, Col = s.Col,
                                 Names = { new ImportAlias { Name = export.Member, AsName = bound } },
                             });
+                        else if (mod.WritesModuleGlobals)
+                            _runtimeProjectBindings[bound] = (mod, a.Name, "__typhon_" + NewTmp("import"));
                         else Report(s, "TY0102", Severity.Error, $"cannot import name '{a.Name}' from '{modName}'");
                         continue;
                     }
@@ -375,8 +419,8 @@ namespace Typhon.Compiler.Emit
             ["_bisect"] = "bisect", ["_heapq"] = "heapq", ["_struct"] = "struct", ["_datetime"] = "datetime", ["_pydatetime"] = "datetime",
             ["_operator"] = "operator", ["_functools"] = "functools", ["_io"] = "io", ["_pyio"] = "io", ["_weakref"] = "weakref",
             ["_json"] = "json", ["_random"] = "random", ["_statistics"] = "statistics", ["_string"] = "string", ["_csv"] = "csv",
-            ["_collections"] = "collections", ["_contextvars"] = "contextvars", ["_hashlib"] = "hashlib", ["_sha2"] = "hashlib",
-            ["_md5"] = "hashlib", ["_sha1"] = "hashlib", ["_sha3"] = "hashlib", ["_blake2"] = "hashlib", ["_pydecimal"] = "decimal",
+            ["_collections"] = "collections", ["_contextvars"] = "contextvars",
+            ["_md5"] = "hashlib", ["_sha1"] = "hashlib", ["_pydecimal"] = "decimal",
             ["_decimal"] = "decimal", ["_pickle"] = "pickle", ["_bz2"] = "bz2", ["_lzma"] = "lzma", ["_locale"] = "locale",
             ["_stat"] = "stat", ["_warnings"] = "warnings", ["_py_warnings"] = "warnings", ["_abc"] = "abc", ["_typing"] = "typing", ["_queue"] = "queue", ["_socket"] = "socket",
         };
@@ -396,7 +440,7 @@ namespace Typhon.Compiler.Emit
             string name = PublicModule(absolute);
             if (IgnoredModules.Contains(name)) return true;
             if (ResolvePsModule(name) is ModuleInfo mod)
-                return imf.Names.All(a => a.Name == "*" || ProjectExport(mod, a.Name).Owner != null || RuntimeReExport(mod, a.Name).Module != null);
+                return mod.WritesModuleGlobals || imf.Names.All(a => a.Name == "*" || ProjectExport(mod, a.Name).Owner != null || RuntimeReExport(mod, a.Name).Module != null);
             if (StdlibType(name) is string meta)
                 return imf.Names.All(a => a.Name == "*" || RuntimeExport(name, meta, a.Name) ||
                                           RuntimePackageChild(name, meta, a.Name) != null);
@@ -415,7 +459,7 @@ namespace Typhon.Compiler.Emit
         /// what Python runs when that import fails, the statements before it and the handler (Typhon resolves imports when
         /// it compiles, so the outcome is known then).
         /// </summary>
-        void ResolveFailingImports(List<Stmt> body, bool moduleScope = true)
+        void ResolveFailingImports(List<Stmt> body, bool moduleScope = true, bool optional = false)
         {
             for (int i = 0; i < body.Count; i++)
             {
@@ -423,8 +467,7 @@ namespace Typhon.Compiler.Emit
                 {
                     case TryStmt t when t.FinalBody.Count == 0:
                     {
-                        var handler = t.Handlers.FirstOrDefault(h => h.Type == null ||
-                            (h.Type is TupleExpr tt ? tt.Elts : new List<Expr> { h.Type }).Any(e => e is NameExpr en && en.Id is "ImportError" or "ModuleNotFoundError" or "Exception"));
+                        var handler = t.Handlers.FirstOrDefault(HandlesMissingImport);
                         int failing = t.Body.FindIndex(st => st is ImportStmt im && im.Names.Any(a => !ModuleExists(a.Name)) ||
                                                              st is ImportFromStmt imf && !ImportFromResolves(imf));
                         // try: from _queue import Empty / except ImportError: class Empty...: the imports all succeed, so
@@ -432,7 +475,10 @@ namespace Typhon.Compiler.Emit
                         if (failing < 0 && t.Handlers.Count > 0 && t.FinalBody.Count == 0 &&
                             t.Handlers.All(h => h.Type != null && h.Name == null &&
                                 (h.Type is TupleExpr ht ? ht.Elts : new List<Expr> { h.Type }).All(e => e is NameExpr en && en.Id is "ImportError" or "ModuleNotFoundError")) &&
-                            t.Body.Count > 0 && t.Body.All(st => st is ImportStmt || st is ImportFromStmt || st is PassStmt))
+                            t.Body.Count > 0 && t.Body.All(st => st is ImportStmt || st is ImportFromStmt || st is PassStmt) &&
+                            !t.Body.Any(st => PlatformModules(st).Any()) &&
+                            !t.Body.OfType<ImportFromStmt>().Any(from => _m.ResolveImport(from.Module, from.Level) is string absolute &&
+                                ResolvePsModule(absolute) is ModuleInfo source && from.Names.Any(a => a.Name != "*" && UsesRuntimeProjectMember(source, a.Name))))
                         {
                             var kept = t.Body.Concat(t.OrElse).ToList();
                             body.RemoveAt(i);
@@ -451,20 +497,77 @@ namespace Typhon.Compiler.Emit
                             var replacement = t.Body.Take(failing).Concat(handler.Body).ToList();
                             body.RemoveAt(i);
                             body.InsertRange(i, replacement);
+                            if (replacement.LastOrDefault() is ReturnStmt or RaiseStmt)
+                                body.RemoveRange(i + replacement.Count, body.Count - i - replacement.Count);
                             i--;
                             continue;
                         }
-                        ResolveFailingImports(t.Body, moduleScope);
-                        foreach (var h in t.Handlers) ResolveFailingImports(h.Body, moduleScope);
-                        ResolveFailingImports(t.OrElse, moduleScope);
+                        ResolveFailingImports(t.Body, moduleScope, optional || handler != null);
+                        foreach (var h in t.Handlers) ResolveFailingImports(h.Body, moduleScope, optional);
+                        ResolveFailingImports(t.OrElse, moduleScope, optional);
                         break;
                     }
-                    case TryStmt t2: ResolveFailingImports(t2.Body, moduleScope); foreach (var h in t2.Handlers) ResolveFailingImports(h.Body, moduleScope); ResolveFailingImports(t2.OrElse, moduleScope); ResolveFailingImports(t2.FinalBody, moduleScope); break;
-                    case IfStmt ifs: ResolveFailingImports(ifs.Body, moduleScope); ResolveFailingImports(ifs.OrElse, moduleScope); break;
+                    case TryStmt t2:
+                        ResolveFailingImports(t2.Body, moduleScope, optional || t2.Handlers.Any(HandlesMissingImport));
+                        foreach (var h in t2.Handlers) ResolveFailingImports(h.Body, moduleScope, optional);
+                        ResolveFailingImports(t2.OrElse, moduleScope, optional);
+                        ResolveFailingImports(t2.FinalBody, moduleScope, optional);
+                        break;
+                    case IfStmt ifs:
+                        ResolveFailingImports(ifs.Body, moduleScope, optional);
+                        ResolveFailingImports(ifs.OrElse, moduleScope, optional);
+                        break;
+                    case ImportStmt import when optional && import.Names.FirstOrDefault(a => !ModuleExists(a.Name)) is ImportAlias missing:
+                        var available = import.Names.TakeWhile(a => a != missing).ToList();
+                        if (available.Count > 0)
+                        {
+                            body.Insert(i, new ImportStmt { Line = import.Line, Col = import.Col, Names = available });
+                            i++;
+                        }
+                        ReplaceUnavailableImport(body, i, import, "ModuleNotFoundError", $"No module named '{missing.Name}'");
+                        break;
+                    case ImportFromStmt from when optional && !ImportFromResolves(from):
+                        ReplaceUnavailableImport(body, i, from, "ImportError", $"cannot import name from '{from.Module}'");
+                        break;
                     case FunctionDef fd: ResolveFailingImports(fd.Body, moduleScope: false); break;
                     case ClassDef cd: ResolveFailingImports(cd.Body, moduleScope: false); break;
                 }
             }
+        }
+
+        void RemoveResolvedImportBindings()
+        {
+            if (_m.ConditionalGlobals.Count == 0) return;
+            var imports = _m.Ast.Body.OfType<ImportFromStmt>().SelectMany(statement => statement.Names)
+                .Select(alias => alias.AsName ?? alias.Name).Where(_m.ConditionalGlobals.Contains).Distinct().ToList();
+            if (imports.Count == 0) return;
+            // A resolved import can replace a try suite whose fallback defined the name.
+            // The old conditional binding cannot shadow the imported class after the rewrite.
+            var remaining = LocalsAnalyzer.Analyze(_m.Ast.Body, Enumerable.Empty<string>(), null);
+            foreach (string name in imports.Where(name => !remaining.AllLocals.Contains(name) && !remaining.LocalFunctions.Contains(name)))
+            {
+                _m.ConditionalGlobals.Remove(name);
+                _m.Globals.Remove(name);
+            }
+        }
+
+        static bool HandlesMissingImport(ExceptHandler handler) => handler.Type == null ||
+            (handler.Type is TupleExpr tuple ? tuple.Elts : new List<Expr> { handler.Type })
+                .Any(e => e is NameExpr name && name.Id is "ImportError" or "ModuleNotFoundError" or "Exception");
+
+        static void ReplaceUnavailableImport(List<Stmt> body, int position, Stmt import, string kind, string message)
+        {
+            body[position] = new RaiseStmt
+            {
+                Line = import.Line,
+                Col = import.Col,
+                Exc = new CallExpr
+                {
+                    Func = new NameExpr { Id = kind },
+                    Args = { new Arg { Value = new ConstExpr { Kind = ConstKind.Str, Str = message } } },
+                },
+            };
+            body.RemoveRange(position + 1, body.Count - position - 1);
         }
 
         string StdlibType(string dotted)

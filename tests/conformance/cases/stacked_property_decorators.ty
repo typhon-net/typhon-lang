@@ -1,0 +1,19 @@
+import functools
+
+calls: list[int] = []
+
+class Sample:
+    def __init__(self, number: int):
+        self.number = number
+
+    @property
+    @functools.lru_cache(maxsize=2)
+    def value(self) -> int:
+        calls.append(self.number)
+        return self.number * 10
+
+one = Sample(1)
+two = Sample(2)
+three = Sample(3)
+print(one.value, two.value, one.value, three.value, two.value)
+print(calls)

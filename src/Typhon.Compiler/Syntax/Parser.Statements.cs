@@ -12,23 +12,23 @@ namespace Typhon.Compiler.Syntax
         List<Stmt> ParseStatement()
         {
             var tok = Cur;
-            if (IsOp("@")) return new List<Stmt> { ParseDecorated() };
-            if (IsKw("def")) return new List<Stmt> { ParseFuncDef(new List<Expr>(), false) };
-            if (IsKw("class")) return new List<Stmt> { ParseClassDef(new List<Expr>()) };
-            if (IsKw("if")) return new List<Stmt> { ParseIf() };
-            if (IsKw("while")) return new List<Stmt> { ParseWhile() };
-            if (IsKw("for")) return new List<Stmt> { ParseFor(false) };
-            if (IsKw("try")) return new List<Stmt> { ParseTry() };
-            if (IsKw("with")) return new List<Stmt> { ParseWith(false) };
+            if (IsOp("@")) return new List<Stmt> { Spanned(ParseDecorated()) };
+            if (IsKw("def")) return new List<Stmt> { Spanned(ParseFuncDef(new List<Expr>(), false)) };
+            if (IsKw("class")) return new List<Stmt> { Spanned(ParseClassDef(new List<Expr>())) };
+            if (IsKw("if")) return new List<Stmt> { Spanned(ParseIf()) };
+            if (IsKw("while")) return new List<Stmt> { Spanned(ParseWhile()) };
+            if (IsKw("for")) return new List<Stmt> { Spanned(ParseFor(false)) };
+            if (IsKw("try")) return new List<Stmt> { Spanned(ParseTry()) };
+            if (IsKw("with")) return new List<Stmt> { Spanned(ParseWith(false)) };
             if (IsKw("async"))
             {
                 _i++;
-                if (IsKw("def")) return new List<Stmt> { ParseFuncDef(new List<Expr>(), true) };
-                if (IsKw("for")) return new List<Stmt> { ParseFor(true) };
-                if (IsKw("with")) return new List<Stmt> { ParseWith(true) };
+                if (IsKw("def")) return new List<Stmt> { Spanned(ParseFuncDef(new List<Expr>(), true)) };
+                if (IsKw("for")) return new List<Stmt> { Spanned(ParseFor(true)) };
+                if (IsKw("with")) return new List<Stmt> { Spanned(ParseWith(true)) };
                 throw Err("expected 'def', 'for' or 'with' after 'async'");
             }
-            if (IsKw("match") && StartsMatchStatement()) return new List<Stmt> { ParseMatch() };
+            if (IsKw("match") && StartsMatchStatement()) return new List<Stmt> { Spanned(ParseMatch()) };
             // type Alias[T] = expression (PEP 695, Python 3.12): a soft keyword; the alias is an ordinary assignment of the type
             if (IsKw("type") && Peek().Kind == TokenKind.Name && Peek(2).Kind == TokenKind.Op && (Peek(2).Text == "=" || Peek(2).Text == "["))
             {
@@ -46,18 +46,18 @@ namespace Typhon.Compiler.Syntax
                 a.Targets.Add(target);
                 a.Value = ParseTest();
                 ExpectNewline();
-                return new List<Stmt> { a };
+                return new List<Stmt> { Spanned(a) };
             }
             return ParseSimpleStatements();
         }
 
         List<Stmt> ParseSimpleStatements()
         {
-            var list = new List<Stmt> { ParseSmallStatement() };
+            var list = new List<Stmt> { Spanned(ParseSmallStatement()) };
             while (AcceptOp(";"))
             {
                 if (Cur.Kind == TokenKind.Newline) break;
-                list.Add(ParseSmallStatement());
+                list.Add(Spanned(ParseSmallStatement()));
             }
             ExpectNewline();
             return list;
@@ -108,21 +108,23 @@ namespace Typhon.Compiler.Syntax
             }
             // lazy import x / lazy from x import y (PEP 810, Python 3.15): a soft keyword; a compiled program binds its imports
             // when it starts, so the import is an ordinary one
-            if (IsKw("lazy") && Peek().Kind == TokenKind.Name && (Peek().Text == "import" || Peek().Text == "from")) _i++;
+            bool isLazy = IsKw("lazy") && Peek().Kind == TokenKind.Name && (Peek().Text == "import" || Peek().Text == "from");
+            if (isLazy) _i++;
             if (AcceptKw("import"))
             {
-                var s = At(new ImportStmt(), tok);
+                var s = At(new ImportStmt { IsLazy = isLazy }, tok);
                 do
                 {
-                    var alias = new ImportAlias { Name = ParseDottedName() };
+                    var name = Cur;
+                    var alias = At(new ImportAlias { Name = ParseDottedName() }, name);
                     if (AcceptKw("as")) alias.AsName = ExpectName();
-                    s.Names.Add(alias);
+                    s.Names.Add(Spanned(alias));
                 } while (AcceptOp(","));
                 return s;
             }
             if (AcceptKw("from"))
             {
-                var s = At(new ImportFromStmt(), tok);
+                var s = At(new ImportFromStmt { IsLazy = isLazy }, tok);
                 while (IsOp(".") || IsOp("..."))
                 {
                     s.Level += Cur.Text.Length;
@@ -130,14 +132,15 @@ namespace Typhon.Compiler.Syntax
                 }
                 s.Module = IsKw("import") ? "" : ParseDottedName();
                 ExpectKw("import");
-                if (AcceptOp("*")) { s.Names.Add(new ImportAlias { Name = "*" }); return s; }
+                if (IsOp("*")) { s.Names.Add(At(new ImportAlias { Name = "*" }, Cur)); _i++; return s; }
                 bool paren = AcceptOp("(");
                 do
                 {
                     if (paren && IsOp(")")) break;
-                    var alias = new ImportAlias { Name = ExpectName() };
+                    var name = Cur;
+                    var alias = At(new ImportAlias { Name = ExpectName() }, name);
                     if (AcceptKw("as")) alias.AsName = ExpectName();
-                    s.Names.Add(alias);
+                    s.Names.Add(Spanned(alias));
                 } while (AcceptOp(","));
                 if (paren) ExpectOp(")");
                 return s;
@@ -236,7 +239,7 @@ namespace Typhon.Compiler.Syntax
 
         FunctionDef ParseFuncDef(List<Expr> decorators, bool isAsync)
         {
-            var tok = Cur;
+            var tok = isAsync ? _t[_i - 1] : Cur;
             ExpectKw("def");
             var f = At(new FunctionDef { Name = ExpectName(), Decorators = decorators, IsAsync = isAsync }, tok);
             f.TypeParams = ParseTypeParams();
@@ -304,7 +307,7 @@ namespace Typhon.Compiler.Syntax
             _i++; // 'if' or 'elif'
             var s = At(new IfStmt { Test = ParseNamedExprTest() }, tok);
             s.Body = ParseBlock();
-            if (IsKw("elif")) s.OrElse.Add(ParseIf());
+            if (IsKw("elif")) s.OrElse.Add(Spanned(ParseIf()));
             else if (AcceptKw("else")) s.OrElse = ParseBlock();
             return s;
         }

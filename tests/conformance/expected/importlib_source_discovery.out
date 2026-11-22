@@ -1,0 +1,13 @@
+browser_pkg browser_pkg __init__.py True
+browser_pkg.child browser_pkg child.py
+# coding: latin-1
+value = 'café'
+False False
+True
+browser_pkg.other loader for browser_pkg.child cannot handle browser_pkg.other
+browser_meta_missing.__spec__ is None
+browser_zip True
+'six = 6\r\n'
+browser_meta ['custom'] None
+meta False
+True

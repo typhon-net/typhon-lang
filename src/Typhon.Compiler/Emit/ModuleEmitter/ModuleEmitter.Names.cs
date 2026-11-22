@@ -132,7 +132,7 @@ namespace Typhon.Compiler.Emit
         bool IsLocal(string name)
         {
             foreach (var set in _lambdaParams) if (set.ContainsKey(name)) return true;
-            if (_renames.ContainsKey(name)) return true;
+            if (_renames.ContainsKey(name) || LateClassSlot(name) != null) return true;
             for (var s = _scope; s != null; s = s.Parent)
             {
                 if (s.Params.Contains(name)) return true;
@@ -170,7 +170,10 @@ namespace Typhon.Compiler.Emit
             _m.Classes.ContainsKey(name) || _importedFromModules.ContainsKey(name);
 
         /// <summary>A Typhon runtime helper (mod, pow, slice, str, ...): qualified when a Python name in scope hides it (a parameter called 'mod').</summary>
-        string Rt(string helper) => IsShadowed(helper) || _renames.ContainsKey(helper) || BuiltinClashes(helper) ? "global::Typhon.Runtime.Builtins." + helper : helper;
+        string Rt(string helper) =>
+            IsShadowed(helper) || _renames.ContainsKey(helper) || BuiltinClashes(helper) ||
+            _cls != null && (_cls.Members.Contains(helper) || _cls.FieldTypes.ContainsKey(helper) || MethodInHierarchy(_cls.Def, helper) != null)
+                ? "global::Typhon.Runtime.Builtins." + helper : helper;
 
         /// <summary>
         /// Names imported from Typhon standard modules (from math import sqrt / *): the module's C# type. A call to such a name
@@ -210,6 +213,7 @@ namespace Typhon.Compiler.Emit
             if (_m.RuntimeCodeMode != null && _m.RuntimeBindings.Contains(id))
                 return $"__typhon_execution.{(_scopeKey == RuntimeCodeScopeKey ? "Local" : "Global")}[{CsString(id)}]";
             if (id == "self" && HasSelfInScope()) return "this";
+            if (id == "__debug__") return "true";
             if (id == "__name__") return CsString(_m.Name);
             if (id == "__package__" && !IsShadowed(id)) return _m.PackageName.Length == 0 ? "null" : CsString(_m.PackageName);
             if (id == "__file__" && !IsShadowed(id)) return CsString(System.IO.Path.GetFullPath(_path));
@@ -221,6 +225,7 @@ namespace Typhon.Compiler.Emit
                     "throw new global::System.InvalidCastException(\"globals() takes no arguments\"))";
             }
             if (PackageImportedMember(id) is string packageMember) return packageMember;
+            if (_runtimeProjectBindings.TryGetValue(id, out var runtimeBinding)) return runtimeBinding.Storage;
             // A CLR class member can shadow a using alias. In Python, a method resolves an
             // imported name from the module scope, outside the surrounding class namespace.
             if ((_cls != null || _qualifiedRuntimeModuleImports.Contains(id)) && !IsShadowed(id) &&

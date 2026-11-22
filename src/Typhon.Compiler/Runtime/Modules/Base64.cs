@@ -14,11 +14,13 @@ namespace Typhon.Stdlib
     using System.Collections.Generic;
     using System.IO;
     using System.Linq;
+    using System.Reflection;
+    using System.Runtime.InteropServices;
     using System.Text;
     using Typhon.Runtime;
 
     /// <summary>binascii: hex and base64 conversions, crc32, and binascii.Error (a ValueError).</summary>
-    internal static class binascii
+    internal static partial class binascii
     {
         internal sealed class Error : ArgumentException { public Error(string message) : base(message) { } }
 
@@ -58,79 +60,118 @@ namespace Typhon.Stdlib
             return string.Join(s, parts);
         }
 
-        public static PyBytes unhexlify(object hexstr) => new PyBytes(Unhex(DecodeData(hexstr)));
-        public static PyBytes a2b_hex(object hexstr) => unhexlify(hexstr);
+        public static PyBytes unhexlify(object hexstr, [Optional] object? ignorechars)
+        {
+            var ascii = DecodeData(hexstr);
+            if (!ReferenceEquals(ignorechars, Missing.Value))
+            {
+                var ignored = Data(ignorechars);
+                ascii = ascii.Where(c => HexValue(c) >= 0 || !ignored.Contains(c)).ToArray();
+            }
+            return new PyBytes(Unhex(ascii));
+        }
+
+        public static PyBytes a2b_hex(object hexstr, [Optional] object? ignorechars) => unhexlify(hexstr, ignorechars);
 
         internal static byte[] Unhex(byte[] s)
         {
+            if (s.Any(c => HexValue(c) < 0)) throw new Error("Non-hexadecimal digit found");
             if (s.Length % 2 != 0) throw new Error("Odd-length string");
-            var r = new byte[s.Length / 2];
-            for (int i = 0; i < r.Length; i++)
-            {
-                int hi = HexValue(s[2 * i]), lo = HexValue(s[2 * i + 1]);
-                if (hi < 0 || lo < 0) throw new Error("Non-hexadecimal digit found");
-                r[i] = (byte)(hi * 16 + lo);
-            }
-            return r;
+            var result = new byte[s.Length / 2];
+            for (int i = 0; i < result.Length; i++)
+                result[i] = (byte)(HexValue(s[2 * i]) * 16 + HexValue(s[2 * i + 1]));
+            return result;
         }
 
         static int HexValue(byte c) => c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
 
-        public static PyBytes b2a_base64(object data, bool newline = true)
+        public static readonly PyBytes BASE64_ALPHABET = PyBytes.Latin1("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/");
+        public static readonly PyBytes URLSAFE_BASE64_ALPHABET = PyBytes.Latin1("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_");
+
+        public static PyBytes b2a_base64(object data, [Optional, DefaultParameterValue(true)] bool newline,
+            [Optional, DefaultParameterValue(true)] bool padded, [Optional, DefaultParameterValue(0L)] long wrapcol,
+            [Optional] object? alphabet)
         {
-            string s = Convert.ToBase64String(Data(data));
-            return new PyBytes(Encoding.ASCII.GetBytes(newline ? s + "\n" : s));
+            if (wrapcol < 0) throw new ArgumentException("Cannot convert negative int");
+            var symbols = SelectAlphabet(alphabet, BASE64_ALPHABET);
+            string encoded = Convert.ToBase64String(Data(data));
+            if (!padded) encoded = encoded.TrimEnd('=');
+            int columns = wrapcol == 0 ? int.MaxValue : (int)Math.Min(int.MaxValue, Math.Max(4, wrapcol / 4 * 4));
+            using var output = new MemoryStream();
+            for (int i = 0; i < encoded.Length; i++)
+            {
+                if (i != 0 && i % columns == 0) output.WriteByte((byte)'\n');
+                char symbol = encoded[i];
+                output.WriteByte(symbol == '=' ? (byte)symbol : symbols[Base64Table[symbol]]);
+            }
+            if (newline) output.WriteByte((byte)'\n');
+            return new PyBytes(output.ToArray());
         }
 
-        public static PyBytes a2b_base64(object data, bool strict_mode = false) => new PyBytes(A2bBase64(DecodeData(data), strict_mode));
-
-        static readonly sbyte[] Base64Table = BuildTable();
-        static sbyte[] BuildTable()
+        public static PyBytes a2b_base64(object data, [Optional] object? strict_mode,
+            [Optional, DefaultParameterValue(true)] bool padded,
+            [Optional] object? alphabet, [Optional] object? ignorechars, bool canonical = false)
         {
-            var t = Enumerable.Repeat((sbyte)-1, 256).ToArray();
-            const string alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-            for (int i = 0; i < alphabet.Length; i++) t[alphabet[i]] = (sbyte)i;
-            return t;
+            bool hasIgnored = !ReferenceEquals(ignorechars, Missing.Value);
+            byte[] ignored = hasIgnored ? Data(ignorechars) : Array.Empty<byte>();
+            bool strict = ReferenceEquals(strict_mode, Missing.Value) ? hasIgnored : Builtins.truthy(strict_mode);
+            var symbols = SelectAlphabet(alphabet, BASE64_ALPHABET);
+            return new PyBytes(A2bBase64(DecodeData(data), strict, padded, canonical,
+                ReferenceEquals(symbols, BASE64_ALPHABET.Data) ? Base64Table : BuildTable(symbols), ignored));
         }
 
-        /// <summary>CPython's binascii.a2b_base64, the lenient and the strict mode.</summary>
-        internal static byte[] A2bBase64(byte[] ascii, bool strict)
+        static readonly sbyte[] Base64Table = BuildTable(BASE64_ALPHABET.Data);
+
+        static sbyte[] BuildTable(byte[] alphabet)
         {
-            var bin = new MemoryStream(ascii.Length * 3 / 4 + 3);
-            if (strict && ascii.Length > 0 && ascii[0] == '=') throw new Error("Leading padding not allowed");
+            var table = Enumerable.Repeat((sbyte)-1, 256).ToArray();
+            for (int i = 0; i < alphabet.Length; i++) table[alphabet[i]] = (sbyte)i;
+            return table;
+        }
+
+        internal static byte[] A2bBase64(byte[] ascii, bool strict, bool padded = true, bool canonical = false,
+            sbyte[]? table = null, byte[]? ignored = null)
+        {
+            table ??= Base64Table;
+            using var bin = new MemoryStream((int)(ascii.LongLength * 3 / 4 + 3));
+            if (strict && padded && ascii.Length > 0 && ascii[0] == '=') throw new Error("Leading padding not allowed");
             int quadPos = 0, pads = 0, leftchar = 0;
             bool paddingStarted = false, complete = false;
             Error OneMore() => new Error($"Invalid base64-encoded string: number of data characters ({bin.Length / 3 * 4 + 1}) cannot be 1 more than a multiple of 4");
-            for (int i = 0; i < ascii.Length; i++)
+            foreach (byte ch in ascii)
             {
-                byte ch = ascii[i];
                 if (ch == '=')
                 {
+                    if (!padded)
+                    {
+                        if (strict) throw new Error("Padding not allowed");
+                        continue;
+                    }
                     paddingStarted = true;
                     if (strict && (complete || quadPos == 0)) throw new Error("Excess padding not allowed");
                     if (strict && quadPos == 1) throw OneMore();
-                    // (lenient decoding goes on after a complete pad sequence, like CPython 3.14)
                     if (quadPos >= 2 && quadPos + ++pads >= 4) complete = true;
                     continue;
                 }
-                int v = Base64Table[ch];
-                if (v < 0)
+                int value = table[ch];
+                if (value < 0)
                 {
-                    if (strict) throw new Error("Only base64 data is allowed");
+                    if (strict && (ignored == null || !ignored.Contains(ch))) throw new Error("Only base64 data is allowed");
                     continue;
                 }
                 if (strict && paddingStarted) throw new Error(complete ? "Excess data after padding" : "Discontinuous padding not allowed");
                 pads = 0;
                 switch (quadPos)
                 {
-                    case 0: quadPos = 1; leftchar = v; break;
-                    case 1: quadPos = 2; bin.WriteByte((byte)((leftchar << 2) | (v >> 4))); leftchar = v & 0x0f; break;
-                    case 2: quadPos = 3; bin.WriteByte((byte)((leftchar << 4) | (v >> 2))); leftchar = v & 0x03; break;
-                    default: quadPos = 0; bin.WriteByte((byte)((leftchar << 6) | v)); leftchar = 0; break;
+                    case 0: quadPos = 1; leftchar = value; break;
+                    case 1: quadPos = 2; bin.WriteByte((byte)((leftchar << 2) | (value >> 4))); leftchar = value & 0x0f; break;
+                    case 2: quadPos = 3; bin.WriteByte((byte)((leftchar << 4) | (value >> 2))); leftchar = value & 0x03; break;
+                    default: quadPos = 0; bin.WriteByte((byte)((leftchar << 6) | value)); leftchar = 0; break;
                 }
             }
             if (quadPos == 1) throw OneMore();
-            if (quadPos != 0 && quadPos + pads < 4) throw new Error("Incorrect padding");
+            if (padded && quadPos != 0 && quadPos + pads < 4) throw new Error("Incorrect padding");
+            if (canonical && leftchar != 0) throw new Error("Non-zero padding bits");
             return bin.ToArray();
         }
 
@@ -202,68 +243,25 @@ namespace Typhon.Stdlib
 
         public static PyBytes decodebytes(object s) => B(binascii.A2bBase64(binascii.Data(s), false));
 
-        const string B32Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567", B32HexAlphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUV";
-
-        static PyBytes B32Encode(string alphabet, object s)
+        static PyBytes B32Decode(PyBytes alphabet, object source, bool casefold, object? map01)
         {
-            var data = binascii.Data(s);
-            int leftover = data.Length % 5;
-            var padded = leftover == 0 ? data : data.Concat(new byte[5 - leftover]).ToArray();
-            var sb = new StringBuilder();
-            for (int i = 0; i < padded.Length; i += 5)
-            {
-                ulong c = 0;
-                for (int k = 0; k < 5; k++) c = (c << 8) | padded[i + k];
-                for (int k = 7; k >= 0; k--) sb.Append(alphabet[(int)((c >> (5 * k)) & 31)]);
-            }
-            int pad = leftover switch { 1 => 6, 2 => 4, 3 => 3, 4 => 1, _ => 0 };
-            if (pad > 0) { sb.Length -= pad; sb.Append('=', pad); }
-            return B(Ascii(sb.ToString()));
-        }
-
-        static PyBytes B32Decode(string alphabet, object s, bool casefold, object? map01)
-        {
-            var data = binascii.DecodeData(s);
-            if (data.Length % 8 != 0) throw new binascii.Error("Incorrect padding");
+            var data = binascii.DecodeData(source);
             if (map01 != null)
             {
-                var m = binascii.DecodeData(map01);
-                if (m.Length != 1) throw new Typhon.Runtime.AssertionError(Builtins.repr(map01));
-                data = Translate(data, "01", "O" + (char)m[0]);
+                var map = binascii.DecodeData(map01);
+                if (map.Length != 1) throw new Typhon.Runtime.AssertionError(Builtins.repr(map01));
+                data = Translate(data, "01", "O" + (char)map[0]);
             }
-            if (casefold) data = data.Select(b => b >= 'a' && b <= 'z' ? (byte)(b - 32) : b).ToArray();
-            int l = data.Length, end = l;
-            while (end > 0 && data[end - 1] == '=') end--;
-            int padchars = l - end;
-            var decoded = new List<byte>();
-            ulong acc = 0;
-            for (int i = 0; i < end; i += 8)
-            {
-                acc = 0;
-                for (int k = i; k < Math.Min(i + 8, end); k++)
-                {
-                    int v = alphabet.IndexOf((char)data[k]);
-                    if (v < 0) throw new binascii.Error("Non-base32 digit found");
-                    acc = (acc << 5) + (ulong)v;
-                }
-                for (int k = 4; k >= 0; k--) decoded.Add((byte)(acc >> (8 * k)));
-            }
-            if (l % 8 != 0 || !(padchars == 0 || padchars == 1 || padchars == 3 || padchars == 4 || padchars == 6))
-                throw new binascii.Error("Incorrect padding");
-            if (padchars > 0 && decoded.Count > 0)
-            {
-                acc <<= 5 * padchars;
-                int leftover = (43 - 5 * padchars) / 8;
-                decoded.RemoveRange(decoded.Count - 5, 5);
-                for (int k = 4; k > 4 - leftover; k--) decoded.Add((byte)(acc >> (8 * k)));
-            }
-            return B(decoded.ToArray());
+            if (casefold) data = data.Select(c => c is >= (byte)'a' and <= (byte)'z' ? (byte)(c - 32) : c).ToArray();
+            return binascii.a2b_base32(new PyBytes(data), alphabet: alphabet);
         }
 
-        public static PyBytes b32encode(object s) => B32Encode(B32Alphabet, s);
-        public static PyBytes b32decode(object s, bool casefold = false, object? map01 = null) => B32Decode(B32Alphabet, s, casefold, map01);
-        public static PyBytes b32hexencode(object s) => B32Encode(B32HexAlphabet, s);
-        public static PyBytes b32hexdecode(object s, bool casefold = false) => B32Decode(B32HexAlphabet, s, casefold, null);
+        public static PyBytes b32encode(object s) => binascii.b2a_base32(s);
+        public static PyBytes b32decode(object s, bool casefold = false, object? map01 = null) =>
+            B32Decode(binascii.BASE32_ALPHABET, s, casefold, map01);
+        public static PyBytes b32hexencode(object s) => binascii.b2a_base32(s, alphabet: binascii.BASE32HEX_ALPHABET);
+        public static PyBytes b32hexdecode(object s, bool casefold = false) =>
+            B32Decode(binascii.BASE32HEX_ALPHABET, s, casefold, null);
 
         public static PyBytes b16encode(object s) => B(Ascii(Convert.ToHexString(binascii.Data(s))));
 

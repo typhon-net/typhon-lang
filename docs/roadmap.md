@@ -13,3 +13,24 @@ The [status page](https://typhon-lang.com/status) explains the principles behind
 * A fully static Typhon.NumPy API (no `dynamic` return values, e.g. for `a[i]` and `np.dot`), so every NumPy program can be compiled with Native AOT
 * Expression fusion for NumPy code: reuse or fuse the temporaries of `np.sqrt(x) * 2.0 - x / 3.0` (the RAM weak spot)
 * A dedicated MSBuild SDK and `dotnet new` templates; a language server reusing the Typhon front end
+
+## Interchangeable standard-library implementations
+
+Continue compiling CPython's standard-library sources as a compatibility baseline. For selected
+modules, write a second implementation in Typhon that calls .NET for operations it can provide.
+Keep Python-specific behavior in the module, including return types, exceptions, and edge cases.
+
+Select implementations per module through Typhon's import resolver. Existing Python clients
+should keep the same import names and call sites, including imports through other modules.
+Use the same conformance cases to compare both implementations with the pinned CPython release
+before offering a switch.
+
+Benchmark the two compiled implementations on the same .NET runtime and inputs. Measure import
+and startup time, warmed execution, and allocations so the results show where each implementation
+performs better.
+
+For unchanged upstream code checked in as a `.ty` file, add a comment header naming the upstream
+project, release or commit, and original file path. Preserve the original copyright and attribution
+notices and include the full text of each applicable original license in the header. When adapting
+upstream code, retain its notices and licenses and record the changes.
+[CPython licensing and acknowledgements](https://docs.python.org/3/license.html)

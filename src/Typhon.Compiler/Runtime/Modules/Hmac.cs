@@ -27,8 +27,12 @@ namespace Typhon.Stdlib
                 foreach (char ch in sa + sb) if (ch > 127) throw new InvalidCastException("comparing strings with non-ASCII characters is not supported");
                 return CryptographicOperations.FixedTimeEquals(System.Text.Encoding.ASCII.GetBytes(sa), System.Text.Encoding.ASCII.GetBytes(sb));
             }
-            if (a is string || b is string) throw new InvalidCastException($"unsupported operand types(s) or combination of types: '{Builtins.PyTypeName(a.GetType())}' and '{Builtins.PyTypeName(b.GetType())}'");
-            return CryptographicOperations.FixedTimeEquals(ByteOps.From(a), ByteOps.From(b));
+            static bool BytesLike(object? value) => value is PyBytes or PyByteArray or byte[] or global::memoryview;
+            if (!BytesLike(a) && !BytesLike(b))
+                throw new InvalidCastException($"unsupported operand types(s) or combination of types: '{Builtins.PyTypeName(Builtins.__type_of(a))}' and '{Builtins.PyTypeName(Builtins.__type_of(b))}'");
+            if (!BytesLike(a) || !BytesLike(b))
+                throw new InvalidCastException($"a bytes-like object is required, not '{Builtins.PyTypeName(Builtins.__type_of(BytesLike(a) ? b : a))}'");
+            return CryptographicOperations.FixedTimeEquals(ByteOps.Buffer(a), ByteOps.Buffer(b));
         }
 
         /// <summary>An HMAC in progress: update() it with data, then digest() / hexdigest().</summary>
@@ -62,7 +66,7 @@ namespace Typhon.Stdlib
                     _ => throw new ArgumentException($"unsupported hash type {algo}"),
                 };
                 name = "hmac-" + algo;
-                _key = ByteOps.From(key);
+                _key = ByteOps.Buffer(key);
                 _h = IncrementalHash.CreateHMAC(_alg, _key);
                 if (msg != null) update(msg);
             }
@@ -78,10 +82,48 @@ namespace Typhon.Stdlib
             // (copy() replays the data: IncrementalHash cannot be cloned mid-stream)
             readonly System.Collections.Generic.List<byte> _appended = new System.Collections.Generic.List<byte>();
 
-            public void update(object msg) { var b = ByteOps.From(msg); _h.AppendData(b); _appended.AddRange(b); }
+            public object? update(object msg)
+            {
+                if (msg is string) throw new InvalidCastException("Strings must be encoded before hashing");
+                byte[] data = ByteOps.Buffer(msg);
+                _h.AppendData(data);
+                _appended.AddRange(data);
+                return null;
+            }
             public PyBytes digest() => new PyBytes(_h.GetCurrentHash());
             public string hexdigest() => Convert.ToHexString(_h.GetCurrentHash()).ToLowerInvariant();
             public HMAC copy() => new HMAC(this);
         }
+    }
+
+    /// <summary>The fallback HMAC accelerator imported by the Python implementation of hmac.</summary>
+    internal static class _hmac
+    {
+        public sealed class UnknownHashError : ArgumentException
+        {
+            public UnknownHashError(string name) : base($"unsupported hash algorithm {name}") { }
+        }
+
+        internal static bool TryAlgorithm(string name, out string normalized)
+        {
+            normalized = name.ToLowerInvariant() switch
+            {
+                "sha-1" => "sha1",
+                "sha-256" => "sha256",
+                "sha-384" => "sha384",
+                "sha-512" => "sha512",
+                string canonical => canonical,
+            };
+            return hashlib.algorithms_available.Contains(normalized);
+        }
+
+        public static hmac.HMAC @new(object key, object? msg, string digestmod)
+        {
+            if (!TryAlgorithm(digestmod, out string algorithm)) throw new UnknownHashError(digestmod);
+            return new hmac.HMAC(key, msg, algorithm);
+        }
+
+        public static PyBytes compute_digest(object key, object msg, string digest) =>
+            @new(key, msg ?? throw new InvalidCastException("object supporting the buffer API required"), digest).digest();
     }
 }

@@ -1,0 +1,17 @@
+from typing import Any
+
+
+def report(values: dict[str, Any]):
+    for key, (left, (middle, right)) in values.items():
+        print(key, left, middle, right)
+
+
+report({"alpha": (1, (2, 3))})
+
+
+def rebind(values: dict[str, Any]):
+    for key, (value, (value, value)) in values.items():
+        print(key, value)
+
+
+rebind({"last": (1, (2, 3))})

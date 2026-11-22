@@ -1,0 +1,19 @@
+class Receiver:
+    def items(self):
+        return [("object", 2)]
+
+def result(key, path, parent=None):
+    if parent is None and path:
+        return result(key, [], key)
+    if key == "object":
+        return Receiver()
+    data = {}
+    data[key] = len(path) + 1
+    return data
+
+def pairs(name, path=None):
+    for key, item in result(name, path or []).items():
+        print(key, item)
+
+pairs("mapping", ["root"])
+pairs("object", ["root"])

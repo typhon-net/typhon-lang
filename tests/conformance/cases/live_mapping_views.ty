@@ -1,0 +1,13 @@
+from collections.abc import MappingView, KeysView as ImportedKeys, ValuesView, ItemsView
+
+data = {"a": 1, "b": 2}
+keys, values, items = data.keys(), data.values(), data.items()
+print(isinstance(keys, MappingView), isinstance(values, ValuesView), isinstance(items, ItemsView))
+print(type(keys).__name__, type(values).__name__, type(items).__name__)
+print(type(keys).__repr__ is type({"other": "text"}.keys()).__repr__)
+data["c"] = 3
+print(repr(keys), repr(values), repr(items))
+print(len(items), list(items))
+print(repr(MappingView(data)), repr(ItemsView(data)))
+print(list(ImportedKeys(data)), list(ValuesView(data)))
+print(keys, values, items)

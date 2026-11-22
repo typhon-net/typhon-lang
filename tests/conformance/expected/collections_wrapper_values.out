@@ -1,0 +1,6 @@
+{'one': 1, 'two': 2} ['one', 'two'] 2 None
+[1, 2, 3] UserList [2, 3]
+AbC 'AbC' abc ['A', 'b', 'C'] UserString
+['name', 'a', 'z'] 5 1 5 9
+9 11
+True

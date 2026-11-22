@@ -1,0 +1,38 @@
+from typing import Any
+
+
+class Reporter:
+    def record(self, message):
+        print("record", message)
+
+
+def from_instance(message: Any):
+    return Reporter().record(message)
+
+
+def record_item(message: Any):
+    print("item", message)
+
+
+def from_function(message: Any):
+    return record_item(message)
+
+
+print(from_instance("alpha"), from_function("beta"))
+
+
+class Base:
+    def result(self):
+        pass
+
+
+class Derived(Base):
+    def result(self):
+        return 9
+
+
+def from_virtual(value: Base):
+    return value.result()
+
+
+print(from_virtual(Base()), from_virtual(Derived()))

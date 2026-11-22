@@ -1,0 +1,14 @@
+True
+True
+True
+False
+'quoted'
+[1, 2]
+1
+wrapper_descriptor dict
+True
+True
+Custom!
+[3, 4]
+[3, 4]
+descriptor '__repr__' requires a 'list' object but received a 'str'

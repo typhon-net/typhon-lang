@@ -55,7 +55,10 @@ namespace Typhon.Compiler.Emit
             // (also a late-bound key on a container of a type Typhon does not know: C# would bind its indexer at run time to an int)
             bool untypedLambdaParameter = targetType == null && s.Target is NameExpr parameter &&
                 _lambdaParams.Any(scope => scope.ContainsKey(parameter.Id));
-            if ((targetType == "dynamic" || untypedLambdaParameter || targetType == null && InferType(s.Index) == "dynamic") && !(s.Index is TupleExpr))
+            bool lateResult = IsDynamicallyDispatched(s.Target) ||
+                targetType == null && s.Target is CallExpr && MaybeLateBound(s.Target);
+            if ((targetType == "dynamic" || lateResult || untypedLambdaParameter ||
+                targetType == null && InferType(s.Index) == "dynamic") && !(s.Index is TupleExpr))
                 return $"{Rt("__getitem")}((object?){target}, (object?){Paren(ModuleOrClassValue(s.Index) ?? EmitExpr(s.Index))})";
             // a[x, y] on a late-bound a: the key is the tuple (x, y) (a Typhon class's __getitem__ takes one key)
             if (targetType == "dynamic" && s.Index is TupleExpr dtk && !dtk.Parenthesized && !dtk.Elts.Any(x => x is SliceExpr))

@@ -1,0 +1,16 @@
+def choose():
+    return 'fallback'
+
+try:
+    if True:
+        import typhon_conformance_missing_hash_module
+        selected = typhon_conformance_missing_hash_module.choose
+except ImportError:
+    selected = choose
+
+def choose_size(*, block=2**18):
+    return selected(), block
+
+print(choose_size())
+globals()['registered_at_runtime'] = 'registered'
+print(globals()['registered_at_runtime'])

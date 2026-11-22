@@ -63,6 +63,7 @@ namespace Typhon.Runtime
                 case Exception e: return ExceptionText(e);
                 case Type type: return $"<class '{PythonQualifiedTypeName(type)}'>";
                 case IPyRepr own: return own.ToString() ?? own.__repr__(); // str(): Fraction → 1/2, Path → /tmp/x
+                case IEnumerable view when PyDictViews.Name(view.GetType()) is string name: return PyDictViews.Repr(view, name);
                 case IFormattable fmt when o is int || o is long || o is short || o is byte || o is sbyte || o is uint || o is ulong || o is ushort || o is decimal || o is BigInteger:
                     return fmt.ToString(null, Inv);
                 default: return CollectionRepr(o) ?? Convert.ToString(o, Inv) ?? "";
@@ -455,8 +456,20 @@ namespace Typhon.Runtime
 
         static bool IsMapping(object? o) => o is IDictionary || o != null && o.GetType().GetInterfaces().Any(x => x.IsGenericType && x.GetGenericTypeDefinition() == typeof(IDictionary<,>));
 
+        public static string __object_format__(object? value, string spec)
+        {
+            if (spec.Length == 0) return str(value);
+            string name = value == null ? "NoneType" : PyTypeName(value.GetType());
+            throw new InvalidCastException($"unsupported format string passed to {name}.__format__");
+        }
+
         public static string format(object? value, string spec = "")
         {
+            if (value != null && value.GetType().GetMember("__format__", InstanceMembers).Length > 0)
+            {
+                object? result = __invoke(getattr(value, "__format__"), new object?[] { spec });
+                return result as string ?? throw new InvalidCastException($"__format__ must return a str, not {(result == null ? "NoneType" : PyTypeName(result.GetType()))}");
+            }
             if (string.IsNullOrEmpty(spec)) return str(value);
             int i = 0; char fill = ' ', align = '\0', sign = '-', type = '\0';
             bool zero = false; int width = 0; int precision = -1; char grouping = '\0';
@@ -742,6 +755,12 @@ namespace Typhon.Runtime
         public static string strip(this string s, string? chars = null) => chars == null ? s.Trim() : s.Trim(chars.ToCharArray());
         public static string lstrip(this string s, string? chars = null) => chars == null ? s.TrimStart() : s.TrimStart(chars.ToCharArray());
         public static string rstrip(this string s, string? chars = null) => chars == null ? s.TrimEnd() : s.TrimEnd(chars.ToCharArray());
+        public static PyBytes strip(this PyBytes value, PyBytes? chars = null) => value.strip(chars);
+        public static PyBytes lstrip(this PyBytes value, PyBytes? chars = null) => value.lstrip(chars);
+        public static PyBytes rstrip(this PyBytes value, PyBytes? chars = null) => value.rstrip(chars);
+        public static PyByteArray strip(this PyByteArray value, PyBytes? chars = null) => value.strip(chars);
+        public static PyByteArray lstrip(this PyByteArray value, PyBytes? chars = null) => value.lstrip(chars);
+        public static PyByteArray rstrip(this PyByteArray value, PyBytes? chars = null) => value.rstrip(chars);
         public static List<string> split(this string s, string? sep = null, long maxsplit = -1)
         {
             int parts1 = maxsplit < 0 ? -1 : (int)Math.Min(maxsplit + 1, int.MaxValue);
@@ -757,6 +776,8 @@ namespace Typhon.Runtime
         public static string join<T>(this string sep, IEnumerable<T> items) => string.Join(sep, items.Select(x => str(x)));
         public static bool startswith(this string s, string prefix) => s.StartsWith(prefix, StringComparison.Ordinal);
         public static bool endswith(this string s, string suffix) => s.EndsWith(suffix, StringComparison.Ordinal);
+        public static PyBytes translate(this PyBytes value, object? table, object? delete = null) => value.translate(table, delete);
+        public static PyByteArray translate(this PyByteArray value, object? table, object? delete = null) => value.translate(table, delete);
         public static bool startswith(this PyBytes value, PyBytes prefix) => value.startswith(prefix);
         public static bool endswith(this PyBytes value, PyBytes suffix) => value.endswith(suffix);
         public static bool startswith(this PyByteArray value, PyBytes prefix) => value.startswith(prefix);
@@ -929,6 +950,8 @@ namespace Typhon.Runtime
         public static string capitalize(this string s) => s.Length == 0 ? s : char.ToUpperInvariant(s[0]) + s.Substring(1).ToLowerInvariant();
         public static string zfill(this string s, long width) => s.StartsWith("-") ? "-" + s.Substring(1).PadLeft(Width(width - 1), '0') : s.PadLeft(Width(width), '0');
         public static string center(this string s, long width, string fill = " ") => format(s, fill + "^" + Width(width));
+        public static PyBytes ljust(this PyBytes value, long width, PyBytes? fillbyte = null) => value.ljust(width, fillbyte);
+        public static PyByteArray ljust(this PyByteArray value, long width, PyBytes? fillbyte = null) => value.ljust(width, fillbyte);
         public static string ljust(this string s, long width, string fill = " ") => s.PadRight(Width(width), fill[0]);
         public static string rjust(this string s, long width, string fill = " ") => s.PadLeft(Width(width), fill[0]);
         static int Width(long w) => w <= 0 ? 0 : checked((int)w);

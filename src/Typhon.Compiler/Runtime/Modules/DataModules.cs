@@ -24,6 +24,7 @@ namespace Typhon.Runtime
         int _hash;
         public frozenset() { }
         public frozenset(IEnumerable<T> items) : base(items) { }
+        public bool issuperset(object other) => Builtins.issuperset(this, other);
         public override bool Equals(object? obj) => obj is HashSet<T> other && SetEquals(other);
         public override int GetHashCode()
         {

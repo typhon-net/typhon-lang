@@ -245,9 +245,9 @@ namespace Typhon.Stdlib
         public static string? getmodulename(object path)
         {
             string filename = System.IO.Path.GetFileName(os_.__path(path));
-            if (filename.EndsWith(".pyc", StringComparison.Ordinal)) return filename[..^4];
-            if (filename.EndsWith(".py", StringComparison.Ordinal) || filename.EndsWith(".ty", StringComparison.Ordinal))
-                return filename[..^3];
+            foreach (string suffix in importlib.machinery.SOURCE_SUFFIXES.Concat(importlib.machinery.BYTECODE_SUFFIXES))
+                if (filename.EndsWith(suffix, StringComparison.Ordinal)) return filename[..^suffix.Length];
+            if (filename.EndsWith(".ty", StringComparison.Ordinal)) return filename[..^3];
             if (!OperatingSystem.IsWindows() && filename.EndsWith(".so", StringComparison.Ordinal))
             {
                 int suffix = filename.IndexOf(".cpython-", StringComparison.Ordinal);
@@ -343,6 +343,11 @@ namespace Typhon.Stdlib
                     return field.GetValue(field.IsStatic ? null : obj);
                 if (type.GetProperty(attr, DeclaredMembers) is { } property)
                 {
+                    if (property.GetCustomAttribute<PyClassSlotAttribute>() is { } slot)
+                    {
+                        if (PyClassDescriptors.TryReadSlot(property, slot, out var classValue)) return classValue;
+                        continue;
+                    }
                     var backing = type.GetField("<" + attr + ">k__BackingField", DeclaredMembers);
                     if (backing != null && (backing.IsStatic || instance)) return backing.GetValue(backing.IsStatic ? null : obj);
                     return property;

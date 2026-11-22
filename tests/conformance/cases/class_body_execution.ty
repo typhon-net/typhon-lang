@@ -1,0 +1,41 @@
+events: list[str] = []
+
+def record(msg: str) -> str:
+    events.append(msg)
+    return msg
+
+def values() -> tuple[str, tuple[str, str]]:
+    return (record('left'), (record('middle'), record('right')))
+
+class Dispatch:
+    table = {}
+    before = record('before')
+
+    def echo(self, value: str) -> str:
+        return value
+
+    table['echo'] = echo
+    table[record('key')] = record('value')
+    left, (middle, right) = values()
+    first = second = record('shared')
+    decorated = table['echo']
+    count = 0
+    if record('condition'):
+        count += 1
+        table['branch'] = record('branch')
+    else:
+        record('skipped')
+    while count < 3:
+        count += 1
+    record('last')
+
+print(events)
+print(Dispatch.left, Dispatch.middle, Dispatch.right)
+print(Dispatch.first, Dispatch.second)
+print(Dispatch.table["echo"](Dispatch(), "called"))
+print(Dispatch.table["echo"] is Dispatch.echo)
+print(Dispatch.decorated is Dispatch.echo)
+print(Dispatch.count, Dispatch.table['branch'])
+print(Dispatch().decorated('bound'))
+print('table' in Dispatch.__dict__)
+print([name for name in Dispatch.__dict__ if 'typhon' in name])

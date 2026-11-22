@@ -92,7 +92,9 @@ namespace Typhon.Compiler.Emit
 
         string EmitModule()
         {
+            if (_m.RuntimeCodeMode != null) LowerRuntimeImports(_m.Ast.Body);
             ResolveFailingImports(_m.Ast.Body);
+            RemoveResolvedImportBindings();
             foreach (var n in AllNodes(_m.Ast.Body))
             {
                 if (n is ImportStmt i) ProcessImport(i);
@@ -116,8 +118,8 @@ namespace Typhon.Compiler.Emit
 
             // return types of module-level functions feed the local type inference
             foreach (var f in _m.Ast.Body.OfType<FunctionDef>())
-                if (f.Returns != null && !TypeInference.IsBareContainer(f.Returns) && !f.IsAsync && f.TypeParams.Count == 0 && !AstWalker.ContainsOutsideNestedScopes(f.Body, n => n is YieldExpr))
-                    _funcReturnTypes[f.Name] = MapType(f.Returns, f, isReturn: true);
+                if (f.Returns != null && !TypeInference.IsBareContainer(f.Returns) && f.TypeParams.Count == 0 && !AstWalker.ContainsOutsideNestedScopes(f.Body, n => n is YieldExpr))
+                    _funcReturnTypes[f.Name] = AnnotatedCallResult(f);
 
             bool hasNs = !string.IsNullOrEmpty(_m.Namespace);
             if (hasNs) { _w.Line("namespace " + _m.Namespace); _w.Open(); }
@@ -200,11 +202,14 @@ namespace Typhon.Compiler.Emit
                 if (s is ClassDef cdef) foreach (var m in cdef.Body.OfType<FunctionDef>()) RegisterDefaultFields(m, cdef.Name, fields, execStmts);
                 if (s is ImportStmt || s is ImportFromStmt)
                 {
-                    if (ProjectImports(s).Any()) execStmts.Add(s);
+                    if (ProjectImports(s).Any() || PlatformModules(s).Any() || s is ImportStmt import && import.Names.Any(alias =>
+                        _m.ConditionalGlobals.Contains(alias.AsName ?? alias.Name.Split('.')[0]))) execStmts.Add(s);
                     continue;
                 }
                 if (s is FunctionDef || s is ClassDef)
                 {
+                    if (s is ClassDef definition && definition != GdScriptClass && RunsClassBodyAtDefinition(definition))
+                        execStmts.Add(new ClassBodyInitialization { Definition = definition, Line = definition.Line, Col = definition.Col });
                     if (runtimeCode)
                     {
                         string name = s is FunctionDef df ? df.Name : ((ClassDef)s).Name;
@@ -312,6 +317,8 @@ namespace Typhon.Compiler.Emit
             }
             if (fields.Count > 0) _w.Line();
             _moduleFieldNames.UnionWith(fields.Keys);
+            foreach (var binding in _runtimeProjectBindings.Values)
+                _w.Line($"private static dynamic? {binding.Storage};");
             if (usesGlobals) _w.Line($"private static object __typhon_globals() => {EmitGlobals()};");
 
             foreach (var s in body)
@@ -435,7 +442,7 @@ namespace Typhon.Compiler.Emit
         string EmitGlobals()
         {
             if (_m.RuntimeCodeMode != null) return "((dynamic)__typhon_execution.Globals)";
-            if (_lateModuleFields.Count != 0)
+            if (_m.WritesModuleGlobals || _lateModuleFields.Count != 0)
                 return $"((dynamic)global::Typhon.Runtime.PyModule.Of(typeof({ModuleClassName(_m)}), {CsString(_m.Name)}).__dict__)";
             var entries = new List<string> { $"[\"__name__\"] = {CsString(_m.Name)}" };
             foreach (var f in _moduleFieldNames.OrderBy(x => x, StringComparer.Ordinal)) entries.Add($"[{CsString(f)}] = {Esc(f)}");

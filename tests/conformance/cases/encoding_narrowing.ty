@@ -1,0 +1,6 @@
+def ascii_bytes(value):
+    if isinstance(value, str):
+        return value.encode('ascii')
+    return value
+
+print(ascii_bytes(b'abc'), ascii_bytes('abc'))

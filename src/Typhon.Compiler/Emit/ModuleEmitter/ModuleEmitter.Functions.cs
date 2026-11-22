@@ -312,6 +312,8 @@ namespace Typhon.Compiler.Emit
             scope.FunctionQualName = qualifier + (f.PyName ?? f.Name);
             scope.ProfileName = f.PyName ?? f.Name;
             scope.ProfileLine = f.Line;
+            if (_cls != null && f.Name == "__new__" && IsStringEnum(_cls.Def) && f.Params.Count > 0)
+                scope.ClassArgument = f.Params[0].Name;
             sig.Scope = scope;
 
             var ps = new List<string>();
@@ -365,6 +367,7 @@ namespace Typhon.Compiler.Emit
                     string localType = ConflictType(p.Name) ?? tupleType;
                     string local = p.Name + "__tuple";
                     string array = packedVarArgs ? $"{argument} ?? global::System.Array.Empty<{type}>()" : argument;
+                    if (f.Name == "__init__" && packedVarArgs) sig.DefaultArguments[p.Name] = Paren(array);
                     sig.Prologue.Add($"{localType} {Esc(local)} = new {tupleType}({array});");
                     sig.Renames[p.Name] = local;
                     scope.Types[p.Name] = localType;
@@ -392,20 +395,18 @@ namespace Typhon.Compiler.Emit
                 }
                 else
                 {
-                    // a late-bound parameter with a number/bool default (def f(x=0)): C# allows only null as the default of a
-                    // dynamic parameter, but honours [Optional, DefaultParameterValue(...)]
-                    if (keepDefault && (type == "dynamic" || type == "object") && p.Default is ConstExpr dc && (dc.Kind == ConstKind.Int || dc.Kind == ConstKind.Float || dc.Kind == ConstKind.Bool || dc.Kind == ConstKind.Str) ||
-                        keepDefault && (type == "dynamic" || type == "object") && p.Default is UnaryExpr du && du.Operand is ConstExpr duc && (duc.Kind == ConstKind.Int || duc.Kind == ConstKind.Float))
+                    if (keepDefault)
                     {
-                        string constant = p.Default is ConstExpr ci && ci.Kind == ConstKind.Int || p.Default is UnaryExpr ui && ((ConstExpr)ui.Operand).Kind == ConstKind.Int
-                            ? (ConstIntValue(p.Default) is long lv ? lv + "L" : null) : EmitExpr(p.Default);
-                        if (constant != null)
+                        defaultCode = EmitExpr(p.Default, targetTyped: true);
+                        // C# allows only null for a dynamic or object parameter in source, but honors boxed metadata constants.
+                        if (type is "dynamic" or "object" && !IsNone(p.Default))
                         {
+                            string constant = !_big && FoldInt(p.Default) is System.Numerics.BigInteger integer &&
+                                integer >= long.MinValue && integer <= long.MaxValue ? integer.ToString(CultureInfo.InvariantCulture) + "L" : defaultCode;
                             decl = WithOptionalDefault(decl, constant);
                             defaultCode = "";
                         }
                     }
-                    else if (keepDefault) defaultCode = EmitExpr(p.Default, targetTyped: true);
                     if (wider != null)
                     {
                         string local = p.Name + "__v";
@@ -704,11 +705,11 @@ namespace Typhon.Compiler.Emit
 
         static bool BindsAnywhere(List<Stmt> body, string name) => body.Any(s => BindsName(s, name));
 
-        /// <summary>The type of a hoisted variable that only for-loops bind: long for range loops, else the iterables' element type.</summary>
+        /// <summary>The type of a hoisted variable that only for-loops bind: the integral mode or the iterables' element type.</summary>
         string LoopVariableType(LocalsResult locals, string name)
         {
             if (!locals.HoistedLoops.TryGetValue(name, out var loops) || loops.Count == 0) return null;
-            var types = loops.Select(f => f.IsAsync ? null : IsBuiltinRange(f.Iter, out _) ? "long" : ElementTypeOf(InferType(f.Iter))).Distinct().ToList();
+            var types = loops.Select(f => f.IsAsync ? null : IsBuiltinRange(f.Iter, out _) ? IntT : ElementTypeOf(InferType(f.Iter))).Distinct().ToList();
             return types.Count == 1 && types[0] != null && types[0] != TypeInference.Pending && types[0] != "dynamic" ? types[0] : null;
         }
 

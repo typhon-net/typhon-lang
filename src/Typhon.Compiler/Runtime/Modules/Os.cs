@@ -1106,6 +1106,12 @@ namespace Typhon.Stdlib
         /// <summary>isatty(fd): is the descriptor a terminal?</summary>
         public static bool isatty(long fd)
         {
+            if (termios.Available)
+            {
+                if (fd < 0 || fd > int.MaxValue) return false;
+                try { return WithUnixDescriptor((int)fd, descriptor => NativeIsatty(descriptor) == 1, OsErrors.BadFd); }
+                catch (IOException) { return false; }
+            }
             lock (_fds) if (_fds.TryGetValue(fd, out var e) && e.Path != null) return false;
             return fd == 0 ? !Console.IsInputRedirected : fd == 1 ? !Console.IsOutputRedirected : fd == 2 && !Console.IsErrorRedirected;
         }

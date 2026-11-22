@@ -82,7 +82,7 @@ namespace Typhon.Stdlib
         public static readonly string prefix = AppContext.BaseDirectory.TrimEnd('/', '\\'), exec_prefix = prefix, base_prefix = prefix, base_exec_prefix = prefix;
         /// <summary>The module search path: the script's directory (imports are resolved when compiling).</summary>
         public static List<string> path = new List<string>();
-        public static readonly List<object?> meta_path = new(), path_hooks = pkgutil.DefaultPathHooks();
+        public static readonly List<dynamic?> meta_path = new(), path_hooks = pkgutil.DefaultPathHooks();
         public static readonly OrderedDictionary<string, object?> path_importer_cache = new OrderedDictionary<string, object?>();
 
         public static readonly PyTextStream __stdout__ = new PyTextStream(0), __stderr__ = new PyTextStream(1), __stdin__ = new PyTextStream(2);
@@ -176,7 +176,7 @@ namespace Typhon.Stdlib
         /// sys.modules: the Typhon runtime's standard modules and the program's __main__, by name (module objects with their
         /// functions and values as attributes). Imports are resolved when compiling: adding entries imports nothing.
         /// </summary>
-        public static OrderedDictionary<string, object?> modules => _modules ??= PyModule.All(_mainModule);
+        public static OrderedDictionary<string, dynamic?> modules => _modules ??= PyModule.All(_mainModule);
 
         // ── frames ──
 
@@ -382,6 +382,8 @@ namespace Typhon.Runtime
         public string? __file__ => _source?.Filename;
         public string? __doc__ => _source?.DocString;
         public PyAttrDict __dict__ { get; }
+        public dynamic? ImportAttribute(string name) => __dict__.TryGetValue(name, out var value) ? value :
+            throw new ImportError($"cannot import name '{name}' from '{__name__}'");
         public override bool TryGetMember(GetMemberBinder binder, out object? result) => __dict__.TryGetValue(binder.Name, out result);
         public override bool TrySetMember(SetMemberBinder binder, object? value) { __dict__[binder.Name] = value; return true; }
 

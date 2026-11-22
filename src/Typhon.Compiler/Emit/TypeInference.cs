@@ -44,6 +44,16 @@ namespace Typhon.Compiler.Emit
         /// <summary>Element types added to containers that started empty: "scope|name" → types ("K→V" for dicts).</summary>
         public readonly Dictionary<string, List<string>> Elements = new Dictionary<string, List<string>>();
 
+        public readonly Dictionary<string, List<string>> ExpectedElements = new Dictionary<string, List<string>>();
+
+        public void AddExpectedElement(string key, string type)
+        {
+            if (!ExpectedElements.TryGetValue(key, out var types))
+                ExpectedElements[key] = types = new List<string>();
+            types.Add(type);
+        }
+
+
         /// <summary>
         /// Variables assigned a value of another type where no fresh C# variable can take it (in a nested block, or a hoisted
         /// variable): "scope|name" → the type the variable needs ("double" for an int that becomes a float, else "dynamic").
@@ -335,6 +345,8 @@ namespace Typhon.Compiler.Emit
             if (known.Count == 0 || known.Any(IsUnknown)) return "dynamic";
             var distinct = known.Distinct().ToList();
             if (distinct.Count == 1) return none && IsValueType(distinct[0]) && !distinct[0].EndsWith("?") ? distinct[0] + "?" : distinct[0];
+            if (distinct.Count == 2 && distinct[0].TrimEnd('?') == distinct[1].TrimEnd('?'))
+                return distinct[0].EndsWith("?") ? distinct[0] : distinct[1];
             if (distinct.All(x => x == "long" || x == "double")) return "double";
             if (distinct.All(x => x == "long" || x == BigInt)) return BigInt; // big-int mode: machine ints and Python ints
             // tuples of one length: unified position by position ((Sphere, Plain) and (Plane, Checker): (dynamic, dynamic)),
@@ -533,6 +545,10 @@ namespace Typhon.Compiler.Emit
                 if (!Obs.Elements.ContainsKey(kv.Key))
                     if (Elements.TryGetValue(kv.Key, out var typedBefore) && !typedBefore.Contains("dynamic")) elements[kv.Key] = typedBefore;
                     else if (UnifyElements(kv.Value) is string fu) elements[kv.Key] = fu;
+            // A typed consumer and its aliases need the same container instance as the empty builder.
+            foreach (var kv in Obs.ExpectedElements)
+                if (kv.Value.Distinct().Count() == 1)
+                    elements[kv.Key] = kv.Value[0];
             var external = new Dictionary<string, string>();
             foreach (var kv in Obs.ExternalFields) if (UnifyElements(kv.Value) is string ext) external[kv.Key] = ext;
             // attributes only grow: one seen set on an object stays (the code that sets it may stop seeing the object's class

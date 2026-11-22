@@ -78,12 +78,20 @@ namespace Typhon.Runtime
         public static bool contains(PyByteArray b, long x) => b.__contains__(x);
         public static bool contains(PyByteArray b, PyBytes x) => b.__contains__(x);
         public static bool contains(string s, char c) => s.IndexOf(c) >= 0;
-        public static bool contains<K, V>(Dictionary<K, V> d, K key) where K : notnull => d.ContainsKey(key);
-        public static bool contains<K, V>(OrderedDictionary<K, V> d, K key) where K : notnull => d.ContainsKey(key);
-        public static bool contains<K, V>(IDictionary<K, V> d, K key) => d.ContainsKey(key);
+        public static bool contains<K, V>(Dictionary<K, V> d, K key) where K : notnull => key != null && d.ContainsKey(key);
+        public static bool contains<K, V>(OrderedDictionary<K, V> d, K key) where K : notnull => key != null && d.ContainsKey(key);
+        public static bool contains<K, V>(IDictionary<K, V> d, K key)
+        {
+            try { return d.ContainsKey(key); }
+            catch (ArgumentNullException) when (key == null) { return false; }
+        }
         public static bool contains<T>(HashSet<T> s, T x) => s.Contains(x);
         public static bool contains<T>(ICollection<T> c, T x) => c.Contains(x);
-        public static bool contains<T>(IEnumerable<T> c, T x) => c.Contains(x);
+        public static bool contains<T>(IEnumerable<T> c, T x) => MembershipHook(c, x) ?? c.Contains(x);
+
+        static bool? MembershipHook(object c, object? x) =>
+            c.GetType().IsDefined(typeof(PySourceAttribute), false) && TryGetAttr(c, "__contains__", out var contains, allowFallback: false)
+                ? truthy((object?)__invoke(contains, [x])) : null;
         /// <summary>The items of a tuple of fixed shape (a C# ValueTuple), for iteration and `in`.</summary>
         public static IEnumerable<T> tuple_items<T>(ITuple t) { for (int i = 0; i < t.Length; i++) yield return (T)t[i]!; }
         public static T tuple_at<T>(ITuple t, long i) => (T)t[checked((int)(i < 0 ? i + t.Length : i))]!;
@@ -94,7 +102,13 @@ namespace Typhon.Runtime
         public static bool contains(object c, object x)
         {
             if (c is PyAttrDict attrs) return x is string name && attrs.ContainsKey(name);
-            if (c is IDictionary d) return d.Contains(KeyFor(d, x));
+            if (c is IDictionary d)
+            {
+                object? key = KeyFor(d, x);
+                try { return d.Contains(key); }
+                catch (ArgumentNullException) when (key == null) { return false; }
+            }
+            if (MembershipHook(c, x) is bool declared) return declared;
             if (c is IEnumerable e) { foreach (var item in e) if (eq(item, x)) return true; return false; }
             return ((dynamic)c).__contains__((dynamic)x);
         }
@@ -153,6 +167,26 @@ namespace Typhon.Runtime
             if (step > 0) return start < stop ? (long)(((decimal)stop - start - 1) / step + 1) : 0;
             if (step < 0) return start > stop ? (long)(((decimal)start - stop - 1) / -(decimal)step + 1) : 0;
             throw new ArgumentException("range() arg 3 must not be zero");
+        }
+
+        public static IEnumerable<BigInteger> __iter_big_range(object? start, object? stop, object? step)
+        {
+            BigInteger first = RangeIndex(start), limit = RangeIndex(stop), stride = RangeIndex(step);
+            if (stride.IsZero) throw new ArgumentException("range() arg 3 must not be zero");
+            for (BigInteger current = first; stride.Sign > 0 ? current < limit : current > limit; current += stride)
+                yield return current;
+        }
+
+        static BigInteger RangeIndex(object? value)
+        {
+            if (value is BigInteger wide) return wide;
+            if (value is bool flag) return flag ? 1 : 0;
+            if (value is byte or sbyte or short or ushort or int or uint or long or ulong)
+                return new BigInteger(Convert.ToDecimal(value, Inv));
+            if (TryGetAttr(value, "__index__", out var index, allowFallback: false))
+                return IntProtocolResult(value!, "__index__", (object?)__invoke(index, []));
+            string name = value == null ? "NoneType" : PyTypeName(value.GetType());
+            throw new InvalidCastException($"'{name}' object cannot be interpreted as an integer");
         }
 
         public static PyRange range(long stop) => new PyRange(0, stop, 1);
@@ -233,6 +267,8 @@ namespace Typhon.Runtime
             new BigInteger(ByteOps.From(b), isUnsigned: !signed, isBigEndian: byteorder == "big");
         /// <summary>(n).to_bytes(length, "big"/"little", signed=False)</summary>
         public static PyBytes to_bytes(this long n, long length = 1, string byteorder = "big", bool signed = false) => to_bytes(new BigInteger(n), length, byteorder, signed);
+        public static PyBytes to_bytes(this BigInteger n, BigInteger length, string byteorder = "big", bool signed = false) =>
+            to_bytes(n, checked((long)length), byteorder, signed);
         public static PyBytes to_bytes(this BigInteger n, long length = 1, string byteorder = "big", bool signed = false)
         {
             if (!signed && n.Sign < 0) throw new OverflowException("can't convert negative int to unsigned");
@@ -304,7 +340,7 @@ namespace Typhon.Runtime
         }
 
 
-        public static IEnumerable<(K, V)> items<K, V>(this IDictionary<K, V> d) => d.Select(kv => (kv.Key, kv.Value));
+        public static IEnumerable<(K, V)> items<K, V>(this IDictionary<K, V> d) => new PyDictItems<K, V>(d, () => d.Count);
         // Mapping[K, V] (IReadOnlyDictionary): plain methods, since an extension overload would make dict.items() ambiguous
         public static IEnumerable<(K, V)> __ro_items<K, V>(IReadOnlyDictionary<K, V> d) => d.Select(kv => (kv.Key, kv.Value));
         public static IEnumerable<K> __ro_keys<K, V>(IReadOnlyDictionary<K, V> d) => d.Keys;
@@ -381,6 +417,9 @@ namespace Typhon.Runtime
         public static HashSet<T> symmetric_difference<T>(this HashSet<T> s, IEnumerable<T> other) { var r = new HashSet<T>(s); r.SymmetricExceptWith(other); return r; }
         public static bool issubset<T>(this HashSet<T> s, IEnumerable<T> other) => s.IsSubsetOf(other);
         public static bool issuperset<T>(this HashSet<T> s, IEnumerable<T> other) => s.IsSupersetOf(other);
+        public static bool issuperset<T>(this HashSet<T> s, object other) =>
+            __iter_dyn(other).All(item => item is T value ? s.Contains(value) :
+                item is null && default(T) is null && s.Contains(default!));
         public static bool isdisjoint<T>(this HashSet<T> s, IEnumerable<T> other) => !s.Overlaps(other);
     }
 
