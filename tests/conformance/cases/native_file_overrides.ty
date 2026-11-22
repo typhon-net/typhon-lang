@@ -24,3 +24,18 @@ def through_base(value: io.IOBase):
 file = File(False)
 print(file.closed, file.seek(5))
 through_base(file)
+
+
+class ForwardedFile:
+    def __init__(self, stream):
+        self.stream = stream
+
+    def __getattr__(self, name):
+        return getattr(self.stream, name)
+
+def spread_seek(stream: Any, *offset):
+    return stream.seek(*offset)
+
+stream = ForwardedFile(io.StringIO("abcdef"))
+print(spread_seek(stream, 2), stream.read(1))
+print(spread_seek(stream, 0, 2), stream.tell())

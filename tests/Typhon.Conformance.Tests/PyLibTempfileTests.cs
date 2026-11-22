@@ -29,6 +29,11 @@ public sealed class PyLibTempfileTests
             File.WriteAllText(script, $"#:pylib {sourceLibrary}\n" + """
                 import os
                 import stock_tempfile as tempfile
+                from typing import Any
+
+                def seek_forward(file: Any, *offset):
+                    return file.seek(*offset)
+
                 import sys
 
                 directory = sys.argv[1]
@@ -36,7 +41,7 @@ public sealed class PyLibTempfileTests
                     filename = named.name
                     print("named", os.path.isfile(filename), named.closed)
                     print(named.write("alpha\n"))
-                    named.seek(0)
+                    seek_forward(named, 0)
                     print(repr(named.readline()))
                 print("removed", named.closed, not os.path.exists(filename))
 

@@ -1374,12 +1374,10 @@ namespace Typhon.Compiler.Emit
                 if (!keywords) return $"{Rt("__invoke")}({callee}, {positional})";
                 return $"{Rt("__invoke_kw")}({callee}, {positional}, {KeywordArgs(c.Args)})";
             }
-            // obj.m(x, *rest) on a late-bound obj: the method chosen at run time by the number of arguments
-            if (c.Func is AttributeExpr sd && InferType(sd.Target) == "dynamic" && c.Args.Any(a => a.Star) && !c.Args.Any(a => a.Name != null || a.DoubleStar))
-            {
-                var spread = c.Args.Select(a => a.Star ? $".. {Rt("__iter_dyn")}((object){Paren(EmitExpr(a.Value))})" : $"(object?){Paren(EmitValue(a.Value))}");
-                return $"new global::Typhon.Runtime.PyBoundMethod((object){Paren(EmitExpr(sd.Target))}, {CsString(sd.Name)}).__call__([{string.Join(", ", spread)}])";
-            }
+            // A runtime attribute may come from a descriptor or __getattr__ before its arguments are unpacked.
+            if (c.Func is AttributeExpr spreadMethod && InferType(spreadMethod.Target) == "dynamic" &&
+                c.Args.Any(arg => arg.Star) && !c.Args.Any(arg => arg.Name != null || arg.DoubleStar))
+                return InvokeLogicalMethod(spreadMethod, $"(object?){Paren(EmitExpr(spreadMethod.Target))}", c.Args);
             if (TryTypeExpr(c.Func, out var typeCode))
             {
                 if (c.Args.Count == 1 && c.Args[0] is Arg { Name: null or "value", Star: false, DoubleStar: false } enumValue &&
