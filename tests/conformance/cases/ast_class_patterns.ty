@@ -1,0 +1,49 @@
+import ast as syntax
+from ast import Assign as Assignment
+
+def describe(source: str):
+    import ast
+    statement = ast.parse(source).body[0]
+    match statement:
+        case ast.Return(value=ast.Call(func=ast.Name(id=name))):
+            print("return", name)
+        case Assignment(targets=[syntax.Name(target)], value=syntax.Constant(value)):
+            print("assign", target, value)
+        case ast.Expr(ast.BinOp(ast.Constant(0), ast.Add(), ast.Name(right))):
+            print("zero", right)
+        case ast.Expr(ast.BinOp(ast.Name(left), ast.Add(), ast.Constant(right))):
+            print("sum", left, right)
+        case ast.Expr(value=ast.Call(missing=_)):
+            print("unexpected")
+        case ast.AST():
+            print("other")
+
+describe("return f()")
+describe("answer = 42")
+describe("answer + 1")
+describe("0 + answer")
+describe("f()")
+describe("pass")
+
+def invalid_patterns(source: str):
+    statement = syntax.parse(source).body[0]
+    try:
+        match statement:
+            case syntax.Expr(_, _):
+                print("unexpected")
+    except TypeError as error:
+        print(error)
+    try:
+        match statement:
+            case syntax.Expr(_, value=_):
+                print("unexpected")
+    except TypeError as error:
+        print(error)
+    try:
+        match statement:
+            case syntax.AST(_):
+                print("unexpected")
+    except TypeError as error:
+        print(error)
+
+invalid_patterns("f()")

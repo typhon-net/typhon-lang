@@ -228,6 +228,10 @@ namespace Typhon.Runtime
             return r;
         }
 
+        // Lib/secrets.py uses this method on SystemRandom, including for arbitrary-precision bounds.
+        public long _randbelow(long n) => RandBelow(n);
+        public BigInteger _randbelow(BigInteger n) => RandBelow(n);
+
         public long randrange(long stop)
         {
             if (stop > 0) return RandBelow(stop);

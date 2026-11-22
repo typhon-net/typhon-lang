@@ -119,12 +119,19 @@ namespace Typhon.Runtime
 
         public struct Enumerator : IEnumerator<string>
         {
-            readonly string _s; int _i;
-            public Enumerator(string s) { _s = s; _i = -1; }
-            public bool MoveNext() => ++_i < _s.Length;
-            public string Current => Builtins.CharStr(_s[_i]);
+            readonly string _s;
+            int _i, _width;
+            public Enumerator(string s) { _s = s; _i = 0; _width = 0; }
+            public bool MoveNext()
+            {
+                _i += _width;
+                if (_i >= _s.Length) { _width = 0; return false; }
+                _width = char.IsSurrogatePair(_s, _i) ? 2 : 1;
+                return true;
+            }
+            public string Current => _width == 2 ? _s.Substring(_i, 2) : Builtins.CharStr(_s[_i]);
             object IEnumerator.Current => Current;
-            public void Reset() => _i = -1;
+            public void Reset() { _i = 0; _width = 0; }
             public void Dispose() { }
         }
     }

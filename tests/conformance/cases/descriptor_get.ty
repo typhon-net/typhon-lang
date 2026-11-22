@@ -1,0 +1,40 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+from inspect import _descriptor_get, getattr_static
+
+
+class Explicit:
+    def __get__(self, obj, owner):
+        return ("custom", type(obj) is owner)
+
+
+class Manager:
+    @property
+    def value(self):
+        return "property value"
+
+    def method(self, number):
+        return number + 4
+
+    @classmethod
+    def owner(cls):
+        return cls.__name__
+
+    @staticmethod
+    def text():
+        return "static"
+
+
+def bind(obj, name):
+    return _descriptor_get(getattr_static(type(obj), name), obj)
+
+
+obj = Manager()
+print(bind(obj, "value"))
+print(bind(obj, "method")(5))
+print(bind(obj, "owner")())
+print(bind(obj, "text")())
+print(_descriptor_get(Explicit(), obj))
+print(_descriptor_get(Manager, obj) is Manager)
+print(_descriptor_get(7, obj))

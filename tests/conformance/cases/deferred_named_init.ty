@@ -1,0 +1,15 @@
+from typing import Any
+
+class Base:
+    def __init__(self, label: Any, *, code: Any = 0):
+        self.label: Any = label
+        self.code: Any = code
+        print("base", label, code)
+
+class Child(Base):
+    def __init__(self, label: Any, *, code: Any = 7):
+        print("child", code)
+        super().__init__(label, code=code)
+
+child = Child("named", code=9)
+print(child.label, child.code)

@@ -1,0 +1,31 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+from typing import Any
+
+
+def callback(*items, **options):
+    print(items, options)
+    return len(items)
+
+
+class Owner:
+    @staticmethod
+    def prepare(function, /, *args, **kwargs):
+        def wrapper():
+            return function(*args, **kwargs)
+        return wrapper
+
+    def add(self, function, /, *args, **kwargs):
+        return self.prepare(function, *args, **kwargs)
+
+
+def dynamic_receiver(owner: Any):
+    handler = owner.add(callback, "dynamic", 2, end="second")
+    print(handler())
+    owner.add(callback, "discarded")
+
+
+handler = Owner().add(callback, "static", 1, end="first")
+print(handler())
+dynamic_receiver(Owner())

@@ -248,9 +248,13 @@ namespace Typhon.Stdlib
                 return Substitute(m => template.Expand(m), @string, count);
             }
             public (string, long) subn(Func<Match, string> repl, string @string, long count = 0) => Substitute(repl, @string, count);
+            public string sub(object repl, string @string, long count = 0) => subn(repl, @string, count).Item1;
+            public (string, long) subn(object repl, string @string, long count = 0) =>
+                Substitute(match => (string?)Builtins.__invoke(repl, [match]) ?? "", @string, count);
 
             (string, long) Substitute(Func<Match, string> repl, string s, long count)
             {
+                if (count < 0) return (s, 0);
                 var sb = new StringBuilder();
                 int last = 0; long n = 0;
                 var offsets = new MatchOffsets(s);
@@ -324,6 +328,25 @@ namespace Typhon.Stdlib
             public (PyBytes, long) subn(PyBytes repl, PyBytes @string, long count = 0)
             {
                 var (result, replaced) = _pattern.subn(RegexText(repl), RegexText(@string), count);
+                return (PyBytes.Latin1(result), replaced);
+            }
+
+            public PyBytes sub(object repl, PyBytes @string, long count = 0) => subn(repl, @string, count).Item1;
+
+            public (PyBytes, long) subn(object repl, PyBytes @string, long count = 0) =>
+                subn(match => Builtins.__invoke(repl, [match]), @string, count);
+
+            public PyBytes sub(Func<BytesMatch, object?> repl, PyBytes @string, long count = 0) => subn(repl, @string, count).Item1;
+
+            public (PyBytes, long) subn(Func<BytesMatch, object?> repl, PyBytes @string, long count = 0)
+            {
+                string Replacement(Match match)
+                {
+                    object? value = repl(new BytesMatch(match, this, @string));
+                    return value == null ? "" : Encoding.Latin1.GetString(ByteOps.Buffer(value));
+                }
+
+                var (result, replaced) = _pattern.subn(Replacement, RegexText(@string), count);
                 return (PyBytes.Latin1(result), replaced);
             }
 

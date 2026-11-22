@@ -1,0 +1,9 @@
+return f
+assign answer 42
+sum answer 1
+zero answer
+other
+other
+Expr() accepts 1 positional sub-pattern (2 given)
+Expr() got multiple sub-patterns for attribute 'value'
+ast.AST() accepts 0 positional sub-patterns (1 given)

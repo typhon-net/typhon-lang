@@ -1,0 +1,16 @@
+before
+new Item True 0
+init Item True
+new Child False 1
+init Child True
+after
+10 Item Child CHILD
+10 10
+True True
+True True True
+True 10
+new DerivedItem True 1
+init DerivedItem True
+True 14 True
+True True
+True ordinary class body

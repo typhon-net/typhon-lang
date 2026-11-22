@@ -1,0 +1,31 @@
+from collections.abc import Coroutine, Generator
+
+def native():
+    yield 1
+
+async def work():
+    return 3
+
+class Manual:
+    def __iter__(self):
+        return self
+    def __next__(self):
+        return self.send(None)
+    def send(self, value):
+        raise StopIteration
+    def throw(self, exception):
+        raise exception
+    def close(self):
+        pass
+
+g = native()
+print(isinstance(g, Generator), issubclass(type(g), Generator), isinstance(g, Coroutine))
+print(isinstance(iter([1]), Generator), issubclass(list, Generator))
+m = Manual()
+print(isinstance(m, Generator), issubclass(Manual, Generator), isinstance(m, Coroutine))
+c = work()
+print(isinstance(c, Coroutine), issubclass(type(c), Coroutine), isinstance(c, Generator))
+try:
+    c.send(None)
+except StopIteration as error:
+    print(error.value)

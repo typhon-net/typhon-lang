@@ -55,7 +55,9 @@ namespace Typhon.Runtime
 
         static ClassNamespace Namespace(Type type) => Namespaces.GetValue(type, t => new ClassNamespace(t));
 
-        internal static types.MappingProxyType Dictionary(Type type) => new(Namespace(type));
+        internal static IDictionary DeclaredNamespace(Type type) => Namespace(type);
+
+        internal static types.MappingProxyType Dictionary(Type type) => new(PyMetaclasses.Namespace(type) ?? Namespace(type));
 
         internal static readonly object Unassigned = new();
 
@@ -160,7 +162,11 @@ namespace Typhon.Runtime
         internal static PyClosure ClassBodyFunction(Type type, string name, string implementation)
         {
             var methods = type.GetMethods(Declared).Where(m => m.Name == implementation).ToArray();
-            return InstanceFunction(type, name, methods, methods.FirstOrDefault()?.GetCustomAttribute<PySourceAttribute>());
+            var method = methods.FirstOrDefault();
+            var source = method?.GetCustomAttribute<PySourceAttribute>();
+            return method?.IsStatic == true
+                ? Callable(type, name, source, method, (args, keywords) => Invoke(methods, name, null, args, keywords))
+                : InstanceFunction(type, name, methods, source);
         }
 
         sealed class ClassNamespace : IDictionary

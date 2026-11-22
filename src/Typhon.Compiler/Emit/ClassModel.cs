@@ -124,9 +124,8 @@ namespace Typhon.Compiler.Emit
         /// (a CLR class cannot be local): it moves there, renamed only if the module already has that name.
         /// </summary>
         /// <summary>
-        /// class C: ... in a module-level if / try block (if HAVE_SSL: class IMAP4_SSL(IMAP4), try: ... else: class
-        /// ABCMeta): a class of the module, defined before the block, when nothing else at module level binds its name
-        /// (Typhon's classes exist from the start; the block's other statements stay where they are).
+        /// A class in a module-level if or try block has a CLR declaration at module scope.
+        /// Its Python name is bound only when execution reaches the class definition.
         /// </summary>
         static void HoistBlockClasses(ModuleInfo m)
         {
@@ -140,8 +139,8 @@ namespace Typhon.Compiler.Emit
                 {
                     if (m.Classes.ContainsKey(cls.Name) || m.Functions.Contains(cls.Name) || found.Count(x => x.Cls.Name == cls.Name) > 1 ||
                         BoundElsewhere(body, cls)) continue;
-                    owner.Remove(cls);
-                    if (owner.Count == 0) owner.Add(new PassStmt { Line = cls.Line, Col = cls.Col });
+                    owner[owner.IndexOf(cls)] = new ConditionalClassBinding { Definition = cls, Line = cls.Line, Col = cls.Col };
+                    cls.ConditionalModuleDefinition = true;
                     body.Insert(i, cls);
                     i++;
                     m.Classes[cls.Name] = cls;
@@ -512,12 +511,25 @@ namespace Typhon.Compiler.Emit
         /// </summary>
         static void NormalizeSelfNames(ClassDef c)
         {
+            var bodyFunctions = c.Body.OfType<FunctionDef>().Where(function => CanBindClassBodyFunction(function) &&
+                !(function.Name.StartsWith("__") && function.Name.EndsWith("__"))).ToList();
+            var helperNames = new HashSet<string>(bodyFunctions.Select(function => function.Name));
             foreach (var f in c.Body.OfType<FunctionDef>())
             {
                 if (f.Params.Count == 0 || f.Params[0].Kind != ParamKind.Normal) continue;
                 bool isStatic = f.Decorators.Any(d => d is NameExpr dn && dn.Id == "staticmethod");
                 bool isClass = f.Decorators.Any(d => d is NameExpr dn && dn.Id == "classmethod") || f.Name is "__new__" or "__init_subclass__" or "__class_getitem__";
                 if (isStatic) continue;
+                if (!isClass && bodyFunctions.Contains(f) &&
+                    AstWalker.ContainsOutsideNestedScopes(c.Body.SkipWhile(statement => statement != f).Skip(1).ToList(), node =>
+                        node is CallExpr { Func: NameExpr function } call && helperNames.Contains(function.Id) &&
+                        (function.Id == f.Name || call.Args.Any(argument => argument.Value is NameExpr name && name.Id == f.Name))) &&
+                    !AstWalker.ContainsOutsideNestedScopes(f.Body, node =>
+                        node is NameExpr { Id: "super" or "__class__" }))
+                {
+                    f.UsedInClassBody = true;
+                    continue;
+                }
                 string want = isClass ? "cls" : "self", have = f.Params[0].Name;
                 if (have == want || f.Name == "__new__") continue;
                 bool clash = f.Params.Skip(1).Any(p => p.Name == want);
@@ -529,6 +541,11 @@ namespace Typhon.Compiler.Emit
             foreach (var nested in c.Body.OfType<ClassDef>()) NormalizeSelfNames(nested);
         }
 
+        internal static bool CanBindClassBodyFunction(FunctionDef definition) =>
+            definition.Decorators.Count == 0 && definition.TypeParams.Count == 0 && definition.Params.Count > 0 &&
+            definition.Params.All(parameter => parameter.Default == null || parameter.Default is ConstExpr) &&
+            definition.Name is not ("__init__" or "__new__");
+
         /// <summary>__rmul__ = __mul__ in a class body: a method of the new name with the same parameters and body.</summary>
         static void AddMethodAliases(ClassDef c)
         {
@@ -536,7 +553,7 @@ namespace Typhon.Compiler.Emit
             {
                 if (!(c.Body[i] is AssignStmt a) || a.Targets.Count != 1 || !(a.Targets[0] is NameExpr alias) || !(a.Value is NameExpr original)) continue;
                 var def = c.Body.Take(i).OfType<FunctionDef>().LastOrDefault(f => f.Name == original.Id);
-                if (def == null) continue;
+                if (def == null || def.UsedInClassBody) continue;
                 c.Body[i] = new FunctionDef
                 {
                     Name = alias.Id, TypeParams = def.TypeParams, Params = def.Params, Returns = def.Returns, Body = def.Body,

@@ -39,13 +39,17 @@ namespace Typhon.Runtime
         public static Type __type_of(object? value)
         {
             if (value == null) return typeof(Typhon.Stdlib.types.NoneType);
-            if (value is Type) return typeof(Type);
+            if (value is Type type) return PyMetaclasses.Of(type);
             if (value is PyModule) return typeof(Typhon.Stdlib.types.ModuleType);
             if (value is ReprDescriptor) return typeof(Typhon.Stdlib.types.WrapperDescriptorType);
             if (value is PyFunction) return typeof(Typhon.Stdlib.types.FunctionType);
             if (value is PyBoundMethod { BuiltinOwner: not null })
                 return typeof(Typhon.Stdlib.types.BuiltinFunctionType);
             Type actual = value.GetType();
+            if (value is Typhon.Stdlib.sys_.code) return typeof(Typhon.Stdlib.sys_.code);
+            if (value is System.Threading.Tasks.Task) return typeof(Typhon.Stdlib.types.CoroutineType);
+            if (Typhon.Stdlib.inspect.IsGeneratorType(actual)) return typeof(Typhon.Stdlib.types.GeneratorType);
+            if (Typhon.Stdlib.inspect.IsAsyncGeneratorType(actual)) return typeof(Typhon.Stdlib.types.AsyncGeneratorType);
             if (PyDictViews.CanonicalType(actual) is Type view) return view;
             if (actual == typeof(ValueTuple)) return typeof(ITuple);
             if (!actual.IsGenericType) return actual;
@@ -143,6 +147,7 @@ namespace Typhon.Runtime
         {
             if (of == typeof(object)) return true;
             if (cls == of) return true;
+            if (of == typeof(Type) && PyMetaclasses.IsMetaclass(cls)) return true;
             if (PyDictViews.Name(cls) is string view && (PyDictViews.Name(of) == view ||
                 of == typeof(Typhon.Stdlib.collections.abc.MappingView) ||
                 view == "dict_keys" && of == typeof(Typhon.Stdlib.collections.abc.KeysView) ||
@@ -150,8 +155,16 @@ namespace Typhon.Runtime
                 view == "dict_items" && of == typeof(Typhon.Stdlib.collections.abc.ItemsView)))
                 return true;
             if (of == typeof(Typhon.Stdlib.types.ModuleType) && cls == typeof(PyModule)) return true;
+            if (of == typeof(Typhon.Stdlib.types.FunctionType) && typeof(PyFunction).IsAssignableFrom(cls)) return true;
+            if (of == typeof(Typhon.Stdlib.types.CoroutineType) && typeof(System.Threading.Tasks.Task).IsAssignableFrom(cls)) return true;
+            if (of == typeof(Typhon.Stdlib.types.GeneratorType) && Typhon.Stdlib.inspect.IsGeneratorType(cls)) return true;
+            if (of == typeof(Typhon.Stdlib.types.AsyncGeneratorType) && Typhon.Stdlib.inspect.IsAsyncGeneratorType(cls)) return true;
             if (of == typeof(Typhon.Stdlib.collections.abc.Mapping) && (typeof(IDictionary).IsAssignableFrom(cls) ||
                 cls.GetInterfaces().Any(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IReadOnlyDictionary<,>)))) return true;
+            if (of == typeof(Typhon.Stdlib.collections.abc.Generator) && (cls == typeof(Typhon.Stdlib.types.GeneratorType) || Typhon.Stdlib.inspect.IsGeneratorType(cls) ||
+                Typhon.Stdlib.collections.abc._check_methods(cls, "__iter__", "__next__", "send", "throw", "close") is true)) return true;
+            if (of == typeof(Typhon.Stdlib.collections.abc.Coroutine) && (cls == typeof(Typhon.Stdlib.types.CoroutineType) || typeof(System.Threading.Tasks.Task).IsAssignableFrom(cls) ||
+                Typhon.Stdlib.collections.abc._check_methods(cls, "__await__", "send", "throw", "close") is true)) return true;
             if (cls is PyLocalDataClass local) return ReferenceEquals(cls, of) || local.BaseType is Type parent && IsSubclass(parent, of);
             if (of is PyLocalDataClass) return false;
             if (cls == of) return true;

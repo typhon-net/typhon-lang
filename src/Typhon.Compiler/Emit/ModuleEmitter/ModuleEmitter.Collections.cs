@@ -363,8 +363,8 @@ namespace Typhon.Compiler.Emit
                 var g = c.Generators[i];
                 // [x async for x in agen()]: one async generator, collected by awaiting (System.Linq's async operators)
                 if (g.IsAsync && c.Generators.Count > 1) Unsupported(c, "an async comprehension with several 'for' clauses");
-                string iter = g.IsAsync ? EmitExpr(g.Iter) : EmitIterable(g.Iter); // (an async iterable stays one)
-                string elemType = !g.IsAsync && iter.StartsWith(Rt("__iter_dyn") + "(")
+                string iter = EmitIterationSource(g.Iter, g.IsAsync, out bool lateAsync);
+                string elemType = lateAsync || !g.IsAsync && iter.StartsWith(Rt("__iter_dyn") + "(")
                     ? "dynamic" : IterElementType(InferType(g.Iter));
                 BindTargetTypes(bindings, g.Target, elemType);
                 string param; string deconstruct = null;

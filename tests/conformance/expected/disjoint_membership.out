@@ -1,0 +1,5 @@
+'PASS ******'
+b'PASS secret\r\n'
+checking b'x'
+checking b'x'
+else

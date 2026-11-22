@@ -192,6 +192,43 @@ namespace Typhon.Runtime
             }
         }
 
+        /// <summary>Look up the attributes for a class pattern on a dynamic instance.</summary>
+        public static bool __match_class(object? subject, Type type, int positional, string[] named, out dynamic?[] fields)
+        {
+            fields = Array.Empty<dynamic?>();
+            if (!Typhon.Stdlib.builtins.isinstance(subject, type)) return false;
+            ITuple? matchArgs = null;
+            if (positional > 0)
+            {
+                if (subject is Typhon.Stdlib.ast.AST node && type != typeof(Typhon.Stdlib.ast.AST))
+                    matchArgs = node._fields;
+                else if (TryGetAttr(type, "__match_args__", out object? args))
+                    matchArgs = args as ITuple ?? throw new InvalidCastException(
+                        $"{PyTypeName(type)}.__match_args__ must be a tuple (got {PyTypeName(__type_of(args))})");
+                int count = matchArgs?.Length ?? 0;
+                if (positional > count)
+                {
+                    string name = type == typeof(Typhon.Stdlib.ast.AST) ? "ast.AST" : PyTypeName(type);
+                    throw new InvalidCastException($"{name}() accepts {count} positional sub-pattern{(count == 1 ? "" : "s")} ({positional} given)");
+                }
+            }
+            fields = new dynamic?[positional + named.Length];
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            for (int i = 0; i < fields.Length; i++)
+            {
+                string name = i < positional ? matchArgs![i] as string ?? throw new InvalidCastException(
+                    $"__match_args__ elements must be strings (got {PyTypeName(__type_of(matchArgs[i]))})") : named[i - positional];
+                if (!seen.Add(name))
+                    throw new InvalidCastException($"{PyTypeName(type)}() got multiple sub-patterns for attribute '{name}'");
+                try
+                {
+                    if (!TryGetAttr(subject, name, out fields[i])) return false;
+                }
+                catch (MissingMemberException) { return false; }
+            }
+            return true;
+        }
+
         public static bool __match_map(object? o, out IDictionary map)
         {
             if (o is IDictionary d) { map = d; return true; }

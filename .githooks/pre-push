@@ -20,7 +20,8 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     else changed="$changed src/"
     fi
 done
-if ! echo "$changed" | tr ' ' '\n' | grep -qE '\.(cs|ty|out|csproj|props|targets|slnx|py|yml)$|^src/|^tests/|^samples/'; then
+# Read every path so a downstream match cannot close the pipe while tr is writing.
+if ! echo "$changed" | tr ' ' '\n' | grep -E '\.(cs|ty|out|csproj|props|targets|slnx|py|yml)$|^src/|^tests/|^samples/|^[.]githooks/' >/dev/null; then
     exit 0
 fi
 

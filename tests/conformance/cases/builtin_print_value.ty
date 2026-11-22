@@ -1,0 +1,18 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+from typing import Any
+
+
+def invoke(function, *args, **kwargs):
+    return function(*args, **kwargs)
+
+
+def dispatch(caller: Any):
+    print(caller(print, "left", 2, "right", sep=":", end="!\n") is None)
+
+
+dispatch(invoke)
+saved = print
+print(saved is print)
+print(saved("saved") is None)

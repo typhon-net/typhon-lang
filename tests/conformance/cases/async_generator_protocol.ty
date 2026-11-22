@@ -1,0 +1,62 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+"""Conformance: async generator suspension, iteration, exceptions and close."""
+
+import asyncio
+import inspect
+from typing import AsyncIterator
+
+
+async def generator() -> AsyncIterator[object]:
+    try:
+        sent = yield "start"
+        await asyncio.sleep(0)
+        try:
+            yield sent * 2
+        except ValueError as error:
+            yield str(error)
+    finally:
+        print("close")
+
+
+async def short() -> AsyncIterator[int]:
+    yield 1
+    yield 2
+    yield 3
+
+
+async def invalid() -> AsyncIterator[int]:
+    if False:
+        yield 0
+    raise StopAsyncIteration()
+
+
+async def main():
+    a = generator()
+    print(inspect.isasyncgen(a))
+    print(await anext(a))
+    print(await a.asend(4))
+    print(await a.athrow(ValueError("caught")))
+    print(await anext(a, "end"))
+
+    b = generator()
+    print(await anext(b))
+    await b.aclose()
+    print(await anext(b, None))
+
+    c = short()
+    print(await anext(c))
+    async for n in c:
+        print(n)
+        break
+    print(await anext(c))
+    print(await anext(c, "exhausted"))
+    print(await c.athrow(ValueError("closed")))
+    try:
+        await anext(invalid())
+    except RuntimeError as error:
+        print(isinstance(error.__cause__, StopAsyncIteration))
+
+
+asyncio.run(main())

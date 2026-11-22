@@ -1,0 +1,9 @@
+from sys import version_info as version_data
+from sys import path as module_path
+
+print(version_data.major == 3)
+print(module_path.copy() == module_path)
+def local_shadow():
+    module_path = [1]
+    return module_path.copy()
+print(local_shadow())

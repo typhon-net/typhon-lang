@@ -1,0 +1,28 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+class Setup(type):
+    @classmethod
+    def __prepare__(mcls, name, bases, *, seed):
+        print("prepare", mcls.__name__, name, seed)
+        return {"initial": seed}
+
+    def __new__(mcls, name, bases, namespace, *, seed):
+        keys = [key for key in namespace if key in ("initial", "selected", "more", "greet")]
+        print("new", keys, namespace["initial"], seed)
+        return super().__new__(mcls, name, bases, namespace)
+
+    def __init__(cls, name, bases, namespace, *, seed):
+        print("init", cls.selected, seed)
+
+
+class Prepared(metaclass=Setup, seed=5):
+    print("class body")
+    selected = initial + 2
+    more = selected * 2
+
+    def greet(self):
+        return self.more
+
+
+print(Prepared.initial, Prepared.more, Prepared().greet())

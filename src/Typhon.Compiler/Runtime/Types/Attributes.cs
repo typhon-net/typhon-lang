@@ -53,14 +53,15 @@ namespace Typhon.Runtime
                 if (name == "__class__") { value = typeof(PyModule); return true; }
                 return module.__dict__.TryGetValue(name, out value);
             }
-            if (o is Exception error && name == "__traceback__")
+            if (o is Exception error && PyExceptionState.HasAttribute(name))
             {
-                value = Typhon.Stdlib.types.TracebackType.Of(error);
+                value = PyExceptionState.GetAttribute(error, name);
                 return true;
             }
             if (o is Type t)
             {
                 if (name == "__name__") { value = PyTypeName(t); return true; }
+                if (name == "__class__") { value = PyMetaclasses.Of(t); return true; }
                 if (name == "__qualname__") { value = t is PyLocalDataClass localName ? localName.QualName : PyTypeName(t); return true; }
                 if (name == "__dict__")
                 {
@@ -75,6 +76,7 @@ namespace Typhon.Runtime
                     return TryGetAttr(local.BaseType, name, out value, allowFallback);
                 }
                 if (name == "__doc__") { value = t.GetCustomAttribute<PySourceAttribute>()?.DocString; return true; }
+                if (PyMetaclasses.TryOwnValue(t, name, out value)) { value = PyMetaclasses.Bind(value, null, t); return true; }
                 if (PyClassDescriptors.TryGetAttribute(t, name, out value)) return true;
                 if (name == "__repr__") { value = ReprSlot(t); return true; }
                 if (name == "__module__") { value = ModuleOfType(t); return true; }
@@ -83,6 +85,7 @@ namespace Typhon.Runtime
                 if (name == "__getstate__") { value = __object_method("__object_getstate"); return true; }
                 if (name == "__new__")
                 {
+                    if (t == typeof(Type) || PyMetaclasses.IsMetaclass(t)) { value = PyMetaclasses.New; return true; }
                     if (t == typeof(long)) { value = __object_method("__int_new"); return true; }
                     if (t == typeof(string)) { value = __object_method("__str_new"); return true; }
                     if (t == typeof(object) || t.IsDefined(typeof(PySourceAttribute), false) &&
@@ -209,6 +212,7 @@ namespace Typhon.Runtime
             const BindingFlags DeclaredStatic = StaticMembers | BindingFlags.DeclaredOnly;
             for (Type? owner = type; owner != null && owner != before; owner = owner.BaseType)
             {
+                if (PyMetaclasses.TryOwnValue(owner, name, out value)) return true;
                 if (owner.GetProperty(name, DeclaredStatic) is PropertyInfo property && property.GetIndexParameters().Length == 0)
                 {
                     if (property.GetCustomAttribute<PyClassSlotAttribute>() is not { } slot)
@@ -410,6 +414,11 @@ namespace Typhon.Runtime
         static void SetAttribute(object? o, string name, object? value, bool freshEmptyDict)
         {
             if (o == null) throw new MissingMemberException($"'NoneType' object has no attribute '{name}'");
+            if (o is Exception error && PyExceptionState.HasAttribute(name))
+            {
+                PyExceptionState.SetAttribute(error, name, value);
+                return;
+            }
             if (name == "__class__")
             {
                 if (value is Type same && same == o.GetType()) return;
@@ -418,6 +427,7 @@ namespace Typhon.Runtime
             if (o is PyLocalDataClass local) { local.Members[name] = value; return; }
             if (o is Type t)
             {
+                if (PyMetaclasses.Set(t, name, value)) return;
                 if (t.GetProperty(name, StaticMembers) is PropertyInfo sp && sp.CanWrite) { sp.SetValue(null, AttributeValue(value, sp.PropertyType, freshEmptyDict)); return; }
                 if (t.GetField(name, StaticMembers) is FieldInfo sf && !sf.IsInitOnly) { sf.SetValue(null, AttributeValue(value, sf.FieldType, freshEmptyDict)); return; }
                 throw new MissingMemberException($"type object '{PyTypeName(t)}' has no attribute '{name}' (Typhon classes cannot gain attributes at run time)");

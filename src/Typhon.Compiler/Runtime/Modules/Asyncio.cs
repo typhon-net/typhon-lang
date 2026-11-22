@@ -318,23 +318,36 @@ namespace Typhon.Runtime
             if (cm == null) throw new InvalidCastException("'NoneType' object does not support the asynchronous context manager protocol");
             var m = cm.GetType().GetMethod("__aenter__", Type.EmptyTypes);
             if (m == null) return cm is IAsyncDisposable ? cm : throw new InvalidCastException($"'{cm.GetType().Name}' object does not support the asynchronous context manager protocol");
-            var task = (Task)Unwrapped(() => m.Invoke(cm, null))!;
-            await task;
-            return TaskResult(task);
+            return await AwaitContextResult(Unwrapped(() => m.Invoke(cm, null)));
         }
 
         /// <summary>The end of async with cm: on a late-bound manager: await __aexit__(type, exc, None); true when it suppresses the exception.</summary>
         public static async Task<bool> __aexit(object? cm, Exception? e)
         {
-            var m = cm!.GetType().GetMethods().FirstOrDefault(x => x.Name == "__aexit__" && x.GetParameters().Length == 3);
-            if (m == null)
+            var methods = cm!.GetType().GetMethods().Where(m => m.Name == "__aexit__").ToArray();
+            if (methods.Length != 0)
             {
-                if (cm is IAsyncDisposable ad) await ad.DisposeAsync();
-                return false;
+                object?[] args = { e?.GetType(), e, null };
+                var exit = PyArgs.Best(methods, args, null, out var call) ?? throw PyArgs.NoFit("__aexit__", null, methods);
+                return truthy(await AwaitContextResult(Unwrapped(() => exit.Invoke(cm, call))));
             }
-            var task = (Task)Unwrapped(() => m.Invoke(cm, new object?[] { e?.GetType(), e, null }))!;
-            await task;
-            return truthy(TaskResult(task));
+            if (cm is IAsyncDisposable disposable) await disposable.DisposeAsync();
+            return false;
+        }
+
+        static async Task<object?> AwaitContextResult(object? awaitable)
+        {
+            if (awaitable is Task task)
+            {
+                await task;
+                return TaskResult(task);
+            }
+            if (awaitable is ValueTask valueTask)
+            {
+                await valueTask;
+                return null;
+            }
+            return await (dynamic)awaitable!;
         }
 
         /// <summary>[x async for x in agen if cond]: the items of an async iterable, collected.</summary>
@@ -374,6 +387,8 @@ namespace Typhon.Stdlib
         // (an already started task: waited for)
         public static void run(Task t) => t.GetAwaiter().GetResult();
         public static T run<T>(Task<T> t) => t.GetAwaiter().GetResult();
+        public static dynamic? run(PyAsyncNext next) => PyEventLoop.Run(async () => await next);
+        public static dynamic? run(Func<PyAsyncNext> next) => PyEventLoop.Run(async () => await next());
 
         public static async Task sleep(double seconds)
         {

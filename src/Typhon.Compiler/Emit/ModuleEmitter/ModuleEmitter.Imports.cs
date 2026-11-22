@@ -32,8 +32,21 @@ namespace Typhon.Compiler.Emit
         string RuntimeProjectMember(ModuleInfo module, string name) =>
             $"{Rt("getattr")}(global::Typhon.Runtime.PyModule.Of(typeof({ModuleClassName(module)}), {CsString(module.Name)}), {CsString(name)})";
 
-        bool UsesRuntimeProjectMember(ModuleInfo module, string name) => module.WritesModuleGlobals &&
+        static bool ConditionalModuleClass(ModuleInfo module, string name) =>
+            module.Classes.TryGetValue(name, out var definition) && definition.ConditionalModuleDefinition;
+
+        bool UsesRuntimeProjectMember(ModuleInfo module, string name) =>
+            ConditionalModuleClass(module, name) || module.WritesModuleGlobals &&
             ProjectExport(module, name).Owner == null && RuntimeReExport(module, name).Module == null;
+
+        bool ConditionalClassReference(Expr reference) => reference switch
+        {
+            NameExpr name when !IsLocal(name.Id) => ConditionalModuleClass(_m, name.Id) ||
+                _runtimeProjectBindings.TryGetValue(name.Id, out var binding) && ConditionalModuleClass(binding.Owner, binding.Name),
+            AttributeExpr member when DottedName(member.Target) is string moduleName && ModuleRef(moduleName) is ModuleInfo source =>
+                ConditionalModuleClass(source, member.Name),
+            _ => false,
+        };
 
         string PackageImportedMember(string name)
         {
@@ -312,7 +325,12 @@ namespace Typhon.Compiler.Emit
                         continue;
                     }
                     if (member == null) _moduleAliases[bound] = owner;
-                    else _importedFromModules[bound] = new KeyValuePair<ModuleInfo, string>(owner, member);
+                    else
+                    {
+                        _importedFromModules[bound] = new KeyValuePair<ModuleInfo, string>(owner, member);
+                        if (owner == mod && ConditionalModuleClass(owner, member))
+                            _runtimeProjectBindings[bound] = (mod, a.Name, "__typhon_" + NewTmp("import"));
+                    }
                     if (IsProjectPackageModule(mod)) _qualifiedPackageImports.Add(bound);
                     if (a.AsName != null && !IsProjectPackageModule(mod))
                     {
@@ -531,6 +549,31 @@ namespace Typhon.Compiler.Emit
                         break;
                     case FunctionDef fd: ResolveFailingImports(fd.Body, moduleScope: false); break;
                     case ClassDef cd: ResolveFailingImports(cd.Body, moduleScope: false); break;
+                }
+            }
+        }
+
+        void MaterializeNativeTypeExports(List<Stmt> body)
+        {
+            if (_r is not Semantics.RoslynTypeResolver resolver || ResolvePsModule("_types") != null) return;
+            for (int i = 0; i < body.Count; i++)
+            {
+                if (body[i] is not ImportFromStmt { Module: "_types", Level: 0, Names.Count: 1 } from || from.Names[0].Name != "*") continue;
+                string target = "__typhon_native_types";
+                body[i] = new ImportStmt
+                {
+                    Line = from.Line, Col = from.Col,
+                    Names = { new ImportAlias { Name = "_types", AsName = target } },
+                };
+                foreach (string name in resolver.StaticFieldNames("Typhon.Stdlib._types").Where(name => !name.StartsWith("_")))
+                {
+                    _m.Globals.Add(name);
+                    body.Insert(++i, new AssignStmt
+                    {
+                        Line = from.Line, Col = from.Col,
+                        Targets = { new NameExpr { Id = name, Line = from.Line, Col = from.Col } },
+                        Value = new AttributeExpr { Target = new NameExpr { Id = target }, Name = name, Line = from.Line, Col = from.Col },
+                    });
                 }
             }
         }

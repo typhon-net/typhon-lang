@@ -31,9 +31,9 @@ namespace Typhon.Stdlib
         {
             readonly PyAttrDict _attrs;
             public SimpleNamespace() { _attrs = new PyAttrDict(this); }
-            public SimpleNamespace(IDictionary<string, object?> __kwargs) : this() { foreach (var kv in __kwargs) _attrs[kv.Key] = kv.Value; }
+            public SimpleNamespace([PyKeywordArguments] IDictionary<string, object?> __kwargs) : this() { foreach (var kv in __kwargs) _attrs[kv.Key] = kv.Value; }
             public SimpleNamespace(object? mapping_or_iterable) : this(mapping_or_iterable, null) { }
-            public SimpleNamespace(object? mapping_or_iterable, IDictionary<string, object?>? __kwargs) : this()
+            public SimpleNamespace(object? mapping_or_iterable, [PyKeywordArguments] IDictionary<string, object?>? __kwargs) : this()
             {
                 if (mapping_or_iterable is IDictionary d)
                 {

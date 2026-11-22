@@ -1,0 +1,44 @@
+import unicodedata as u
+from unicodedata import ucd_3_2_0 as old
+
+print(u.unidata_version, old.unidata_version)
+for point in [65, 0x300, 0x5d0, 0x661, 0xd800, 0xfdd0, 0x1f600, 0x1e030]:
+    c = chr(point)
+    print(hex(ord(c)), u.category(c), repr(u.bidirectional(c)), u.combining(c), u.east_asian_width(c),
+          old.category(c), repr(old.bidirectional(c)), old.combining(c))
+print(u.mirrored("("), u.decomposition("ﬁ"), old.decomposition("Å"))
+print(u.decimal("٢"), u.digit("²"), u.numeric("⅓"), old.numeric("⅓"))
+print(u.decimal("x", None), old.digit("x", 42), old.numeric("x", "missing"))
+try:
+    u.numeric("x")
+except ValueError as e:
+    print(str(e))
+try:
+    u.combining("xy")
+except TypeError:
+    print("only one character")
+
+for text in ["A\u030a", "q\u0307\u0323", "각", "ﬁ②", chr(0x2f868), chr(0x1e030), "A" + chr(0xd800) + "\u030a"]:
+    print(ascii(text))
+    for form in ["NFC", "NFD", "NFKC", "NFKD"]:
+        print(form, ascii(u.normalize(form, text)), ascii(old.normalize(form, text)),
+              u.is_normalized(form, text), old.is_normalized(form, text))
+try:
+    u.normalize("wrong", "text")
+except ValueError as e:
+    print(str(e))
+try:
+    u.normalize(None, "")
+except TypeError as e:
+    print(str(e))
+try:
+    ord("😀a")
+except TypeError as e:
+    print(str(e))
+try:
+    chr(0x110000)
+except ValueError as e:
+    print(str(e))
+historic_text = "A" + chr(0x1e6e3) + "\u0323"
+print(ascii(old.normalize("NFD", historic_text)), ascii(old.normalize("NFC", historic_text)))
+print(ascii(old.normalize("NFC", "\u1b05\u1b35")))

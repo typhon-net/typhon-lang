@@ -50,6 +50,8 @@ namespace Typhon.Compiler
         public readonly HashSet<string> Functions = new HashSet<string>();
         public readonly HashSet<string> Globals = new HashSet<string>();
         internal readonly HashSet<string> ConditionalGlobals = new HashSet<string>();
+        internal readonly HashSet<string> ReboundFunctions = new HashSet<string>();
+        internal readonly List<FunctionDef> ReboundImplementations = new List<FunctionDef>();
         /// <summary>The source changes its module namespace through globals()[key].</summary>
         internal bool WritesModuleGlobals;
         /// <summary>Module-level type aliases: EdgeT = tuple[int, int], Matrix = list[list[float]], X: TypeAlias = ...</summary>
@@ -277,6 +279,7 @@ namespace Typhon.Compiler
             }
             Decorators.Apply(info.Ast);
             ModuleAliases.Apply(info.Ast);
+            if (!runtimeCode && !info.IsGdScript) ReboundModuleFunctions.Apply(info);
             foreach (var s in info.Ast.Body)
             {
                 if (s is AssignStmt alias && alias.Targets.Count == 1 && alias.Targets[0] is NameExpr an0 &&

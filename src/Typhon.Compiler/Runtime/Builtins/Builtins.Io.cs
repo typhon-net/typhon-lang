@@ -23,6 +23,25 @@ namespace Typhon.Runtime
 
     internal static partial class Builtins
     {
+        static readonly PyClosure PrintValue = new("print", (values, keywords) =>
+        {
+            object? Keyword(string name) => keywords != null && keywords.TryGetValue(name, out var value) ? value : null;
+            if (keywords != null)
+                foreach (string name in keywords.Keys)
+                    if (name is not ("sep" or "end" or "file" or "flush"))
+                        throw new InvalidCastException($"'{name}' is an invalid keyword argument for print()");
+            string? Text(string name) => Keyword(name) switch
+            {
+                null => null,
+                string text => text,
+                _ => throw new InvalidCastException($"{name} must be None or a string"),
+            };
+            print_kw(values, Text("sep"), Text("end"), Keyword("file"), truthy(Keyword("flush")));
+            return null;
+        }) { __module__ = "builtins" };
+
+        public static PyClosure __print_value() => PrintValue;
+
         public static void print() => WritePrint((object?)Typhon.Stdlib.sys_.stdout, "\n", false);
         public static void print(object? value) => WritePrint((object?)Typhon.Stdlib.sys_.stdout, str(value) + "\n", false);
         public static void print(params object?[]? args) => print_kw(args ?? new object?[] { null });

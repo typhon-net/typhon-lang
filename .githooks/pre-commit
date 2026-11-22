@@ -13,7 +13,7 @@ cd "$(git rev-parse --show-toplevel)" || exit 1
 staged=$(git diff --cached --name-only --diff-filter=ACMR)
 [ -z "$staged" ] && exit 0
 
-if echo "$staged" | grep -qE '\.(cs|ty|csproj|props|targets|slnx)$|^src/|^tests/|^samples/'; then
+if echo "$staged" | grep -E '\.(cs|ty|csproj|props|targets|slnx)$|^src/|^tests/|^samples/|^[.]githooks/' >/dev/null; then
     dotnet=$(typhon_dotnet) || exit 1
     echo "pre-commit: building Typhon.slnx (Release) ..."
     if ! out=$("$dotnet" build Typhon.slnx -c Release -nologo -v q 2>&1); then

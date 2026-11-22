@@ -80,6 +80,8 @@ namespace Typhon.Stdlib
         public static dynamic iter(object o) => Builtins.iter((dynamic)o);
         public static dynamic next(object iterator) => Builtins.next((dynamic)iterator);
         public static dynamic next(object iterator, object? @default) => Builtins.next((dynamic)iterator, (dynamic?)@default);
+        public static PyAsyncNext anext(object? iterator) => Builtins.anext(iterator);
+        public static PyAsyncNext anext(object? iterator, object? @default) => Builtins.anext(iterator, @default);
         public static dynamic enumerate(object iterable, long start = 0) => Builtins.enumerate((dynamic)iterable, start);
         public static dynamic zip(object a, object b) => Builtins.zip((dynamic)a, (dynamic)b);
         public static dynamic zip(object a, object b, object c) => Builtins.zip((dynamic)a, (dynamic)b, (dynamic)c);
@@ -101,7 +103,7 @@ namespace Typhon.Stdlib
             {
                 case Type t:
                     if (obj == null) return t == typeof(object) || t == typeof(Typhon.Stdlib.types.NoneType);
-                    return Builtins.issubclass(obj.GetType(), t);
+                    return Builtins.issubclass(obj is Type cls ? PyMetaclasses.Of(cls) : obj.GetType(), t);
                 case types.UnionType union:
                     return union.__args__.Any(type => isinstance(obj, type));
                 case ITuple tuple:

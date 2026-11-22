@@ -1,0 +1,71 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+"""Conformance: runtime protocol dispatch for context-manager mixins and None-valued async methods."""
+
+import asyncio
+
+
+class SyncMixin:
+    def recreate(self) -> "SyncMixin":
+        return self
+
+    def use(self):
+        with self.recreate() as value:
+            print("sync received", value)
+
+
+class SyncManager(SyncMixin):
+    def __enter__(self):
+        print("sync enter")
+        return "sync value"
+
+    def __exit__(self, *details):
+        print("sync exit", details[0] is None)
+
+
+class AsyncMixin:
+    def recreate(self) -> "AsyncMixin":
+        return self
+
+    async def use(self):
+        async with self.recreate():
+            print("async body")
+            raise ValueError("suppressed")
+
+
+class AsyncManager(AsyncMixin):
+    async def __aenter__(self):
+        print("async enter")
+        return "async value"
+
+    async def __aexit__(self, *details):
+        print("async exit", details[0] is ValueError)
+        return True
+
+
+class AsyncVoid:
+    async def __aenter__(self):
+        print("void enter")
+
+    async def __aexit__(self, *details):
+        print("void exit")
+
+
+async def main():
+    await AsyncManager().use()
+    async with AsyncVoid() as value:
+        print("void value", value is None)
+    try:
+        async with AsyncVoid():
+            raise ValueError("propagated")
+    except ValueError as error:
+        print(error)
+
+
+SyncManager().use()
+try:
+    SyncMixin().use()
+except TypeError:
+    print("requires a manager")
+asyncio.run(main())

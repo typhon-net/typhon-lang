@@ -1,0 +1,23 @@
+class Allocated:
+    def __new__(cls, value: int = 2):
+        self = super().__new__(cls)
+        self.value = value
+        return self
+
+    def read(self) -> int:
+        return self.value
+
+class Child(Allocated):
+    pass
+
+class Choice:
+    def __new__(cls, substitute: bool = False):
+        if substitute:
+            return 7
+        return object.__new__(cls)
+
+factory = Child
+print(Allocated().read(), Allocated(value=4).read())
+print(type(factory(6)).__name__, factory(8).read())
+print(Choice(True), type(Choice()).__name__)
+print(type(Allocated.__new__(Child, 10)).__name__)

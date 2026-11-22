@@ -1,0 +1,12 @@
+class Typed(list[int]):
+    def append(self, item: int):
+        return super().append(item * 2)
+
+class Untyped(list):
+    def append(self, item):
+        return super().append(item)
+
+typed = Typed()
+print(typed.append(21), list(typed), typed.append(10), list(typed))
+untyped = Untyped()
+print(untyped.append("text"), list(untyped))

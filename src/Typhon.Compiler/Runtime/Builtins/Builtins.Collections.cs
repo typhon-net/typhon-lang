@@ -23,7 +23,18 @@ namespace Typhon.Runtime
 
     internal static partial class Builtins
     {
-        public static long len(string s) => s.Length;
+        public static long len(string s)
+        {
+            int length = s.Length;
+            if (!s.AsSpan().ContainsAnyInRange('\ud800', '\udbff')) return length;
+            for (int i = 0; i < s.Length; i++)
+            {
+                if (!char.IsSurrogatePair(s, i)) continue;
+                length--;
+                i++;
+            }
+            return length;
+        }
         public static long len<T>(List<T> l) => l.Count;
         public static long len<T>(T[] a) => a.Length;
         public static long len<T>(T t) where T : struct, ITuple => t.Length;
@@ -60,6 +71,7 @@ namespace Typhon.Runtime
         }
         public static long len(object o)
         {
+            if (o is string s) return len(s);
             if (o is IPyLen pl) return pl.__len__();
             if (o is ICollection c) return c.Count;
             if (o is ITuple tuple) return tuple.Length;
@@ -213,7 +225,7 @@ namespace Typhon.Runtime
 
         public static PyIterator<T> iter<T>(IEnumerable<T> xs) => xs as PyIterator<T> ?? new PyIterator<T>(xs.GetEnumerator());
         public static PyIterator<K> iter<K, V>(IDictionary<K, V> mapping) => new PyIterator<K>(mapping.Keys.GetEnumerator());
-        public static PyIterator<string> iter(string s) => new PyIterator<string>(s.Select(c => c.ToString()).GetEnumerator());
+        public static PyIterator<string> iter(string s) => new PyIterator<string>(new StrChars(s).GetEnumerator());
         public static PyIterator<object?> iter(IEnumerable xs) => new PyIterator<object?>(__iter_dyn(xs).GetEnumerator());
         public static PyIterator<object?> iter(object? xs) => new PyIterator<object?>(__iter_dyn(xs).GetEnumerator());
         /// <summary>iter(f, sentinel): f() called until it returns the sentinel (iter(read_char, "") reads to the end).</summary>
@@ -241,6 +253,11 @@ namespace Typhon.Runtime
             return e.MoveNext() ? e.Current : throw new StopIteration();
         }
         public static T next<T>(IEnumerable<T> xs, T @default) { var e = IteratorOf(xs); return e.MoveNext() ? e.Current : @default; }
+        public static dynamic? next<T>(IEnumerable<T> xs, object? @default)
+        {
+            var iterator = IteratorOf(xs);
+            return iterator.MoveNext() ? (object?)iterator.Current : @default;
+        }
 
         /// <summary>xs + ys for lists of different item types: one list of both's items.</summary>
         public static List<dynamic> __concat_any(IEnumerable a, IEnumerable b) => a.Cast<object?>().Concat(b.Cast<object?>()).ToList()!;

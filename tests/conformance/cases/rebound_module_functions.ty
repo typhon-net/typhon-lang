@@ -1,0 +1,48 @@
+def greet(who):
+    return "hello " + who
+
+saved = greet
+print(saved.__name__, saved("Ada"))
+greet = 42
+print(greet, saved("Ray"))
+
+def greet(who="everyone"):
+    return "bye " + who
+
+def later():
+    return greet()
+print(later(), greet.__name__, saved("Max"))
+del greet
+try:
+    later()
+except NameError:
+    print("deleted")
+
+try:
+    import _typhon_missing_rebinding
+except ImportError:
+    def choose():
+        return "fallback"
+    choose = choose()
+
+print(choose)
+
+def reset():
+    global saved
+    saved = None
+reset()
+print(saved)
+def enabled():
+    return True
+
+if enabled():
+    def transform(x):
+        return x + 1
+else:
+    def transform(x):
+        return x + 2
+
+print(transform(3), transform.__name__)
+old = transform
+transform = "released"
+print(old(4), transform)

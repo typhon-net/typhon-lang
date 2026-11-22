@@ -1,0 +1,58 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+class TraceMeta(type):
+    def __new__(mcls, name, bases, namespace):
+        print("new", name, "value" in namespace, len(bases))
+        if "value" in namespace:
+            namespace["value"] *= 2
+        namespace["created"] = name
+        return type.__new__(mcls, name, bases, namespace)
+
+    def __init__(cls, name, bases, namespace):
+        cls.initialized = name.upper()
+        print("init", cls.__name__, isinstance(cls, TraceMeta))
+
+
+print("before")
+
+class Item(metaclass=TraceMeta):
+    value = 5
+
+    def get(self):
+        return self.value
+
+class Child(Item):
+    pass
+
+print("after")
+print(Item.value, Item.created, Child.created, Child.initialized)
+print(Item().get(), Child().get())
+print(type(Item) is TraceMeta, type(Child) is TraceMeta)
+print(isinstance(Item, TraceMeta), isinstance(Item(), Item), issubclass(TraceMeta, type))
+print("created" in Item.__dict__, Item.__dict__["value"])
+
+
+class DerivedMeta(TraceMeta):
+    def __new__(mcls, name, bases, namespace):
+        namespace["derived"] = True
+        return super().__new__(mcls, name, bases, namespace)
+
+
+class DerivedItem(Item, metaclass=DerivedMeta):
+    value = 7
+
+
+print(DerivedItem.derived, DerivedItem().get(), type(DerivedItem) is DerivedMeta)
+print(isinstance(DerivedItem, TraceMeta), type(TraceMeta) is type)
+
+
+class PassiveMeta(type):
+    pass
+
+
+class Passive(metaclass=PassiveMeta):
+    marker = "ordinary class body"
+
+
+print(type(Passive) is PassiveMeta, Passive.marker)

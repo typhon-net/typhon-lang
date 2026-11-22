@@ -79,11 +79,19 @@ namespace Typhon.Runtime
     /// suspends it, and MoveNext/send resume it on the caller's thread (a coroutine without threads or a scheduler).
     /// </remarks>
     /// <summary>A generator that can receive exceptions (contextlib.contextmanager throws the with block's exception into it).</summary>
-    internal interface IPyGenerator { object? ThrowIn(Exception e); void close(); }
+    internal interface IPyGenerator
+    {
+        object? Next();
+        object? Send(object? value);
+        object? ThrowIn(Exception error);
+        void close();
+    }
 
     internal sealed class PyGenerator<T> : IEnumerable<T>, IEnumerator<T>, IPyGenerator
     {
-        object? IPyGenerator.ThrowIn(Exception e) => @throw(e);
+        object? IPyGenerator.Next() => __next__();
+        object? IPyGenerator.Send(object? value) => send(value);
+        object? IPyGenerator.ThrowIn(Exception error) => @throw(error);
         IEnumerator<T>? _body;
         bool _started, _done, _plain;
         public object? __sent;
@@ -99,6 +107,7 @@ namespace Typhon.Runtime
         Func<System.Threading.Tasks.Task<object?>>? _asyncBody;
         System.Threading.Tasks.Task<object?>? _task;
         Action? _continuation;
+        Builtins.DelegatedIterator? _delegation;
         T _yielded = default!;
         public void __start_async(Func<System.Threading.Tasks.Task<object?>> body) => _asyncBody = body;
 
@@ -116,11 +125,60 @@ namespace Typhon.Runtime
             public object? GetResult() => _g.__resume();
         }
 
+        // Use the same suspended body as an ordinary yield. Drive the child on the resuming thread and
+        // resume the parent only when the child finishes or raises an exception.
+        public YieldFromAwaiter YieldFrom(object? value) => new(this, new Builtins.DelegatedIterator(value));
+
+        public readonly struct YieldFromAwaiter : ICriticalNotifyCompletion
+        {
+            readonly PyGenerator<T> _generator;
+            readonly Builtins.DelegatedIterator _iterator;
+
+            internal YieldFromAwaiter(PyGenerator<T> generator, Builtins.DelegatedIterator iterator)
+            { _generator = generator; _iterator = iterator; }
+
+            public YieldFromAwaiter GetAwaiter() => this;
+            public bool IsCompleted => false;
+            public void OnCompleted(Action continuation) => UnsafeOnCompleted(continuation);
+            public void UnsafeOnCompleted(Action continuation)
+            {
+                _generator._delegation = _iterator;
+                _generator._continuation = continuation;
+            }
+            public dynamic? GetResult() => _generator.__resume();
+        }
+
+        void ContinueAsync()
+        {
+            var continuation = _continuation!;
+            _continuation = null;
+            continuation();
+        }
+
         /// <summary>Runs the async-form body to its next yield (true) or to its end (false, its return value kept).</summary>
         bool StepAsync()
         {
             if (_task == null) _task = _asyncBody!();
-            else { var k = _continuation!; _continuation = null; k(); }
+            else if (_delegation == null) ContinueAsync();
+            while (_delegation is { } delegated)
+            {
+                var error = _pending;
+                var sent = __sent;
+                _pending = null;
+                __sent = null;
+                try
+                {
+                    if (delegated.Step(error, sent, out var value))
+                    {
+                        _yielded = (T)(dynamic)value!;
+                        return true;
+                    }
+                    __sent = value;
+                }
+                catch (Exception failure) { _pending = failure; }
+                _delegation = null;
+                ContinueAsync();
+            }
             if (_continuation != null) return true;
             if (_task.IsFaulted) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(_task.Exception!.InnerException!).Throw();
             __return = _task.Result;
@@ -145,15 +203,22 @@ namespace Typhon.Runtime
             return more;
         }
 
+        StopIteration Finished()
+        {
+            var value = __return;
+            __return = null;
+            return new StopIteration(value);
+        }
+
         public T send(object? value)
         {
             if (!_started && value != null) throw new InvalidCastException("can't send non-None value to a just-started generator");
             __sent = value;
             if (Step()) return Current;
-            throw new StopIteration(__return);
+            throw Finished();
         }
         /// <summary>next(g) at the end: StopIteration carries the generator's return value.</summary>
-        public T __next__() { __sent = null; if (Step()) return Current; throw new StopIteration(__return); }
+        public T __next__() { __sent = null; if (Step()) return Current; throw Finished(); }
         public T @throw(Exception e)
         {
             if (_plain) { close(); throw e; }
@@ -161,7 +226,7 @@ namespace Typhon.Runtime
             if (!_started || _done) { _done = true; throw e; }
             _pending = e;
             if (Step()) return Current;
-            throw new StopIteration(__return);
+            throw Finished();
         }
         public void close()
         {
@@ -181,7 +246,13 @@ namespace Typhon.Runtime
 
         public T Current => _asyncBody != null ? _yielded : _body!.Current;
         object? IEnumerator.Current => Current;
-        public bool MoveNext() { __sent = null; return Step(); }
+        public bool MoveNext()
+        {
+            __sent = null;
+            if (Step()) return true;
+            __return = null;
+            return false;
+        }
         public void Reset() => throw new NotSupportedException();
         public void Dispose() { }
         public IEnumerator<T> GetEnumerator() => this;
@@ -191,6 +262,69 @@ namespace Typhon.Runtime
 
     internal static partial class Builtins
     {
+        internal sealed class DelegatedIterator
+        {
+            readonly IPyGenerator? _generator;
+            readonly object? _pythonIterator;
+            readonly IEnumerator? _enumerator;
+            readonly bool _plainGenerator;
+
+            internal DelegatedIterator(object? iterable)
+            {
+                if (iterable is not IPyGenerator && TryGetAttr(iterable, "__iter__", out var iter, allowFallback: false))
+                {
+                    var iterator = (object?)__invoke(iter, []);
+                    if (iterator is not IEnumerable || TryGetAttr(iterator, "__next__", out _, allowFallback: false))
+                        _pythonIterator = iterator ?? throw new InvalidCastException("iter() returned non-iterator of type 'NoneType'");
+                    iterable = iterator;
+                }
+                _generator = iterable as IPyGenerator;
+                if (_generator != null || _pythonIterator != null) return;
+                _plainGenerator = Typhon.Stdlib.inspect.isgenerator(iterable);
+                _enumerator = _plainGenerator ? (IEnumerator)IteratorOf((dynamic)iterable!) : __iter_dyn(iterable).GetEnumerator();
+            }
+
+            internal bool Step(Exception? error, object? sent, out object? value)
+            {
+                if (error is GeneratorExit)
+                {
+                    if (_generator != null) _generator.close();
+                    else if (_plainGenerator && _enumerator is IDisposable plain) plain.Dispose();
+                    else if (TryGetAttr(_pythonIterator, "close", out var close, allowFallback: false)) __invoke(close, []);
+                    throw error;
+                }
+
+                object? throwMethod = null;
+                if (error != null && _generator == null &&
+                    !TryGetAttr(_pythonIterator, "throw", out throwMethod, allowFallback: false))
+                {
+                    if (_plainGenerator && _enumerator is IDisposable plain) plain.Dispose();
+                    throw error;
+                }
+                try
+                {
+                    if (_generator != null)
+                    {
+                        value = error != null ? _generator.ThrowIn(error) : sent != null ? _generator.Send(sent) : _generator.Next();
+                        return true;
+                    }
+                    if (error != null) { value = __invoke(throwMethod, [error]); return true; }
+                    if (sent != null && !_plainGenerator)
+                    {
+                        if (!TryGetAttr(_pythonIterator, "send", out var send, allowFallback: false))
+                            throw new MissingMemberException("delegated iterator has no attribute 'send'");
+                        value = __invoke(send, [sent]);
+                        return true;
+                    }
+                    if (_pythonIterator != null) { value = __invoke((object?)getattr(_pythonIterator, "__next__"), []); return true; }
+                    if (_enumerator!.MoveNext()) { value = _enumerator.Current; return true; }
+                    value = null;
+                    return false;
+                }
+                catch (StopIteration ended) { value = ended.value; return false; }
+            }
+        }
+
         /// <summary>
         /// coro.send(None) on an async def coroutine: Typhon runs coroutines as Tasks, so the first send runs it to completion
         /// and ends it with StopIteration(result), as CPython does for a coroutine that never suspends on a real future.

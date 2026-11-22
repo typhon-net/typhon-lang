@@ -1,0 +1,8 @@
+class Record:
+    value = "class"
+
+obj = Record()
+attrs = vars(obj)
+print(attrs.setdefault("value", "instance"), obj.value, Record.value)
+print(attrs.setdefault("value", "ignored"), attrs["value"], obj.value)
+print(attrs.setdefault("missing"), "missing" in attrs, attrs.setdefault("missing", 42))

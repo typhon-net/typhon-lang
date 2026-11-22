@@ -1,0 +1,13 @@
+sync enter
+sync received sync value
+sync exit True
+requires a manager
+async enter
+async body
+async exit True
+void enter
+void value True
+void exit
+void enter
+void exit
+propagated

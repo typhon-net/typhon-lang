@@ -203,6 +203,36 @@ namespace Typhon.Stdlib
                 return new PyBytes(read == bytes.Length ? bytes : bytes[..read]);
             }
 
+            public long sendto(object data, object address) => sendto(data, 0, address);
+
+            public long sendto(object data, long flags, object address)
+            {
+                byte[] bytes = Buffer(data);
+                SocketFlags netFlags = NetFlags(flags);
+                return Run(s => s.SendTo(bytes, netFlags, ToEndPoint(address, s.AddressFamily)));
+            }
+
+            public (PyBytes, dynamic?) recvfrom(long bufsize, long flags = 0)
+            {
+                if (bufsize < 0) throw new ArgumentException("negative buffersize in recvfrom");
+                if (type != SOCK_DGRAM) return (recv(bufsize, flags), null);
+
+                // Receive a whole IP datagram before limiting the returned bytes, including on systems that report truncation as an error.
+                const int maxDatagram = 65536;
+                SocketFlags netFlags = NetFlags(flags);
+                byte[] buffer = System.Buffers.ArrayPool<byte>.Shared.Rent(maxDatagram);
+                try
+                {
+                    EndPoint peer = Run(s => (EndPoint)new IPEndPoint(
+                        s.AddressFamily == AddressFamily.InterNetworkV6 ? IPAddress.IPv6Any : IPAddress.Any, 0));
+                    int count = Run(s => s.ReceiveFrom(buffer, 0, maxDatagram, netFlags, ref peer));
+                    int resultSize = (int)Math.Min(count, bufsize);
+                    PyBytes result = resultSize == 0 ? PyBytes.Empty : new PyBytes(buffer.AsSpan(0, resultSize).ToArray());
+                    return (result, PythonAddress(peer));
+                }
+                finally { System.Buffers.ArrayPool<byte>.Shared.Return(buffer); }
+            }
+
             public void shutdown(long how)
             {
                 if (how is < SHUT_RD or > SHUT_RDWR) throw new PyOSError(errno.EINVAL, "Invalid argument");

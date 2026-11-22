@@ -1,0 +1,23 @@
+from itertools import islice
+
+def read_first(items):
+    items = iter(items)
+    return next(items)
+
+print(read_first(["a", "b"]))
+print(list("a💚b"), len("a💚b"))
+text_iter = iter("a💚b")
+print(next(text_iter), ord(next(text_iter)), next(text_iter))
+
+items = iter(list(range(8)))
+print(list(islice(items, 0)), next(items))
+print(list(islice(items, 2)), next(items))
+print(list(islice(items, 3, 1)), next(items))
+
+items = iter(list(range(8)))
+section = islice(items, 0, 5, 2)
+print(next(section), list(section), list(section), next(items))
+try:
+    islice(items, 0, 1, 0)
+except ValueError:
+    print("invalid step")

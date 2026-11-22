@@ -77,7 +77,11 @@ namespace Typhon.Compiler.Emit
                 case NameExpr fv when FunctionValue(fv, typed: _fnTypedUse) is string fvalue: return fvalue;
                 // a nested function as a value where no delegate type is expected (returned as dynamic, stored, a decorator's result)
                 case NameExpr lfv when !targetTyped && LocalFunctionValue(lfv) is string closure: return closure;
-                // a Typhon class as a value ((C, (), state), a dict of classes): its type object
+                case NameExpr imported when !IsLocal(imported.Id) && _runtimeProjectBindings.ContainsKey(imported.Id):
+                    return EmitName(imported);
+                case NameExpr conditional when !IsLocal(conditional.Id) && ConditionalModuleClass(_m, conditional.Id):
+                    return $"global::Typhon.Runtime.PyModule.ReadLateGlobal({ClassActivation(_m.Classes[conditional.Id])} ? " +
+                        $"(object)typeof({Esc(conditional.Id)}) : global::Typhon.Runtime.PyModule.Unbound, {CsString(conditional.Id)})";
                 case NameExpr cv when !IsLocal(cv.Id) && !_moduleFieldTypes.ContainsKey(cv.Id) && !_renames.ContainsKey(cv.Id) &&
                                       TryResolveType(cv.Id, 0, out var cvMeta, out var cvClass) && cvClass != null && cvClass.TypeParams.Count == 0:
                     return $"typeof({EmitName(cv)})";
@@ -90,6 +94,8 @@ namespace Typhon.Compiler.Emit
                 case NameExpr bt when !Receivers.Contains(bt) && BuiltinTypeValue(bt) is string builtinValue:
                     return builtinValue;
                 case NameExpr pm when !Receivers.Contains(pm) && ProjectModuleValue(pm) is string moduleValue: return moduleValue;
+                case NameExpr printer when IsBuiltinPrintValue(printer):
+                    return $"(dynamic){Rt("__print_value")}()";
                 case NameExpr n: return EmitName(n);
                 case FStringExpr f: return EmitFString(f);
                 // one of the runtime's classes as a value ({weakref.ref: ...}, cls is collections.deque): its type object
@@ -162,7 +168,9 @@ namespace Typhon.Compiler.Emit
                 case ComprehensionExpr c: return EmitComprehension(c);
                 case AwaitExpr a: return $"(await {EmitExpr(a.Value)})";
                 // (yield v) inside an expression: the async form awaits it; its value is what send() passes in
-                case YieldExpr y when _scope != null && _scope.AsyncForm && !y.From: return $"(await {GenVar}.Yield({YieldedValue(y)}))";
+                case YieldExpr { From: true } y when _scope?.AsyncForm == true:
+                    return $"(await {GenVar}.YieldFrom((object?){Paren(EmitValue(y.Value))}))";
+                case YieldExpr y when _scope?.AsyncForm == true: return $"(await {GenVar}.Yield({YieldedValue(y)}))";
                 case YieldExpr y: Unsupported(y, "using 'yield' as an expression"); return "default";
                 case StarredExpr s: Unsupported(s, "starred expressions here"); return "default";
                 case SliceExpr s: Error(s, "slice outside of a subscript"); return "default";
@@ -635,9 +643,20 @@ namespace Typhon.Compiler.Emit
                 _ => null,
             } : null;
 
+        bool UsesExceptionAttribute(AttributeExpr attribute) =>
+            attribute.Name is "__cause__" or "__context__" or "__suppress_context__" or "__traceback__" &&
+            (IsUnknownType(InferType(attribute.Target)) || IsExceptionType(InferType(attribute.Target)));
+
+        const string ExceptionTracebackType = "global::Typhon.Stdlib.types.TracebackType?";
+
+        bool IsTypedExceptionTraceback(AttributeExpr attribute) =>
+            !_m.IsGdScript && attribute.Name == "__traceback__" && IsExceptionType(InferType(attribute.Target));
+
         string EmitAttribute(AttributeExpr a, bool allowMethodGroup = false)
         {
             if (IsTypingUnion(a)) return $"typeof({RuntimeUnionType})";
+            if (!IsAttributeStore(a) && MetaclassMember(a, out var metaclassOwner))
+                return $"{Rt("getattr")}(typeof({metaclassOwner}), {CsString(a.Name)})";
             if (!IsAttributeStore(a) && InferType(a.Target) == LocalDataClassType)
                 return $"{Rt("getattr")}((object?){Paren(EmitValue(a.Target))}, {CsString(a.Name)})";
             if (!Receivers.Contains(a) && BaseObjectMethod(a) is string objectMethod)
@@ -666,8 +685,11 @@ namespace Typhon.Compiler.Emit
                 return $"{Rt("getattr")}((object?){Paren(EmitExpr(a.Target))}, {CsString(a.Name)})";
             if (!allowMethodGroup && !Receivers.Contains(a) && ProjectFunctionAttributeValue(a) is string projectFunction)
                 return projectFunction;
-            if (a.Name == "__traceback__" && IsExceptionType(InferType(a.Target)))
-                return $"global::Typhon.Stdlib.types.TracebackType.Of({EmitExpr(a.Target)})";
+            if (!_m.IsGdScript && !IsAttributeStore(a) && UsesExceptionAttribute(a))
+            {
+                string lookup = $"{Rt("getattr")}((object?){Paren(EmitValue(a.Target))}, {CsString(a.Name)})";
+                return IsTypedExceptionTraceback(a) ? $"(({ExceptionTracebackType}){lookup})" : lookup;
+            }
             if (DottedName(a.Target) is string exportOwner && ModuleRef(exportOwner) is ModuleInfo source &&
                 RuntimeReExport(source, a.Name) is var export && export.Module != null && StdlibType(export.Module) is string exportMeta)
             {
@@ -703,7 +725,9 @@ namespace Typhon.Compiler.Emit
                     ? $"((global::System.Func<{ct}, global::System.Func<{et}, bool>>)({container} => __v => {Rt("contains")}({container}, __v)))({boundTo})"
                     : $"((global::System.Func<{ct}, global::System.Func<object?, dynamic>>)({container} => __k => {Rt("__getitem")}((object?){container}, __k)))({boundTo})";
             }
-            if (a.Target is CallExpr sc && sc.Func is NameExpr sn && sn.Id == "super" && sc.Args.Count == 0) return "base." + Esc(a.Name);
+            if (a.Target is CallExpr sc && sc.Func is NameExpr sn && sn.Id == "super" && sc.Args.Count == 0 &&
+                (_m.IsGdScript || _scope?.HasSelf == true))
+                return "base." + Esc(a.Name);
             // np.random.random(...): C# forbids a member named like its class, the numpy library exposes it as random_sample
             if (a.Name == "random" && a.Target is AttributeExpr inner && inner.Name == "random" && DottedName(inner.Target) is string mod &&
                 (_dotnetAliases.TryGetValue(mod, out var target0) ? target0 : mod) == "Typhon.Stdlib.numpy")
@@ -744,9 +768,13 @@ namespace Typhon.Compiler.Emit
                 return $"{Rt("getattr")}((object?){Paren(EmitValue(a.Target))}, {CsString(a.Name)})";
             if (a.Name == "__dict__" && !IsAttributeStore(a))
             {
-                string value = ModuleOrClassValue(a.Target) ?? (TryTypeExpr(a.Target, out var classType) ? $"typeof({classType})" : EmitExpr(a.Target));
+                string value = (a.Target is NameExpr builtin ? BuiltinTypeValue(builtin) : null) ??
+                    ModuleOrClassValue(a.Target) ?? (TryTypeExpr(a.Target, out var classType) ? $"typeof({classType})" : EmitExpr(a.Target));
                 return $"{Rt("__dict__")}((object){Paren(value)})";
             }
+            if (!allowMethodGroup && !Receivers.Contains(a) && !IsAttributeStore(a) && a.Target is NameExpr typeName &&
+                BuiltinTypeValue(typeName) is string builtinReceiver)
+                return $"{Rt("getattr")}({builtinReceiver}, {CsString(a.Name)})";
             if (!IsAttributeStore(a) && a.Target is NameExpr classArgument && IsClassArgument(classArgument.Id))
                 return $"{Rt("getattr")}((object?){Paren(EmitName(classArgument))}, {CsString(a.Name)})";
             if (TupleFieldOwner(a) is string tupleType)

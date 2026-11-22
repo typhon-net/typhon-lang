@@ -105,13 +105,16 @@ namespace Typhon.Stdlib
         public static bool ismemberdescriptor(object? @object) =>
             @object is FieldInfo { IsStatic: false } field && !DefinedInPython(field.DeclaringType);
 
-        public static bool isgenerator(object? @object) => @object is IPyGenerator ||
-            @object is IEnumerator && @object.GetType().IsDefined(typeof(CompilerGeneratedAttribute)) &&
-            DefinedInPython(@object.GetType());
+        internal static bool IsGeneratorType(Type type) => typeof(IPyGenerator).IsAssignableFrom(type) ||
+            typeof(IEnumerator).IsAssignableFrom(type) && type.IsDefined(typeof(CompilerGeneratedAttribute)) && DefinedInPython(type);
+
+        public static bool isgenerator(object? @object) => @object != null && IsGeneratorType(@object.GetType());
         public static bool iscoroutine(object? @object) => @object is Task;
-        public static bool isasyncgen(object? @object) => @object != null &&
-            @object.GetType().IsDefined(typeof(CompilerGeneratedAttribute)) && DefinedInPython(@object.GetType()) &&
-            @object.GetType().GetInterfaces().Any(t => t.IsGenericType && t.GetGenericTypeDefinition() == typeof(IAsyncEnumerator<>));
+        internal static bool IsAsyncGeneratorType(Type type) => typeof(IPyAsyncGenerator).IsAssignableFrom(type) ||
+            type.IsDefined(typeof(CompilerGeneratedAttribute)) && DefinedInPython(type) &&
+            type.GetInterfaces().Any(t => t.IsGenericType && t.GetGenericTypeDefinition() == typeof(IAsyncEnumerator<>));
+
+        public static bool isasyncgen(object? @object) => @object != null && IsAsyncGeneratorType(@object.GetType());
 
         public static bool isawaitable(object? @object) =>
             @object?.GetType().GetMethod("GetAwaiter", Type.EmptyTypes) != null ||
@@ -359,6 +362,27 @@ namespace Typhon.Stdlib
             }
             if (!ReferenceEquals(fallback, Missing)) return fallback;
             throw new MissingMemberException(attr);
+        }
+
+        /// <summary>Bind a descriptor found by static lookup using the instance's runtime class.</summary>
+        public static dynamic? _descriptor_get(object? descriptor, object? instance)
+        {
+            if (descriptor is null or Type) return descriptor;
+            if (descriptor is PyFunction function)
+                return instance == null ? function : new types.MethodType(function, instance);
+            if (descriptor is PyBoundMethod method && method.Target is Type declaration && instance != null &&
+                declaration.IsInstanceOfType(instance))
+            {
+                // A CLR member returned by static lookup carries its declaring type until bound.
+                var flags = PublicMembers | (method.IncludesNonPublic ? BindingFlags.NonPublic : 0);
+                var candidates = declaration.GetMethods(flags).Where(member => member.Name == method.Name).ToArray();
+                if (candidates.Length != 0 && candidates.All(member => !member.IsStatic))
+                    return new PyBoundMethod(instance, method.Name, includeNonPublic: method.IncludesNonPublic);
+            }
+
+            object? getter = Builtins.getattr(descriptor.GetType(), "__get__", Missing);
+            return ReferenceEquals(getter, Missing) ? descriptor :
+                Builtins.__invoke(getter, [descriptor, instance, Builtins.__type_of(instance)]);
         }
 
         public static sys_.frame currentframe() => sys_._getframe();

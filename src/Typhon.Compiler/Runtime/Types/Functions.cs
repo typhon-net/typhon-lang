@@ -296,8 +296,26 @@ namespace Typhon.Runtime
         /// cls(args) for a class known at run time: the constructor that takes this many arguments (optional ones
         /// get their defaults), preferring one whose parameter types the arguments have over a late-bound one.
         /// </summary>
-        static object Construct(Type t, object?[] args)
+        static bool TryCustomAllocation(Type type, object?[] args, IDictionary<string, object?>? keywords, out object? result)
         {
+            result = null;
+            if (!type.IsDefined(typeof(PyCustomAllocationAttribute), inherit: false)) return false;
+            const System.Reflection.BindingFlags declaredStatic = System.Reflection.BindingFlags.DeclaredOnly |
+                System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic;
+            for (Type? owner = type; owner != null; owner = owner.BaseType)
+            {
+                if (owner.GetMethods(declaredStatic).Any(method => method.Name == "__new__"))
+                {
+                    result = new PyBoundMethod(owner, "__new__", includeNonPublic: true).__call_kw__([type, .. args], keywords);
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        static object? Construct(Type t, object?[] args)
+        {
+            if (TryCustomAllocation(t, args, null, out var allocated)) return allocated;
             if (typeof(PyStrEnum).IsAssignableFrom(t))
             {
                 if (args.Length != 1) throw new InvalidCastException($"{t.Name}() expected one value");
@@ -421,6 +439,9 @@ namespace Typhon.Runtime
             if (t == typeof(Typhon.Stdlib.types.UnionType)) return "Union";
             if (t == typeof(Typhon.Stdlib.types.BuiltinFunctionType)) return "builtin_function_or_method";
             if (t == typeof(Typhon.Stdlib.types.WrapperDescriptorType)) return "wrapper_descriptor";
+            if (t == typeof(Typhon.Stdlib.types.GeneratorType)) return "generator";
+            if (t == typeof(Typhon.Stdlib.types.CoroutineType)) return "coroutine";
+            if (t == typeof(Typhon.Stdlib.types.AsyncGeneratorType)) return "async_generator";
             if (PyDictViews.Name(t) is string view) return view;
             if (t == typeof(Type)) return "type";
             if (t == typeof(PyRange)) return "range";
@@ -472,6 +493,7 @@ namespace Typhon.Runtime
             }
             if (f is Type t)
             {
+                if (TryCustomAllocation(t, args, kw, out var allocated)) return allocated;
                 if (t == typeof(frozendict<object, object>)) return ConstructFrozenDict(args, kw);
                 if (t == typeof(OrderedDictionary<object, object>)) return dict(ConstructFrozenDict(args, kw, "dict"));
                 if (t == typeof(frozenset<object>)) throw new InvalidCastException("frozenset() takes no keyword arguments");
@@ -484,7 +506,7 @@ namespace Typhon.Runtime
                     throw;
                 }
             }
-            if (f != null) return new PyBoundMethod(f, "__call__").__call_kw__(args, kw);
+            if (f != null) return CallMember(f).__call_kw__(args, kw);
             throw new InvalidCastException("'NoneType' object is not callable");
         }
 
@@ -554,6 +576,11 @@ namespace Typhon.Runtime
             return true;
         }
 
+        public static bool __has_packed_method(object? receiver, string name) =>
+            receiver != null && receiver.GetType().IsDefined(typeof(PySourceAttribute), false) &&
+            receiver.GetType().GetMethods(InstanceMembers).Any(method => method.Name == name &&
+                method.GetParameters().Any(parameter => parameter.IsDefined(typeof(PyPackedArgumentsAttribute), false)));
+
         public static dynamic? __invoke(object? f, object?[] args) => f switch
         {
             PyFunction pf => pf.__call__(args),
@@ -564,9 +591,16 @@ namespace Typhon.Runtime
             // a class passed as a value (cls = Array2D; cls(n, n)): constructed with the constructor that fits the arguments
             Type t => Construct(t, args),
             null => throw new NullReferenceException("'NoneType' object is not callable"),
-            _ => new PyBoundMethod(f, "__call__").__call__(args),
+            _ => CallMember(f).__call__(args),
         };
+
+        static PyBoundMethod CallMember(object callable) => new PyBoundMethod(callable, "__call__",
+            includeNonPublic: callable.GetType().IsDefined(typeof(PySourceAttribute), false));
     }
+
+    /// <summary>A Python class that uses its explicit __new__ for construction.</summary>
+    [AttributeUsage(AttributeTargets.Class, Inherited = false)]
+    internal sealed class PyCustomAllocationAttribute : Attribute { }
 
     /// <summary>A CLR virtual slot used to forward to a different Python signature.</summary>
     [AttributeUsage(AttributeTargets.Method)]

@@ -139,13 +139,12 @@ namespace Typhon.Stdlib
         // ── exceptions ──
 
         /// <summary>
-        /// exc_info(): (type, value, traceback) of the exception being handled. .NET cannot tell whether a handler is running,
-        /// so this is the last exception raised on the thread (in an except block: the one it caught).
+        /// exc_info(): (type, value, traceback) of the active Python exception handler.
         /// </summary>
         public static (Type?, Exception?, types.TracebackType?) exc_info() =>
-            PyExcInfo.Current is Exception e ? (e.GetType(), e, types.TracebackType.Of(e)) : (null, null, null);
+            PyExceptionState.Handling is Exception e ? (e.GetType(), e, PyExceptionState.GetTraceback(e)) : (null, null, null);
         /// <summary>exception(): the exception being handled (see exc_info), or None.</summary>
-        public static Exception? exception() => PyExcInfo.Current;
+        public static Exception? exception() => PyExceptionState.Handling;
         /// <summary>The last uncaught exception (set by CPython's interactive interpreter only): None.</summary>
         public static object? last_exc = null, last_type = null, last_value = null, last_traceback = null;
 
@@ -347,6 +346,16 @@ namespace Typhon.Runtime
     using System.Linq;
     using System.Reflection;
 
+    [AttributeUsage(AttributeTargets.Class | AttributeTargets.Interface | AttributeTargets.Enum, Inherited = false)]
+    internal sealed class PyConditionalModuleClassAttribute(string field) : Attribute
+    {
+        internal static bool IsBound(Type type) =>
+            type.GetCustomAttribute<PyConditionalModuleClassAttribute>() is not { } conditional ||
+            (bool)type.DeclaringType!.GetField(conditional.Field, BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!;
+
+        public string Field { get; } = field;
+    }
+
     /// <summary>
     /// A module object of sys.modules: a standard module of the runtime or the program's __main__. Its functions and
     /// values are its attributes (getattr(module, name), module.name on a late-bound value).
@@ -410,7 +419,8 @@ namespace Typhon.Runtime
                 try { result = p.GetValue(null); return true; }
                 catch (TargetInvocationException e) when (p.IsDefined(typeof(PyLateAttributeAttribute)) && e.InnerException is NameError) { return false; }
             }
-            if (_type.GetNestedType(name, BindingFlags.Public | BindingFlags.NonPublic) is Type nested) { result = nested; return true; }
+            if (_type.GetNestedType(name, BindingFlags.Public | BindingFlags.NonPublic) is Type nested &&
+                PyConditionalModuleClassAttribute.IsBound(nested)) { result = nested; return true; }
             if (_type.GetMethods(Members).Any(m => m.Name == name && IsNamespaceMethod(m)))
             {
                 var fn = _type.GetNestedType("__fn_" + name, BindingFlags.NonPublic)?.GetField("Instance", BindingFlags.Public | BindingFlags.Static);
@@ -450,7 +460,7 @@ namespace Typhon.Runtime
                     (member is not PropertyInfo property || !property.IsDefined(typeof(PyLateAttributeAttribute)) || TryGetNamespaceMember(property.Name, out _)))
                     yield return member.Name;
             foreach (var nested in _type.GetNestedTypes(BindingFlags.Public | BindingFlags.NonPublic))
-                if (IsModuleName(nested.Name)) yield return nested.Name;
+                if (IsModuleName(nested.Name) && PyConditionalModuleClassAttribute.IsBound(nested)) yield return nested.Name;
         }
 
         public override IEnumerable<string> GetDynamicMemberNames() => __dict__.Keys;

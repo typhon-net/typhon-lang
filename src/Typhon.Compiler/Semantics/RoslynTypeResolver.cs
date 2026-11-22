@@ -34,6 +34,11 @@ namespace Typhon.Compiler.Semantics
 
         public bool TypeExists(string metadataName) => Find(metadataName) != null;
 
+        internal IEnumerable<string> StaticFieldNames(string metadataName) =>
+            Find(metadataName)?.GetMembers().OfType<IFieldSymbol>()
+                .Where(field => field.IsStatic && field.DeclaredAccessibility == Accessibility.Public)
+                .Select(field => field.Name) ?? Enumerable.Empty<string>();
+
         public bool NamespaceExists(string dottedNamespace)
         {
             if (_namespaces.TryGetValue(dottedNamespace, out var known)) return known;

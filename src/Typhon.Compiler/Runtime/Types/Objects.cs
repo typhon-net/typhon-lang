@@ -161,6 +161,7 @@ namespace Typhon.Runtime
             else if (other is IEnumerable<KeyValuePair<string, object?>> kvs) foreach (var kv in kvs) this[kv.Key] = kv.Value;
         }
         public object? get(string key, object? @default = null) => TryGetValue(key, out var v) ? v : @default;
+        public object? setdefault(string key, object? @default = null) => Builtins.setdefault(this, key, @default);
         public IEnumerable<(string, object?)> items() => Keys.Select(k => (k, this[k]));
         public IEnumerable<string> keys() => Keys;
         public IEnumerable<object?> values() => Values;

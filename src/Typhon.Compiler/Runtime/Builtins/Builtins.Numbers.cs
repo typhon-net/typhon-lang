@@ -150,11 +150,28 @@ namespace Typhon.Runtime
 
         public static bool @bool(object? o) => truthy(o);
 
-        public static long ord(string c) => char.ConvertToUtf32(c, 0);
+        public static long ord(string c)
+        {
+            if (c.Length == 1) return c[0];
+            if (c.Length == 2 && char.IsSurrogatePair(c, 0)) return char.ConvertToUtf32(c, 0);
+            int length = c.Length;
+            for (int i = 0; i < c.Length; i++)
+            {
+                if (!char.IsSurrogatePair(c, i)) continue;
+                length--;
+                i++;
+            }
+            throw new InvalidCastException($"ord() expected a character, but string of length {length} found");
+        }
         public static long ord(PyBytes b) => b.Count == 1 ? b[0] : throw new InvalidCastException($"ord() expected a character, but string of length {b.Count} found");
         public static long ord(char c) => c;
-        public static string chr(long i) => char.ConvertFromUtf32(checked((int)i));
-        public static string chr(BigInteger i) => char.ConvertFromUtf32(checked((int)i));
+        public static string chr(long i)
+        {
+            if (i is < 0 or > 0x10FFFF) throw new ArgumentException("chr() arg not in range(0x110000)");
+            return i <= 0xFFFF ? CharStr((char)i) : char.ConvertFromUtf32((int)i);
+        }
+        public static string chr(BigInteger i) => i < 0 || i > 0x10FFFF
+            ? throw new ArgumentException("chr() arg not in range(0x110000)") : chr((long)i);
         public static string hex(long i) => (i < 0 ? "-0x" : "0x") + Math.Abs(i).ToString("x", Inv);
         public static string bin(long i) => (i < 0 ? "-0b" : "0b") + Convert.ToString(Math.Abs(i), 2);
         public static string oct(long i) => (i < 0 ? "-0o" : "0o") + Convert.ToString(Math.Abs(i), 8);

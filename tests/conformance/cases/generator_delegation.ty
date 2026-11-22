@@ -1,0 +1,114 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+"""Conformance: generator delegation returns a value and forwards the iterator protocol."""
+
+def child():
+    try:
+        value = yield "ready"
+        try:
+            yield value * 2
+        except ValueError:
+            yield "caught"
+        return "child result"
+    finally:
+        print("child closed")
+
+
+def outer():
+    try:
+        return (yield from child())
+    finally:
+        print("outer closed")
+
+
+def assigned():
+    first = yield from [1, 2]
+    yield first
+    yield "after"
+
+
+def nested():
+    yield ("result", (yield from child()))
+
+
+g = outer()
+print(next(g), g.send(5))
+print(g.throw(ValueError("example")))
+try:
+    next(g)
+except StopIteration as end:
+    print(end.value)
+try:
+    next(g)
+except StopIteration as end:
+    print(end.value)
+g = outer()
+print(next(g))
+g.close()
+print(list(assigned()))
+g = nested()
+print(next(g), g.send(3))
+print(next(g))
+
+
+def plain():
+    yield 1
+    yield 2
+    yield 3
+
+
+def forward(iterator):
+    yield from iterator
+
+
+child_iter = plain()
+print(next(child_iter))
+g = forward(child_iter)
+print(next(g), g.send("unused"))
+print(list(g), list(child_iter))
+print(list(forward({"key": 5})), list(forward("xy")))
+g = forward([1, 2])
+print(next(g))
+try:
+    g.send("unsupported")
+except AttributeError:
+    print("iterator has no send")
+
+
+class ScriptedIterator:
+    def __init__(self):
+        self.started = False
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self.started:
+            raise StopIteration("iterator result")
+        self.started = True
+        return "iterator ready"
+
+    def send(self, value):
+        return ("iterator sent", value)
+
+    def throw(self, error):
+        return ("iterator threw", str(error))
+
+    def close(self):
+        print("iterator closed")
+
+
+def custom_return():
+    return (yield from ScriptedIterator())
+
+
+g = custom_return()
+print(next(g), g.send(5), g.throw(ValueError("sent to child")))
+try:
+    next(g)
+except StopIteration as end:
+    print(end.value)
+g = custom_return()
+print(next(g))
+g.close()

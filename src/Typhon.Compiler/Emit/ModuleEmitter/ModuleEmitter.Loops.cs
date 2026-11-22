@@ -98,6 +98,17 @@ namespace Typhon.Compiler.Emit
         bool IsIntConversion(Expr e) => e is CallExpr c && (c.Func is NameExpr n && (n.Id == "int" || n.Id == "round" && c.Args.Count == 1) && !IsShadowed(n.Id) ||
                                                             c.Func is AttributeExpr a && IsMathModule(a.Target) && (a.Name == "floor" || a.Name == "ceil" || a.Name == "trunc"));
 
+        string EmitIterationSource(Expr source, bool asynchronous, out bool lateAsync)
+        {
+            lateAsync = false;
+            if (!asynchronous) return EmitIterable(source);
+            string type = InferType(source);
+            lateAsync = IsUnknownType(type) || type == "object?" ||
+                ClassKeyOfType(type, out _) != null || IsDynamicallyDispatched(source);
+            string value = EmitExpr(source);
+            return lateAsync ? $"{Rt("__aiter_dyn")}((object?){Paren(value)})" : value;
+        }
+
         void EmitFor(ForStmt f)
         {
             string flag = LoopElseFlag(f.OrElse, f.Body);
@@ -212,14 +223,14 @@ namespace Typhon.Compiler.Emit
                 EmitBlock(f.Body, prologue);
                 return;
             }
-            string iter = f.IsAsync ? EmitExpr(f.Iter) : EmitIterable(f.Iter);
+            string iter = EmitIterationSource(f.Iter, f.IsAsync, out bool lateAsync);
             string kw = f.IsAsync ? "await foreach" : "foreach";
             if (f.Target is NameExpr n)
             {
                 // the body rebinds the loop variable (case = case.strip(), an inner `for _ in`): a C# foreach variable is
                 // read-only, so the item goes into an ordinary variable
                 // (an iterable of unknown type is iterated through __iter_dyn: its items are late-bound)
-                string loopType = IsDynamicallyDispatched(f.Iter) || iter.StartsWith(Rt("__iter_dyn") + "(")
+                string loopType = lateAsync || IsDynamicallyDispatched(f.Iter) || iter.StartsWith(Rt("__iter_dyn") + "(")
                     ? "dynamic" : IterElementType(IterableType(f.Iter));
                 if (IsInline(f, n.Id) && AssignsName(f.Body, n.Id))
                 {
@@ -245,7 +256,7 @@ namespace Typhon.Compiler.Emit
                 // (also a call dispatched dynamically, enumerate(u) with u late-bound: its C# type is dynamic, whatever it returns)
                 string loopElem = IterElementType(IterableType(f.Iter));
                 // (also when the loop iterates late-bound itself, for bit, char in table with table an object: __iter_dyn(table))
-                if ((tup.Elts.Count < 2 || HasLateNestedUnpack(tup.Elts, loopElem) || loopElem == "dynamic" || IsDynamicallyDispatched(f.Iter) || IsUnknownType(IterableType(f.Iter)) && !(f.Iter is NameExpr) ||
+                if ((lateAsync || tup.Elts.Count < 2 || HasLateNestedUnpack(tup.Elts, loopElem) || loopElem == "dynamic" || IsDynamicallyDispatched(f.Iter) || IsUnknownType(IterableType(f.Iter)) && !(f.Iter is NameExpr) ||
                      iter.StartsWith(Rt("__iter_dyn") + "(") ||
                      (loopElem == null || loopElem == "object") && f.Iter is CallExpr && UnpackPartTypes(loopElem, tup.Elts.Count) == null) &&
                     !tup.Elts.Any(e => e is StarredExpr))

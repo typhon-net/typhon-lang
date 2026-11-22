@@ -236,16 +236,21 @@ namespace Typhon.Compiler.Syntax
         public List<Expr> Decorators = new List<Expr>();
         public bool IsAsync;
         public bool IsCachedProperty;
+        internal bool UsedInClassBody;
         /// <summary>The name Python sees (its __name__) when Name was changed: a decorated function's undecorated body.</summary>
         public string PyName;
     }
 
+    internal sealed class ConditionalClassBinding : Stmt { public ClassDef Definition; }
+
     public sealed class ClassDef : Stmt
     {
+        internal bool ConditionalModuleDefinition;
         public string Name;
         public List<TypeParam> TypeParams = new List<TypeParam>();
         public List<Expr> Bases = new List<Expr>();
         public Expr Metaclass;
+        public List<Arg> ClassKeywords = new List<Arg>();
         public List<Stmt> Body = new List<Stmt>();
         public List<Expr> Decorators = new List<Expr>();
         /// <summary>Set for a class made from namedtuple(...) / typing.NamedTuple: its fields in order (it behaves like a tuple of them).</summary>

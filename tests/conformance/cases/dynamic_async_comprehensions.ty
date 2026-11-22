@@ -1,0 +1,32 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import asyncio
+from typing import Any, AsyncIterator
+
+
+async def values() -> AsyncIterator[tuple[str, int]]:
+    yield "a", 10
+    yield "b", 20
+    yield "c", 30
+
+
+async def collect(source: Any):
+    print([value for value in [name async for name, count in source if count >= 20]])
+
+
+async def list_of_numbers(source: Any):
+    return [count async for _, count in source]
+
+
+async def mapping(source: Any):
+    return {name: count async for name, count in source}
+
+
+async def main():
+    await collect(values())
+    print(await list_of_numbers(values()))
+    print(await mapping(values()))
+
+
+asyncio.run(main())

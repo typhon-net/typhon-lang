@@ -1,0 +1,55 @@
+17.0.0 3.2.0
+0x41 Lu 'L' 0 Na Lu 'L' 0
+0x300 Mn 'NSM' 230 A Mn 'NSM' 230
+0x5d0 Lo 'R' 0 N Lo 'R' 0
+0x661 Nd 'AN' 0 N Nd 'AN' 0
+0xd800 Cs 'L' 0 N Cs 'L' 0
+0xfdd0 Cn 'BN' 0 N Cn '' 0
+0x1f600 So 'ON' 0 W Cn '' 0
+0x1e030 Lm 'L' 0 N Cn '' 0
+1 <compat> 0066 0069 00C5
+2 2 0.3333333333333333 0.3333333333333333
+None 42 missing
+not a numeric character
+only one character
+'A\u030a'
+NFC '\xc5' '\xc5' False False
+NFD 'A\u030a' 'A\u030a' True True
+NFKC '\xc5' '\xc5' False False
+NFKD 'A\u030a' 'A\u030a' True True
+'q\u0307\u0323'
+NFC 'q\u0323\u0307' 'q\u0323\u0307' False False
+NFD 'q\u0323\u0307' 'q\u0323\u0307' False False
+NFKC 'q\u0323\u0307' 'q\u0323\u0307' False False
+NFKD 'q\u0323\u0307' 'q\u0323\u0307' False False
+'\u1100\u1161\u11a8'
+NFC '\uac01' '\uac01' False False
+NFD '\u1100\u1161\u11a8' '\u1100\u1161\u11a8' True True
+NFKC '\uac01' '\uac01' False False
+NFKD '\u1100\u1161\u11a8' '\u1100\u1161\u11a8' True True
+'\ufb01\u2461'
+NFC '\ufb01\u2461' '\ufb01\u2461' True True
+NFD '\ufb01\u2461' '\ufb01\u2461' True True
+NFKC 'fi2' 'fi2' False False
+NFKD 'fi2' 'fi2' False False
+'\U0002f868'
+NFC '\u36fc' '\U0002136a' False False
+NFD '\u36fc' '\U0002136a' False False
+NFKC '\u36fc' '\U0002136a' False False
+NFKD '\u36fc' '\U0002136a' False False
+'\U0001e030'
+NFC '\U0001e030' '\U0001e030' True True
+NFD '\U0001e030' '\U0001e030' True True
+NFKC '\u0430' '\U0001e030' False True
+NFKD '\u0430' '\U0001e030' False True
+'A\ud800\u030a'
+NFC 'A\ud800\u030a' 'A\ud800\u030a' True True
+NFD 'A\ud800\u030a' 'A\ud800\u030a' True True
+NFKC 'A\ud800\u030a' 'A\ud800\u030a' True True
+NFKD 'A\ud800\u030a' 'A\ud800\u030a' True True
+invalid normalization form
+normalize() argument 1 must be str, not None
+ord() expected a character, but string of length 2 found
+chr() arg not in range(0x110000)
+'A\u0323\U0001e6e3' '\u1ea0\U0001e6e3'
+'\u1b06'

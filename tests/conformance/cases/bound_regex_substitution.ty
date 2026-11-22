@@ -1,0 +1,26 @@
+from typing import Any
+import re
+
+pattern = "x+"
+cached: Any = None
+
+def substitute(text: bytes) -> bytes:
+    global cached
+    if cached is None:
+        import re
+        cached = re.compile(pattern.encode(), re.ASCII).sub
+    operation = cached
+    return operation(b"X", text)
+
+print(substitute(b"xx--xx"))
+print(substitute(b"-xx"))
+
+replace_text = re.compile("x+", re.ASCII).sub
+replace_bytes = re.compile(b"x+", re.ASCII).sub
+print(replace_text("X", "xx--xx", 1))
+print(replace_bytes(b"X", b"xx--xx"))
+print(replace_bytes(lambda match: match.group(0).upper(), b"xx--xx", 1))
+print(replace_text(lambda match: match.group(0).upper(), "xx/xx", 1))
+print(re.compile(b"x").subn(lambda match: None, b"xx-y", 1))
+print(re.compile(b"x").subn(lambda match: memoryview(b"M"), b"xx", 1))
+print(replace_bytes(b"X", b"xx/xx", -1))

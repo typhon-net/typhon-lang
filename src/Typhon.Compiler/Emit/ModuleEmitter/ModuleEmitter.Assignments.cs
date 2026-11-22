@@ -75,7 +75,7 @@ namespace Typhon.Compiler.Emit
                 foreach (var t in a.Targets) EmitAssignTo(t, new NameExpr { Id = sent, Line = a.Line, Col = a.Col }, a);
                 return;
             }
-            if (a.Value is YieldExpr) { Unsupported(a, "using 'yield' as an expression"); return; }
+            if (a.Value is YieldExpr && _scope?.AsyncForm != true) { Unsupported(a, "using 'yield' as an expression"); return; }
             if (a.Targets.Count == 1) { EmitAssignTo(a.Targets[0], a.Value, a); return; }
             string tmp = NewTmp();
             _w.Line($"{(IsNone(a.Value) ? "dynamic?" : "var")} {tmp} = {EmitValue(a.Value)};");
@@ -126,12 +126,22 @@ namespace Typhon.Compiler.Emit
         /// <summary>obj.name where obj is a .NET (or runtime) object and name one of its methods, not a property or field.</summary>
         bool IsDotNetMethod(AttributeExpr a)
         {
-            string t = InferType(a.Target);
-            if (t == null || t == "dynamic" || ClassKeyOfType(t, out _) != null) return false;
-            var meta = DotNetMeta(t);
-            if (meta == null) return false;
-            var members = _r.GetMembers(meta, a.Name);
-            return members.Count > 0 && members.All(m => m.IsMethod && !m.IsStatic);
+            bool ReturnsMethod(string type)
+            {
+                if (type == null || type == "dynamic" || ClassKeyOfType(type, out _) != null) return false;
+                string meta = DotNetMeta(type);
+                if (meta == null) return false;
+                var members = _r.GetMembers(meta, a.Name);
+                return members.Count > 0 && members.All(member => member.IsMethod && !member.IsStatic);
+            }
+
+            string type = InferType(a.Target);
+            if (type != null) return ReturnsMethod(type);
+
+            // An overloaded factory can return different CLR types with the same instance method.
+            // Bind the method on the actual receiver when the factory's result type is ambiguous.
+            return a.Target is CallExpr call && DotNetOverloads(call) is { Count: > 0 } overloads &&
+                overloads.All(overload => ReturnsMethod(overload.Type));
         }
 
         string EmitBoundMethod(AttributeExpr a) =>
@@ -270,6 +280,13 @@ namespace Typhon.Compiler.Emit
                     {
                         string known = KnownType(n.Id) ?? (!IsLocal(n.Id) && _moduleFieldTypes.TryGetValue(n.Id, out var fieldType) ? fieldType : null);
                         string valueType = rawValue == null ? PyType(InferType(value)) : null;
+                        if (rawValue == null && known?.StartsWith(PyTuplePrefix) == true &&
+                            (value is TupleExpr || TupleElementTypes(valueType) != null))
+                        {
+                            // Fixed and variable-length tuple shapes are the same Python container.
+                            rawValue = EmitAsPyTuple(value, known);
+                            valueType = known;
+                        }
                         if (Obs != null && rawValue == null && (IsHoistedLocal(n.Id) || _noneLocals.Contains(_scopeKey + "|" + n.Id)))
                             Obs.AddHoisted(_scopeKey + "|" + n.Id, IsNone(value) ? TypeInference.NoneType : valueType);
                         // rebinding to a value of another type (names = names.split(",")) in the block that declared the variable:
@@ -283,8 +300,10 @@ namespace Typhon.Compiler.Emit
                         bool differentFunction = known != valueType && CallableValue(known) && CallableValue(valueType);
                         bool extractsItem = valueType == "dynamic" && IsPythonContainer(known) &&
                             value is SubscriptExpr { Target: NameExpr source, Index: not SliceExpr } && source.Id == n.Id;
+                        bool convertsToString = known is not (null or "dynamic" or "object" or "string") && valueType == "string" &&
+                            value is CallExpr { Func: NameExpr { Id: "str" } } && !IsShadowed("str");
                         if (Obs != null && valueType != null && known != null && !sameBlock &&
-                            (Incompatible(known, valueType) || incompatibleClass || differentFunction || extractsItem ||
+                            (Incompatible(known, valueType) || incompatibleClass || differentFunction || extractsItem || convertsToString ||
                              known == "double" && IsIntegral(valueType) && valueType != "bool" && IsIntConversion(value)))
                             Obs.AddConflict(_scopeKey + "|" + n.Id, IsIntegral(known) && valueType == "double" ? "double" : "dynamic");
                         // total = total + x with a late-bound x on a number variable: the sum may be a float, the variable is late-bound
@@ -298,7 +317,7 @@ namespace Typhon.Compiler.Emit
                             Obs.AddConflict(_scopeKey + "|" + n.Id, "dynamic");
                         // (x = int(x) on a float: from here on x is an int, so it gets a new variable too)
                         bool narrows = known == "double" && IsIntegral(valueType) && valueType != "bool";
-                        if (valueType != null && (Incompatible(known, valueType) || incompatibleClass || differentFunction || extractsItem || narrows) && sameBlock)
+                        if (valueType != null && (Incompatible(known, valueType) || incompatibleClass || differentFunction || extractsItem || convertsToString || narrows) && sameBlock)
                         {
                             string fresh = NewTmp(n.Id + "_");
                             _w.Line($"var {fresh} = {EmitValue(value)};");
@@ -432,7 +451,7 @@ namespace Typhon.Compiler.Emit
             {
                 case AttributeExpr at:
                 {
-                    if (!_m.IsGdScript && at.Name == "__class__" ||
+                    if (!_m.IsGdScript && (at.Name == "__class__" || UsesExceptionAttribute(at) || MetaclassMember(at, out _)) ||
                         at.Target is NameExpr owner && IsClassArgument(owner.Id) || IsInstanceClassDefault(at) || InferType(at.Target) == LocalDataClassType)
                     {
                         string temporary = NewTmp("value");
@@ -683,7 +702,8 @@ namespace Typhon.Compiler.Emit
             {
                 if (a.Value != null)
                 {
-                    if (at.Target is NameExpr owner && IsClassArgument(owner.Id) || IsInstanceClassDefault(at)) EmitAssignTo(at, a.Value, a);
+                    if (at.Target is NameExpr owner && IsClassArgument(owner.Id) || IsInstanceClassDefault(at) ||
+                        !_m.IsGdScript && UsesExceptionAttribute(at)) EmitAssignTo(at, a.Value, a);
                     else _w.Line($"{EmitExpr(at)} = {EmitExpr(a.Value, targetTyped: true)};");
                 }
                 return;

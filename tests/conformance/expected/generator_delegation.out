@@ -1,0 +1,23 @@
+ready 10
+caught
+child closed
+outer closed
+child result
+None
+ready
+child closed
+outer closed
+[1, 2, None, 'after']
+ready 6
+child closed
+('result', 'child result')
+1
+2 3
+[] []
+['key'] ['x', 'y']
+1
+iterator has no send
+iterator ready ('iterator sent', 5) ('iterator threw', 'sent to child')
+iterator result
+iterator ready
+iterator closed

@@ -1,0 +1,55 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+"""Conformance: drive async iterators one item at a time and handle exhaustion."""
+
+import asyncio
+import builtins
+from typing import AsyncIterator
+
+
+async def values() -> AsyncIterator[int]:
+    yield 10
+    await asyncio.sleep(0)
+    yield 20
+
+
+class Counter:
+    def __init__(self):
+        self.value = 0
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if self.value == 2:
+            raise StopAsyncIteration()
+        self.value += 1
+        return self.value
+
+
+async def main():
+    it = values()
+    later = anext(it)
+    print(await anext(it), await later)
+    try:
+        await later
+    except RuntimeError:
+        print("cannot await twice")
+    print(await anext(it, "fallback"), await anext(it, None))
+    try:
+        await anext(it)
+    except StopAsyncIteration:
+        print("exhausted")
+    custom = Counter()
+    print(await anext(custom), await anext(custom))
+    print(await anext(custom, "custom end"))
+    try:
+        anext([1])
+    except TypeError:
+        print("requires an async iterator")
+
+
+asyncio.run(main())
+
+print(asyncio.run(builtins.anext(values())))

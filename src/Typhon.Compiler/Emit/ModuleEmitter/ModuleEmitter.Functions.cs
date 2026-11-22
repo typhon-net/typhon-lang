@@ -205,11 +205,12 @@ namespace Typhon.Compiler.Emit
         void EmitSignatureBody(List<Stmt> body, Signature sig)
         {
             foreach (var kv in sig.Renames) _renames[kv.Key] = kv.Value;
-            if (sig.IsGenerator && !sig.IsAsync)
+            if (sig.IsGenerator)
             {
                 // A Python generator has one cursor, including when its CLR signature only promises an enumerable.
                 _w.Open();
-                _w.Line($"var {GenVar} = new {PyGeneratorPrefix}{sig.ElementType}>();");
+                string generatorType = sig.IsAsync ? "global::Typhon.Runtime.PyAsyncGenerator<" : PyGeneratorPrefix;
+                _w.Line($"var {GenVar} = new {generatorType}{sig.ElementType}>();");
                 // (the async form: an async method that awaits each yield, so yields may stand in try/except/finally and
                 // inside expressions)
                 _w.Line(sig.AsyncForm ? "async global::System.Threading.Tasks.Task<object?> __body()" : $"IEnumerable<{sig.ElementType}> __body()");
@@ -252,9 +253,9 @@ namespace Typhon.Compiler.Emit
                         foreach (var item in w.Items) InExpr(item.Context);
                         Stmts(w.Body, true);
                         return;
-                    case ExprStmt es when es.Value is YieldExpr y: if (restricted) found = true; else InExpr(y.Value); return;
-                    case AssignStmt a when a.Value is YieldExpr y && a.Targets.Count == 1: if (restricted) found = true; else InExpr(y.Value); return;
-                    case AnnAssignStmt an when an.Value is YieldExpr y: if (restricted) found = true; else InExpr(y.Value); return;
+                    case ExprStmt es when es.Value is YieldExpr y: if (restricted || y.From) found = true; else InExpr(y.Value); return;
+                    case AssignStmt a when a.Value is YieldExpr y && a.Targets.Count == 1: if (restricted || y.From) found = true; else InExpr(y.Value); return;
+                    case AnnAssignStmt an when an.Value is YieldExpr y: if (restricted || y.From) found = true; else InExpr(y.Value); return;
                 }
                 foreach (var child in AstWalker.Children(st))
                 {
@@ -304,7 +305,7 @@ namespace Typhon.Compiler.Emit
             sig.Locals = locals;
             sig.IsGenerator = locals.HasYield;
             sig.IsAsync = f.IsAsync;
-            sig.AsyncForm = sig.IsGenerator && !f.IsAsync && GeneratorNeedsAsyncForm(f.Body);
+            sig.AsyncForm = sig.IsGenerator && (f.IsAsync || GeneratorNeedsAsyncForm(f.Body));
             sig.ReceivesValues = sig.IsGenerator && !f.IsAsync && (sig.AsyncForm || GeneratorReceivesValues(f.Body));
             var scope = new Scope { Locals = locals, IsGenerator = sig.IsGenerator, IsAsync = f.IsAsync, Parent = _scope, ReceivesValues = sig.ReceivesValues, AsyncForm = sig.AsyncForm };
             string qualifier = _scope?.FunctionQualName is string enclosing ? enclosing + ".<locals>." :
@@ -438,13 +439,13 @@ namespace Typhon.Compiler.Emit
                     else sig.ReturnType = "IEnumerable<" + elem + ">";
                 }
             }
-            else if (sig.IsGenerator) elem = ImplicitDynamic(f, $"the values yielded by '{f.Name}'");
+            else if (sig.IsGenerator) elem = ImplicitDynamic(f, $"the values yielded by '{f.PyName ?? f.Name}'");
             // (an override of a .NET or runtime method: the base method's return type)
             else if (!f.IsAsync && baseMethod?.ReturnsDynamic == true) elem = "dynamic";
             else if (locals.HasValueReturn && !f.IsAsync && baseMethod?.Type != null) elem = baseMethod.Type;
             else if (locals.HasValueReturn)
                 elem = retKey != null && Ti != null && Ti.Returns.TryGetValue(retKey, out var inferredReturn) && inferredReturn != "dynamic" ? inferredReturn
-                     : ImplicitDynamic(f, $"the return type of '{f.Name}'");
+                     : ImplicitDynamic(f, $"the return type of '{f.PyName ?? f.Name}'");
             // a method whose overrides (or the method it overrides) return values: C# needs one return type for all of them
             // (def fn(self): raise NotImplementedError in the base, values in the subclasses)
             else if (dropFirst && _cls != null && FamilyReturnsValue(_cls.Def, f.Name)) elem = "dynamic";
@@ -559,7 +560,7 @@ namespace Typhon.Compiler.Emit
             }
             EmitAttributes(f.Decorators);
             string vis = SurfaceVisibility(Visibility(f.Name, topLevel: true), sig.ReturnType, sig.Params);
-            string asyncKw = f.IsAsync && !sig.IsGenerator ? "async " : (f.IsAsync ? "async " : "");
+            string asyncKw = f.IsAsync && !sig.IsGenerator ? "async " : "";
             _w.Line($"{vis} static {asyncKw}{sig.ReturnType} {Esc(f.Name)}{TypeParamList(f.TypeParams)}({sig.Params}){TypeParamConstraints(f.TypeParams, f)}");
             bool memoize = f.Decorators.Any(TypeInference.IsCacheDecorator) && !sig.IsGenerator && !f.IsAsync && sig.ReturnType != "void" &&
                            f.TypeParams.Count == 0 && f.Params.Count > 0 && f.Params.All(p => p.Kind == ParamKind.Normal);
@@ -745,7 +746,7 @@ namespace Typhon.Compiler.Emit
                     _w.Line($"var {value} = {ClosureCode(f, sig, name, null)};");
                 }
             }
-            string asyncKw = f.IsAsync ? "async " : "";
+            string asyncKw = f.IsAsync && !sig.IsGenerator ? "async " : "";
             _w.Line($"{asyncKw}{sig.ReturnType} {name}{TypeParamList(f.TypeParams)}({sig.Params}){TypeParamConstraints(f.TypeParams, f)}");
             EmitSignatureBody(f.Body, sig);
             if (bindsLocal) _w.Line($"{EmitName(new NameExpr { Id = f.Name })} = {ClosureCode(f, sig, name, null)};");

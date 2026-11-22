@@ -16,6 +16,38 @@ namespace Typhon.Stdlib
     {
         public static class abc
         {
+            public abstract class Generator : IEnumerable<object?>
+            {
+                public Generator __iter__() => this;
+                public virtual dynamic? __next__() => Builtins.__invoke(Builtins.getattr(this, "send"), new object?[] { null });
+                public virtual void close() => CloseWithGeneratorExit(this, "generator");
+
+                public IEnumerator<object?> GetEnumerator()
+                {
+                    while (true)
+                    {
+                        object? value;
+                        try { value = __next__(); }
+                        catch (StopIteration) { yield break; }
+                        yield return value;
+                    }
+                }
+
+                IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+            }
+
+            public abstract class Coroutine
+            {
+                public virtual void close() => CloseWithGeneratorExit(this, "coroutine");
+            }
+
+            static void CloseWithGeneratorExit(object generator, string kind)
+            {
+                try { Builtins.__invoke(Builtins.getattr(generator, "throw"), new object?[] { new GeneratorExit() }); }
+                catch (Exception error) when (error is GeneratorExit or StopIteration) { return; }
+                throw new InvalidOperationException($"{kind} ignored GeneratorExit");
+            }
+
             public static object _check_methods(Type C, params string[] methods)
             {
                 foreach (var method in methods)

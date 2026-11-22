@@ -112,10 +112,13 @@ namespace Typhon.Compiler.Emit
                     if (n.Id == "self" && _cls != null && SelfInScope()) return _cls.CsSelfType;
                     if (FunctionRef(n, out var fnOwner, out var fnDef)) return FunctionValueType(fnOwner, fnDef.Name);
                     if (!IsLocal(n.Id) && _moduleFieldTypes.TryGetValue(n.Id, out var mt)) return mt;
-                    if (!IsLocal(n.Id) && _runtimeProjectBindings.ContainsKey(n.Id)) return "dynamic";
+                    if (!IsLocal(n.Id) && _runtimeProjectBindings.TryGetValue(n.Id, out var imported))
+                        return ConditionalModuleClass(imported.Owner, imported.Name) ? "global::System.Type" : "dynamic";
+                    if (!IsLocal(n.Id) && ConditionalModuleClass(_m, n.Id)) return "global::System.Type";
                     return null;
                 }
                 case AttributeExpr { Name: "__class__" }: return "global::System.Type";
+                case AttributeExpr trace when IsTypedExceptionTraceback(trace): return ExceptionTracebackType;
                 case AttributeExpr reflected when TypeObjectMember(reflected):
                     return "dynamic";
                 case AttributeExpr tupleField when TupleFieldOwner(tupleField) != null:
@@ -134,7 +137,8 @@ namespace Typhon.Compiler.Emit
                 }
                 case AttributeExpr dict0 when dict0.Name == "__dict__": return "dynamic";
                 case AttributeExpr exported when DottedName(exported.Target) is string moduleName && ModuleRef(moduleName) is ModuleInfo exportedModule &&
-                    UsesRuntimeProjectMember(exportedModule, exported.Name): return "dynamic";
+                    UsesRuntimeProjectMember(exportedModule, exported.Name):
+                    return ConditionalModuleClass(exportedModule, exported.Name) ? "global::System.Type" : "dynamic";
                 case AttributeExpr oa:
                 {
                     // Cls.ATTR / self.__class__.ATTR / type(self).ATTR: a class variable's type
@@ -182,6 +186,7 @@ namespace Typhon.Compiler.Emit
                 case AwaitExpr aw:
                 {
                     var t = InferType(aw.Value);
+                    if (t == "global::Typhon.Runtime.PyAsyncNext") return "dynamic";
                     return t != null && (t.StartsWith("Task<") || t.StartsWith(TaskTypeName + "<")) &&
                         t.EndsWith(">") ? GenericArg(t) : null;
                 }
@@ -317,6 +322,9 @@ namespace Typhon.Compiler.Emit
         /// <summary>The type of a call: a Typhon function, a class, a builtin, a method of a known type, a standard-library function.</summary>
         string CallType(CallExpr call)
         {
+            if (CustomAllocatorTarget(call.Func, out _) ||
+                call.Func is AttributeExpr allocator && BaseObjectMethod(allocator) == "__object_new") return "dynamic";
+            if (SuperListAppend(call) != null || ConditionalClassReference(call.Func)) return "dynamic";
             if (call.Func is NameExpr aliasName && AliasTarget(aliasName) is Expr aliasTarget)
                 return InferType(new CallExpr { Func = aliasTarget, Args = call.Args, Line = call.Line, Col = call.Col });
             if (CallableObjectCall(call) is CallExpr objectCall) return InferType(objectCall);

@@ -1,0 +1,11 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+# typhon: int=bigint
+import random
+
+seeded = random.Random(1729)
+print([seeded._randbelow(100) for index in range(5)])
+system = random.SystemRandom()
+print(system._randbelow(1))
+print(0 <= system._randbelow(2 ** 130) < 2 ** 130)

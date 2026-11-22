@@ -1,0 +1,4 @@
+('static', 1) {'end': 'first'}
+2
+('dynamic', 2) {'end': 'second'}
+2

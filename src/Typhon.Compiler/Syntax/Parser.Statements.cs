@@ -291,6 +291,7 @@ namespace Typhon.Compiler.Syntax
                         ExpectOp("=");
                         var value = ParseTest();
                         if (keyword == "metaclass") c.Metaclass = value;
+                        else c.ClassKeywords.Add(new Arg { Name = keyword, Value = value });
                     }
                     else c.Bases.Add(ParseTest());
                     if (!AcceptOp(",")) break;

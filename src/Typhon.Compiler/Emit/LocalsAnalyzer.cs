@@ -489,7 +489,11 @@ namespace Typhon.Compiler.Emit
                 case TryStmt t: yield return t.Body; foreach (var h in t.Handlers) yield return h; yield return t.OrElse; yield return t.FinalBody; break;
                 case ExceptHandler h: yield return h.Type; yield return h.Body; break;
                 case FunctionDef f: foreach (var p in f.Params) { yield return p.Default; } yield return f.Body; break;
-                case ClassDef c: yield return c.Body; break;
+                case ClassDef c:
+                    yield return c.Metaclass;
+                    yield return c.ClassKeywords.Select(argument => argument.Value);
+                    yield return c.Body;
+                    break;
             }
         }
 

@@ -23,6 +23,7 @@ namespace Typhon.Compiler.Emit
             EmitDocComment(cls.Body);
             LineDirective(cls);
             EmitClassSource(cls.Body, cls.Line);
+            EmitConditionalModuleClassAttribute(cls);
             EmitAttributes(cls.Decorators, decorator => decorator is "_simple_enum" or "enum._simple_enum");
             _w.Line($"internal partial class {name} : global::Typhon.Runtime.PyStrEnum");
             _w.Open();

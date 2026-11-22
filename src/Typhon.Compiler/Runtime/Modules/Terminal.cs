@@ -192,6 +192,10 @@ namespace Typhon.Stdlib
 
     internal static partial class os_
     {
+        const int LinuxGetFileFlags = 3;
+        const int LinuxSetFileFlags = 4;
+        const int LinuxDuplicateCloseOnExec = 1030;
+
         [DllImport("libc", EntryPoint = "openpty", SetLastError = true)]
         static extern int LibcOpenPty(out int master, out int slave, IntPtr name, IntPtr attributes, IntPtr size);
         [DllImport("libutil.so.1", EntryPoint = "openpty", SetLastError = true)]
@@ -202,6 +206,10 @@ namespace Typhon.Stdlib
         static extern int NativeIsatty(int descriptor);
         [DllImport("libc", EntryPoint = "waitpid", SetLastError = true)]
         static extern int NativeWaitPid(int pid, out int status, int options);
+        [DllImport("libc", EntryPoint = "read", SetLastError = true)]
+        static extern nint NativeRead(int descriptor, [Out] byte[] buffer, nuint count);
+        [DllImport("libc", EntryPoint = "write", SetLastError = true)]
+        static extern nint NativeWrite(int descriptor, byte[] buffer, nuint count);
 
         public static (long, long) waitpid(long pid, long options)
         {
@@ -212,12 +220,17 @@ namespace Typhon.Stdlib
         }
 
 
-        internal static T WithUnixDescriptor<T>(int descriptor, Func<int, T> operation, Func<Exception> badDescriptor)
+        internal static T WithUnixDescriptor<T>(long descriptor, Func<int, T> operation, Func<Exception> badDescriptor)
         {
             Stream stream;
             try { stream = Fd(descriptor).Stream; }
             catch (IOException) { throw badDescriptor(); }
-            if (descriptor is >= 0 and <= 2 && stream is not FileStream) return operation(descriptor);
+            return WithUnixDescriptor(descriptor, stream, operation, badDescriptor);
+        }
+
+        static T WithUnixDescriptor<T>(long descriptor, Stream stream, Func<int, T> operation, Func<Exception> badDescriptor)
+        {
+            if (descriptor is >= 0 and <= 2 && stream is not FileStream) return operation((int)descriptor);
             if (stream is not FileStream file) throw badDescriptor();
 
             SafeFileHandle handle;
@@ -233,15 +246,52 @@ namespace Typhon.Stdlib
             finally { if (referenced) handle.DangerousRelease(); }
         }
 
-        internal static FileStream OpenTerminalInput()
+        static int LinuxFileStatus(int descriptor)
         {
-            const int F_DUPFD_CLOEXEC = 1030;
-            int descriptor = ConfigureDescriptor(0, F_DUPFD_CLOEXEC, 3);
-            if (descriptor < 0) throw OsErrors.Errno(Marshal.GetLastPInvokeError());
-            var handle = new SafeFileHandle((IntPtr)descriptor, ownsHandle: true);
-            try { return new FileStream(handle, FileAccess.Read, bufferSize: 1); }
+            int flags = ConfigureDescriptor(descriptor, LinuxGetFileFlags, 0);
+            if (flags < 0) throw OsErrors.Errno(Marshal.GetLastPInvokeError());
+            return flags;
+        }
+
+        static void SetLinuxBlocking(int descriptor, bool blocking)
+        {
+            int flags = LinuxFileStatus(descriptor);
+            int mode = (int)O_NONBLOCK;
+            int updated = blocking ? flags & ~mode : flags | mode;
+            if (updated != flags && ConfigureDescriptor(descriptor, LinuxSetFileFlags, updated) < 0)
+                throw OsErrors.Errno(Marshal.GetLastPInvokeError());
+        }
+
+        static int TransferLinuxDescriptor(long descriptor, Stream stream, byte[] buffer, bool write) =>
+            WithUnixDescriptor(descriptor, stream, native =>
+            {
+                while (true)
+                {
+                    nint count = write ? NativeWrite(native, buffer, (nuint)buffer.Length) : NativeRead(native, buffer, (nuint)buffer.Length);
+                    if (count >= 0) return checked((int)count);
+                    int error = Marshal.GetLastPInvokeError();
+                    if (error == errno.EINTR) continue;
+                    if (error == errno.EAGAIN) throw new BlockingIOError((long)error, OsErrors.StrError(error));
+                    throw OsErrors.Errno(error);
+                }
+            }, OsErrors.BadFd);
+
+        static FileStream DuplicateLinuxDescriptor(long descriptor, Stream stream)
+        {
+            var access = stream.CanRead && stream.CanWrite ? FileAccess.ReadWrite : stream.CanRead ? FileAccess.Read : FileAccess.Write;
+            return WithUnixDescriptor(descriptor, stream, native => DuplicateLinuxFile(native, access), OsErrors.BadFd);
+        }
+
+        static FileStream DuplicateLinuxFile(int descriptor, FileAccess access)
+        {
+            int duplicate = ConfigureDescriptor(descriptor, LinuxDuplicateCloseOnExec, 3);
+            if (duplicate < 0) throw OsErrors.Errno(Marshal.GetLastPInvokeError());
+            var handle = new SafeFileHandle((IntPtr)duplicate, ownsHandle: true);
+            try { return new FileStream(handle, access, bufferSize: 1); }
             catch { handle.Dispose(); throw; }
         }
+
+        internal static FileStream OpenTerminalInput() => DuplicateLinuxFile(0, FileAccess.Read);
 
         public static (long, long) openpty()
         {

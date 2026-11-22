@@ -45,6 +45,86 @@ public sealed class PyLibTerminalTests
     }
 
     [Fact]
+    public void PyLibPtyDescriptorOwnership()
+    {
+        if (!LinuxTerminal) return;
+        Compare("pty_descriptors", """
+            import os
+            import pty
+            import tty
+            from select import select
+
+            master, slave = pty.openpty()
+            duplicate = os.dup(master)
+            try:
+                tty.setraw(slave)
+                print(master != duplicate, os.get_blocking(duplicate))
+                os.set_blocking(master, False)
+                print(os.get_blocking(duplicate))
+                ready, _, _ = select([master], [], [], 0)
+                print(master in ready)
+                try:
+                    os.read(duplicate, 1)
+                except BlockingIOError:
+                    print("would block")
+
+                old_descriptor = master
+                os.close(master)
+                master = -1
+                try:
+                    os.read(old_descriptor, 1)
+                except OSError:
+                    print("closed")
+
+                replacement, replacement_slave = pty.openpty()
+                try:
+                    tty.setraw(replacement_slave)
+                    print(replacement != duplicate, os.get_blocking(replacement))
+                    os.write(slave, b"old")
+                    os.write(replacement_slave, b"new")
+                    ready, _, _ = select([duplicate, replacement], [], [], 0.25)
+                    print(duplicate in ready, replacement in ready)
+                    print(os.read(duplicate, 3), os.read(replacement, 3))
+                finally:
+                    os.close(replacement_slave)
+                    os.close(replacement)
+            finally:
+                if master >= 0:
+                    os.close(master)
+                os.close(duplicate)
+                os.close(slave)
+            """);
+    }
+
+    [Fact]
+    public void PyLibPtyCopyRestoresBlockingMode()
+    {
+        if (!LinuxTerminal) return;
+        Compare("pty_copy", """
+            import os
+            import pty
+            import tty
+
+            def handle_packet(fd):
+                print(os.get_blocking(fd), os.read(fd, 1))
+                return b""
+
+            def end_input(fd):
+                return b""
+
+            master, slave = pty.openpty()
+            try:
+                tty.setraw(slave)
+                os.write(slave, b"?")
+                pty._copy(master, master_read=handle_packet, stdin_read=end_input)
+                print(os.get_blocking(master))
+            finally:
+                os.close(slave)
+                os.close(master)
+            """);
+    }
+
+    [Fact]
     public void PyLibGetpass()
     {
         if (!LinuxTerminal && !OperatingSystem.IsWindows()) return;

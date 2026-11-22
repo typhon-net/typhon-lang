@@ -1,0 +1,28 @@
+class Base:
+    def call(self, label: str = "base") -> str:
+        return label
+
+class Child(Base):
+    def call(self, label: str = "base", suffix: str = "child") -> str:
+        return super().call(label) + " " + suffix
+
+def via_base(receiver: Base) -> str:
+    return receiver.call()
+
+child = Child()
+print(child.call(), via_base(child), child.call(suffix="extended"))
+print(getattr(child, "call")(), getattr(child, "call")(suffix="dynamic"))
+
+class DynamicBase:
+    def call(self, label="dynamic"):
+        return label
+
+class DynamicChild(DynamicBase):
+    def call(self, label="dynamic", suffix="extra"):
+        return super().call(label) + " " + suffix
+
+def dynamic_via_base(receiver: DynamicBase):
+    return receiver.call()
+
+dynamic_child = DynamicChild()
+print(dynamic_child.call(), dynamic_via_base(dynamic_child), getattr(dynamic_child, "call")(suffix="named"))

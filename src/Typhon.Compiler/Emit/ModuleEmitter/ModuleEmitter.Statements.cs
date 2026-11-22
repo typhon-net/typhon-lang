@@ -65,7 +65,7 @@ namespace Typhon.Compiler.Emit
                                     x is "global::Typhon.Runtime.PyAttrDict" or "global::Typhon.Runtime.PyBytes" or "global::Typhon.Runtime.PyByteArray" ||
                                     x is "global::System.Type" or "System.Type" ||
                                     x is "global::Typhon.Stdlib.re.Match" or "global::Typhon.Stdlib.re.BytesMatch" ||
-                                    x.StartsWith("global::Typhon.Runtime.PyTuple<");
+                                    x.StartsWith("global::Typhon.Runtime.PyTuple<") || x.StartsWith("global::Typhon.Runtime.PyIterator<");
             return Plain(t) && Plain(v);
         }
 
@@ -124,7 +124,14 @@ namespace Typhon.Compiler.Emit
                     break;
                 case FunctionDef f: EmitLocalFunction(f); break;
                 case ClassBodyInitialization initialization:
-                    _w.Line($"global::System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(typeof({Esc(initialization.Definition.Name)}).TypeHandle);");
+                    EmitClassInitialization(initialization.Definition);
+                    break;
+                case ConditionalClassBinding binding:
+                    if (RunsClassBodyAtDefinition(binding.Definition))
+                        EmitClassInitialization(binding.Definition);
+                    _w.Line($"{ClassActivation(binding.Definition)} = true;");
+                    if (_m.RuntimeCodeMode != null)
+                        _w.Line($"__typhon_execution.Export({CsString(binding.Definition.Name)}, typeof({Esc(binding.Definition.Name)}));");
                     break;
                 case ClassDef c: EmitLocalDataClass(c); break;
                 default: Unsupported(s, s.GetType().Name); break;
@@ -156,12 +163,8 @@ namespace Typhon.Compiler.Emit
             {
                 case ConstExpr c when c.Kind == ConstKind.Str || c.Kind == ConstKind.Ellipsis: return; // docstring / ...
                 case YieldExpr y:
-                    if (y.From)
-                    {
-                        string t = NewTmp("y");
-                        _w.Line(_scope != null && _scope.AsyncForm ? $"foreach (var {t} in {EmitIterable(y.Value)}) await {GenVar}.Yield({t});"
-                                                                    : $"foreach (var {t} in {EmitExpr(y.Value)}) yield return {t};");
-                    }
+                    if (y.From && _scope?.AsyncForm == true) _w.Line(StripParens(EmitExpr(y)) + ";");
+                    else if (y.From) Unsupported(y, "'yield from' outside a synchronous generator");
                     else EmitYieldValue(y);
                     return;
                 // Mapping.register(Context) / _collections_abc.Sequence.register(X): a virtual subclass of an ABC of the typing-only
@@ -284,6 +287,14 @@ namespace Typhon.Compiler.Emit
         void EmitRaise(RaiseStmt r)
         {
             if (r.Exc == null) { _w.Line("throw;"); return; }
+            if (!_m.IsGdScript)
+            {
+                string error = (r.Exc is NameExpr || r.Exc is AttributeExpr) && TryTypeExpr(r.Exc, out var exceptionType)
+                    ? $"new {exceptionType}()" : EmitValue(r.Exc);
+                string cause = r.Cause == null ? "null" : $"(object?){Paren(EmitValue(r.Cause))}";
+                _w.Line($"throw {Rt("__prepare_exception")}((object?){Paren(error)}, {cause}, {(r.Cause == null ? "false" : "true")});");
+                return;
+            }
             if (r.Exc is NameExpr || r.Exc is AttributeExpr)
             {
                 if (TryTypeExpr(r.Exc, out var typeCode)) { _w.Line($"throw new {typeCode}();"); return; }
@@ -300,8 +311,44 @@ namespace Typhon.Compiler.Emit
 
         readonly HashSet<string> _narrowedInstanceVariables = new HashSet<string>();
 
+        bool? DisjointLiteralMembership(Expr test)
+        {
+            if (test is not CompareExpr { Ops.Count: 1, Comparators.Count: 1 } comparison ||
+                comparison.Ops[0] is not ("in" or "not in")) return null;
+            ConstKind? disjoint = InferType(comparison.Left) switch
+            {
+                "string" => ConstKind.Bytes,
+                PyBytesType => ConstKind.Str,
+                _ => null,
+            };
+            if (disjoint == null) return null;
+            var elements = comparison.Comparators[0] switch
+            {
+                ListExpr list => list.Elts,
+                TupleExpr tuple => tuple.Elts,
+                SetExpr set => set.Elts,
+                _ => null,
+            };
+            return elements != null && elements.All(element => element is ConstExpr constant && constant.Kind == disjoint)
+                ? comparison.Ops[0] == "not in" : null;
+        }
+
         void EmitIf(IfStmt i, bool isElif)
         {
+            // Sealed text and byte values cannot match literals in the other domain.
+            // Keep evaluating the comparison before emitting the reachable suite.
+            if (!_m.IsGdScript && _scope?.IsGenerator != true && DisjointLiteralMembership(i.Test) is bool matches)
+            {
+                if (isElif)
+                {
+                    _w.Line("else");
+                    _w.Open();
+                }
+                _w.Line($"_ = {Cond(i.Test)};");
+                EmitBlock(matches ? i.Body : i.OrElse);
+                if (isElif) _w.Close();
+                return;
+            }
             // if isinstance(x, C): in the block, x is a C (a pattern variable of that type)
             if (IsInstanceNarrowing(i.Test, i.Body, out var nn, out var ncls))
             {
@@ -388,6 +435,12 @@ namespace Typhon.Compiler.Emit
                 if (t is SubscriptExpr s && !(s.Index is SliceExpr)) _w.Line($"{Rt("delitem")}({EmitExpr(s.Target)}, {ModuleOrClassValue(s.Index) ?? EmitExpr(s.Index)});");
                 else if (t is SubscriptExpr ss && ss.Index is SliceExpr sl)
                     _w.Line($"{Rt("delslice")}({EmitExpr(ss.Target)}, {(sl.Lower != null ? SliceBound(sl.Lower) : "null")}, {(sl.Upper != null ? SliceBound(sl.Upper) : "null")}, {(sl.Step != null ? SliceBound(sl.Step) : "1")});");
+                else if (t is NameExpr name && _m.ReboundFunctions.Contains(name.Id) && !IsLocal(name.Id))
+                {
+                    string binding = EmitName(name);
+                    _w.Line($"_ = {binding};");
+                    _w.Line($"{binding} = global::Typhon.Runtime.PyModule.Unbound;");
+                }
                 // del name: Python unbinds it (a module's clean-up of helper names, a local no longer needed); the CLR
                 // cannot unbind a variable, and reading it later is an error in Python anyway: nothing to do
                 else if (t is NameExpr) continue;
@@ -438,10 +491,10 @@ namespace Typhon.Compiler.Emit
             {
                 LineDirective(h);
                 string name = h.Name;
-                string csName = name;
+                string csName = name ?? NewTmp("e");
                 bool renamed = false;
                 if (name != null && (IsLocal(name) || _renames.ContainsKey(name))) { csName = NewTmp("e"); renamed = true; }
-                if (h.Type == null) _w.Line(name == null ? "catch" : $"catch (Exception {Esc(csName)})");
+                if (h.Type == null) _w.Line($"catch (Exception {Esc(csName)})");
                 else
                 {
                     var specs = h.Type is TupleExpr ht ? ht.Elts : new List<Expr> { h.Type };
@@ -461,7 +514,7 @@ namespace Typhon.Compiler.Emit
                         _w.Line($"catch (Exception {Esc(v)}) when ({Esc(v)} is not global::Typhon.Runtime.IPyBaseException{string.Concat(others.Select(o => " || " + o))})");
                     }
                     else if (aliases.Count == 0 && types.Count == 1 && !types[0].StartsWith("("))
-                        _w.Line(name == null ? $"catch ({types[0]})" : $"catch ({types[0]} {Esc(csName)})");
+                        _w.Line($"catch ({types[0]} {Esc(csName)})");
                     else
                     {
                         string v = csName ?? NewTmp("e");
@@ -479,6 +532,7 @@ namespace Typhon.Compiler.Emit
                     _scope.Types[name] = h.Type != null && TryTypeExpr(h.Type, out var caught) && !(h.Type is TupleExpr) ? caught : "global::System.Exception";
                 }
                 _w.Open();
+                if (!_m.IsGdScript) _w.Line($"using var {NewTmp("handling")} = {Rt("__handling_exception")}({Esc(csName)});");
                 EmitBlockStatements(h.Body);
                 if (hasElse && !EndsWithJump(h.Body)) { _w.Line($"goto {after};"); usedAfter = true; }
                 _w.Close();
@@ -533,13 +587,14 @@ namespace Typhon.Compiler.Emit
         /// A context manager that has __enter__ / __exit__ (a Typhon class, a runtime type such as contextlib's) or whose type
         /// is not known: Python's protocol. A typed .NET IDisposable (an open() file) keeps C#'s using.
         /// </summary>
-        bool UsesEnterProtocol(Expr ctx, bool isAsync = false)
+        bool UsesEnterProtocol(Expr ctx, bool isAsync = false, bool declared = false)
         {
             string enter = isAsync ? "__aenter__" : "__enter__";
             string t = InferType(ctx);
-            if (t == null || t == "dynamic" || t == "object" || t == "object?") return true;
-            if (ClassKeyOfType(t, out _) is string key && ClassDefOfKey(key) is ClassDef cd) return DefinesInHierarchy(cd, enter);
-            if (_cls != null && t == _cls.CsSelfType) return DefinesInHierarchy(_cls.Def, enter);
+            if (t is null or "dynamic" or "object" or "object?") return !declared;
+            // A Python base type may provide the protocol only on its runtime subclass.
+            if (ClassKeyOfType(t, out _) is string key && ClassDefOfKey(key) is ClassDef cd) return !declared || DefinesInHierarchy(cd, enter);
+            if (_cls != null && t == _cls.CsSelfType) return !declared || DefinesInHierarchy(_cls.Def, enter);
             return DotNetMeta(t) is string meta && _r.GetMembers(meta, enter).Count > 0;
         }
 
@@ -554,7 +609,7 @@ namespace Typhon.Compiler.Emit
             var item = w.Items[index];
             string t = InferType(item.Context);
             bool isAsync = w.IsAsync;
-            bool typed = t != null && t != "dynamic" && !t.StartsWith("object") && UsesEnterProtocol(item.Context, isAsync) && !(DotNetMeta(t) is null && ClassKeyOfType(t, out _) == null && !(_cls != null && t == _cls.CsSelfType));
+            bool typed = UsesEnterProtocol(item.Context, isAsync, declared: true);
             bool protocol = UsesEnterProtocol(item.Context, isAsync);
             string cm = NewTmp("cm"), raised = NewTmp("raised"), e = NewTmp("e");
             _w.Open();
@@ -572,27 +627,33 @@ namespace Typhon.Compiler.Emit
                 return;
             }
             _w.Line($"var {cm} = {EmitExpr(item.Context)};");
-            string enter = isAsync ? (typed ? $"(await {cm}.__aenter__())" : $"(await {Rt("__aenter")}((object?){cm}))")
-                                   : typed ? $"{cm}.__enter__()" : $"{Rt("__enter")}((object?){cm})";
-            string enterType = "dynamic";
             string enterName = isAsync ? "__aenter__" : "__enter__";
-            // (a runtime or .NET type's __enter__: its declared result type)
             string dotnetEnter = typed && DotNetMeta(t) is string em ? _r.GetMembers(em, enterName).FirstOrDefault(x => x.IsMethod && x.Parameters.Count == 0)?.Type : null;
-            if (typed && (MemberType(t, enterName, method: true) ?? dotnetEnter) is string et0)
-                enterType = isAsync ? (et0.StartsWith("global::System.Threading.Tasks.Task<") || et0.StartsWith("Task<") ? GenericArg(et0) : "dynamic") : et0;
+            string resultType = typed ? MemberType(t, enterName, method: true) ?? dotnetEnter : null;
+            string enterType = "dynamic";
+            if (resultType != null)
+            {
+                if (!isAsync && resultType != "void") enterType = resultType;
+                if (isAsync && (resultType.StartsWith("global::System.Threading.Tasks.Task<") || resultType.StartsWith("Task<")))
+                    enterType = GenericArg(resultType);
+            }
+            string enter = isAsync ? $"(await {Rt("__aenter")}((object?){cm}))" :
+                           typed && resultType is not (null or "void") ? $"{cm}.__enter__()" : $"{Rt("__enter")}((object?){cm})";
             if (item.Var is NameExpr vn)
             {
-                if (IsInline(w, vn.Id)) { _w.Line($"var {Esc(vn.Id)} = {enter};"); SetType(vn.Id, enterType); }
-                else _w.Line($"{EmitName(vn)} = {enter};");
+                string value = isAsync && enterType != "dynamic" ? $"({enterType}){enter}!" : enter;
+                if (IsInline(w, vn.Id)) { _w.Line($"{(enterType == "dynamic" ? "dynamic" : "var")} {Esc(vn.Id)} = {value};"); SetType(vn.Id, enterType); }
+                else _w.Line($"{EmitName(vn)} = {value};");
             }
-            else if (item.Var == null) _w.Line($"{(typed && isAsync ? "_ = " : "")}{enter};");
+            else if (item.Var == null) _w.Line($"{StripParens(enter)};");
             else Unsupported(item.Var, "this 'with ... as' target");
-            string exitNone = isAsync ? (typed ? $"await {cm}.__aexit__(null, null, null)" : $"await {Rt("__aexit")}((object?){cm}, null)")
+
+            string exitNone = isAsync ? $"await {Rt("__aexit")}((object?){cm}, null)"
                                       : typed ? $"{cm}.__exit__(null, null, null)" : $"{Rt("__exit")}((object?){cm}, null)";
             string syncExitType = !isAsync && typed ? MemberType(t, "__exit__", method: true) ??
                 (DotNetMeta(t) is string exitMeta ? _r.GetMembers(exitMeta, "__exit__").FirstOrDefault(x => x.IsMethod && x.Parameters.Count == 3)?.Type : null) : null;
             // A Python __exit__ may return None, represented by a CLR void method.
-            string exitExc = isAsync ? (typed ? $"(await {cm}.__aexit__((object){e}.GetType(), {e}, null))" : $"(await {Rt("__aexit")}((object?){cm}, {e}))")
+            string exitExc = isAsync ? $"(await {Rt("__aexit")}((object?){cm}, {e}))"
                                      : syncExitType is not (null or "void") ? $"{cm}.__exit__((object){e}.GetType(), {e}, null)" : $"{Rt("__exit")}((object?){cm}, {e})";
             _w.Line($"bool {raised} = false;");
             _w.Line("try");
@@ -602,6 +663,7 @@ namespace Typhon.Compiler.Emit
             _w.Line($"catch (global::System.Exception {e})");
             _w.Open();
             _w.Line($"{raised} = true;");
+            if (!_m.IsGdScript) _w.Line($"using var {NewTmp("handling")} = {Rt("__handling_exception")}({e});");
             _w.Line($"if (!{Rt("truthy")}((object?)({exitExc}))) throw;");
             _w.Close();
             _w.Line("finally");

@@ -564,14 +564,21 @@ namespace Typhon.Stdlib
             islice(Builtins.__iter_dyn(iterable), start, stop, step);
         public static IEnumerable<T> islice<T>(IEnumerable<T> iterable, long? start, long? stop, long? step = 1)
         {
-            long s = start ?? 0, st = step ?? 1, i = 0;
+            long s = start ?? 0, st = step ?? 1;
             if (s < 0 || st <= 0 || stop < 0) throw new ArgumentException("Indices for islice() must be None or an integer: 0 <= x <= sys.maxsize.");
-            long next = s;
-            foreach (var x in iterable)
+            var iterator = iterable.GetEnumerator();
+            return new PyIterator<T>(Read().GetEnumerator());
+
+            IEnumerable<T> Read()
             {
-                if (stop != null && i >= stop) yield break;
-                if (i == next) { yield return x; next += st; }
-                i++;
+                long next = s;
+                long limit = stop == null ? long.MaxValue : Math.Max(s, stop.Value);
+                for (long i = 0; i < limit && iterator.MoveNext(); i++)
+                {
+                    if (i != next || i >= stop) continue;
+                    yield return iterator.Current;
+                    next = next > long.MaxValue - st ? long.MaxValue : next + st;
+                }
             }
         }
         public static IEnumerable<T> chain<T>(params IEnumerable<T>[] iterables) { foreach (var it in iterables) foreach (var x in it) yield return x; }

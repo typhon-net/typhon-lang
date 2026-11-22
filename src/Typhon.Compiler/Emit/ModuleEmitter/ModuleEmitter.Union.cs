@@ -66,7 +66,7 @@ namespace Typhon.Compiler.Emit
             _ => IsKnownClassOrUnion(expression),
         };
 
-        bool NeedsRuntimeClassInfo(Expr expression) => IsUnionValue(expression) ||
+        bool NeedsRuntimeClassInfo(Expr expression) => IsUnionValue(expression) || IsMetaclassExpression(expression) ||
             IsBuiltinGenericAlias(expression) ||
             expression is NameExpr name && CanMaterializeTypeAlias(TypeAlias(name.Id));
 

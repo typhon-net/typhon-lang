@@ -1,0 +1,44 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import sys
+
+
+untouched = ValueError("untouched")
+print(untouched.__cause__, untouched.__context__, untouched.__traceback__, untouched.__suppress_context__)
+
+
+def raise_nested():
+    raise RuntimeError("implicit")
+
+
+try:
+    raise ValueError("handling")
+except ValueError as primary:
+    print(sys.exception() is primary, primary.__traceback__ is not None)
+    try:
+        raise_nested()
+    except RuntimeError as wrapped:
+        print(wrapped.__context__ is primary, wrapped.__cause__, wrapped.__suppress_context__)
+        traceback = primary.__traceback__
+        wrapped.__traceback__ = traceback
+        print(wrapped.__traceback__ is traceback)
+        setattr(wrapped, "__traceback__", None)
+        print(wrapped.__traceback__)
+        wrapped.__context__ = None
+        wrapped.__cause__ = primary
+        print(wrapped.__context__, wrapped.__cause__ is primary, wrapped.__suppress_context__)
+        try:
+            wrapped.__cause__ = 3
+        except TypeError:
+            print("requires an exception cause")
+    print(sys.exception() is primary)
+    try:
+        raise RuntimeError("explicit") from primary
+    except RuntimeError as explicit:
+        print(explicit.__cause__ is primary, explicit.__context__ is primary, explicit.__suppress_context__)
+    try:
+        raise RuntimeError("hidden") from None
+    except RuntimeError as hidden:
+        print(hidden.__cause__, hidden.__context__ is primary, hidden.__suppress_context__)
+print(sys.exception())

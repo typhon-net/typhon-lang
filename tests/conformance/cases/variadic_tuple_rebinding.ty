@@ -1,0 +1,25 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+from abc import ABC, abstractmethod
+
+
+class Base(ABC):
+    @abstractmethod
+    def process(self, a, b, c):
+        pass
+
+
+class Relay(Base):
+    def process(self, *details):
+        value = details[1]
+        if value is None:
+            details = None, None, None
+        else:
+            details = type(value).__name__, value, details[2]
+        return details
+
+
+relay: Base = Relay()
+print(relay.process("value", "word", 10))
+print(relay.process("value", None, 10))

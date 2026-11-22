@@ -28,6 +28,13 @@ namespace Typhon.Stdlib
         static extern int WindowsSelect(int count, [In, Out] nint[] read, [In, Out] nint[] write,
             [In, Out] nint[] error, [In] int[]? timeout);
 
+        public static (List<TRead>, List<TWrite>, List<TError>) select<TRead, TWrite, TError>(
+            IEnumerable<TRead> rlist, IEnumerable<TWrite> wlist, IEnumerable<TError> xlist, object? timeout = null)
+        {
+            var (readers, writers, exceptional) = select((object)rlist, wlist, xlist, timeout);
+            return (readers.Cast<TRead>().ToList(), writers.Cast<TWrite>().ToList(), exceptional.Cast<TError>().ToList());
+        }
+
         public static (List<dynamic>, List<dynamic>, List<dynamic>) select(
             object rlist, object wlist, object xlist, object? timeout = null)
         {

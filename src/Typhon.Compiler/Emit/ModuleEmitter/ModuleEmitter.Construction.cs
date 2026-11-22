@@ -19,7 +19,7 @@ namespace Typhon.Compiler.Emit
         /// Python inherits __init__, C# does not inherit constructors: a class without __init__ gets one constructor per
         /// constructor of its base (the nearest Typhon __init__, or the .NET base's public/protected constructors).
         /// </summary>
-        void EmitInheritedConstructors(ClassContext ctx, List<Expr> bases, int depth = 0)
+        void EmitInheritedConstructors(ClassContext ctx, List<Expr> bases, ClassDef baseOwner = null, int depth = 0)
         {
             // a subclass of a two-phase class allocates through it too
             if (depth == 0 && NearestInitAncestor(ctx.Def) is ClassDef twoPhaseOwner && TwoPhaseClasses.Contains(twoPhaseOwner) && !ctx.NoInitDone)
@@ -27,9 +27,10 @@ namespace Typhon.Compiler.Emit
                 _w.Line($"private protected {Esc(ctx.Name)}({NoInitType} _) : base(_) {{ }}");
                 ctx.NoInitDone = true;
             }
+            var resolver = baseOwner == null ? this : ClassDeclarationResolver(baseOwner);
             foreach (var b in bases)
             {
-                if (depth > 20 || !ResolveBase(b, out var py, out var meta)) continue;
+                if (depth > 20 || !resolver.ResolveBase(b, out var py, out var meta)) continue;
                 if (py != null)
                 {
                     if (IsProtocol(py)) continue;
@@ -37,10 +38,11 @@ namespace Typhon.Compiler.Emit
                     if (init == null)
                     {
                         if (HasDecorator(py.Decorators, "dataclass")) return;
-                        EmitInheritedConstructors(ctx, py.Bases, depth + 1);
+                        EmitInheritedConstructors(ctx, py.Bases, py, depth + 1);
                         return;
                     }
-                    if (_p.TryFindClass(_m, py.Name, out var initCls, out var initOwner) && InitTarget(initOwner, initCls) is InferenceTarget it &&
+                    var initOwner = _p.DeclaringModule(py) ?? _m;
+                    if (InitTarget(initOwner, py) is InferenceTarget it &&
                         it.InferParams && Ti.Signatures.TryGetValue(it.Key, out var baseSigs))
                     {
                         foreach (var types in baseSigs)
@@ -185,21 +187,21 @@ namespace Typhon.Compiler.Emit
                 call.Args.Any(a => a.Star || a.DoubleStar));
         }
 
-        readonly Dictionary<ModuleInfo, ModuleEmitter> _constructorResolvers = new Dictionary<ModuleInfo, ModuleEmitter>();
+        readonly Dictionary<ModuleInfo, ModuleEmitter> _classDeclarationResolvers = new Dictionary<ModuleInfo, ModuleEmitter>();
 
-        // Base names belong to the defining module, even while scanning another module for deferred construction.
-        ModuleEmitter ConstructorBaseResolver(ClassDef cls)
+        // Base names belong to the module in which the class was declared.
+        ModuleEmitter ClassDeclarationResolver(ClassDef cls)
         {
             var owner = _p.DeclaringModule(cls);
             if (owner == null || owner == _m && _scope == null) return this;
-            if (_constructorResolvers.TryGetValue(owner, out var resolver)) return resolver;
+            if (_classDeclarationResolvers.TryGetValue(owner, out var resolver)) return resolver;
             resolver = new ModuleEmitter(owner, _p, new List<TyDiagnostic>(), dryRun: true);
             foreach (var import in TyphonCompiler.Imports(owner))
             {
                 if (import is ImportStmt plain) resolver.ProcessImport(plain);
                 else if (import is ImportFromStmt from) resolver.ProcessImportFrom(from);
             }
-            _constructorResolvers[owner] = resolver;
+            _classDeclarationResolvers[owner] = resolver;
             return resolver;
         }
 
@@ -210,7 +212,7 @@ namespace Typhon.Compiler.Emit
             for (int depth = 0; depth < 50; depth++)
             {
                 if (k.Bases.Count == 0) return null;
-                if (!ConstructorBaseResolver(k).ResolveBase(k.Bases[0], out var py, out _) || py == null) return null;
+                if (!ClassDeclarationResolver(k).ResolveBase(k.Bases[0], out var py, out _) || py == null) return null;
                 if (py.Body.OfType<FunctionDef>().Any(f => f.Name == "__init__")) return py;
                 k = py;
             }

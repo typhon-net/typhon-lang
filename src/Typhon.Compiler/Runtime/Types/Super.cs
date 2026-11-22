@@ -71,6 +71,11 @@ namespace Typhon.Stdlib
                 {
                     for (Type? owner = __thisclass__.BaseType; owner != null; owner = owner.BaseType)
                     {
+                        if (owner == typeof(object) && name == "__new__" && PyMetaclasses.IsMetaclass(__thisclass__))
+                        {
+                            result = PyMetaclasses.New;
+                            return true;
+                        }
                         if (owner == typeof(object) && name is "__new__" or "__str__" or "__getattribute__" or "__getstate__" or "__setattr__" or "__delattr__")
                         {
                             var method = Builtins.__object_method("__object_" + name[2..^2]);

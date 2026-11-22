@@ -45,7 +45,7 @@ namespace Typhon.Compiler.Emit
             return ps.Count == 0 ? "true" : string.Join(" && ", ps.Select(x => x.Contains("||") && !(x.StartsWith("(") && x.EndsWith(")")) ? "(" + x + ")" : x));
         }
 
-        string Bind(string name, string value) => $"{Rt("__bind")}(out {EmitName(new NameExpr { Id = name })}, {value})";
+        string Bind(string name, string value) => $"((bool){Rt("__bind")}(out {EmitName(new NameExpr { Id = name })}, {value}))";
 
         static readonly HashSet<string> PrimitiveCsTypes = new HashSet<string> { "long", "int", "double", "float", "bool", "string", "char", "decimal" };
 
@@ -77,7 +77,7 @@ namespace Typhon.Compiler.Emit
             if (primitive && (vt == lt || IsIntegral(vt) && IsIntegral(lt) || (vt == "double" && IsIntegral(lt))))
                 return $"({v} == {EmitValue(value)})";
             if (primitive) return vt == "string" || lt == "string" ? "false" : $"({v} == {EmitValue(value)})";
-            return $"{Rt("eq")}({v}, {EmitValue(value)})";
+            return $"{Rt("eq")}((object?){Paren(v)}, (object?){Paren(EmitValue(value))})";
         }
 
         string SequenceTest(SequencePattern sq, string v, string vt)
@@ -140,6 +140,10 @@ namespace Typhon.Compiler.Emit
             string clsName = DottedName(cp.Cls);
             bool builtin = clsName != null && !IsShadowed(clsName) && BuiltinPatternTypes.ContainsKey(clsName);
             string type = builtin ? BuiltinPatternTypes[clsName] : MapType(cp.Cls, cp);
+            if (!builtin && clsName != null &&
+                TryResolveType(clsName, 0, out var meta, out var pyClass) && pyClass == null && meta != null &&
+                (type == "dynamic" || meta.StartsWith("Typhon.Stdlib.ast+", StringComparison.Ordinal)))
+                return RuntimeClassTest(cp, v, $"typeof({CsTypeName(meta)})");
             bool untyped = vt == null || vt == "dynamic" || vt == "object";
             string tmp = NewTmp("c");
             var parts = new List<string>();
@@ -164,6 +168,20 @@ namespace Typhon.Compiler.Emit
             }
             for (int i = 0; i < cp.KeywordNames.Count; i++)
                 parts.Add(PatternTest(cp.KeywordPatterns[i], $"{tmp}.{Esc(cp.KeywordNames[i])}", builtin ? null : MemberType(type, cp.KeywordNames[i], method: false)));
+            return Conj(parts.ToArray());
+        }
+
+        string RuntimeClassTest(ClassPattern cp, string subject, string cls)
+        {
+            string fields = NewTmp("fields");
+            string names = string.Join(", ", cp.KeywordNames.Select(CsString));
+            var parts = new List<string>
+            {
+                $"{Rt("__match_class")}((object?){Paren(subject)}, {cls}, {cp.Positional.Count}, [{names}], out var {fields})",
+            };
+            int i = 0;
+            foreach (var pattern in cp.Positional.Concat(cp.KeywordPatterns))
+                parts.Add(PatternTest(pattern, $"{fields}[{i++}]", "dynamic"));
             return Conj(parts.ToArray());
         }
 

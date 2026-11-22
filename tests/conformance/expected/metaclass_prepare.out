@@ -1,0 +1,5 @@
+prepare Setup Prepared 5
+class body
+new ['initial', 'selected', 'more', 'greet'] 5 5
+init 7 5
+5 14 14

@@ -1,0 +1,10 @@
+from types import FunctionType, MappingProxyType
+
+def plain():
+    pass
+
+print(type(lambda: None) is type(plain))
+print(type(lambda x: x) is FunctionType)
+print(type(type.__dict__) is MappingProxyType, type(dict.__dict__) is MappingProxyType)
+join = str.join
+print(join("-", ["a", "b"]))

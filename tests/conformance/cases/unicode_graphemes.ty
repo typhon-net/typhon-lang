@@ -1,0 +1,18 @@
+import unicodedata as u
+
+for ch in ["x", "\r", "\n", "\u0600", "\u200d", "\u0301", "क", "्", "👩", "🇧"]:
+    print(ascii(ch), u.grapheme_cluster_break(ch), u.indic_conjunct_break(ch), u.extended_pictographic(ch))
+
+for sample in ["", "a\r\nb\x00c", "e\u0301!", "각한",
+               "👩🏽‍👩‍👧‍👧!💚\u0300", "🇦🇧🇨🇩🇪", "क्\u200dष", "\u0600ع",
+               "a" + chr(0xd800) + "b"]:
+    clusters = list(u.iter_graphemes(sample))
+    print(ascii(sample), [(item.start, item.end, ascii(str(item))) for item in clusters])
+
+segments = u.iter_graphemes("x🇦🇧é")
+print(iter(segments) is segments)
+print(repr(next(segments)), repr(next(segments)), str(next(segments)), next(segments, "done"))
+try:
+    u.extended_pictographic("too long")
+except TypeError:
+    print("one character")

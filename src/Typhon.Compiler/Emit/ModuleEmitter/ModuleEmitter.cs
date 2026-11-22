@@ -94,6 +94,7 @@ namespace Typhon.Compiler.Emit
         {
             if (_m.RuntimeCodeMode != null) LowerRuntimeImports(_m.Ast.Body);
             ResolveFailingImports(_m.Ast.Body);
+            MaterializeNativeTypeExports(_m.Ast.Body);
             RemoveResolvedImportBindings();
             foreach (var n in AllNodes(_m.Ast.Body))
             {
@@ -195,6 +196,12 @@ namespace Typhon.Compiler.Emit
             var execStmts = new List<Stmt>();                     // static ctor (regular) / Main (main module)
             var mainBlocks = new List<Stmt>();
 
+            foreach (string name in _m.ReboundFunctions.OrderBy(name => name, StringComparer.Ordinal))
+                EmitLateModuleField(name, fields);
+
+            foreach (var conditionalClass in body.OfType<ClassDef>().Where(c => c.ConditionalModuleDefinition))
+                _w.Line($"internal static bool {ClassActivation(conditionalClass)};");
+
             foreach (var s in body)
             {
                 // defaults Python evaluates when the def / class statement runs: fields assigned at this position
@@ -208,9 +215,10 @@ namespace Typhon.Compiler.Emit
                 }
                 if (s is FunctionDef || s is ClassDef)
                 {
-                    if (s is ClassDef definition && definition != GdScriptClass && RunsClassBodyAtDefinition(definition))
+                    if (s is ClassDef definition && !definition.ConditionalModuleDefinition &&
+                        definition != GdScriptClass && RunsClassBodyAtDefinition(definition))
                         execStmts.Add(new ClassBodyInitialization { Definition = definition, Line = definition.Line, Col = definition.Col });
-                    if (runtimeCode)
+                    if (runtimeCode && s is not ClassDef { ConditionalModuleDefinition: true })
                     {
                         string name = s is FunctionDef df ? df.Name : ((ClassDef)s).Name;
                         execStmts.Add(new ExprStmt
@@ -303,16 +311,7 @@ namespace Typhon.Compiler.Emit
                 foreach (var name in _m.ConditionalGlobals.OrderBy(n => n, StringComparer.Ordinal))
                 {
                     if (fields.ContainsKey(name) || isEntryModule && !exposesGlobals && !usedInDefs.Contains(name)) continue;
-                    string storage = "__typhon_" + NewTmp("module");
-                    const string moduleType = "global::Typhon.Runtime.PyModule";
-                    var member = Esc(name);
-                    fields.Add(name, "dynamic");
-                    _moduleFieldTypes[name] = "dynamic";
-                    _lateModuleFields.Add(name);
-                    _w.Line($"private static object? {storage} = {moduleType}.Unbound;");
-                    _w.Line("[global::Typhon.Runtime.PyLateAttribute]");
-                    _w.Line($"{(name.StartsWith("_") ? "internal" : "public")} static dynamic? {member} " +
-                        $"{{ get => {moduleType}.ReadLateGlobal({storage}, {CsString(name)}); set => {storage} = value; }}");
+                    EmitLateModuleField(name, fields);
                 }
             }
             if (fields.Count > 0) _w.Line();
@@ -359,6 +358,19 @@ namespace Typhon.Compiler.Emit
                 }
                 if (mainBlocks.Count > 0 && (_p.MainModule == null || _p.MainModule == _m.Name)) EmitMain(mainBlocks, fields.Keys, body.First(IsMainGuard));
             }
+        }
+
+        void EmitLateModuleField(string name, Dictionary<string, string> fields)
+        {
+            const string moduleType = "global::Typhon.Runtime.PyModule";
+            string storage = "__typhon_" + NewTmp("module");
+            fields.Add(name, "dynamic");
+            _moduleFieldTypes[name] = "dynamic";
+            _lateModuleFields.Add(name);
+            _w.Line($"private static object? {storage} = {moduleType}.Unbound;");
+            _w.Line("[global::Typhon.Runtime.PyLateAttribute]");
+            _w.Line($"{(name.StartsWith("_") ? "internal" : "public")} static dynamic? {Esc(name)} " +
+                $"{{ get => {moduleType}.ReadLateGlobal({storage}, {CsString(name)}); set => {storage} = value; }}");
         }
 
         string RegisterAbcMixins()

@@ -946,6 +946,13 @@ namespace Typhon.Stdlib
                 foreach (var stale in _fds.Where(kv => kv.Key > 2 && !kv.Value.Stream.CanRead && !kv.Value.Stream.CanWrite && !kv.Value.Stream.CanSeek).Select(kv => kv.Key).ToList())
                     _fds.Remove(stale);
                 long fd = 3;
+                if (OperatingSystem.IsLinux())
+                {
+                    // Keep file and socket descriptors in the same native namespace for select().
+                    const long firstVirtualDescriptor = (long)int.MaxValue + 1;
+                    fd = e.Stream is FileStream file ? (long)file.SafeFileHandle.DangerousGetHandle() : firstVirtualDescriptor;
+                    if (fd < 3 || _fds.ContainsKey(fd)) fd = firstVirtualDescriptor;
+                }
                 while (_fds.ContainsKey(fd)) fd++;
                 _fds[fd] = e;
                 _fdOf.AddOrUpdate(e.Stream, fd);
@@ -980,7 +987,8 @@ namespace Typhon.Stdlib
                 fm = creat ? FileMode.OpenOrCreate : FileMode.Open;
             }
             var stream = Create(path, fm, access, mode, (flags & O_TEMPORARY) != 0 && O_TEMPORARY != 0);
-            return Allocate(new FdEntry { Stream = stream, Path = path, Append = append });
+            try { return Allocate(new FdEntry { Stream = stream, Path = path, Append = append }); }
+            catch { stream.Dispose(); throw; }
         }
 
         static FileStream Create(string path, FileMode fm, FileAccess access, long mode, bool deleteOnClose)
@@ -1006,7 +1014,9 @@ namespace Typhon.Stdlib
             {
                 if (!s.CanRead) throw OsErrors.BadFd();
                 var buf = new byte[n];
-                int got = s.Read(buf, 0, (int)n);
+                int got = OperatingSystem.IsLinux() && s is FileStream { CanSeek: false }
+                    ? TransferLinuxDescriptor(fd, s, buf, write: false)
+                    : s.Read(buf, 0, (int)n);
                 return new PyBytes(got == n ? buf : buf.AsSpan(0, got).ToArray());
             }
             catch (ObjectDisposedException) { throw OsErrors.BadFd(); }
@@ -1023,6 +1033,8 @@ namespace Typhon.Stdlib
             try
             {
                 if (!e.Stream.CanWrite) throw OsErrors.BadFd();
+                if (OperatingSystem.IsLinux() && e.Stream is FileStream { CanSeek: false })
+                    return TransferLinuxDescriptor(fd, e.Stream, bytes, write: true);
                 if (e.Append && e.Stream.CanSeek) e.Stream.Seek(0, SeekOrigin.End);
                 e.Stream.Write(bytes);
                 e.Stream.Flush();
@@ -1099,9 +1111,21 @@ namespace Typhon.Stdlib
         }
         /// <summary>sendfile(out_fd, in_fd, offset, count): copies count bytes from offset of in_fd (None: its position) to out_fd.</summary>
         public static long sendfile(long out_fd, long in_fd, long? offset, long count) => copy_file_range(in_fd, out_fd, count, offset, null);
-        /// <summary>set_blocking / get_blocking: descriptors here are always blocking.</summary>
-        public static void set_blocking(long fd, bool blocking) => Fd(fd);
-        public static bool get_blocking(long fd) { Fd(fd); return true; }
+        public static void set_blocking(long fd, bool blocking)
+        {
+            if (!OperatingSystem.IsLinux()) { Fd(fd); return; }
+            WithUnixDescriptor(fd, descriptor =>
+            {
+                SetLinuxBlocking(descriptor, blocking);
+                return true;
+            }, OsErrors.BadFd);
+        }
+
+        public static bool get_blocking(long fd)
+        {
+            if (!OperatingSystem.IsLinux()) { Fd(fd); return true; }
+            return WithUnixDescriptor(fd, descriptor => (LinuxFileStatus(descriptor) & O_NONBLOCK) == 0, OsErrors.BadFd);
+        }
 
         /// <summary>isatty(fd): is the descriptor a terminal?</summary>
         public static bool isatty(long fd)
@@ -1120,6 +1144,12 @@ namespace Typhon.Stdlib
         public static long dup(long fd)
         {
             var e = Fd(fd);
+            if (OperatingSystem.IsLinux() && e.Stream is FileStream { CanSeek: false })
+            {
+                var file = DuplicateLinuxDescriptor(fd, e.Stream);
+                try { return Allocate(new FdEntry { Stream = file, Path = e.Path, Append = e.Append }); }
+                catch { file.Dispose(); throw; }
+            }
             return Allocate(new FdEntry { Stream = e.Stream, Path = e.Path, Append = e.Append });
         }
 

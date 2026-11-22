@@ -52,7 +52,7 @@ namespace Typhon.Compiler.Emit
             var keys = new HashSet<string>();
             foreach (var m in p.Modules.Values)
                 if (m.Ast != null && m.ParseDiagnostics.Count == 0)
-                    foreach (var f in m.Ast.Body.OfType<FunctionDef>())
+                    foreach (var f in m.Ast.Body.OfType<FunctionDef>().Concat(m.ReboundImplementations).Distinct())
                         if (names.Contains(f.Name) && IsFunctionValueCandidate(f)) keys.Add(TypeInference.FuncKey(m, null, f.Name));
             return keys;
         }
@@ -204,6 +204,7 @@ namespace Typhon.Compiler.Emit
         /// <summary>A value passed where its static type is lost (a late-bound call's argument): functions become callable objects.</summary>
         string EmitLooseValue(Expr e)
         {
+            if (e is LambdaExpr lambda) return EmitRuntimeLambda(lambda);
             if (BoundMethodValue(e) is string bound) return bound;
             if (e is NameExpr n)
             {
@@ -383,7 +384,8 @@ namespace Typhon.Compiler.Emit
         {
             _functionAliases.Clear();
             foreach (var s in body)
-                if (s is AssignStmt a && a.Targets.Count == 1 && a.Targets[0] is NameExpr n && !_m.Functions.Contains(n.Id) && !_m.Classes.ContainsKey(n.Id) &&
+                if (s is AssignStmt a && a.Targets.Count == 1 && a.Targets[0] is NameExpr n && !_m.Functions.Contains(n.Id) &&
+                    !_m.Classes.ContainsKey(n.Id) && !_m.ReboundFunctions.Contains(n.Id) &&
                     IsFunctionReference(a.Value) && OnlyCalled(body, n.Id, a))
                 {
                     _functionAliases[n.Id] = a.Value;

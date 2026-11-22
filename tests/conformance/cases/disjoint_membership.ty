@@ -1,0 +1,20 @@
+def redact(value):
+    if value[:5] in {"pass ", "PASS "}:
+        value = value.rstrip("\r\n")[:-6] + "******"
+    return repr(value)
+
+print(redact("PASS secret\r\n"))
+print(redact(b"PASS secret\r\n"))
+
+def traced(value: bytes) -> bytes:
+    print("checking", value)
+    return value
+
+def path(value: bytes) -> str:
+    if traced(value) in ("x", "y"):
+        return value.strip("x")
+    elif traced(value) not in ["x", "y"]:
+        return "else"
+    return "unexpected"
+
+print(path(b"x"))

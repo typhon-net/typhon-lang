@@ -212,6 +212,7 @@ namespace Typhon.Compiler.Emit
             if (IsLocal(id)) return Esc(id);
             if (_m.RuntimeCodeMode != null && _m.RuntimeBindings.Contains(id))
                 return $"__typhon_execution.{(_scopeKey == RuntimeCodeScopeKey ? "Local" : "Global")}[{CsString(id)}]";
+            if (ImportAlias(n) is Expr imported) return EmitExpr(imported);
             if (id == "self" && HasSelfInScope()) return "this";
             if (id == "__debug__") return "true";
             if (id == "__name__") return CsString(_m.Name);
@@ -241,6 +242,11 @@ namespace Typhon.Compiler.Emit
                     !_dotnetAliases.ContainsKey(id) && !_typingOnlyNames.Contains(id))
                     return $"{Rt("__unbound_import")}({CsString(id)})";
             }
+            if (_classFieldInitializer && _cls != null && HasUserMetaclass(_cls.Def) &&
+                !_cls.Members.Contains(id) && !IsValueName(id) && !_m.Classes.ContainsKey(id) &&
+                !_dotnetAliases.ContainsKey(id) && !_moduleAliases.ContainsKey(id) &&
+                _r.GetMembers("Typhon.Runtime.Builtins", id).Count == 0)
+                return EmitPreparedName(id);
             return Esc(id);
         }
 
@@ -560,14 +566,16 @@ namespace Typhon.Compiler.Emit
             switch (e)
             {
                 case NameExpr n:
-                    if (BuiltinConversionNames.Contains(n.Id) && !IsShadowed(n.Id)) return false;
+                    if (BuiltinConversionNames.Contains(n.Id) && !IsShadowed(n.Id) || ConditionalClassReference(n) ||
+                        !IsLocal(n.Id) && _runtimeProjectBindings.ContainsKey(n.Id)) return false;
                     if (!TryResolveType(n.Id, 0, out var nameMeta, out var namePy)) return false;
                     code = ExceptionMap.TryGetValue(n.Id, out var ex) && !IsShadowed(n.Id) ? ex : (_cls != null && _cls.Name == n.Id ? _cls.CsSelfType : PackageImportedMember(n.Id) ?? StdlibTypeCode(nameMeta, namePy) ?? StdlibNestedType(n.Id) ?? Esc(n.Id));
                     return true;
                 case AttributeExpr a:
                 {
                     string dotted = DottedName(a);
-                    if (dotted == null || !TryResolveType(dotted, 0, out var attrMeta, out var attrPy)) return false;
+                    if (dotted == null || ConditionalClassReference(a) ||
+                        !TryResolveType(dotted, 0, out var attrMeta, out var attrPy)) return false;
                     code = (attrPy == null ? null : ProjectPackageMember(dotted)) ?? StdlibTypeCode(attrMeta, attrPy) ?? StdlibNestedType(dotted) ?? string.Join(".", dotted.Split('.').Select(Esc));
                     return true;
                 }
