@@ -19,6 +19,7 @@ namespace Typhon.Runtime
     using System.Numerics;
     using System.Runtime.CompilerServices;
     using System.Text;
+    using System.Text.RegularExpressions;
     using System.Threading.Tasks;
 
     internal static partial class Builtins
@@ -79,7 +80,8 @@ namespace Typhon.Runtime
         public static long @int(object o) => o switch
         {
             string s => @int(s), double d => @int(d), float f => @int((double)f), bool b => b ? 1 : 0, decimal m => @int(m),
-            BigInteger big => checked((long)big), char c => @int(c), _ => Convert.ToInt64(o, Inv),
+            BigInteger big => checked((long)big), char c => @int(c),
+            PyBytes or PyByteArray => checked((long)ParseByteInteger(o)), _ => Convert.ToInt64(o, Inv),
         };
 
         public static double @float(string s)
@@ -105,6 +107,46 @@ namespace Typhon.Runtime
 
         public static Complex complex(double real = 0, double imag = 0) => new Complex(real, imag);
         public static Complex complex(Complex real) => real;
+        static class ComplexText
+        {
+            const string Digits = @"[0-9](?:_?[0-9])*";
+            const string Component =
+                $@"(?:(?:{Digits}(?:\.(?:{Digits})?)?|\.{Digits})(?:[eE][+-]?{Digits})?|inf(?:inity)?|nan)";
+
+            internal static readonly Regex Literal = new(
+                $@"\A(?:(?<real>[+-]?{Component})(?:(?<imag>[+-]{Component}?)j)?|(?<imag>[+-]?{Component}?)j)\z",
+                RegexOptions.CultureInvariant | RegexOptions.IgnoreCase | RegexOptions.NonBacktracking);
+        }
+
+        public static Complex complex(string text)
+        {
+            string source = text.Trim();
+            if (source.Length >= 2 && source[0] == '(' && source[^1] == ')')
+                source = source[1..^1].Trim();
+
+            // Like float(), complex() accepts Unicode decimal digits.
+            if (source.Any(c => c > 127))
+            {
+                var normalized = new StringBuilder(source.Length);
+                foreach (var rune in source.EnumerateRunes())
+                    if (Rune.GetUnicodeCategory(rune) == UnicodeCategory.DecimalDigitNumber)
+                        normalized.Append((char)('0' + (int)Rune.GetNumericValue(rune)));
+                    else
+                        normalized.Append(rune.ToString());
+                source = normalized.ToString();
+            }
+
+            Match match = ComplexText.Literal.Match(source);
+            if (!match.Success) throw new ArgumentException("complex() arg is a malformed string");
+            Group real = match.Groups["real"], imag = match.Groups["imag"];
+            double Parse(Group part) => !part.Success ? 0.0 : part.Value switch
+            {
+                "" or "+" => 1.0,
+                "-" => -1.0,
+                _ => @float(part.Value),
+            };
+            return new Complex(Parse(real), Parse(imag));
+        }
 
         public static bool @bool(object? o) => truthy(o);
 
@@ -243,7 +285,27 @@ namespace Typhon.Runtime
         }
         public static BigInteger __bigint(char c) => __bigint(c.ToString());
         public static BigInteger __bigint(decimal m) => new BigInteger(Math.Truncate(m));
-        public static BigInteger __bigint(object o) => o switch { BigInteger b => b, string s => __bigint(s), double d => __bigint(d), bool b => __bigint(b), _ => new BigInteger(Convert.ToInt64(o, Inv)) };
+        public static BigInteger __bigint(object o) => o switch
+        {
+            BigInteger b => b, string s => __bigint(s), double d => __bigint(d), bool b => __bigint(b),
+            PyBytes or PyByteArray => ParseByteInteger(o), _ => new BigInteger(Convert.ToInt64(o, Inv)),
+        };
+
+        static BigInteger ParseByteInteger(object buffer)
+        {
+            string text = Encoding.ASCII.GetString(ByteOps.From(buffer)).Trim(' ', '\t', '\n', '\v', '\f', '\r');
+            ArgumentException InvalidLiteral() => new ArgumentException($"invalid literal for int() with base 10: {repr(buffer)}");
+            int start = text.Length != 0 && text[0] is '+' or '-' ? 1 : 0;
+            if (start == text.Length) throw InvalidLiteral();
+            for (int i = start; i < text.Length; i++)
+            {
+                if (char.IsAsciiDigit(text[i])) continue;
+                if (text[i] != '_' || i == start || i + 1 == text.Length ||
+                    !char.IsAsciiDigit(text[i - 1]) || !char.IsAsciiDigit(text[i + 1]))
+                    throw InvalidLiteral();
+            }
+            return __bigint(text);
+        }
 
         public static BigInteger floordiv(BigInteger a, BigInteger b) { var q = BigInteger.DivRem(a, b, out var r); return !r.IsZero && (r.Sign < 0) != (b.Sign < 0) ? q - 1 : q; }
         public static BigInteger mod(BigInteger a, BigInteger b) { var r = BigInteger.Remainder(a, b); return !r.IsZero && (r.Sign < 0) != (b.Sign < 0) ? r + b : r; }
@@ -367,7 +429,8 @@ namespace Typhon.Runtime
         {
             if (a is IList la && b is IList lb && !(a is string) && !(a is IDictionary))
             {
-                var r = (IList)Activator.CreateInstance(((object)a).GetType())!;
+                if (la.GetType() != lb.GetType() || la.IsFixedSize) return __concat_any(la, lb);
+                var r = (IList)Activator.CreateInstance(la.GetType())!;
                 foreach (var x in la) r.Add(x);
                 foreach (var x in lb) r.Add(x);
                 return r;

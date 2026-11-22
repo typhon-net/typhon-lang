@@ -1,0 +1,20 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import math
+
+if hasattr(math, "typhon_example_backend"):
+    print(math.typhon_example_backend(3))
+else:
+    print("backend absent")
+
+try:
+    print(math.typhon_example_backend)
+except AttributeError as error:
+    print(str(error))
+
+def increment(value: int) -> int:
+    return value + 1
+
+setattr(math, "typhon_example_backend", increment)
+print(hasattr(math, "typhon_example_backend"), math.typhon_example_backend(3))

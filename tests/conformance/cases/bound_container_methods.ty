@@ -1,0 +1,24 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+class Lookup:
+    def __init__(self) -> None:
+        self.items: dict[int, str] = {7: "seven"}
+
+    def report(self) -> None:
+        read = self.items.get
+        print(read(7), read(9), read(9, "fallback"))
+        self.items[9] = "added"
+        print(read(9))
+
+def capture(mapping: dict[int, str]) -> None:
+    old = mapping.get
+    mapping = {7: "replacement"}
+    print(old(7), mapping.get(7))
+
+Lookup().report()
+capture({7: "original"})
+
+values: dict[int, int] = {7: 10}
+number = values.get
+print(number(7), number(9), number(9, 20))

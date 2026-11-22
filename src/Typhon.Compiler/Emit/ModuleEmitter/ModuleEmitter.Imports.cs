@@ -81,6 +81,31 @@ namespace Typhon.Compiler.Emit
             return owner == null ? null : member == null ? ModuleClassName(owner) : ModuleClassName(owner) + "." + Esc(member);
         }
 
+        // A source module can expose a runtime member through a named from-import, as cProfile does.
+        (string Module, string Member) RuntimeReExport(ModuleInfo module, string name, HashSet<(ModuleInfo, string)> seen = null)
+        {
+            if (module.Functions.Contains(name) || module.Classes.ContainsKey(name) || module.Globals.Contains(name)) return default;
+            seen ??= new HashSet<(ModuleInfo, string)>();
+            if (!seen.Add((module, name))) return default;
+            foreach (var import in module.Ast.Body.OfType<ImportFromStmt>())
+            {
+                string path = module.ResolveImport(import.Module, import.Level);
+                if (path == null) continue;
+                foreach (var alias in import.Names)
+                {
+                    if (alias.Name == "*" || (alias.AsName ?? alias.Name) != name) continue;
+                    if (_p.FindModule(path) is ModuleInfo source)
+                    {
+                        var result = RuntimeReExport(source, alias.Name, seen);
+                        if (result.Module != null) return result;
+                    }
+                    else if (StdlibType(path) is string metadata && RuntimeExport(path, metadata, alias.Name))
+                        return (path, alias.Name);
+                }
+            }
+            return default;
+        }
+
         IEnumerable<ModuleInfo> ProjectImports(Stmt stmt)
         {
             IEnumerable<ModuleInfo> Ancestors(ModuleInfo module)
@@ -123,6 +148,14 @@ namespace Typhon.Compiler.Emit
             foreach (var alias in s.Names)
             {
                 string name = alias.Name, local = alias.AsName;
+                if (name == "typing") _typingModules.Add(local ?? name);
+                if (PublicModule(name) == "collections.abc")
+                {
+                    string bound = local ?? name.Split('.')[0];
+                    _typingOnlyNames.Add(bound);
+                    BindRuntimeModule(bound, local == null && name == "collections.abc" ? "Typhon.Stdlib.collections" : "Typhon.Stdlib.collections+abc");
+                    continue;
+                }
                 if (name != "__future__" && IgnoredModules.Contains(PublicModule(name))) { _typingOnlyNames.Add(local ?? name.Split('.')[0]); continue; }
                 var mod = ResolvePsModule(name);
                 if (mod != null)
@@ -186,11 +219,31 @@ namespace Typhon.Compiler.Emit
         ModuleInfo RuntimePackageChild(string package, string metadata, string name) =>
             name != "*" && !RuntimeExport(package, metadata, name) ? _p.FindModule(package + "." + name) : null;
 
-        void ProcessImportFrom(ImportFromStmt s)
+        void ProcessImportFrom(ImportFromStmt s, bool resolveRuntimeMember = false)
         {
             string modName = _m.ResolveImport(s.Module, s.Level);
             if (modName == null) { Report(s, "TY0101", Severity.Error, "attempted relative import beyond the current package"); return; }
-            if (IgnoredModules.Contains(PublicModule(modName))) { foreach (var a in s.Names) _typingOnlyNames.Add(a.AsName ?? a.Name); return; }
+            string publicModule = PublicModule(modName);
+            if (!resolveRuntimeMember && IgnoredModules.Contains(publicModule))
+            {
+                string runtime = publicModule == "collections.abc" ? StdlibType(modName) : null;
+                foreach (var a in s.Names)
+                {
+                    if (runtime != null && _r.GetMembers(runtime, a.Name).Any(member => member.IsStatic && member.IsMethod))
+                    {
+                        ProcessImportFrom(new ImportFromStmt
+                        {
+                            Module = s.Module, Level = s.Level, Line = s.Line, Col = s.Col, Names = { a },
+                        }, resolveRuntimeMember: true);
+                        continue;
+                    }
+                    string local = a.AsName ?? a.Name;
+                    _typingOnlyNames.Add(local);
+                    if (modName == "typing" && a.Name == "Union") _typingUnionImports.Add(local);
+                    if (PublicModule(modName) == "collections.abc" && a.Name == "Mapping") _importedTypes[local] = MappingMeta;
+                }
+                return;
+            }
 
             var mod = ResolvePsModule(modName);
             if (mod != null)
@@ -201,9 +254,19 @@ namespace Typhon.Compiler.Emit
                 {
                     if (a.Name == "*") { _wildcardModules.Add(mod); continue; }
                     var (owner, member) = ProjectExport(mod, a.Name);
-                    if (owner == null)
-                    { Report(s, "TY0102", Severity.Error, $"cannot import name '{a.Name}' from '{modName}'"); continue; }
                     string bound = a.AsName ?? a.Name;
+                    if (owner == null)
+                    {
+                        var export = RuntimeReExport(mod, a.Name);
+                        if (export.Module != null)
+                            ProcessImportFrom(new ImportFromStmt
+                            {
+                                Module = export.Module, Line = s.Line, Col = s.Col,
+                                Names = { new ImportAlias { Name = export.Member, AsName = bound } },
+                            });
+                        else Report(s, "TY0102", Severity.Error, $"cannot import name '{a.Name}' from '{modName}'");
+                        continue;
+                    }
                     if (member == null) _moduleAliases[bound] = owner;
                     else _importedFromModules[bound] = new KeyValuePair<ModuleInfo, string>(owner, member);
                     if (IsProjectPackageModule(mod)) _qualifiedPackageImports.Add(bound);
@@ -333,7 +396,7 @@ namespace Typhon.Compiler.Emit
             string name = PublicModule(absolute);
             if (IgnoredModules.Contains(name)) return true;
             if (ResolvePsModule(name) is ModuleInfo mod)
-                return imf.Names.All(a => a.Name == "*" || ProjectExport(mod, a.Name).Owner != null);
+                return imf.Names.All(a => a.Name == "*" || ProjectExport(mod, a.Name).Owner != null || RuntimeReExport(mod, a.Name).Module != null);
             if (StdlibType(name) is string meta)
                 return imf.Names.All(a => a.Name == "*" || RuntimeExport(name, meta, a.Name) ||
                                           RuntimePackageChild(name, meta, a.Name) != null);

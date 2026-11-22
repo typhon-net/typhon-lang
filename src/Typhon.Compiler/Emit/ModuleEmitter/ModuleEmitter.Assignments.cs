@@ -80,7 +80,8 @@ namespace Typhon.Compiler.Emit
             string tmp = NewTmp();
             _w.Line($"var {tmp} = {EmitValue(a.Value)};");
             // a = b = value: the targets take the value's type (and the inference sees it: xs[i] = node = Node())
-            string vt = TypeInference.IsEmptyContainer(a.Value) || NeedsExplicitType(a.Value) ? null : InferType(a.Value);
+            string vt = a.Value is ListExpr { Elts.Count: 0 } ? "List<dynamic>" :
+                TypeInference.IsEmptyContainer(a.Value) || NeedsExplicitType(a.Value) ? null : InferType(a.Value);
             if (vt != null && vt != TypeInference.Pending) SetType(tmp, vt); else vt = null;
             foreach (var t in a.Targets) EmitAssignTo(t, new NameExpr { Id = tmp, Line = a.Line, Col = a.Col }, a, rawValue: vt == null ? tmp : null);
         }
@@ -152,6 +153,9 @@ namespace Typhon.Compiler.Emit
                 return null;
             }
             if (IsDotNetMethod(a)) return EmitBoundMethod(a);
+            if (RuntimeExtensionMethods.Contains(a.Name) && IsPythonContainer(InferType(a.Target)) &&
+                _r.GetMembers("Typhon.Runtime.Builtins", a.Name).Any(m => m.IsMethod && m.IsStatic && m.Parameters.Count > 0))
+                return $"{Rt("getattr")}((object?){Paren(EmitExpr(a.Target))}, {CsString(a.Name)})";
             if (a.Target is NameExpr name && !IsLocal(name.Id) && TryResolveType(name.Id, 0, out _, out _)) return null;
             var cls = a.Target is NameExpr self && self.Id == "self" && HasSelfInScope() ? _cls?.Def :
                 ClassKeyOfType(InferType(a.Target), out _) is string key ? ClassDefOfKey(key) : null;
@@ -183,7 +187,8 @@ namespace Typhon.Compiler.Emit
                         string declType = null;
                         if (_scope.Locals.Annotations.TryGetValue(n.Id, out var ann) && !TypeInference.IsBareContainer(ann)) declType = MapType(ann, stmt);
                         else if (ConflictType(n.Id) is string wider) declType = wider; // rebound to other types later (in a nested block)
-                        string inferred = boundMethod ? "dynamic" : rawValue != null ? null : InferType(value);
+                        string inferred = boundMethod ? "dynamic" : rawValue != null ? null :
+                            InferType(value) ?? (value is NameExpr builtin && BuiltinTypeValue(builtin) != null ? "global::System.Type" : null);
                         Declared(n.Id);
                         if (declType != null)
                         {
@@ -317,7 +322,10 @@ namespace Typhon.Compiler.Emit
                     if (unpackedType == null && (rawValue != null && value == null ||
                         rawValue == null && value is CallExpr or SubscriptExpr or AttributeExpr))
                         unpackedType = "dynamic";
-                    if (unpackedType == null && elts.Count < 2) unpackedType = "dynamic";
+                    // Python allows a target to be assigned twice in one unpacking; C# does not declare it twice.
+                    if (unpackedType == null && elts.Count < 2 ||
+                        elts.OfType<NameExpr>().GroupBy(n => n.Id).Any(group => group.Count() > 1))
+                        unpackedType = "dynamic";
                     if (unpackedType != null && (elts.Count < 2 || unpackedType == "dynamic" || unpackedType == "object" ||
                         (TupleElementTypes(unpackedType) == null && !(unpackedType.StartsWith("global::Typhon.Runtime.PyTuple") && elts.Count <= 5) && !HasDeconstruct(unpackedType))))
                     {
@@ -386,10 +394,20 @@ namespace Typhon.Compiler.Emit
         {
             string sequence = NewTmp("u");
             _w.Line($"var {sequence} = {Rt("__unpack_items")}({items}, {targets.Count});");
+            var assigned = new HashSet<string>();
             for (int i = 0; i < targets.Count; i++)
             {
-                EmitAssignTo(targets[i], null, stmt, $"{sequence}[{i}]");
-                if (targets[i] is NameExpr name && IsInline(stmt, name.Id)) SetType(name.Id, itemType);
+                if (targets[i] is NameExpr name && IsInline(stmt, name.Id))
+                {
+                    if (!assigned.Add(name.Id))
+                    {
+                        _w.Line($"{EmitName(name)} = {sequence}[{i}];");
+                        continue;
+                    }
+                    EmitAssignTo(name, null, stmt, $"{sequence}[{i}]");
+                    SetType(name.Id, itemType);
+                }
+                else EmitAssignTo(targets[i], null, stmt, $"{sequence}[{i}]");
             }
         }
 
@@ -399,7 +417,7 @@ namespace Typhon.Compiler.Emit
             {
                 case AttributeExpr at:
                 {
-                    if (at.Target is NameExpr owner && IsClassArgument(owner.Id) || IsInstanceClassDefault(at))
+                    if (at.Target is NameExpr owner && IsClassArgument(owner.Id) || IsInstanceClassDefault(at) || InferType(at.Target) == LocalDataClassType)
                     {
                         string temporary = NewTmp("value");
                         _w.Line($"object? {temporary} = {rawValue ?? EmitLooseValue(value)};");
@@ -414,6 +432,14 @@ namespace Typhon.Compiler.Emit
                         return;
                     }
                     if (Obs != null && rawValue == null) RecordExternalAttribute(at, value);
+                    if (!_m.IsGdScript && InferType(at.Target) == "dynamic")
+                    {
+                        string receiver = NewTmp("receiver"), assigned = NewTmp("assigned");
+                        string rhs = rawValue ?? BoundMethodValue(value) ?? EmitLooseValue(value);
+                        _w.Line($"{Rt("__setattr_late")}((object?){Paren(rhs)}, (object?){Paren(EmitExpr(at.Target))}, {CsString(at.Name)}, " +
+                            $"static ({receiver}, {assigned}) => {receiver}.{Esc(at.Name)} = {assigned});");
+                        return;
+                    }
                     string ft = null;
                     if (at.Target is NameExpr tn && tn.Id == "self" && _cls != null) ft = InferType(at);
                     if (rawValue == null && ft?.StartsWith("global::Typhon.Runtime.deque<") == true &&

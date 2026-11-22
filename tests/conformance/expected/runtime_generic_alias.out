@@ -1,0 +1,7 @@
+list[int] dict[str, list[int]]
+True True (<class 'int'>,)
+True True True
+[1, 2] [3, 4] True
+True
+tuple[int, ...] list[()]
+instance test rejects parameterized classes

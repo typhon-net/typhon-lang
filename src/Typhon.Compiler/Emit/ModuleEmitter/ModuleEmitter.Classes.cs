@@ -27,12 +27,35 @@ namespace Typhon.Compiler.Emit
 
         bool HasVirtualSubclasses(ClassDef c, int depth = 0) =>
             depth < 20 && (DottedName(c.Metaclass) is "ABCMeta" or "abc.ABCMeta" ||
-                c.Bases.Any(b => DottedName(b) is "ABC" or "abc.ABC") ||
-                TyphonBases(c).Any(b => HasVirtualSubclasses(b, depth + 1)));
+                c.Bases.Any(b => DottedName(b) is "ABC" or "abc.ABC" || IsMappingBase(b)) ||
+                TyphonBases(c).Any(b => HasVirtualSubclasses(b, depth + 1)) ||
+                _p.MixedInto.Any(ancestor => ancestor.Value.Any(copy => copy.Class == c) &&
+                    HasVirtualSubclasses(ancestor.Key, depth + 1)));
 
         bool MayHaveVirtualSubclasses(string meta, ClassDef c) =>
             c != null ? HasVirtualSubclasses(c) :
-                meta == "Typhon.Stdlib.os_+PathLike" || meta?.StartsWith("Typhon.Stdlib.numbers+", StringComparison.Ordinal) == true;
+                meta is MappingMeta or "Typhon.Stdlib.os_+PathLike" || meta?.StartsWith("Typhon.Stdlib.numbers+", StringComparison.Ordinal) == true;
+
+        const string MappingMeta = "Typhon.Stdlib.collections+abc+Mapping";
+
+        bool IsMappingBase(Expr value) =>
+            DottedName(value is SubscriptExpr sub ? sub.Target : value) is string dotted &&
+            TryResolveType(dotted, 0, out var meta, out _) && meta == MappingMeta;
+
+        HashSet<string> AbstractMethods(ClassDef c, int depth = 0)
+        {
+            var unresolved = new HashSet<string>();
+            if (depth > 20) return unresolved;
+            if (c.Bases.Any(IsMappingBase)) unresolved.UnionWith(new[] { "__getitem__", "__iter__", "__len__" });
+            foreach (var parent in TyphonBases(c))
+                unresolved.UnionWith(AbstractMethods(parent, depth + 1));
+            foreach (var methods in c.Body.OfType<FunctionDef>().GroupBy(f => f.Name))
+            {
+                if (methods.Any(f => HasDecorator(f.Decorators, "abstractmethod"))) unresolved.Add(methods.Key);
+                else unresolved.Remove(methods.Key);
+            }
+            return unresolved;
+        }
 
         void EmitClass(ClassDef c)
         {
@@ -52,8 +75,7 @@ namespace Typhon.Compiler.Emit
             var ctx = new ClassContext { Def = c, Name = c.Name, IsInterface = isInterface, IsSealed = HasDecorator(c.Decorators, "final") };
             foreach (var tp in c.TypeParams) ctx.TypeParams.Add(tp.Name);
             ctx.CsSelfType = Esc(c.Name) + TypeParamList(c.TypeParams);
-            bool hasAbstractMethods = c.Body.OfType<FunctionDef>().Any(f => HasDecorator(f.Decorators, "abstractmethod"));
-            if (hasAbstractMethods) isAbstract = true;
+            if (!isAbstract) isAbstract = AbstractMethods(c).Count != 0;
 
             var savedCls = _cls; var savedScope = _scope; var savedEmptyFields = _emptyFields;
             _cls = ctx; _scope = null; _emptyFields = new Dictionary<string, char>();
@@ -65,7 +87,7 @@ namespace Typhon.Compiler.Emit
             string vis = Visibility(c.Name, topLevel: true);
             if (vis == "public" && DerivesFromInternalClass(c)) vis = "internal";
             string kind = isInterface ? "partial interface" : (isAbstract ? "abstract partial class" : (ctx.IsSealed ? "sealed partial class" : "partial class"));
-            var baseTypes = bases.Select(b => MapType(b, c)).ToList();
+            var baseTypes = bases.Select(b => IsMappingBase(b) ? CsTypeName(MappingMeta) : MapType(b, c)).ToList();
             if (!isInterface) baseTypes.AddRange(StructuralProtocols(c, bases));
             // def __iter__(self) -> Iterator[T]  ⇒  the class implements IEnumerable<T> (foreach, LINQ, comprehensions)
             var iter = c.Body.OfType<FunctionDef>().FirstOrDefault(f => f.Name == "__iter__");
@@ -272,6 +294,7 @@ namespace Typhon.Compiler.Emit
             if (b is SubscriptExpr s) { target = s.Target; arity = s.Index is TupleExpr t ? t.Elts.Count : 1; }
             string dotted = DottedName(target);
             if (dotted == null) return false;
+            if (arity > 0 && IsMappingBase(b)) { meta = MappingMeta; return true; }
             return TryResolveType(dotted, arity, out meta, out pyClass);
         }
 
@@ -298,6 +321,31 @@ namespace Typhon.Compiler.Emit
         }
 
         /// <summary>self.x = ... assignments inside methods declare instance attributes (Python style).</summary>
+        const string LocalDataClassType = "global::Typhon.Runtime.PyLocalDataClass";
+
+        void EmitLocalDataClass(ClassDef c)
+        {
+            if (c.Bases.Count > 1 || c.Decorators.Count > 0 || c.TypeParams.Count > 0 || c.Metaclass != null ||
+                c.Body.Any(s => s is not (PassStmt or ExprStmt { Value: ConstExpr { Kind: ConstKind.Str } }) &&
+                    s is not AssignStmt { Targets.Count: 1 } || s is AssignStmt assignment && assignment.Targets[0] is not NameExpr))
+            {
+                Unsupported(c, "this local class body");
+                return;
+            }
+            string parent = c.Bases.Count == 1 ? EmitValue(c.Bases[0]) : "typeof(object)";
+            string name = Esc(c.Name);
+            if (IsInline(c, c.Name)) { _w.Line($"{LocalDataClassType} {name};"); Declared(c.Name); }
+            string value = NewTmp("cls");
+            string qualified = _scope.FunctionQualName + ".<locals>." + c.Name;
+            _w.Line($"var {value} = new {LocalDataClassType}({CsString(c.Name)}, {CsString(PythonModuleName)}, {CsString(qualified)}, (global::System.Type){Paren(parent)});");
+            if (c.Body.FirstOrDefault() is ExprStmt { Value: ConstExpr { Kind: ConstKind.Str } doc })
+                _w.Line($"{value}.Members[\"__doc__\"] = {EmitValue(doc)};");
+            foreach (var member in c.Body.OfType<AssignStmt>())
+                _w.Line($"{value}.Members[{CsString(((NameExpr)member.Targets[0]).Id)}] = {EmitValue(member.Value)};");
+            _w.Line($"{name} = {value};");
+            SetType(c.Name, LocalDataClassType);
+        }
+
         static Dictionary<string, KeyValuePair<Expr, KeyValuePair<FunctionDef, Expr>>> CollectImplicitFields(ClassDef c)
         {
             var result = new Dictionary<string, KeyValuePair<Expr, KeyValuePair<FunctionDef, Expr>>>(); // name → (annotation, (method, value))
@@ -308,7 +356,7 @@ namespace Typhon.Compiler.Emit
                 AstWalker.VisitAll(f.Body, n =>
                 {
                     Expr target = null, ann = null, value = null;
-                    if (n is AssignStmt a) foreach (var t in a.Targets) { target = t; value = a.Targets.Count == 1 ? a.Value : null; Check(); }
+                    if (n is AssignStmt a) foreach (var t in a.Targets) { target = t; value = a.Value; Check(); }
                     else if (n is AnnAssignStmt aa) { target = aa.Target; ann = aa.Annotation; value = aa.Value; Check(); }
                     else if (n is AugAssignStmt ag) { target = ag.Target; Check(); }
 
@@ -331,9 +379,67 @@ namespace Typhon.Compiler.Emit
             return result;
         }
 
+        static bool ConditionalClassMethod(IfStmt statement, out FunctionDef method, out Expr alternative, out bool definitionFirst)
+        {
+            method = null;
+            alternative = null;
+            definitionFirst = false;
+            if (statement.Body.Count != 1 || statement.OrElse.Count != 1) return false;
+            definitionFirst = statement.Body[0] is FunctionDef;
+            if ((definitionFirst ? statement.Body[0] : statement.OrElse[0]) is not FunctionDef definition ||
+                (definitionFirst ? statement.OrElse[0] : statement.Body[0]) is not AssignStmt assignment ||
+                assignment.Targets.Count != 1 || assignment.Targets[0] is not NameExpr target || target.Id != definition.Name ||
+                definition.Decorators.Count != 0 || definition.TypeParams.Count != 0 || definition.Params.Count == 0 ||
+                definition.Params.Any(p => p.Default != null && p.Default is not ConstExpr) ||
+                definition.Name is "__init__" or "__new__")
+                return false;
+            method = definition;
+            alternative = assignment.Value;
+            return true;
+        }
+
+        bool HasConditionalClassMethod(ClassDef c, string name, int depth = 0) =>
+            depth < 20 && (c.Body.OfType<IfStmt>().Any(statement =>
+                ConditionalClassMethod(statement, out var method, out _, out _) && method.Name == name) ||
+                TyphonBases(c).Any(parent => HasConditionalClassMethod(parent, name, depth + 1)));
+
+        bool IsConditionalClassMethodReference(AttributeExpr member)
+        {
+            if (DottedName(member.Target) is string dotted && TryResolveType(dotted, 0, out _, out var declared) && declared != null)
+                return HasConditionalClassMethod(declared, member.Name);
+            var owner = member.Target is NameExpr { Id: "self" } && HasSelfInScope() ? _cls?.Def :
+                ClassKeyOfType(InferType(member.Target), out _) is string key ? ClassDefOfKey(key) : null;
+            return owner != null && HasConditionalClassMethod(owner, member.Name);
+        }
+
+        FunctionDef EmitConditionalClassMethod(IfStmt statement, ClassContext ctx, FunctionDef definition, Expr alternative, bool definitionFirst)
+        {
+            const string descriptors = "global::Typhon.Runtime.PyClassDescriptors";
+            string name = CsString(definition.Name), property = Esc(definition.Name);
+            string callable = "__typhon_branch_" + NewTmp("callable"), implementation = "__typhon_branch_" + NewTmp("method");
+            string fromDefinition = $"{descriptors}.ConditionalFunction(typeof({ctx.CsSelfType}), {name}, {CsString(implementation)})";
+            string fromAssignment = $"(object?){Paren(EmitLooseValue(alternative))}";
+            string whenTrue = definitionFirst ? fromDefinition : fromAssignment;
+            string whenFalse = definitionFirst ? fromAssignment : fromDefinition;
+            ctx.Members.Add(definition.Name);
+            ctx.FieldTypes[definition.Name] = "dynamic";
+            LineDirective(statement);
+            _w.Line($"private static readonly object? {callable} = {Cond(statement.Test)} ? {whenTrue} : {whenFalse};");
+            EmitDescriptorAttribute("ConditionalMethod", callable);
+            _w.Line($"{Visibility(definition.Name, false)} dynamic? {property} " +
+                $"{{ get => {descriptors}.BindConditionalMethod({callable}, this, {name}); " +
+                $"set => global::Typhon.Runtime.PyAttrDict.SetExtra(this, {name}, value); }}");
+            return new FunctionDef
+            {
+                Name = implementation, PyName = definition.Name, Line = definition.Line, Col = definition.Col,
+                Params = definition.Params, Returns = definition.Returns, Body = definition.Body, IsAsync = definition.IsAsync,
+            };
+        }
+
         void EmitClassBody(ClassDef c, ClassContext ctx, List<Expr> bases, bool isAbstract)
         {
             var methods = c.Body.OfType<FunctionDef>().ToList();
+            var conditionalMethods = new List<FunctionDef>();
             bool hasGetAttr = DefinesInHierarchy(c, "__getattr__");
             string InstanceStorage(string name, string type, string visibility, string initializer = "")
             {
@@ -367,6 +473,10 @@ namespace Typhon.Compiler.Emit
                 Obs.MethodReturns[TypeInference.ClassKey(_m, c.Name)] = new Dictionary<string, string>(ctx.MethodReturnTypes);
             bool isDataclass = HasDecorator(c.Decorators, "dataclass");
             var dataFields = new List<AnnAssignStmt>();
+            var overwritten = new HashSet<string>(c.Body.OfType<AssignStmt>()
+                .Where(a => a.Targets.Count == 1 && a.Targets[0] is NameExpr)
+                .GroupBy(a => ((NameExpr)a.Targets[0]).Id)
+                .Where(group => group.Count() > 1).Select(group => group.Key));
 
             // 1. class-level declarations
             foreach (var s in c.Body)
@@ -397,20 +507,31 @@ namespace Typhon.Compiler.Emit
                     }
                     case AssignStmt a when a.Targets.Count == 1 && a.Targets[0] is NameExpr n:
                     {
+                        bool overwrittenField = overwritten.Contains(n.Id);
+                        if (overwrittenField && declared.Contains(n.Id))
+                        {
+                            // Another Python binding of the same class variable. Evaluate it here, in class body order.
+                            LineDirective(s);
+                            _w.Line($"static readonly object? {NewTmp("class_assign")} = {Checked($"{Esc(n.Id)} = {ClassFieldValue(a.Value, "dynamic")}")};");
+                            break;
+                        }
                         // NAME = None, assigned a value later from outside (Cls.NAME = Cls(...)): the type of those values
                         string later = a.Value is ConstExpr cn0 && cn0.Kind == ConstKind.None ? ExternalType(TypeInference.ClassKey(_m, c.Name) + "|static|" + n.Id) : null;
                         if (later == TypeInference.Pending || later == "dynamic") later = null;
                         if (later != null && IsValueTypeName(later) && !later.EndsWith("?")) later += "?";
-                        string type = later ?? PyType(InferType(a.Value)) ?? ImplicitDynamic(s, $"class variable '{n.Id}'");
+                        string type = overwrittenField ? "dynamic" : later ?? PyType(InferType(a.Value)) ?? ImplicitDynamic(s, $"class variable '{n.Id}'");
                         declared.Add(n.Id);
                         ctx.Members.Add(n.Id);
                         ctx.FieldTypes[n.Id] = type; // read as self.name too (through the class)
                         LineDirective(s);
-                        string value = type != "dynamic" ? EmitExpr(a.Value, targetTyped: true) : BoundMethodValue(a.Value) ?? EmitValue(a.Value);
+                        string value = ClassFieldValue(a.Value, type);
                         _w.Line($"{SurfaceVisibility(Visibility(n.Id, false), type)} {GdStaticKeyword(c, n.Id, a.Value, type)} {type} {Esc(n.Id)} = {Checked(value)};");
                         break;
                     }
                     case FunctionDef f: ctx.Members.Add(f.Name); break;
+                    case IfStmt branch when ConditionalClassMethod(branch, out var method, out var alternative, out bool definitionFirst):
+                        conditionalMethods.Add(EmitConditionalClassMethod(branch, ctx, method, alternative, definitionFirst));
+                        break;
                     case ClassDef _: break;
                     case ExprStmt e when e.Value is ConstExpr: break; // docstring / ...
                     case PassStmt _: break;
@@ -421,6 +542,7 @@ namespace Typhon.Compiler.Emit
             }
 
             // 2. attributes created via self.x = ... in methods
+            var (reflectiveFields, arbitraryReflectiveFields) = ReflectedInstanceWrites(methods);
             foreach (var kv in CollectImplicitFields(c))
             {
                 string name = kv.Key;
@@ -429,6 +551,7 @@ namespace Typhon.Compiler.Emit
                 var ann = kv.Value.Key; var method = kv.Value.Value.Key; var value = kv.Value.Value.Value;
                 string type;
                 if (ann != null) type = MapType(ann, method);
+                else if (arbitraryReflectiveFields || reflectiveFields.Contains(name)) type = "dynamic";
                 else if (value != null && TypeInference.IsEmptyContainer(value))
                 {
                     // self.items = [] / {}: typed by what the methods add to it
@@ -463,6 +586,8 @@ namespace Typhon.Compiler.Emit
                     if (TypeInference.IsUnknown(type) || type == TypeInference.Pending) type = null;
                     type = type ?? ImplicitDynamic(method, $"attribute 'self.{name}'");
                 }
+                // An object() sentinel can share a Python field with a value of another type.
+                if (ann == null && type == "object") type = "dynamic";
                 // A subclass or an external assignment can store a different type in an inferred field.
                 if (ann == null && type != "dynamic" && Ti != null && _m.Classes.TryGetValue(c.Name, out var wcls) && wcls == c &&
                     Ti.ExternalFields.TryGetValue(TypeInference.ClassKey(_m, c.Name) + "|" + name, out var outside) && outside != type)
@@ -560,12 +685,51 @@ namespace Typhon.Compiler.Emit
                 EmitMethod(f, ctx, bases);
                 _w.Line();
             }
+            foreach (var method in conditionalMethods) EmitMethod(method, ctx, bases);
             if (!isDataclass && !methods.Any(m => m.Name == "__init__")) EmitInheritedConstructors(ctx, bases);
             EmitDunderBridges(methods, ctx);
             if (c.NamedTupleFields != null) EmitNamedTupleMembers(c, ctx, methods);
 
             // 5. nested classes
             foreach (var nested in c.Body.OfType<ClassDef>()) EmitClass(nested);
+        }
+
+        bool _classFieldInitializer;
+
+        bool ClassBodyMethod(NameExpr name) => _classFieldInitializer && _cls != null &&
+            _cls.Members.Contains(name.Id) && !_cls.FieldTypes.ContainsKey(name.Id) &&
+            _cls.Def.Body.OfType<FunctionDef>().Any(method => method.Name == name.Id);
+
+        string ClassFieldValue(Expr value, string type)
+        {
+            bool previous = _classFieldInitializer;
+            _classFieldInitializer = true;
+            try
+            {
+                return type != "dynamic" ? EmitExpr(value, targetTyped: true) : BoundMethodValue(value) ?? EmitValue(value);
+            }
+            finally { _classFieldInitializer = previous; }
+        }
+
+        (HashSet<string> Names, bool Arbitrary) ReflectedInstanceWrites(List<FunctionDef> methods)
+        {
+            var names = new HashSet<string>();
+            bool arbitrary = false;
+            if (IsShadowed("setattr")) return (names, false);
+            foreach (var method in methods)
+            {
+                if (arbitrary || method.Params.Count == 0 || HasDecorator(method.Decorators, "staticmethod") ||
+                    HasDecorator(method.Decorators, "classmethod")) continue;
+                string self = method.Params[0].Name;
+                AstWalker.VisitAll(method.Body, node =>
+                {
+                    if (node is not CallExpr { Func: NameExpr { Id: "setattr" }, Args.Count: 3 } call ||
+                        call.Args[0].Value is not NameExpr instance || instance.Id != self) return;
+                    if (call.Args[1].Value is ConstExpr { Kind: ConstKind.Str } literal) names.Add(literal.Str);
+                    else arbitrary = true;
+                });
+            }
+            return (names, arbitrary);
         }
 
         string MethodModifiers(FunctionDef f, ClassContext ctx, List<Expr> bases, out bool isStatic, out bool isAbstract)

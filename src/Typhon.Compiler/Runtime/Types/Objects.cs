@@ -47,8 +47,13 @@ namespace Typhon.Runtime
         /// <summary>The end of with cm: on a late-bound manager: __exit__(type, exc, None); true when it suppresses the exception.</summary>
         public static bool __exit(object? cm, Exception? e)
         {
-            var m = cm!.GetType().GetMethods().FirstOrDefault(x => x.Name == "__exit__" && x.GetParameters().Length == 3);
-            if (m != null) return truthy(Unwrapped(() => m.Invoke(cm, new object?[] { e?.GetType(), e, null })));
+            var methods = cm!.GetType().GetMethods().Where(x => x.Name == "__exit__").ToArray();
+            if (methods.Length != 0)
+            {
+                object?[] args = { e?.GetType(), e, null };
+                var exit = PyArgs.Best(methods, args, null, out var call) ?? throw PyArgs.NoFit("__exit__", null, methods);
+                return truthy(Unwrapped(() => exit.Invoke(cm, call)));
+            }
             if (cm is IDisposable d) d.Dispose();
             return false;
         }
@@ -68,7 +73,7 @@ namespace Typhon.Runtime
     /// obj.__dict__ / vars(obj): a live dict view of an object's attributes (its properties and fields), so
     /// __dict__.update(state) and __dict__[k] = v set them. Names the class does not declare are kept beside the object.
     /// </summary>
-    internal sealed class PyAttrDict : IDictionary<string, object?>, IPyRepr
+    internal sealed class PyAttrDict : IDictionary<string, object?>, IDictionary, IPyRepr
     {
         static readonly ConditionalWeakTable<object, OrderedDictionary<string, object?>> Extra = new ConditionalWeakTable<object, OrderedDictionary<string, object?>>();
         readonly object _o;
@@ -132,6 +137,23 @@ namespace Typhon.Runtime
             if (Extras.TryGetValue(key, out value)) return true;
             return _module?.TryGetNamespaceMember(key, out value) == true;
         }
+
+        static string AttributeKey(object key) => key as string ?? throw new InvalidCastException("attribute name must be a string");
+        object? IDictionary.this[object key]
+        {
+            get => key is string name && TryGetValue(name, out var value) ? value : null;
+            set => this[AttributeKey(key)] = value;
+        }
+        ICollection IDictionary.Keys => Keys.ToArray();
+        ICollection IDictionary.Values => Values.ToArray();
+        bool IDictionary.IsFixedSize => false;
+        bool ICollection.IsSynchronized => false;
+        object ICollection.SyncRoot => this;
+        bool IDictionary.Contains(object key) => key is string name && ContainsKey(name);
+        void IDictionary.Add(object key, object? value) => Add(AttributeKey(key), value);
+        void IDictionary.Remove(object key) { if (key is string name) Remove(name); }
+        IDictionaryEnumerator IDictionary.GetEnumerator() => ((IDictionary)copy()).GetEnumerator();
+        void ICollection.CopyTo(Array array, int index) => ((ICollection)copy()).CopyTo(array, index);
 
         public void update(object? other)
         {

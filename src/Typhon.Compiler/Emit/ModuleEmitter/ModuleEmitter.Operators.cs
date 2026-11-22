@@ -79,6 +79,7 @@ namespace Typhon.Compiler.Emit
         }
 
         static readonly HashSet<string> ArithmeticOps = new HashSet<string> { "+", "-", "*", "/", "//", "%", "**", "<<", ">>" };
+        static bool IsBitwiseOperator(string op) => op is "|" or "&" or "^";
 
         /// <summary>An operand of arithmetic: an int literal is a long, unless the other side is a narrower .NET integer.</summary>
         string Operand(Expr e, Expr other) => IsIntLiteral(e) && !IsSmallInt(InferType(other)) ? EmitValue(e) : EmitExpr(e);
@@ -141,6 +142,11 @@ namespace Typhon.Compiler.Emit
         string EmitBinOp(BinOpExpr b)
         {
             if (_m.IsGdScript && GdEmitBinOp(b) is string gd) return gd;
+            if (!_m.IsGdScript && b.Op == "-" && b.Left is CallExpr { Func: AttributeExpr { Name: "keys" } keys, Args.Count: 0 } &&
+                (IsDictType(InferType(keys.Target)) || InferType(keys.Target) is null or "dynamic" or "object"))
+                return $"{Rt("__key_difference")}((object?){Paren(EmitValue(keys.Target))}, (object?){Paren(EmitValue(b.Right))})";
+            if (!_m.IsGdScript && IsUnionOperation(b))
+                return $"{Rt("__union__")}((object?){Paren(EmitUnionOperand(b.Left))}, (object?){Paren(EmitUnionOperand(b.Right))})";
             // literal-only integer arithmetic is folded when the result fits 64 bits (otherwise it raises OverflowError at run time)
             if (FoldInt(b) is BigInteger folded && (_big || folded >= long.MinValue && folded <= long.MaxValue))
                 return IntConstant(folded);
@@ -163,7 +169,9 @@ namespace Typhon.Compiler.Emit
                 else if (rType == Big && (lType == "double" || lType == "float")) r = $"((double){Paren(r)})";
             }
             // bool is an int in Python: True + True == 2 (but "%s" % True formats the bool)
-            if (ArithmeticOps.Contains(b.Op) && !(b.Op == "%" && lType == "string"))
+            bool bitwise = IsBitwiseOperator(b.Op);
+            if (ArithmeticOps.Contains(b.Op) && !(b.Op == "%" && lType == "string") ||
+                bitwise && (lType == "bool" && IsIntegral(rType) || rType == "bool" && IsIntegral(lType)))
             {
                 if (lType == "bool") { l = $"({Paren(l)} ? 1L : 0L)"; lType = "long"; }
                 if (rType == "bool") { r = $"({Paren(r)} ? 1L : 0L)"; rType = "long"; }
@@ -193,7 +201,8 @@ namespace Typhon.Compiler.Emit
                 var items = lItems.Select((_, i) => $"__ta.Item{i + 1}").Concat(rItems.Select((_, i) => $"__tb.Item{i + 1}"));
                 return $"(({l}, {r}) switch {{ var (__ta, __tb) => ({string.Join(", ", items)}) }})";
             }
-            if ((b.Op == "-" || b.Op == "|" || b.Op == "&" || b.Op == "^") && lType == "dynamic" && rType == "dynamic")
+            if (b.Op == "-" && lType == "dynamic" && rType == "dynamic" ||
+                bitwise && (IsUnknownType(lType) || IsUnknownType(rType)))
                 return $"{Rt(b.Op == "-" ? "sub" : b.Op == "|" ? "or_" : b.Op == "&" ? "and_" : "xor_")}({l}, {r})";
             // x // 2**k and x % 2**k on integers are exactly an arithmetic shift and a mask in Python (floor semantics, any sign)
             if ((b.Op == "//" || b.Op == "%") && PowerOfTwoExponent(b.Right) is int k && k > 0 && IsIntegral(InferType(b.Left)))
@@ -214,7 +223,9 @@ namespace Typhon.Compiler.Emit
                 case "*" when IsSequenceLiteral(b.Left) || IsSequenceLiteral(b.Right) || IsSequenceTyped(b.Left) || IsSequenceTyped(b.Right): return $"{Rt("__repeat")}({l}, {r})";
                 // late-bound operands may be a str or list at run time: "ab" * 2 must repeat, not fail in the binder
                 case "*" when InferType(b.Left) == "dynamic" || InferType(b.Right) == "dynamic": return $"{Rt("mul")}({l}, {r})";
-                case "+" when InferType(b.Left) == "dynamic" && InferType(b.Right) == "dynamic": return $"{Rt("add")}({l}, {r})";
+                case "+" when lType == "dynamic" && (rType == "dynamic" || IsListy(b.Right)) ||
+                              rType == "dynamic" && IsListy(b.Left):
+                    return $"{Rt("add")}((object?){Paren(l)}, (object?){Paren(r)})";
                 // lists of different item types: a list of dynamic values (C# lists are invariant)
                 case "+" when (IsListy(b.Left) || IsListy(b.Right)) && ListConcatMismatch(b): return $"{Rt("__concat_any")}({l}, {r})";
                 case "+" when IsListy(b.Left) || IsListy(b.Right): return $"{Rt("concat")}({l}, {r})";

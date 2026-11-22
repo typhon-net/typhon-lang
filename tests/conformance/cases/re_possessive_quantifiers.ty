@@ -1,0 +1,11 @@
+import re
+print(bool(re.fullmatch(r'a*a', 'aaa')), bool(re.fullmatch(r'a*+a', 'aaa')))
+print(bool(re.fullmatch(r'(?:ab){1,2}+ab', 'abab')), bool(re.fullmatch(r'(?:ab){1,2}ab', 'abab')))
+print(re.findall(r'[a-z]++', 'abc 123 xyz'))
+print(re.findall(r'\+++', 'a+++b'))
+for pattern in ['a*++', 'a+?+', 'a++{2}', 'a{1,2}+{1}', r'\b++']:
+    try:
+        re.compile(pattern)
+    except re.error:
+        print("invalid repetition")
+print(bool(re.fullmatch(r'a++{x}', 'aa{x}')))

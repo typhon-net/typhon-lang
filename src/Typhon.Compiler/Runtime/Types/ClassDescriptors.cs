@@ -15,7 +15,7 @@ namespace Typhon.Runtime
     using System.Runtime.ExceptionServices;
     using Typhon.Stdlib;
 
-    internal enum PyDescriptorKind { Property, StaticMethod, ClassMethod, CachedProperty, NamedTupleField }
+    internal enum PyDescriptorKind { Property, StaticMethod, ClassMethod, CachedProperty, NamedTupleField, ConditionalMethod }
 
     [AttributeUsage(AttributeTargets.Method | AttributeTargets.Property, Inherited = false)]
     internal sealed class PyDescriptorAttribute(PyDescriptorKind kind, string? getter = null, int index = -1) : Attribute
@@ -109,6 +109,18 @@ namespace Typhon.Runtime
         static PyClosure InstanceFunction(Type type, string name, MethodInfo[] methods, PySourceAttribute? source) =>
             Callable(type, name, source, methods.FirstOrDefault(), (args, keywords) => Invoke(methods, name, Receiver(name, args), args[1..], keywords));
 
+        internal static PyClosure ConditionalFunction(Type type, string name, string implementation)
+        {
+            var methods = type.GetMethods(Declared).Where(m => m.Name == implementation).ToArray();
+            return InstanceFunction(type, name, methods, methods.FirstOrDefault()?.GetCustomAttribute<PySourceAttribute>());
+        }
+
+        internal static object? BindConditionalMethod(object? value, object instance, string name)
+        {
+            if (PyAttrDict.TryGetExtra(instance, name, out var local)) return local;
+            return value is PyFunction function ? new types.MethodType(function, instance) : value;
+        }
+
         sealed class ClassNamespace : IDictionary
         {
             readonly Dictionary<string, Func<object?>> _bindings = new(StringComparer.Ordinal);
@@ -120,7 +132,8 @@ namespace Typhon.Runtime
                 _bindings["__module__"] = () => Builtins.__module_of(type);
                 _bindings["__qualname__"] = () => Builtins.PyTypeName(type);
                 _bindings["__doc__"] = () => source?.DocString;
-                foreach (var field in type.GetFields(Declared).Where(f => f.IsStatic && !f.Name.StartsWith("<", StringComparison.Ordinal)))
+                foreach (var field in type.GetFields(Declared).Where(f => f.IsStatic && !f.Name.StartsWith("<", StringComparison.Ordinal) &&
+                    !f.Name.StartsWith("__typhon_branch_", StringComparison.Ordinal)))
                     _bindings[field.Name] = () => field.GetValue(null);
                 foreach (var nested in type.GetNestedTypes(Declared))
                     if (nested.IsDefined(typeof(PySourceAttribute))) _bindings[nested.Name] = () => nested;
@@ -131,6 +144,12 @@ namespace Typhon.Runtime
                     if (spec?.Kind == PyDescriptorKind.NamedTupleField)
                     {
                         AddDescriptor(member.Name, new PyTupleGetter(spec.Index));
+                    }
+                    else if (spec?.Kind == PyDescriptorKind.ConditionalMethod)
+                    {
+                        object? value = type.GetField(spec.Getter!, Declared)?.GetValue(null);
+                        Descriptors[member.Name] = value;
+                        _bindings[member.Name] = () => value;
                     }
                     else if (spec?.Kind == PyDescriptorKind.Property)
                     {
@@ -149,7 +168,8 @@ namespace Typhon.Runtime
                         AddDescriptor(member.Name, property);
                     }
                 }
-                foreach (var overloads in type.GetMethods(Declared).Where(m => m.IsDefined(typeof(PySourceAttribute)) && !m.IsSpecialName).GroupBy(m => m.Name))
+                foreach (var overloads in type.GetMethods(Declared).Where(m => m.IsDefined(typeof(PySourceAttribute)) && !m.IsSpecialName &&
+                    !m.Name.StartsWith("__typhon_branch_", StringComparison.Ordinal)).GroupBy(m => m.Name))
                 {
                     var methods = overloads.ToArray();
                     var method = methods[0];

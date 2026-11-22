@@ -1,0 +1,8 @@
+def read_status() -> str:
+    return status
+
+if __name__ == "__main__":
+    status = "ready"
+    values = ["first"]
+    values.append("second")
+    print(read_status(), values)

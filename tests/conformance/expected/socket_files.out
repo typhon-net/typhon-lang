@@ -1,0 +1,8 @@
+True True False False
+True
+13
+b'hell' b'o\r\n' b'world\n'
+True True
+5 w
+b'caf\xc3\xa9\n'
+invalid mode 'r+' (only r, w, b allowed)

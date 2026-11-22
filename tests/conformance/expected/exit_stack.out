@@ -1,0 +1,16 @@
+enter first
+entered first
+True
+moved
+callback second
+exit first None
+enter observer
+enter suppressor
+exit suppressor initial
+exit observer None
+continued
+enter replacement observer
+exit replacement observer replacement
+propagated replacement
+True
+pushed handled

@@ -18,7 +18,7 @@ namespace Typhon.Stdlib
     using Typhon.Runtime;
 
     /// <summary>Internet sockets backed by the host's .NET socket implementation.</summary>
-    internal static class socket_
+    internal static partial class socket_
     {
         public const long AF_UNSPEC = 0, AF_INET = 2, SOCK_STREAM = 1, SOCK_DGRAM = 2;
         public static readonly long AF_INET6 = OperatingSystem.IsWindows() ? 23 : OperatingSystem.IsMacOS() ? 30 : 10;
@@ -57,7 +57,7 @@ namespace Typhon.Stdlib
             public gaierror(params object?[] args) : base(args) { }
         }
 
-        internal class socket : IDisposable
+        internal partial class socket : IDisposable
         {
             readonly Socket _handle;
             double? _timeout;
@@ -107,7 +107,15 @@ namespace Typhon.Stdlib
                 close();
                 return null;
             }
-            public void close() => _handle.Dispose();
+            public void close()
+            {
+                lock (_fileLifetime)
+                {
+                    if (_closeRequested) return;
+                    _closeRequested = true;
+                    if (_openFiles == 0) _handle.Dispose();
+                }
+            }
             public void Dispose() => close();
             public long fileno()
             {

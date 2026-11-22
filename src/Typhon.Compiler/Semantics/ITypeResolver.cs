@@ -88,6 +88,8 @@ namespace Typhon.Compiler.Semantics
         public string GenericType;
         /// <summary>The method is declared to return dynamic (its Type is null then).</summary>
         public bool ReturnsDynamic;
+        /// <summary>The method is declared void, so its Python result is None.</summary>
+        public bool ReturnsVoid;
     }
 
     /// <summary>A constructor as the emitter needs it: fully qualified C# parameter types and names.</summary>

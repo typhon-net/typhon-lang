@@ -7,6 +7,7 @@
 namespace Typhon.Stdlib
 {
     using System;
+    using System.Collections.Generic;
     using System.IO;
     using System.Linq;
     using System.Text;
@@ -98,8 +99,112 @@ namespace Typhon.Stdlib
 
     internal static class importlib
     {
+        internal static class machinery
+        {
+            internal sealed class ModuleSpec : IPyRepr, IEquatable<ModuleSpec>
+            {
+                public string name;
+                public dynamic? loader;
+                public object? loader_state;
+                public string? origin;
+                public List<string>? submodule_search_locations;
+                string? _cached;
+
+                public ModuleSpec(string name, object? loader, string? origin = null, object? loader_state = null, bool? is_package = null)
+                {
+                    this.name = name;
+                    this.loader = loader;
+                    this.origin = origin;
+                    this.loader_state = loader_state;
+                    submodule_search_locations = is_package == true ? new List<string>() : null;
+                }
+
+                public bool has_location { get; set; }
+                public string parent
+                {
+                    get
+                    {
+                        if (submodule_search_locations != null) return name;
+                        int dot = name.LastIndexOf('.');
+                        return dot >= 0 ? name[..dot] : "";
+                    }
+                }
+                public string? cached
+                {
+                    get
+                    {
+                        if (_cached == null && has_location && origin?.EndsWith(".pyc", StringComparison.Ordinal) == true)
+                            _cached = origin;
+                        return _cached;
+                    }
+                    set => _cached = value;
+                }
+
+                public bool Equals(ModuleSpec? other) => other != null && name == other.name &&
+                    Builtins.eq(loader, other.loader) && origin == other.origin &&
+                    Builtins.eq(submodule_search_locations, other.submodule_search_locations) &&
+                    cached == other.cached && has_location == other.has_location;
+                public override bool Equals(object? other) => other is ModuleSpec spec && Equals(spec);
+                public override int GetHashCode() => throw new InvalidCastException("unhashable type: 'ModuleSpec'");
+                public string __repr__() => $"ModuleSpec(name={Builtins.repr(name)}, loader={Builtins.repr(loader)}" +
+                    (origin == null ? "" : $", origin={Builtins.repr(origin)}") +
+                    (submodule_search_locations == null ? "" : $", submodule_search_locations={Builtins.repr(submodule_search_locations)}") + ")";
+                public override string ToString() => __repr__();
+            }
+        }
+
         internal static class util
         {
+            public static machinery.ModuleSpec? find_spec(string name, string? package = null)
+            {
+                if (name.StartsWith('.'))
+                {
+                    if (string.IsNullOrEmpty(package)) throw new ImportError($"no package specified for {Builtins.repr(name)} (required for relative module names)");
+                    int level = 0;
+                    while (level < name.Length && name[level] == '.') level++;
+                    name = SourceImport.ResolveRelative(name[level..], package, level);
+                }
+                if (name.Length == 0 || name.IndexOfAny(new[] { '/', '\\', '\0' }) >= 0 || name.Split('.').Any(s => s.Length == 0)) return null;
+                if (sys_.modules.TryGetValue(name, out var module))
+                {
+                    if (module == null) return null;
+                    if ((object?)Builtins.getattr(module, "__spec__", null) is machinery.ModuleSpec known) return known;
+                    throw new ArgumentException(Builtins.hasattr(module, "__spec__") ? $"{name}.__spec__ is None" : $"{name}.__spec__ is not set");
+                }
+                int parentDelimiter = name.LastIndexOf('.');
+                if (parentDelimiter < 0) return SourceImport.Find(name, sys_.path);
+                string parent = name[..parentDelimiter];
+                object owner = SourceImport.ImportModule(parent);
+                object? search = Builtins.getattr(owner, "__path__", null);
+                if (search == null) throw new ModuleNotFoundError($"__path__ attribute not found on '{parent}' while trying to find '{name}'", name);
+                return SourceImport.Find(name, Builtins.__iter_dyn(search).Cast<string>());
+            }
+
+            public static dynamic module_from_spec(machinery.ModuleSpec spec)
+            {
+                object? module = null;
+                if (spec.loader != null)
+                {
+                    var create = (object?)Builtins.getattr(spec.loader, "create_module", null);
+                    if (create != null) module = Builtins.__invoke(create, [spec]);
+                    else if (Builtins.hasattr(spec.loader, "exec_module"))
+                        throw new ImportError("loaders that define exec_module() must also define create_module()");
+                }
+                module ??= new PyModule(spec.name, null);
+                SetMissing("__name__", spec.name);
+                SetMissing("__loader__", spec.loader);
+                SetMissing("__package__", spec.parent);
+                Builtins.setattr(module, "__spec__", spec);
+                if (spec.submodule_search_locations != null) SetMissing("__path__", spec.submodule_search_locations);
+                if (spec.has_location) SetMissing("__file__", spec.origin);
+                return module;
+
+                void SetMissing(string name, object? value)
+                {
+                    if ((object?)Builtins.getattr(module, name, null) == null) Builtins.setattr(module, name, value);
+                }
+            }
+
             public static string decode_source(PyBytes source_bytes)
             {
                 byte[] bytes = source_bytes.Data;

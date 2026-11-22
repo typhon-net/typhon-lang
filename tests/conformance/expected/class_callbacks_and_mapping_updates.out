@@ -1,0 +1,14 @@
+None ['first', 'second']
+255
+(('one', 'two'), {'action': 'store'})
+{2: 'before', 'name': 3}
+int string
+(('a', 'b'), True, {'contents': 'extra'})
+(('a', 'b', 'c'), False, {})
+unbound
+Parcel override
+True False
+dynamic
+(('one',), {'mode': 'named'})
+None missing
+([1, 'right'], [1])

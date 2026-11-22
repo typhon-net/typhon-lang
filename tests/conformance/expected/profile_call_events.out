@@ -1,0 +1,8 @@
+14
+outer call False None
+leaf call True None
+leaf return True 7
+outer return False 14
+interrupted call False None
+interrupted return False None
+9 True

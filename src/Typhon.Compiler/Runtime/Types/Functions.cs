@@ -30,12 +30,14 @@ namespace Typhon.Runtime
         readonly object _target; readonly string _name;
         internal object Target => _target;
         internal string Name => _name;
+        internal Type? BuiltinOwner { get; }
         internal bool IncludesNonPublic => (_visibility & System.Reflection.BindingFlags.NonPublic) != 0;
         readonly System.Reflection.BindingFlags _visibility;
-        public PyBoundMethod(object target, string name, bool includeNonPublic = false)
+        public PyBoundMethod(object target, string name, bool includeNonPublic = false, Type? builtinOwner = null)
         {
             _target = target;
             _name = name;
+            BuiltinOwner = builtinOwner;
             _visibility = System.Reflection.BindingFlags.Public;
             if (includeNonPublic) _visibility |= System.Reflection.BindingFlags.NonPublic;
         }
@@ -46,7 +48,7 @@ namespace Typhon.Runtime
             .Select(method => method.GetCustomAttributes(typeof(PySourceAttribute), false).OfType<PySourceAttribute>().FirstOrDefault())
             .FirstOrDefault(attribute => attribute != null);
 
-        public string __name__ => _name;
+        public string __name__ => BuiltinOwner != null ? "__new__" : _name;
         public string? __doc__ => Source?.DocString;
         public string __module__ => Source?.Module ?? Builtins.__module_of(_target as Type ?? _target.GetType());
         public Typhon.Stdlib.sys_.code? __code__ => Source is { } source ? new Typhon.Stdlib.sys_.code(_name, source.Filename, source.Line) : null;
@@ -59,7 +61,7 @@ namespace Typhon.Runtime
             var methods = type.GetMethods(flags).Where(m => m.Name == _name).ToList();
             if (_target is Type && args.Length > 0 && args[0] != null && type.IsInstanceOfType(args[0]) &&
                 methods.Count == 0)
-                return new PyBoundMethod(args[0]!, _name).__call__(args.Skip(1).ToArray());
+                return new PyBoundMethod(args[0]!, _name, includeNonPublic: IncludesNonPublic).__call__(args.Skip(1).ToArray());
             var candidates = methods.Select(m => CloseMethod(m, args, null)).OfType<System.Reflection.MethodInfo>().ToList();
             var best = PyArgs.Best(candidates, args, null, out var fitted);
             if (best != null) return Invoke(best, fitted);
@@ -120,10 +122,9 @@ namespace Typhon.Runtime
             if (!method.IsGenericMethodDefinition) return method;
             var parameters = method.GetParameters();
             var types = new Type?[method.GetGenericArguments().Length];
-            int fixedCount = parameters.Length;
-            Type? element = null;
-            if (fixedCount > 0 && parameters[^1].IsDefined(typeof(ParamArrayAttribute), false))
-                element = parameters[--fixedCount].ParameterType.GetElementType();
+            int restIndex = Array.FindIndex(parameters, PyArgs.IsPositionalRest);
+            int fixedCount = restIndex < 0 ? parameters.Length : restIndex;
+            Type? element = restIndex < 0 ? null : parameters[restIndex].ParameterType.GetElementType();
             for (int i = 0; i < args.Length; i++)
             {
                 Type? declared = i < fixedCount ? parameters[i].ParameterType : element;
@@ -133,7 +134,7 @@ namespace Typhon.Runtime
             if (keywords != null)
                 foreach (var keyword in keywords)
                 {
-                    var parameter = parameters.FirstOrDefault(p => p.Name == keyword.Key);
+                    var parameter = parameters.FirstOrDefault(p => p.Position != restIndex && p.Name == keyword.Key);
                     if (parameter != null && keyword.Value is object argument && !MatchArgumentType(parameter.ParameterType, argument.GetType(), types))
                         return null;
                 }
@@ -206,21 +207,26 @@ namespace Typhon.Runtime
                                                             : $"{name}() got missing, repeated or too many arguments");
         }
 
+        internal static bool IsPositionalRest(System.Reflection.ParameterInfo parameter) =>
+            parameter.IsDefined(typeof(ParamArrayAttribute), false) || parameter.IsDefined(typeof(PyPackedArgumentsAttribute), false);
+
         /// <summary>The arguments of a call to a method with these parameters, and how well they fit (-1: they do not).</summary>
         public static int Bind(System.Reflection.ParameterInfo[] ps, object?[] args, IDictionary<string, object?>? kw, out object?[] call)
         {
             call = new object?[ps.Length];
             if (ps.Any(p => p.ParameterType.IsByRef || p.ParameterType == typeof(NoInit))) return -1;
-            bool hasParams = ps.Length > 0 && ps[^1].IsDefined(typeof(ParamArrayAttribute), false);
             bool hasKeywords = ps.Length > 0 && ps[^1].IsDefined(typeof(PyKeywordArgumentsAttribute), false);
-            int fixedCount = hasParams || hasKeywords ? ps.Length - 1 : ps.Length;
-            if (!hasParams && args.Length > fixedCount) return -1;
+            int parameterCount = hasKeywords ? ps.Length - 1 : ps.Length;
+            int restIndex = Array.FindIndex(ps, IsPositionalRest);
+            int positionalLimit = restIndex < 0 ? parameterCount : restIndex;
+            if (restIndex < 0 && args.Length > positionalLimit) return -1;
             int score = 0, byName = 0;
-            for (int i = 0; i < fixedCount; i++)
+            for (int i = 0; i < parameterCount; i++)
             {
+                if (i == restIndex) continue;
                 var p = ps[i];
                 object? v;
-                if (i < args.Length)
+                if (i < positionalLimit && i < args.Length)
                 {
                     if (kw != null && p.Name != null && kw.ContainsKey(p.Name)) return -1; // given twice
                     v = args[i];
@@ -243,19 +249,20 @@ namespace Typhon.Runtime
                 var extra = new OrderedDictionary<string, object?>();
                 if (kw != null && byName != kw.Count)
                     foreach (var pair in kw)
-                        if (!ps.Take(fixedCount).Any(parameter => parameter.Name == pair.Key)) extra[pair.Key] = pair.Value;
+                        if (!ps.Take(parameterCount).Any(parameter => parameter.Position != restIndex && parameter.Name == pair.Key))
+                            extra[pair.Key] = pair.Value;
                 call[^1] = extra;
             }
-            if (hasParams)
+            if (restIndex >= 0)
             {
-                var elem = ps[ps.Length - 1].ParameterType.GetElementType()!;
-                var rest = Array.CreateInstance(elem, Math.Max(0, args.Length - fixedCount));
-                for (int i = fixedCount; i < args.Length; i++)
+                var elem = ps[restIndex].ParameterType.GetElementType()!;
+                var rest = Array.CreateInstance(elem, Math.Max(0, args.Length - restIndex));
+                for (int i = restIndex; i < args.Length; i++)
                 {
                     if (Fit(args[i], elem) < 0) return -1;
-                    rest.SetValue(To(args[i], elem), i - fixedCount);
+                    rest.SetValue(To(args[i], elem), i - restIndex);
                 }
-                call[ps.Length - 1] = rest;
+                call[restIndex] = rest;
             }
             return score;
         }
@@ -277,8 +284,13 @@ namespace Typhon.Runtime
 
     internal static partial class Builtins
     {
+        static System.Reflection.ConstructorInfo[] CallableConstructors(Type type) =>
+            type.IsDefined(typeof(PySourceAttribute), false)
+                ? type.GetConstructors(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic)
+                : type.GetConstructors();
+
         /// <summary>
-        /// cls(args) for a class known at run time: the public constructor that takes this many arguments (optional ones
+        /// cls(args) for a class known at run time: the constructor that takes this many arguments (optional ones
         /// get their defaults), preferring one whose parameter types the arguments have over a late-bound one.
         /// </summary>
         static object Construct(Type t, object?[] args)
@@ -297,9 +309,21 @@ namespace Typhon.Runtime
                 return set;
             }
             System.Reflection.ConstructorInfo? best = null; int bestScore = -1;
-            foreach (var c in t.GetConstructors())
+            object?[]? boundRest = null;
+            foreach (var c in CallableConstructors(t))
             {
                 var ps = c.GetParameters();
+                if (ps.Any(PyArgs.IsPositionalRest))
+                {
+                    int restScore = PyArgs.Bind(ps, args, null, out var rest);
+                    if (restScore > bestScore)
+                    {
+                        best = c;
+                        bestScore = restScore;
+                        boundRest = rest;
+                    }
+                    continue;
+                }
                 if (args.Length > ps.Length || ps.Take(args.Length).Any(p => p.ParameterType.IsByRef)) continue;
                 if (ps.Skip(args.Length).Any(p => !p.IsOptional)) continue;
                 int score = 0; bool ok = true;
@@ -312,9 +336,10 @@ namespace Typhon.Runtime
                     if (args[i] is IConvertible && (pt.IsPrimitive || Nullable.GetUnderlyingType(pt)?.IsPrimitive == true)) { score += 1; continue; }
                     ok = false;
                 }
-                if (ok && score > bestScore) { best = c; bestScore = score; }
+                if (ok && score > bestScore) { best = c; bestScore = score; boundRest = null; }
             }
             if (best == null) throw new InvalidCastException($"{t.Name}() takes no constructor for {args.Length} arguments");
+            if (boundRest != null) return best.Invoke(boundRest);
             var bps = best.GetParameters();
             var call = new object?[bps.Length];
             for (int i = 0; i < bps.Length; i++)
@@ -339,7 +364,7 @@ namespace Typhon.Runtime
         {
             Type t => PyTypeName(t),
             PyFunction f => f.__name__,
-            PyBoundMethod m => m.Name,
+            PyBoundMethod m => m.__name__,
             Delegate d => d.Method.Name,
             null => throw new MissingMemberException("'NoneType' object has no attribute '__name__'"),
             _ => (string)((dynamic)o).__name__,
@@ -357,6 +382,8 @@ namespace Typhon.Runtime
         /// <summary>The module of a class: a Typhon class's is the module class it is nested in; the runtime's and .NET's are builtins.</summary>
         static string ModuleOfType(Type t)
         {
+            if (t == typeof(Typhon.Stdlib.types.UnionType)) return "typing";
+            if (t is PyLocalDataClass local) return local.PythonModule;
             var outer = t;
             while (outer.DeclaringType != null) outer = outer.DeclaringType;
             if (outer.GetCustomAttributes(typeof(PySourceAttribute), inherit: false).FirstOrDefault() is PySourceAttribute source)
@@ -371,9 +398,20 @@ namespace Typhon.Runtime
             return outer != t ? outer.Name : t.Namespace ?? "builtins";
         }
 
+        internal static string PythonQualifiedTypeName(Type type)
+        {
+            string module = ModuleOfType(type), name = PyExc.TypeName(type);
+            for (var owner = type.DeclaringType; owner?.DeclaringType != null && module != "builtins"; owner = owner.DeclaringType)
+                name = PyTypeName(owner) + "." + name;
+            return module == "builtins" ? name : module + "." + name;
+        }
+
         /// <summary>A type's Python name: int for long, str for string, list for List&lt;T&gt;, a Typhon class's own name.</summary>
         public static string PyTypeName(Type t)
         {
+            if (t == typeof(object)) return "object";
+            if (t == typeof(Typhon.Stdlib.types.UnionType)) return "Union";
+            if (t == typeof(Typhon.Stdlib.types.BuiltinFunctionType)) return "builtin_function_or_method";
             if (t == typeof(Type)) return "type";
             if (t == typeof(PyRange)) return "range";
             if (t == typeof(PySlice)) return "slice";
@@ -387,7 +425,7 @@ namespace Typhon.Runtime
             if (t == typeof(PyBytes)) return "bytes";
             if (t == typeof(PyByteArray)) return "bytearray";
             if (typeof(PyFunction).IsAssignableFrom(t)) return "function";
-            if (t == typeof(PyModule)) return "module";
+            if (t == typeof(PyModule) || t == typeof(Typhon.Stdlib.types.ModuleType)) return "module";
             if (t == typeof(Typhon.Stdlib.types.MappingProxyType)) return "mappingproxy";
             if (t == typeof(Typhon.Stdlib.types.TracebackType)) return "traceback";
             if (t.IsArray && t != typeof(byte[])) return "tuple";
@@ -427,7 +465,8 @@ namespace Typhon.Runtime
                 if (t == typeof(frozendict<object, object>)) return ConstructFrozenDict(args, kw);
                 if (t == typeof(OrderedDictionary<object, object>)) return dict(ConstructFrozenDict(args, kw, "dict"));
                 if (t == typeof(frozenset<object>)) throw new InvalidCastException("frozenset() takes no keyword arguments");
-                var ctor = PyArgs.Best(t.GetConstructors(), args, kw, out var call) ?? throw PyArgs.NoFit(t.Name, kw, t.GetConstructors());
+                var constructors = CallableConstructors(t);
+                var ctor = PyArgs.Best(constructors, args, kw, out var call) ?? throw PyArgs.NoFit(t.Name, kw, constructors);
                 try { return ctor.Invoke(call); }
                 catch (System.Reflection.TargetInvocationException tie) when (tie.InnerException != null)
                 {
@@ -476,14 +515,27 @@ namespace Typhon.Runtime
             return d;
         }
 
-        /// <summary>int(x), str(x), float(x), bool(x), type(x), object() through the type object of the builtin.</summary>
+        /// <summary>Numeric and string conversions, type(x), and object() through the type object of the builtin.</summary>
         static bool BuiltinTypeCall(Type t, object?[] args, out object? result)
         {
             result = null;
+            if (t == typeof(long) && args.Length == 2 && args[0] is string integerText && args[1] is int or long)
+            {
+                result = @int(integerText, System.Convert.ToInt64(args[1]));
+                return true;
+            }
             if (args.Length > 1) return false;
             object? a = args.Length == 1 ? args[0] : null;
             if (t == typeof(long)) result = args.Length == 0 ? 0L : @int(a!);
             else if (t == typeof(double)) result = args.Length == 0 ? 0.0 : @float(a!);
+            else if (t == typeof(Complex))
+                result = args.Length == 0 ? Complex.Zero : a switch
+                {
+                    string literal => complex(literal),
+                    Complex number => number,
+                    bool or byte or short or int or long or float or double or decimal or BigInteger => complex(@float(a)),
+                    _ => throw new InvalidCastException("complex() first argument must be a string or a number"),
+                };
             else if (t == typeof(string)) result = args.Length == 0 ? "" : str(a);
             else if (t == typeof(bool)) result = args.Length == 1 && @bool(a);
             else if (t == typeof(Type) && args.Length == 1) result = a?.GetType();
@@ -505,6 +557,10 @@ namespace Typhon.Runtime
             _ => new PyBoundMethod(f, "__call__").__call__(args),
         };
     }
+
+    /// <summary>Marks *args when a following parameter prevents the array from being declared as C# params.</summary>
+    [AttributeUsage(AttributeTargets.Parameter)]
+    internal sealed class PyPackedArgumentsAttribute : Attribute { }
 
     [AttributeUsage(AttributeTargets.Parameter)]
     internal sealed class PyKeywordArgumentsAttribute : Attribute { }

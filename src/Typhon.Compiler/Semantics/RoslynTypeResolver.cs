@@ -90,7 +90,14 @@ namespace Typhon.Compiler.Semantics
 
         MemberSig MethodSig(IMethodSymbol m)
         {
-            var sig = new MemberSig { IsMethod = true, IsStatic = m.IsStatic, Type = Display(m.ReturnType), ReturnsDynamic = m.ReturnType.TypeKind == TypeKind.Dynamic };
+            var sig = new MemberSig
+            {
+                IsMethod = true,
+                IsStatic = m.IsStatic,
+                Type = Display(m.ReturnType),
+                ReturnsDynamic = m.ReturnType.TypeKind == TypeKind.Dynamic,
+                ReturnsVoid = m.ReturnsVoid,
+            };
             // C# constructs a delegate from one callable. The CLR metadata's target and
             // method pointer are implementation details, not the source parameter list.
             if (m.MethodKind == MethodKind.Constructor && m.ContainingType.TypeKind == TypeKind.Delegate)

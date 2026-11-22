@@ -1,0 +1,46 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+class SavedState:
+    def __init__(self) -> None:
+        self.saved = self.sentinel = object()
+
+    def __enter__(self):
+        print(self.saved is self.sentinel)
+        self.saved = "restored"
+
+    def __exit__(self, *args):
+        print(self.saved)
+
+with SavedState():
+    print("body")
+
+try:
+    with SavedState():
+        raise ValueError("body failed")
+except ValueError as error:
+    print(str(error))
+
+def unpack(value):
+    first, repeated, repeated = value
+    print(first, repeated)
+
+unpack((7, 8, "last"))
+x, repeated, repeated = (1, 2, "third")
+print(x, repeated)
+
+def catcher(expected):
+    try:
+        raise ValueError("matched")
+    except expected as caught:
+        print(str(caught))
+
+catcher(ValueError)
+
+def options(flag: bool):
+    selected = {"a": 1} if flag else {}
+    annotated: dict[str, int] = {"a": 1} if flag else {}
+    print(selected, annotated)
+
+options(True)
+options(False)

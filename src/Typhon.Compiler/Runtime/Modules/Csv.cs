@@ -249,7 +249,11 @@ namespace Typhon.Runtime
             return Write(rec.ToString());
         }
 
-        public void writerows(IEnumerable rows) { foreach (var row in rows) writerow(row); }
+        public object? writerows(IEnumerable rows)
+        {
+            foreach (var row in rows) writerow(row);
+            return null;
+        }
 
         long Write(string line)
         {
@@ -409,6 +413,11 @@ namespace Typhon.Stdlib
                            bool skipinitialspace = false, string lineterminator = "\r\n", long quoting = QUOTE_MINIMAL, bool strict = false)
                 : this(delimiter, quotechar, escapechar, doublequote, skipinitialspace, lineterminator, quoting, strict, null) { }
 
+            public Dialect(object dialect) : this(ReadDialect(dialect)) { }
+
+            Dialect(Dialect source) : this(source.delimiter, source.quotechar, source.escapechar, source.doublequote,
+                source.skipinitialspace, source.lineterminator, source.quoting, source.strict) { }
+
             internal Dialect(string delimiter, string? quotechar, string? escapechar, bool doublequote, bool skipinitialspace,
                              string lineterminator, long quoting, bool strict, string? className)
             {
@@ -480,6 +489,26 @@ namespace Typhon.Stdlib
         public static Dialect get_dialect(string name) => Registry.TryGetValue(name, out var d) ? d : throw new Error("unknown dialect");
         public static List<string> list_dialects() => Registry.Keys.ToList();
 
+        static Dialect ReadDialect(object dialect)
+        {
+            if (dialect is Dialect native) return native;
+            if (dialect is string name) return get_dialect(name);
+
+            object? Attr(string key, object? fallback) => Builtins.getattr(dialect, key, fallback);
+            string? Text(string key, string? fallback)
+            {
+                object? value = Attr(key, fallback);
+                if (value == null || value is string) return (string?)value;
+                throw new InvalidCastException($"\"{key}\" must be a string");
+            }
+            object? quoting = Attr("quoting", excel.quoting);
+            if (quoting is not (long or int)) throw new InvalidCastException("\"quoting\" must be an integer");
+            return new Dialect(Text("delimiter", excel.delimiter)!, Text("quotechar", excel.quotechar),
+                Text("escapechar", excel.escapechar), Builtins.truthy(Attr("doublequote", excel.doublequote)),
+                Builtins.truthy(Attr("skipinitialspace", excel.skipinitialspace)),
+                Text("lineterminator", excel.lineterminator)!, Convert.ToInt64(quoting), Builtins.truthy(Attr("strict", excel.strict)));
+        }
+
         static Dialect Resolve(object? dialect, string delimiter, string? quotechar, string? escapechar, bool? doublequote, bool? skipinitialspace,
                                string lineterminator, long? quoting, bool? strict)
         {
@@ -488,7 +517,7 @@ namespace Typhon.Stdlib
                 null => excel,
                 string name => get_dialect(name),
                 Dialect d => d,
-                _ => throw new InvalidCastException("dialect must be a string or a csv.Dialect"),
+                _ => ReadDialect(dialect),
             };
             return baseDialect.With(delimiter, quotechar, escapechar, doublequote, skipinitialspace, lineterminator, quoting, strict);
         }

@@ -25,10 +25,14 @@ namespace Typhon.Compiler.Emit
 
         string EmitSubscript(SubscriptExpr s)
         {
+            if (IsUnionFactory(s.Target))
+                return $"{Rt("__getitem")}(typeof({RuntimeUnionType}), {EmitUnionArguments(s.Index)})";
             // (a key of unknown or late-bound type says nothing about the key type: max(c, key=lambda x: c[x]) before x is typed)
             if (Obs != null && !(s.Index is SliceExpr) && ElementKey(s.Target, out char rk) is string rkey && (rk == 'D' || rk == 'c') &&
                 InferType(s.Index) is string rit && rit != "dynamic")
                 Obs.AddElement(rkey, (PyType(InferType(s.Index)) ?? TypeInference.Unknown) + "→" + (rk == 'c' ? "long" : TypeInference.Pending));
+            if (!(s.Index is SliceExpr) && BuiltinGenericOrigin(s.Target) is string origin)
+                return EmitGenericAlias(s, origin);
             // a generic type used as a value, e.g. Stack[str].of(...) or Dictionary[str, int] passed around
             if (!(s.Index is SliceExpr) && TryTypeExpr(s, out var genericType)) return genericType;
             string target = EmitExpr(s.Target);
@@ -49,7 +53,9 @@ namespace Typhon.Compiler.Emit
                 return $"{target}.{Esc(ntc.NamedTupleFields[(int)(nti < 0 ? nti + ntc.NamedTupleFields.Count : nti)])}";
             // a late-bound container: a position (a Python int, maybe negative) or a key, resolved at run time
             // (also a late-bound key on a container of a type Typhon does not know: C# would bind its indexer at run time to an int)
-            if ((targetType == "dynamic" || targetType == null && InferType(s.Index) == "dynamic") && !(s.Index is TupleExpr))
+            bool untypedLambdaParameter = targetType == null && s.Target is NameExpr parameter &&
+                _lambdaParams.Any(scope => scope.ContainsKey(parameter.Id));
+            if ((targetType == "dynamic" || untypedLambdaParameter || targetType == null && InferType(s.Index) == "dynamic") && !(s.Index is TupleExpr))
                 return $"{Rt("__getitem")}((object?){target}, (object?){Paren(ModuleOrClassValue(s.Index) ?? EmitExpr(s.Index))})";
             // a[x, y] on a late-bound a: the key is the tuple (x, y) (a Typhon class's __getitem__ takes one key)
             if (targetType == "dynamic" && s.Index is TupleExpr dtk && !dtk.Parenthesized && !dtk.Elts.Any(x => x is SliceExpr))

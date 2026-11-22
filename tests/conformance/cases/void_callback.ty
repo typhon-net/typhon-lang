@@ -1,0 +1,11 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import atexit
+import sys
+
+registered = atexit.register(lambda: sys.setprofile(None))
+print(registered() is None)
+
+local = lambda: sys.setprofile(None)
+print(local() is None)

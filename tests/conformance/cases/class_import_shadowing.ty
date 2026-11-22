@@ -1,0 +1,17 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import math as helpers
+
+class Calculates:
+    def helpers(self) -> float:
+        return helpers.sqrt(9.0)
+
+    def circle(self) -> float:
+        return round(helpers.pi, 2)
+
+    def has_helpers(self) -> bool:
+        return hasattr(helpers, "sqrt")
+
+example = Calculates()
+print(example.helpers(), example.circle(), example.has_helpers())

@@ -63,6 +63,7 @@ namespace Typhon.Compiler.Emit
             if (t.StartsWith("List<") && v.StartsWith("IEnumerable<")) return true;
             bool Plain(string x) => PrimitiveCsTypes.Contains(x) || x.StartsWith("List<") || x.StartsWith("HashSet<") || IsDictType(x) || x.StartsWith("(") ||
                                     x is "global::Typhon.Runtime.PyAttrDict" or "global::Typhon.Runtime.PyBytes" or "global::Typhon.Runtime.PyByteArray" ||
+                                    x is "global::System.Type" or "System.Type" ||
                                     x is "global::Typhon.Stdlib.re.Match" or "global::Typhon.Stdlib.re.BytesMatch" ||
                                     x.StartsWith("global::Typhon.Runtime.PyTuple<");
             return Plain(t) && Plain(v);
@@ -118,7 +119,7 @@ namespace Typhon.Compiler.Emit
                 case TryStmt t: EmitTry(t); break;
                 case WithStmt w: EmitWith(w); break;
                 case FunctionDef f: EmitLocalFunction(f); break;
-                case ClassDef c: Unsupported(c, "classes defined inside functions"); break;
+                case ClassDef c: EmitLocalDataClass(c); break;
                 default: Unsupported(s, s.GetType().Name); break;
             }
         }
@@ -211,7 +212,7 @@ namespace Typhon.Compiler.Emit
                 _w.Line(rt is null or "void" ? "return;" : "return null;");
                 return;
             }
-            if (bound != null) { _w.Line($"return {bound};"); return; }
+            if (bound != null) { _w.Line($"return {ProfileReturn(bound)};"); return; }
             if (r.Value is CallExpr { Func: AttributeExpr { Target: NameExpr { Id: "self" } } callee } call &&
                 _cls != null && MethodInHierarchy(_cls.Def, callee.Name) is FunctionDef method && !method.IsAsync &&
                 !_m.Ast.MethodDecorators.ContainsKey(method) &&
@@ -222,7 +223,10 @@ namespace Typhon.Compiler.Emit
                 _w.Line(rt == "void" ? "return;" : "return null;");
                 return;
             }
-            _w.Line($"return {EmitExpr(r.Value, targetTyped: rt != null && rt != "dynamic" && rt != "void")};");
+            _w.Line($"return {ProfileReturn(EmitExpr(r.Value, targetTyped: rt != null && rt != "dynamic" && rt != "void"))};");
+
+            string ProfileReturn(string value) => _scope?.ProfileToken is string profile && rt != "void"
+                ? $"global::Typhon.Runtime.PyProfiling.Result<{rt ?? "dynamic"}>({profile}, {value})" : value;
         }
 
         bool IsTestModule => _staticTypes.Contains("Typhon.Stdlib.pytest") || _dotnetAliases.ContainsValue("Typhon.Stdlib.pytest");
@@ -408,8 +412,8 @@ namespace Typhon.Compiler.Emit
                 {
                     var specs = h.Type is TupleExpr ht ? ht.Elts : new List<Expr> { h.Type };
                     // Exception aliases may be Type-valued fields, e.g. socket.timeout.
-                    var aliases = specs.Where(x => (InferType(x) is "System.Type" or "global::System.Type") &&
-                        !TryTypeExpr(x, out _)).ToList();
+                    var aliases = specs.Where(x => !TryTypeExpr(x, out _) &&
+                        (InferType(x) is "System.Type" or "global::System.Type" || x is NameExpr nameValue && IsLocal(nameValue.Id))).ToList();
                     var types = specs.Except(aliases).SelectMany(x => CatchTypes(x, h)).Distinct().ToList();
                     IEnumerable<string> AliasTests(string caught) => aliases.Select(x =>
                         $"global::Typhon.Stdlib.builtins.isinstance({caught}, (object?){Paren(EmitValue(x))})");
@@ -547,7 +551,7 @@ namespace Typhon.Compiler.Emit
                 if (IsInline(w, vn.Id)) { _w.Line($"var {Esc(vn.Id)} = {enter};"); SetType(vn.Id, enterType); }
                 else _w.Line($"{EmitName(vn)} = {enter};");
             }
-            else if (item.Var == null) _w.Line($"{(typed ? "_ = " : "")}{enter};");
+            else if (item.Var == null) _w.Line($"{(typed && isAsync ? "_ = " : "")}{enter};");
             else Unsupported(item.Var, "this 'with ... as' target");
             string exitNone = isAsync ? (typed ? $"await {cm}.__aexit__(null, null, null)" : $"await {Rt("__aexit")}((object?){cm}, null)")
                                       : typed ? $"{cm}.__exit__(null, null, null)" : $"{Rt("__exit")}((object?){cm}, null)";

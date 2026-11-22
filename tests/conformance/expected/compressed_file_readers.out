@@ -1,3 +1,4 @@
 'café\n' 'second'
 b'caf\xc3\xa9\r\nsecond'
 b'first\n' b'caf\xc3' b'\xa9\r\nsecond'
+truncated bzip2 header

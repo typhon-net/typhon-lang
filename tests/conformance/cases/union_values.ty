@@ -1,0 +1,49 @@
+import operator
+import types
+import typing as t
+from typing import Any, Union as U
+
+class Custom:
+    pass
+
+u = int | str
+print(type(u) is types.UnionType, type(u) is t.Union, U is t.Union)
+print(u, u.__args__)
+print((int | (str | int)) == (str | int), hash(u) == hash(str | int))
+print(int | int is int, U[int, int] is int)
+print(U[Custom, None], operator.getitem(t.Union, (Custom, int)))
+print(type(u).__name__, type(u).__module__)
+print(isinstance(5, int | str), isinstance(5.0, int | str), isinstance(False, u))
+print(isinstance(None, (str, Custom | None)), issubclass(Custom, Custom | str))
+print(isinstance([], u), issubclass(float, u))
+print(U[str, int].__args__, operator.getitem(U, (int, str)) == u)
+
+def union_values(left: Any, right: Any):
+    return left | right
+
+builtin_cls = int
+print(union_values(builtin_cls, Custom), union_values(1, 2))
+
+Scalar = int | str
+
+def annotated(value: Scalar) -> U[int, str]:
+    return value
+
+print(annotated(7), annotated("text"), isinstance(1, Scalar))
+print(issubclass(bool, int | float))
+print(U[list[int], str], (list[int] | str).__args__[0])
+print(isinstance("ok", str | list[int]))
+try:
+    isinstance([], list[int] | str)
+except TypeError:
+    print("generic class check rejected")
+try:
+    print(int | 1)
+except TypeError:
+    print("non-class union rejected")
+
+def reduce_union(value):
+    return operator.getitem, (t.Union, value.__args__)
+
+getter, arguments = reduce_union(u)
+print(getter(arguments[0], arguments[1]) == u)

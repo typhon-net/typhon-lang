@@ -21,7 +21,7 @@ namespace Typhon.Stdlib
     using System.Runtime.CompilerServices;
     using Typhon.Runtime;
 
-    internal static class types
+    internal static partial class types
     {
         /// <summary>
         /// SimpleNamespace(mapping_or_iterable=(), /, **kwargs): an object whose attributes are the keyword arguments; more
@@ -315,7 +315,6 @@ namespace Typhon.Stdlib
         internal sealed class CapsuleType { CapsuleType() { } }
         internal sealed class FrameLocalsProxyType { FrameLocalsProxyType() { } }
         internal sealed class LazyImportType { LazyImportType() { } }
-        internal sealed class UnionType { UnionType() { } }
         /// <summary>NoneType: the class of None (None is null in Typhon, so isinstance(None, NoneType) is False here).</summary>
         internal sealed class NoneType { NoneType() { } }
 

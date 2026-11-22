@@ -58,8 +58,10 @@ namespace Typhon.Runtime
 
     internal static partial class Builtins
     {
-        public static RuntimeCode compile(object? source, object? filename = null, object? mode = null, long flags = 0, bool dont_inherit = false, long optimize = -1)
+        public static RuntimeCode compile(object? source, object? filename = null, object? mode = null, long flags = 0, bool dont_inherit = false, long optimize = -1, object? module = null)
         {
+            if (module != null && module is not string)
+                throw new InvalidCastException($"compile() argument 'module' must be str or None, not {PyTypeName(module.GetType())}");
             string text = source switch
             {
                 string s => s,
@@ -106,10 +108,29 @@ namespace Typhon.Runtime
             var localNames = locals == null ? globalNames :
                 locals as IDictionary ?? throw new InvalidCastException("locals must be a mapping");
             var run = AppContext.GetData("Typhon.RunRuntimeCode") as
-                Func<string, string, string, long, IDictionary, IDictionary, (object? Value, string? Error)>
+                Func<string, string, string, long, IDictionary, IDictionary, bool, (object? Value, string? Error)>
                 ?? throw new NotSupportedException("exec() and eval() require the Typhon runtime compiler host");
-            var result = run(code.Source, code.co_filename, code.Mode, code.co_flags, globalNames, localNames);
+            var result = run(code.Source, code.co_filename, code.Mode, code.co_flags, globalNames, localNames, PyProfiling.Active);
             return result.Error != null ? throw new SyntaxError(result.Error) : result.Value;
+        }
+
+        static readonly object MissingImportAttribute = new object();
+
+        public static dynamic? __runtime_relative_import(IDictionary globals, string module, long level, string member)
+        {
+            if (globals["__package__"] is not string package || package.Length == 0)
+                throw new ImportError("attempted relative import with no known parent package");
+            string absolute = SourceImport.ResolveRelative(module, package, checked((int)level));
+            object imported = SourceImport.ImportModule(absolute);
+            object? value = getattr(imported, member, MissingImportAttribute);
+            if (!ReferenceEquals(value, MissingImportAttribute)) return value;
+            if (hasattr(imported, "__path__"))
+            {
+                string child = absolute + "." + member;
+                try { return SourceImport.ImportModule(child); }
+                catch (ModuleNotFoundError error) when (Equals(error.name, child)) { }
+            }
+            throw new ImportError($"cannot import name '{member}' from '{absolute}'", absolute);
         }
 
         public static void __display_runtime_result(object? value)

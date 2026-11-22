@@ -635,7 +635,107 @@ namespace Typhon.Stdlib
                     default: sb.Append(c); break;
                 }
             }
-            return sb.ToString();
+            return PossessiveRepetitions(sb.ToString(), verbose);
+        }
+
+        // .NET's atomic group expresses Python's possessive repetition without adding any captures.
+        static string PossessiveRepetitions(string pattern, bool verbose)
+        {
+            if (!pattern.Contains("*+") && !pattern.Contains("++") &&
+                !pattern.Contains("?+") && !pattern.Contains("}+")) return pattern;
+            var result = new StringBuilder(pattern.Length);
+            var groups = new Stack<int>();
+            int atom = -1;
+            for (int i = 0; i < pattern.Length;)
+            {
+                int first = i;
+                char c = pattern[i++];
+                if (c == '\\' && i < pattern.Length)
+                {
+                    char escape = pattern[i++];
+                    if (escape is 'p' or 'P' or 'k' && i < pattern.Length && pattern[i] is '{' or '<')
+                    {
+                        int end = pattern.IndexOf(pattern[i] == '{' ? '}' : '>', i + 1);
+                        if (end >= 0) i = end + 1;
+                    }
+                    else if (escape is 'x' or 'u')
+                        i = Math.Min(pattern.Length, i + (escape == 'x' ? 2 : 4));
+                    else if (char.IsAsciiDigit(escape))
+                        while (i < pattern.Length && char.IsAsciiDigit(pattern[i])) i++;
+                    atom = escape is 'A' or 'Z' or 'z' or 'b' or 'B' or 'G' ? -1 : result.Length;
+                }
+                else if (c == '[')
+                {
+                    while (i < pattern.Length)
+                    {
+                        char member = pattern[i++];
+                        if (member == '\\' && i < pattern.Length) i++;
+                        else if (member == ']') break;
+                    }
+                    atom = result.Length;
+                }
+                else if (verbose && c == '#')
+                {
+                    int end = pattern.IndexOf('\n', i);
+                    i = end < 0 ? pattern.Length : end;
+                }
+                else if (c == '(')
+                {
+                    groups.Push(result.Length);
+                    atom = -1;
+                }
+                else if (c == ')')
+                    atom = groups.TryPop(out int opening) ? opening : -1;
+                else if (c is '^' or '$' or '|')
+                    atom = -1;
+                else if (!(verbose && char.IsWhiteSpace(c)))
+                {
+                    int end = QuantifierEnd(pattern, first);
+                    bool quantifier = end > first;
+                    if (quantifier) i = end;
+                    if (quantifier && atom >= 0 && i < pattern.Length && pattern[i] == '+')
+                    {
+                        int next = i + 1;
+                        if (verbose)
+                        {
+                            while (next < pattern.Length)
+                            {
+                                if (char.IsWhiteSpace(pattern[next])) next++;
+                                else if (pattern[next] == '#')
+                                {
+                                    int newline = pattern.IndexOf('\n', next + 1);
+                                    next = newline < 0 ? pattern.Length : newline + 1;
+                                }
+                                else break;
+                            }
+                        }
+                        if (QuantifierEnd(pattern, next) > next) throw new ArgumentException("multiple repeat");
+                        result.Insert(atom, "(?>");
+                        result.Append(pattern, first, i - first).Append(')');
+                        i++;
+                        atom = -1;
+                        continue;
+                    }
+                    atom = quantifier ? -1 : result.Length;
+                }
+                result.Append(pattern, first, i - first);
+            }
+            return result.ToString();
+        }
+
+        static int QuantifierEnd(string pattern, int start)
+        {
+            if (start >= pattern.Length) return start;
+            if (pattern[start] is '*' or '?' or '+') return start + 1;
+            int end = start + 1;
+            if (pattern[start] != '{' || end >= pattern.Length || !char.IsAsciiDigit(pattern[end])) return start;
+            while (end < pattern.Length && char.IsAsciiDigit(pattern[end])) end++;
+            if (end < pattern.Length && pattern[end] == ',')
+            {
+                end++;
+                while (end < pattern.Length && char.IsAsciiDigit(pattern[end])) end++;
+            }
+            return end < pattern.Length && pattern[end] == '}' ? end + 1 : start;
         }
     }
 }

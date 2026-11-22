@@ -153,6 +153,7 @@ namespace Typhon.Compiler.Emit
             public readonly List<string> Prologue = new List<string>();
             /// <summary>Python names the body refers to by another C# name (the non-null local of such a parameter).</summary>
             public readonly Dictionary<string, string> Renames = new Dictionary<string, string>();
+            public readonly Dictionary<string, string> DefaultArguments = new Dictionary<string, string>();
         }
 
         /// <summary>
@@ -247,6 +248,10 @@ namespace Typhon.Compiler.Emit
                         Stmts(t.OrElse, restricted || t.Handlers.Count > 0);
                         Stmts(t.FinalBody, true);
                         return;
+                    case WithStmt w:
+                        foreach (var item in w.Items) InExpr(item.Context);
+                        Stmts(w.Body, true);
+                        return;
                     case ExprStmt es when es.Value is YieldExpr y: if (restricted) found = true; else InExpr(y.Value); return;
                     case AssignStmt a when a.Value is YieldExpr y && a.Targets.Count == 1: if (restricted) found = true; else InExpr(y.Value); return;
                     case AnnAssignStmt an when an.Value is YieldExpr y: if (restricted) found = true; else InExpr(y.Value); return;
@@ -305,6 +310,8 @@ namespace Typhon.Compiler.Emit
             string qualifier = _scope?.FunctionQualName is string enclosing ? enclosing + ".<locals>." :
                 _cls != null ? _cls.Name + "." : "";
             scope.FunctionQualName = qualifier + (f.PyName ?? f.Name);
+            scope.ProfileName = f.PyName ?? f.Name;
+            scope.ProfileLine = f.Line;
             sig.Scope = scope;
 
             var ps = new List<string>();
@@ -352,7 +359,7 @@ namespace Typhon.Compiler.Emit
                 {
                     if (p.Annotation == null) type = "object";
                     string argument = Esc(p.Name);
-                    ps.Add(packedVarArgs ? $"{type}[]? {argument}" : $"params {type}[] {argument}");
+                    ps.Add(packedVarArgs ? $"[global::Typhon.Runtime.PyPackedArguments] {type}[]? {argument}" : $"params {type}[] {argument}");
                     defaults.Add(packedVarArgs ? "null" : null);
                     var tupleType = $"{PyTuplePrefix}{(type == "object" ? "dynamic" : type)}>";
                     string localType = ConflictType(p.Name) ?? tupleType;
@@ -364,10 +371,9 @@ namespace Typhon.Compiler.Emit
                     continue;
                 }
                 string decl = $"{type} {Esc(p.Name)}";
-                // an inferred overload keeps a default only if the default has the overload's parameter type
-                // (a method's late-bound version beside typed overloads takes no defaults: a call leaving a parameter out
-                // binds to the typed overload, C# would find the two ambiguous)
-                bool keepDefault = p.Default != null && !_quietDynamic &&
+                // An inferred overload keeps only defaults of its parameter type. For a None default
+                // on an unannotated parameter, the late-bound overload is the only one omitting it.
+                bool keepDefault = p.Default != null && (!_quietDynamic || p.Annotation == null && IsNone(p.Default)) &&
                     (paramTypes == null || p.Annotation != null || InferType(p.Default) == type);
                 string defaultCode = null;
                 // a parameter the body rebinds to values of another type (in a nested block): the body uses a wider local
@@ -378,7 +384,9 @@ namespace Typhon.Compiler.Emit
                     string local = p.Name + "__arg";
                     decl = $"{NullableOf(type)} {Esc(p.Name)}";
                     defaultCode = "null";
-                    sig.Prologue.Add($"{wider ?? type} {Esc(local)} = {Esc(p.Name)} ?? {source};");
+                    string argument = $"{Esc(p.Name)} ?? {source}";
+                    sig.DefaultArguments[p.Name] = Paren(argument);
+                    sig.Prologue.Add($"{wider ?? type} {Esc(local)} = {argument};");
                     sig.Renames[p.Name] = local;
                     if (wider != null) scope.Types[p.Name] = wider;
                 }
@@ -623,6 +631,15 @@ namespace Typhon.Compiler.Emit
             // Python ints never wrap around: arithmetic is checked (beyond 64 bits it raises OverflowError)
             _w.Line(CheckedKeyword);
             _w.Open();
+            scope.ProfileToken = null;
+            if (!_dry && _p.EmitsProfileEvents && scope.ProfileName != null && !scope.IsGenerator && !scope.IsAsync)
+            {
+                scope.ProfileToken = NewTmp("profile");
+                _w.Line($"using var {scope.ProfileToken} = global::Typhon.Runtime.PyProfiling.Enter(" +
+                    $"{CsString(scope.ProfileName)}, {CsString(scope.FunctionQualName)}, {CsString(_m.Path ?? "")}, {scope.ProfileLine}, {CsString(_m.Name)});");
+                _w.Line("try");
+                _w.Open();
+            }
             if (prologue != null) _w.Line(prologue);
             extraPrologue?.Invoke();
             foreach (var h in scope.Locals.Hoisted)
@@ -666,6 +683,15 @@ namespace Typhon.Compiler.Emit
             {
                 if (Obs != null && _retKey != null && CanFallThrough(body)) Obs.AddReturn(_retKey, TypeInference.NoneType);
                 _w.Line("return default!;");
+            }
+            if (scope.ProfileToken != null)
+            {
+                _w.Close();
+                _w.Line("catch");
+                _w.Open();
+                _w.Line($"if ({scope.ProfileToken} != null) {scope.ProfileToken}.Result = null;");
+                _w.Line("throw;");
+                _w.Close();
             }
             _w.Close();
             _w.Close();

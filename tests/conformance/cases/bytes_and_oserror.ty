@@ -1,0 +1,15 @@
+def check(value):
+    return value.startswith(b'+')
+
+print(check(b'+ready'), check(b'-error'))
+
+try:
+    raise OSError(7, 'problem', 'mailbox')
+except OSError as exc:
+    print(exc.errno, exc.strerror, exc.filename, exc.filename2)
+
+print(int(b' -1_024\t'), int(bytearray(b'+15')))
+try:
+    int(b'1__2')
+except ValueError as exc:
+    print(str(exc))

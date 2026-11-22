@@ -49,6 +49,7 @@ namespace Typhon.Compiler
         public readonly Dictionary<string, ClassDef> Classes = new Dictionary<string, ClassDef>();
         public readonly HashSet<string> Functions = new HashSet<string>();
         public readonly HashSet<string> Globals = new HashSet<string>();
+        internal readonly HashSet<string> ConditionalGlobals = new HashSet<string>();
         /// <summary>Module-level type aliases: EdgeT = tuple[int, int], Matrix = list[list[float]], X: TypeAlias = ...</summary>
         public readonly Dictionary<string, Expr> TypeAliases = new Dictionary<string, Expr>();
         public readonly List<TyDiagnostic> ParseDiagnostics = new List<TyDiagnostic>();
@@ -96,6 +97,29 @@ namespace Typhon.Compiler
         internal TypeInference Inference;
         /// <summary>Module functions referenced as values somewhere in the project ("module.func"); each gets a function type.</summary>
         internal HashSet<string> FunctionValueKeys;
+        bool? _emitsProfileEvents;
+        public bool ProfileRuntimeCode;
+        internal bool EmitsProfileEvents => ProfileRuntimeCode || (_emitsProfileEvents ??= Modules.Values.Any(UsesProfiling));
+
+        static bool UsesProfiling(ModuleInfo module)
+        {
+            if (module.Ast == null) return false;
+            bool found = false;
+            AstWalker.VisitAll(module.Ast.Body, node =>
+            {
+                if (found) return;
+                found = node is NameExpr { Id: "setprofile" or "_setprofileallthreads" } ||
+                        node is AttributeExpr { Name: "setprofile" or "_setprofileallthreads" } ||
+                        node is ConstExpr { Kind: ConstKind.Str, Str: "setprofile" or "_setprofileallthreads" } ||
+                        node is ImportStmt direct && direct.Names.Any(n => ProfilingModule(n.Name)) ||
+                        node is ImportFromStmt from && (ProfilingModule(from.Module) ||
+                            from.Module == "sys" && from.Names.Any(n => n.Name is "setprofile" or "_setprofileallthreads"));
+            });
+            return found;
+
+            static bool ProfilingModule(string name) => name is "cProfile" or "profile" or "profiling" ||
+                name?.StartsWith("profiling.", StringComparison.Ordinal) == true;
+        }
         /// <summary>Classes constructed in two phases (allocation, then an __init__ method), see Typhon.Runtime.NoInit.</summary>
         internal HashSet<Syntax.ClassDef> TwoPhaseClasses;
         /// <summary>
@@ -250,6 +274,24 @@ namespace Typhon.Compiler
                     case AssignStmt a: foreach (var t in a.Targets) if (t is NameExpr n) info.Globals.Add(n.Id); break;
                     case AnnAssignStmt a: if (a.Target is NameExpr an) info.Globals.Add(an.Id); break;
                 }
+            }
+            var branches = info.Ast.Body.OfType<IfStmt>().Cast<Stmt>().ToList();
+            if (branches.Count > 0)
+            {
+                var locals = LocalsAnalyzer.Analyze(branches, Enumerable.Empty<string>(), null);
+                info.ConditionalGlobals.UnionWith(locals.AllLocals);
+                info.ConditionalGlobals.ExceptWith(locals.LocalFunctions);
+                info.ConditionalGlobals.ExceptWith(info.Globals);
+                info.ConditionalGlobals.ExceptWith(info.Functions);
+                info.ConditionalGlobals.ExceptWith(info.Classes.Keys);
+                foreach (var statement in info.Ast.Body)
+                {
+                    if (statement is ImportStmt import)
+                        info.ConditionalGlobals.ExceptWith(import.Names.Select(n => n.AsName ?? n.Name.Split('.')[0]));
+                    if (statement is ImportFromStmt from)
+                        info.ConditionalGlobals.ExceptWith(from.Names.Select(n => n.AsName ?? n.Name));
+                }
+                info.Globals.UnionWith(info.ConditionalGlobals);
             }
             return info;
         }

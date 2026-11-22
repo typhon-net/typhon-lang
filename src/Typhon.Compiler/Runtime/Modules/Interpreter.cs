@@ -102,6 +102,8 @@ namespace Typhon.Stdlib
                 case Type t:
                     if (obj == null) return t == typeof(object) || t == typeof(Typhon.Stdlib.types.NoneType);
                     return Builtins.issubclass(obj.GetType(), t);
+                case types.UnionType union:
+                    return union.__args__.Any(type => isinstance(obj, type));
                 case ITuple tuple:
                     for (int i = 0; i < tuple.Length; i++) if (isinstance(obj, tuple[i])) return true;
                     return false;
@@ -139,7 +141,8 @@ namespace Typhon.Stdlib
 
         public static object __import__(string name, object? globals = null, object? locals = null, object? fromlist = null, long level = 0) =>
             Builtins.__import__(name, globals, locals, fromlist, level);
-        public static dynamic? compile(object? source, object? filename = null, object? mode = null, long flags = 0, bool dont_inherit = false, long optimize = -1) => Builtins.compile(source, filename, mode, flags, dont_inherit, optimize);
+        public static dynamic? compile(object? source, object? filename = null, object? mode = null, long flags = 0, bool dont_inherit = false, long optimize = -1, object? module = null) =>
+            Builtins.compile(source, filename, mode, flags, dont_inherit, optimize, module);
         public static void exec(object? source, object? globals = null, object? locals = null) => Builtins.exec(source, globals, locals);
         public static dynamic? eval(object? source, object? globals = null, object? locals = null) => Builtins.eval(source, globals, locals);
         public static void breakpoint() => Builtins.breakpoint();

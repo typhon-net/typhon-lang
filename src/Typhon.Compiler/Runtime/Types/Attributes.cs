@@ -23,7 +23,9 @@ namespace Typhon.Runtime
         const BindingFlags StaticMembers = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
 
         public static dynamic? getattr(object? o, string name) =>
-            TryGetAttr(o, name, out var v) ? v : throw new MissingMemberException($"'{(o == null ? "NoneType" : o is Type ? "type" : PyTypeName(o.GetType()))}' object has no attribute '{name}'");
+            TryGetAttr(o, name, out var v) ? v : throw new MissingMemberException(o is PyModule module
+                ? $"module '{module.__name__}' has no attribute '{name}'"
+                : $"'{(o == null ? "NoneType" : o is Type ? "type" : PyTypeName(o.GetType()))}' object has no attribute '{name}'");
         public static dynamic? getattr(object? o, string name, object? @default) => TryGetAttr(o, name, out var v) ? v : @default;
         public static bool hasattr(object? o, string name) => TryGetAttr(o, name, out _);
 
@@ -39,6 +41,12 @@ namespace Typhon.Runtime
             if (o == null && name == "__class__") { value = __type_of(o); return true; }
             if (o == null || name.StartsWith("<")) return false;
             if (o is Typhon.Stdlib.builtins.super proxy && proxy.TryResolve(name, out value)) return true;
+            if (o is PyBoundMethod { BuiltinOwner: { } owner } && name == "__self__") { value = owner; return true; }
+            if (o is System.Numerics.Complex number && name is "real" or "imag")
+            {
+                value = name == "real" ? number.Real : number.Imaginary;
+                return true;
+            }
             if (o is PyModule module)
             {
                 if (name == "__dict__") { value = module.__dict__; return true; }
@@ -52,14 +60,33 @@ namespace Typhon.Runtime
             }
             if (o is Type t)
             {
-                if (name == "__name__" || name == "__qualname__") { value = PyTypeName(t); return true; }
-                if (name == "__dict__") { value = PyClassDescriptors.Dictionary(t); return true; }
+                if (name == "__name__") { value = PyTypeName(t); return true; }
+                if (name == "__qualname__") { value = t is PyLocalDataClass localName ? localName.QualName : PyTypeName(t); return true; }
+                if (name == "__dict__")
+                {
+                    value = t is PyLocalDataClass localDict ? new Typhon.Stdlib.types.MappingProxyType(localDict.Members) : PyClassDescriptors.Dictionary(t);
+                    return true;
+                }
                 if (name == "__module__") { value = __module_of(t); return true; }
+                if (name == "__mro__") { value = new PyTuple<Type>(Ancestors(t)); return true; }
+                if (t is PyLocalDataClass local)
+                {
+                    if (local.Members.TryGetValue(name, out value) || name == "__doc__") return true;
+                    return TryGetAttr(local.BaseType, name, out value, allowFallback);
+                }
                 if (name == "__doc__") { value = t.GetCustomAttribute<PySourceAttribute>()?.DocString; return true; }
                 if (PyClassDescriptors.TryGetAttribute(t, name, out value)) return true;
                 if (name == "__module__") { value = ModuleOfType(t); return true; }
                 if (TryGetClassData(t, name, out value)) return true;
                 if (t.GetMethods(StaticMembers | InstanceMembers).Any(m => m.Name == name)) { value = new PyBoundMethod(t, name); return true; }
+                if (name == "__getstate__") { value = __object_method("__object_getstate"); return true; }
+                if (name == "__new__")
+                {
+                    if (t == typeof(long)) { value = __object_method("__int_new"); return true; }
+                    if (t == typeof(object) || t.IsDefined(typeof(PySourceAttribute), false) &&
+                        !typeof(System.Runtime.CompilerServices.ITuple).IsAssignableFrom(t))
+                    { value = __object_method("__object_new"); return true; }
+                }
                 if (FindNestedType(t, name) is Type nested) { value = nested; return true; }
                 if (TryBuiltinClassMethod(t, name, out value)) return true;
                 // CLR reflection consumers may also read members of the Type object itself.
@@ -95,6 +122,11 @@ namespace Typhon.Runtime
                 catch (MissingMemberException) when (lateAttribute) { return false; }
             }
             if (type.GetField(name, InstanceMembers) is FieldInfo f) { value = f.GetValue(o); return true; }
+            if (o is System.IO.IOException && name is ("errno" or "strerror" or "filename" or "filename2"))
+            {
+                value = null;
+                return true;
+            }
             if (PyAttrDict.TryGetExtra(o, name, out value)) return true;
             if (type.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
                 .Any(m => m.Name == name && (m.IsPublic || m.IsDefined(typeof(PySourceAttribute), false))))
@@ -110,7 +142,7 @@ namespace Typhon.Runtime
                     if (args.Length is < 1 or > 2 || keywords?.Count > 0)
                         throw PyClosure.ArgCountError(name, 1, 2, args.Length);
                     object? key = KeyFor(dictionary, args[0]);
-                    return dictionary.Contains(key!) ? dictionary[key!] : args.Length == 2 ? args[1] : null;
+                    return key != null && dictionary.Contains(key) ? dictionary[key] : args.Length == 2 ? args[1] : null;
                 });
                 return true;
             }
@@ -144,6 +176,11 @@ namespace Typhon.Runtime
             }
             if (TryGetClassData(type, name, out value)) return true;
             if (FindNestedType(type, name) is Type nestedType) { value = nestedType; return true; }
+            if (name == "__getstate__")
+            {
+                value = new Typhon.Stdlib.types.MethodType(__object_method("__object_getstate"), o);
+                return true;
+            }
             return allowFallback && TryFallbackAttribute(o, name, out value);
         }
 
@@ -193,7 +230,12 @@ namespace Typhon.Runtime
         static readonly System.Collections.Concurrent.ConcurrentDictionary<string, PyBoundMethod> ObjectMethods = new();
 
         public static PyBoundMethod __object_method(string helper) =>
-            ObjectMethods.GetOrAdd(helper, name => new PyBoundMethod(typeof(Builtins), name));
+            ObjectMethods.GetOrAdd(helper, name => new PyBoundMethod(typeof(Builtins), name, builtinOwner: name switch
+            {
+                "__object_new" => typeof(object),
+                "__int_new" => typeof(long),
+                _ => null,
+            }));
 
         public static object __object_new(Type cls)
         {
@@ -203,6 +245,38 @@ namespace Typhon.Runtime
         }
 
         public static object? __object_init(object? value) => null;
+
+        public static object? __object_getstate(object? instance)
+        {
+            if (instance == null) return null;
+            var state = new PyAttrDict(instance);
+            return state.Count == 0 ? null : state;
+        }
+
+        static void RequireIntClass(Type cls)
+        {
+            if (cls != typeof(long)) throw new InvalidCastException("int.__new__() requires the int type");
+        }
+
+        public static long __int_new(Type cls)
+        {
+            RequireIntClass(cls);
+            return 0;
+        }
+
+        public static long __int_new(Type cls, object? x)
+        {
+            RequireIntClass(cls);
+            if (x == null) throw new InvalidCastException("int() argument must be a string or a number, not 'NoneType'");
+            return @int(x);
+        }
+
+        public static long __int_new(Type cls, string x, long @base)
+        {
+            RequireIntClass(cls);
+            return @int(x, @base);
+        }
+
 
         public static object? __object_getattribute(object? obj, string name) =>
             TryGetAttr(obj, name, out var value, allowFallback: false) ? value : throw new MissingMemberException(name);
@@ -287,10 +361,20 @@ namespace Typhon.Runtime
             throw new InvalidCastException($"{name}() does not take {args.Length} arguments here");
         }
 
+        /// <summary>Python instances can acquire attributes, while CLR receivers keep their normal setter behavior.</summary>
+        public static void __setattr_late(object? value, object? receiver, string name, Action<dynamic, dynamic> clrSet)
+        {
+            if (receiver == null || (receiver as Type ?? receiver.GetType()).IsDefined(typeof(PySourceAttribute), false))
+                setattr(receiver, name, value);
+            else
+                clrSet(receiver, value);
+        }
+
         /// <summary>setattr(obj, name, value): a declared property or field (converted to its type), else an attribute kept beside the object.</summary>
         public static void setattr(object? o, string name, object? value)
         {
             if (o == null) throw new MissingMemberException($"'NoneType' object has no attribute '{name}'");
+            if (o is PyLocalDataClass local) { local.Members[name] = value; return; }
             if (o is Type t)
             {
                 if (t.GetProperty(name, StaticMembers) is PropertyInfo sp && sp.CanWrite) { sp.SetValue(null, ConvertTo(value, sp.PropertyType)); return; }
@@ -318,6 +402,7 @@ namespace Typhon.Runtime
 
         public static void delattr(object? o, string name)
         {
+            if (o is PyLocalDataClass local && local.Members.Remove(name)) return;
             if (o != null && PyAttrDict.RemoveExtra(o, name)) return;
             if (o is PyFunction pf && pf._attrs != null && pf._attrs.Remove(name)) return;
             throw new MissingMemberException($"'{(o == null ? "NoneType" : PyTypeName(o.GetType()))}' object has no attribute '{name}' (or it is declared by its class)");

@@ -1,0 +1,54 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+from contextlib import ExitStack
+
+class Manager:
+    def __init__(self, label: str, suppress: bool = False):
+        self.label = label
+        self.suppress = suppress
+
+    def __enter__(self) -> str:
+        print("enter", self.label)
+        return self.label
+
+    def __exit__(self, kind, value, trace) -> bool:
+        print("exit", self.label, str(value) if value is not None else None)
+        return self.suppress
+
+def marked(label: str) -> None:
+    print("callback", label)
+
+with ExitStack() as outer:
+    print("entered", outer.enter_context(Manager("first")))
+    callback = outer.callback(marked, "second")
+    print(callback is marked)
+    moved = outer.pop_all()
+print("moved")
+moved.close()
+moved.close()
+
+with ExitStack() as stack:
+    stack.enter_context(Manager("observer"))
+    stack.enter_context(Manager("suppressor", True))
+    raise ValueError("initial")
+print("continued")
+
+def fail() -> None:
+    raise RuntimeError("replacement")
+
+try:
+    with ExitStack() as stack:
+        stack.enter_context(Manager("replacement observer"))
+        stack.callback(fail)
+        raise ValueError("original")
+except RuntimeError as error:
+    print("propagated", str(error))
+
+def ignore_error(kind, value, trace) -> bool:
+    print("pushed", str(value))
+    return kind is ValueError
+
+with ExitStack() as stack:
+    print(stack.push(ignore_error) is ignore_error)
+    raise ValueError("handled")

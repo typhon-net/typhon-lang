@@ -205,6 +205,7 @@ namespace Typhon.Compiler.Emit
             foreach (var scope in _lambdaParams)
                 if (scope.TryGetValue(id, out var lambdaParameter)) return lambdaParameter;
             if (_renames.TryGetValue(id, out var renamed)) return Esc(renamed);
+            if (_baseInitializerArguments != null && _baseInitializerArguments.TryGetValue(id, out var argument)) return argument;
             if (IsLocal(id)) return Esc(id);
             if (_m.RuntimeCodeMode != null && _m.RuntimeBindings.Contains(id))
                 return $"__typhon_execution.{(_scopeKey == RuntimeCodeScopeKey ? "Local" : "Global")}[{CsString(id)}]";
@@ -220,8 +221,11 @@ namespace Typhon.Compiler.Emit
                     "throw new global::System.InvalidCastException(\"globals() takes no arguments\"))";
             }
             if (PackageImportedMember(id) is string packageMember) return packageMember;
-            if (_qualifiedRuntimeModuleImports.Contains(id) && !IsShadowed(id) && _dotnetAliases.TryGetValue(id, out var runtimeModule))
-                return CsTypeName(runtimeModule);
+            // A CLR class member can shadow a using alias. In Python, a method resolves an
+            // imported name from the module scope, outside the surrounding class namespace.
+            if ((_cls != null || _qualifiedRuntimeModuleImports.Contains(id)) && !IsShadowed(id) &&
+                _dotnetAliases.TryGetValue(id, out var importedAlias))
+                return CsTypeName(importedAlias);
             if (ExceptionMap.TryGetValue(id, out var ex) && !IsShadowed(id)) return ex;
             if (!IsShadowed(id))
             {
@@ -260,6 +264,14 @@ namespace Typhon.Compiler.Emit
             return _p.FindModule(dotted);
         }
 
+        static readonly Dictionary<string, string> RuntimeTypeAliases = new Dictionary<string, string>
+        {
+            ["Typhon.Stdlib.io+_IOBase"] = "Typhon.Stdlib.io+IOBase",
+            ["Typhon.Stdlib.io+_RawIOBase"] = "Typhon.Stdlib.io+RawIOBase",
+            ["Typhon.Stdlib.io+_BufferedIOBase"] = "Typhon.Stdlib.io+BufferedIOBase",
+            ["Typhon.Stdlib.io+_TextIOBase"] = "Typhon.Stdlib.io+TextIOBase",
+        };
+
         /// <summary>Does the dotted name denote a type? (Python has no 'new', so calls need this to become constructions.)</summary>
         bool TryResolveType(string dotted, int arity, out string meta, out ClassDef pyClass)
         {
@@ -288,7 +300,12 @@ namespace Typhon.Compiler.Emit
                 if (mod != null)
                 {
                     var (owner, member) = ProjectExport(mod, parts[parts.Length - 1]);
-                    return member != null && owner.Classes.TryGetValue(member, out pyClass);
+                    if (member != null && owner.Classes.TryGetValue(member, out pyClass)) return true;
+                    var runtime = RuntimeReExport(mod, parts[parts.Length - 1]);
+                    if (runtime.Module != null && StdlibType(runtime.Module) is string exportMeta &&
+                        _r.TypeExists(exportMeta + "+" + runtime.Member + sfx))
+                    { meta = exportMeta + "+" + runtime.Member + sfx; return true; }
+                    return false;
                 }
             }
 
@@ -302,6 +319,7 @@ namespace Typhon.Compiler.Emit
                 for (int dot = cand.LastIndexOf('.'); dot > 0; dot = cand.LastIndexOf('.', dot - 1))
                 {
                     string nestedName = cand.Substring(0, dot) + "+" + cand.Substring(dot + 1).Replace('.', '+');
+                    if (RuntimeTypeAliases.TryGetValue(nestedName, out var canonical)) nestedName = canonical;
                     if (_r.TypeExists(nestedName + sfx)) { meta = nestedName + sfx; return true; }
                 }
             }
@@ -441,7 +459,7 @@ namespace Typhon.Compiler.Emit
                 case SubscriptExpr s:
                 {
                     var args = s.Index is TupleExpr t ? t.Elts : new List<Expr> { s.Index };
-                    string baseName = StripTypingPrefix(DottedName(s.Target));
+                    string baseName = IsTypingUnion(s.Target) ? "Union" : StripTypingPrefix(DottedName(s.Target));
                     if (baseName == null) { Error(at, "invalid generic type annotation"); return "dynamic"; }
                     string A(int i) => MapType(args[i], at);
                     switch (baseName)

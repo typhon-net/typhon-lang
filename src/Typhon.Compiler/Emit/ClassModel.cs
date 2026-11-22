@@ -145,6 +145,7 @@ namespace Typhon.Compiler.Emit
                     body.Insert(i, cls);
                     i++;
                     m.Classes[cls.Name] = cls;
+                    if (m.ConditionalGlobals.Remove(cls.Name)) m.Globals.Remove(cls.Name);
                 }
             }
         }

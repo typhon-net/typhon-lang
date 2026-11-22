@@ -1,0 +1,36 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+from collections.abc import Mapping
+import collections.abc
+import inspect
+
+class Partial(Mapping):
+    def __len__(self) -> int:
+        return 2
+
+class Lookup(Partial):
+    def __init__(self) -> None:
+        self.source: dict[str, int] = {"a": 1, "b": 2}
+
+    def __getitem__(self, key: str) -> int:
+        return self.source[key]
+
+    def __iter__(self):
+        return iter(self.source)
+
+mapping = Lookup()
+print(inspect.isabstract(Partial), inspect.isabstract(Lookup))
+print(isinstance(mapping, Mapping), isinstance({}, collections.abc.Mapping))
+print(mapping.get("a"), mapping.get("c"), mapping.get("c", "missing"))
+print("a" in mapping, "c" in mapping, len(mapping.items()))
+print(list(mapping.keys()), list(mapping.values()), list(mapping.items()))
+keys = mapping.keys()
+mapping.source["c"] = 3
+print(list(keys), mapping["c"])
+
+class Specialized(Mapping[str, int]):
+    def __len__(self) -> int:
+        return 0
+
+print(inspect.isabstract(Specialized))

@@ -1,0 +1,12 @@
+from collections import Counter, defaultdict
+from typing import Any
+
+def lookup(mapping: Any, key: Any):
+    return mapping[key]
+
+counts = Counter('aab')
+groups = defaultdict(Counter)
+print(lookup(counts, 'a'), lookup(counts, 'missing'))
+print(lookup(groups, 'bucket'))
+print(lookup(groups, 'bucket') is lookup(groups, 'bucket'))
+print(list(groups.keys()))

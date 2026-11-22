@@ -17,3 +17,11 @@ with tempfile.TemporaryDirectory() as folder:
         print(repr(binary.read()))
     with bz2.BZ2File(compressed_bzip) as binary:
         print(repr(binary.readline()), repr(binary.read(4)), repr(binary.read()))
+
+    with open(compressed_bzip, 'wb') as stream:
+        stream.write(b'BZ')
+    try:
+        with bz2.BZ2File(compressed_bzip) as binary:
+            binary.read()
+    except EOFError:
+        print('truncated bzip2 header')

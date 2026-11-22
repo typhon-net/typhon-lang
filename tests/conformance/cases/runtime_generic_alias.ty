@@ -1,0 +1,15 @@
+from types import GenericAlias
+
+alias = list[int]
+mapping = dict[str, list[int]]
+print(repr(alias), repr(mapping))
+print(type(alias) is GenericAlias, alias.__origin__ is list, alias.__args__)
+print(alias == GenericAlias(list, (int,)), alias != list[str], hash(alias) == hash(list[int]))
+print(alias([1, 2]), list[int]([3, 4]), mapping.__origin__ is dict)
+print(mapping.__args__[1].__args__ == (int,))
+print(tuple[int, ...], list[()])
+
+try:
+    isinstance([], alias)
+except TypeError:
+    print('instance test rejects parameterized classes')

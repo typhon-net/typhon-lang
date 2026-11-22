@@ -31,7 +31,7 @@ internal static class RuntimeCodeHost
         AppContext.SetData("Typhon.CheckRuntimeSyntax",
             (Func<string, string, string, long, (string? Error, int Line, int Column, int Kind, long Flags)>)CheckSyntax);
         AppContext.SetData("Typhon.RunRuntimeCode",
-            (Func<string, string, string, long, IDictionary, IDictionary, (object? Value, string? Error)>)Run);
+            (Func<string, string, string, long, IDictionary, IDictionary, bool, (object? Value, string? Error)>)Run);
     }
 
     static ModuleInfo Parse(string source, string filename, string mode, long flags) =>
@@ -99,7 +99,7 @@ internal static class RuntimeCodeHost
         MatchStmt match => match.Cases.FirstOrDefault()?.Body, _ => null,
     };
 
-    static (object? Value, string? Error) Run(string source, string filename, string mode, long flags, IDictionary globals, IDictionary locals)
+    static (object? Value, string? Error) Run(string source, string filename, string mode, long flags, IDictionary globals, IDictionary locals, bool profiling)
     {
         var module = Parse(source, filename, mode, flags);
         if (CheckSyntax(module, source, mode, flags).Error is string syntax) return (null, syntax);
@@ -109,12 +109,17 @@ internal static class RuntimeCodeHost
         foreach (string name in globals.Keys.OfType<string>().Concat(locals.Keys.OfType<string>()).Where(IsIdentifier))
             module.RuntimeBindings.Add(name);
 
+        LowerRelativeImports(module.Ast.Body);
         if (mode == "eval" && module.Ast.Body[0] is ExprStmt expression)
             module.Ast.Body[0] = new ReturnStmt { Value = expression.Value, Line = expression.Line, Col = expression.Col };
 
         var compilation = CSharpCompilation.Create(CliCompiler.ScriptAssemblyName, references: References.Value.Script,
             options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, optimizationLevel: OptimizationLevel.Release));
-        var project = new ProjectContext { MainModule = "__main__", TypeMode = TypeMode.Permissive, Resolver = new RoslynTypeResolver(compilation) };
+        var project = new ProjectContext
+        {
+            MainModule = "__main__", TypeMode = TypeMode.Permissive,
+            Resolver = new RoslynTypeResolver(compilation), ProfileRuntimeCode = profiling,
+        };
         project.Modules.Add(module.Name, module);
         var diagnostics = new List<TyDiagnostic>();
         string csharp = TyphonCompiler.Emit(module, project, diagnostics);
@@ -146,6 +151,53 @@ internal static class RuntimeCodeHost
             throw;
         }
         finally { context.Unload(); }
+    }
+
+    static void LowerRelativeImports(List<Stmt> body)
+    {
+        for (int index = 0; index < body.Count; index++)
+        {
+            switch (body[index])
+            {
+                case ImportFromStmt from when from.Level > 0 && from.Names.All(n => n.Name != "*"):
+                {
+                    ConstExpr Text(string value) => new() { Kind = ConstKind.Str, Str = value, Line = from.Line, Col = from.Col };
+                    var replacements = from.Names.Select(name => (Stmt)new AssignStmt
+                    {
+                        Line = from.Line, Col = from.Col,
+                        Targets = { new NameExpr { Id = name.AsName ?? name.Name, Line = from.Line, Col = from.Col } },
+                        Value = new CallExpr
+                        {
+                            Line = from.Line, Col = from.Col, Func = new NameExpr { Id = "__typhon_relative_import" },
+                            Args =
+                            {
+                                new Arg { Value = Text(from.Module) },
+                                new Arg { Value = new ConstExpr { Kind = ConstKind.Int, Raw = from.Level.ToString(System.Globalization.CultureInfo.InvariantCulture) } },
+                                new Arg { Value = Text(name.Name) },
+                            },
+                        },
+                    }).ToList();
+                    body.RemoveAt(index);
+                    body.InsertRange(index, replacements);
+                    index += replacements.Count - 1;
+                    break;
+                }
+                case FunctionDef function: LowerRelativeImports(function.Body); break;
+                case IfStmt conditional: LowerRelativeImports(conditional.Body); LowerRelativeImports(conditional.OrElse); break;
+                case WhileStmt loop: LowerRelativeImports(loop.Body); LowerRelativeImports(loop.OrElse); break;
+                case ForStmt loop: LowerRelativeImports(loop.Body); LowerRelativeImports(loop.OrElse); break;
+                case WithStmt with: LowerRelativeImports(with.Body); break;
+                case TryStmt handler:
+                    LowerRelativeImports(handler.Body);
+                    foreach (var clause in handler.Handlers) LowerRelativeImports(clause.Body);
+                    LowerRelativeImports(handler.OrElse);
+                    LowerRelativeImports(handler.FinalBody);
+                    break;
+                case MatchStmt match:
+                    foreach (var clause in match.Cases) LowerRelativeImports(clause.Body);
+                    break;
+            }
+        }
     }
 
     static bool IsIdentifier(string name) => name.Length > 0 && (name[0] == '_' || char.IsLetter(name[0])) &&

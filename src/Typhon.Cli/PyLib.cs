@@ -67,8 +67,8 @@ internal static class PyLib
     /// <summary>Is the module one Typhon provides itself (a runtime module, a typing-only one)? Those are never taken from Lib.</summary>
     public static bool ProvidedByTyphon(string module)
     {
-        // The source timeit supports the Timer class and string statements.
-        if (module == "timeit") return false;
+        // Use the Lib modules for timeit's Timer, copyreg's reducers, and csv's dialect detection.
+        if (module is "timeit" or "copyreg" or "csv") return false;
         if (TypingOnly.Contains(module)) return true;
         // With #:pylib, use the source doctest module to discover and execute examples.
         return module.Split('.')[0] != "doctest" && RuntimeModule(module) != null;

@@ -1,0 +1,34 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import math
+from inspect import getattr_static
+
+checks: list[bool] = []
+
+def feature(value: bool) -> bool:
+    checks.append(value)
+    return value
+
+class Definition:
+    if feature(True):
+        def operation(self, value: int = 9) -> int:
+            """A conditional method."""
+            return value + 1
+    else:
+        operation = math.sqrt
+
+class Alias:
+    if feature(False):
+        def operation(self, value: int = 9) -> int:
+            return value + 1
+    else:
+        operation = math.sqrt
+
+chosen = Definition()
+alternate = Alias()
+print(chosen.operation(), chosen.operation(value=0), Definition.operation(chosen, 25))
+print(alternate.operation(16.0), Alias.operation(25.0))
+print(chosen.operation.__name__, Definition.operation.__doc__)
+print(getattr_static(alternate, "operation").__name__)
+print(checks)

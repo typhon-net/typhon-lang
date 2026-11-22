@@ -1,0 +1,6 @@
+ModuleSpec(name='demo.mod', loader=None, origin='module.pyc') demo False None
+demo.mod demo module.pyc module.pyc True
+False
+demo.sub []
+create demo.created
+demo.created demo True

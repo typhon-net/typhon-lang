@@ -191,7 +191,11 @@ namespace Typhon.Compiler.Emit
                 case PassStmt _:
                 case BreakStmt _:
                 case ContinueStmt _:
-                case ClassDef _:
+                    break;
+                case ClassDef cls:
+                    foreach (var parent in cls.Bases) Loads(parent, path);
+                    foreach (var field in cls.Body.OfType<AssignStmt>()) Loads(field.Value, path);
+                    Add(cls.Name, path, Kind.DeclStore, cls);
                     break;
             }
         }

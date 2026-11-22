@@ -1,0 +1,33 @@
+import sys
+
+recorded: list[tuple[str, str, str, object]] = []
+
+def leaf(value: int) -> int:
+    return value + 1
+
+def outer(value: int) -> int:
+    return leaf(value) * 2
+
+def interrupted() -> int:
+    try:
+        return 1
+    finally:
+        raise ValueError('stop')
+
+def receiver(frame, event, result):
+    if event in ('call', 'return') and frame.f_code.co_name in ('outer', 'leaf', 'interrupted'):
+        parent = frame.f_back.f_code.co_name if frame.f_back else ''
+        row: tuple[str, str, str, object] = (str(frame.f_code.co_name), str(event), str(parent), result)
+        recorded.append(row)
+        leaf(99)
+
+sys.setprofile(receiver)
+print(outer(6))
+try:
+    interrupted()
+except ValueError:
+    pass
+sys.setprofile(None)
+for name, event, parent, result in recorded:
+    print(name, event, parent == 'outer', result)
+print(leaf(8), sys.getprofile() is None)

@@ -90,6 +90,7 @@ namespace Typhon.Compiler.Emit
                     string make = factory == null ? "null" : factory is LambdaExpr fl
                         ? fl.RequiresArgumentBinding ? $"() => {FactoryCall(fl, kv[1])}" : $"() => {EmitValue(fl.Body)}"
                         : name == "int" ? (_big ? "() => global::System.Numerics.BigInteger.Zero" : "() => 0L") : name == "float" ? "() => 0.0" : name == "str" ? "() => \"\"" : name == "bool" ? "() => false"
+                        : kv[1] == "dynamic" ? $"() => {EmitExpr(new CallExpr { Func = factory, Line = factory.Line, Col = factory.Col })}"
                         : $"() => new {kv[1]}()";
                     return $"new {type}({make}, {CsString(name)})";
                 }

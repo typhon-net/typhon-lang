@@ -219,6 +219,7 @@ namespace Typhon.Runtime
         public static dynamic __dict__(object o) => o switch
         {
             PyModule module => module.__dict__,
+            Typhon.Stdlib.types.SimpleNamespace ns => ns.__dict__,
             Type type => PyClassDescriptors.Dictionary(type),
             _ => new PyAttrDict(o),
         };

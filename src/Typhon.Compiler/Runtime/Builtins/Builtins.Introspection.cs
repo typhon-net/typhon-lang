@@ -40,7 +40,10 @@ namespace Typhon.Runtime
         {
             if (value == null) return typeof(Typhon.Stdlib.types.NoneType);
             if (value is Type) return typeof(Type);
+            if (value is PyModule) return typeof(Typhon.Stdlib.types.ModuleType);
             if (value is PyFunction) return typeof(Typhon.Stdlib.types.FunctionType);
+            if (value is PyBoundMethod { BuiltinOwner: not null })
+                return typeof(Typhon.Stdlib.types.BuiltinFunctionType);
             Type actual = value.GetType();
             if (actual == typeof(ValueTuple)) return typeof(ITuple);
             if (!actual.IsGenericType) return actual;
@@ -82,6 +85,8 @@ namespace Typhon.Runtime
             switch (classinfo)
             {
                 case Type t: return IsSubclass(cls, t);
+                case Typhon.Stdlib.types.UnionType union:
+                    return union.__args__.Any(type => issubclass(cls, type));
                 case ITuple tuple:
                     for (int i = 0; i < tuple.Length; i++) if (issubclass(cls, tuple[i])) return true;
                     return false;
@@ -135,6 +140,12 @@ namespace Typhon.Runtime
         static bool DirectSubclass(Type cls, Type of)
         {
             if (of == typeof(object)) return true;
+            if (cls == of) return true;
+            if (of == typeof(Typhon.Stdlib.types.ModuleType) && cls == typeof(PyModule)) return true;
+            if (of == typeof(Typhon.Stdlib.collections.abc.Mapping) && (typeof(IDictionary).IsAssignableFrom(cls) ||
+                cls.GetInterfaces().Any(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IReadOnlyDictionary<,>)))) return true;
+            if (cls is PyLocalDataClass local) return ReferenceEquals(cls, of) || local.BaseType is Type parent && IsSubclass(parent, of);
+            if (of is PyLocalDataClass) return false;
             if (cls == of) return true;
             if (of == typeof(Typhon.Stdlib.os_.PathLike) && cls.GetMethods().Any(m => m.Name == "__fspath__" && !m.IsStatic)) return true;
             if (of == typeof(ArgumentException) && typeof(Typhon.Stdlib.io.UnsupportedOperation).IsAssignableFrom(cls)) return true;

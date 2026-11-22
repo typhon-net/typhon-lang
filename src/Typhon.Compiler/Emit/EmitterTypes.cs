@@ -35,6 +35,8 @@ namespace Typhon.Compiler.Emit
         /// <summary>Nested functions used as values and the locals that hold their Python function objects.</summary>
         public readonly Dictionary<string, string> LocalFunctionObjects = new Dictionary<string, string>();
         public string FunctionQualName;
+        public string ProfileName, ProfileToken;
+        public int ProfileLine;
         public string ReturnType;        // element type for generators, awaited type for async; "void" for none
         public bool IsGenerator;
         /// <summary>A generator that receives values (x = yield v) or returns one: a PyGenerator whose body reads them.</summary>

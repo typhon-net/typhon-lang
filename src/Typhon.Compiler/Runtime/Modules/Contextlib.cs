@@ -94,6 +94,7 @@ namespace Typhon.Stdlib
 {
     using System;
     using System.Collections.Generic;
+    using System.Runtime.ExceptionServices;
     using Typhon.Runtime;
 
     internal static class contextlib
@@ -104,5 +105,87 @@ namespace Typhon.Stdlib
         public static PySuppress suppress(params Type[] exceptions) => new PySuppress(exceptions);
         public static PyNullContext nullcontext(object? enter_result = null) => new PyNullContext(enter_result);
         public static PyClosing closing(object? thing) => new PyClosing(thing);
+
+        internal class ExitStack
+        {
+            static readonly object MissingExit = new object();
+            Stack<Func<Exception?, bool>> _exits = new Stack<Func<Exception?, bool>>();
+
+            public ExitStack __enter__() => this;
+
+            public ExitStack pop_all()
+            {
+                var transferred = (ExitStack)Activator.CreateInstance(GetType())!;
+                transferred._exits = _exits;
+                _exits = new Stack<Func<Exception?, bool>>();
+                return transferred;
+            }
+
+            public dynamic? enter_context(object manager)
+            {
+                var exit = ContextExit(manager) ??
+                    throw new InvalidCastException($"'{Builtins.PyTypeName(manager.GetType())}' object does not support the context manager protocol");
+                object? value = Builtins.__enter(manager);
+                _exits.Push(exit);
+                return value;
+            }
+
+            public object push(object exit)
+            {
+                _exits.Push(ContextExit(exit) ?? (error => InvokeExit(exit, error)));
+                return exit;
+            }
+
+            public object callback(object function, params object?[] args)
+            {
+                _exits.Push(_ => { Builtins.__invoke(function, args); return false; });
+                return function;
+            }
+
+            public void close() => __exit__(null, null, null);
+
+            public bool __exit__(object? type, object? value, object? traceback)
+            {
+                Exception? error = (Exception?)value;
+                bool receivedError = error != null;
+                bool suppressedError = false;
+                ExceptionDispatchInfo? pending = null;
+
+                while (_exits.TryPop(out var exit))
+                {
+                    try
+                    {
+                        if (!exit(error)) continue;
+                        error = null;
+                        pending = null;
+                        suppressedError = true;
+                    }
+                    catch (Exception replacement)
+                    {
+                        pending = ExceptionDispatchInfo.Capture(replacement);
+                        error = replacement;
+                        suppressedError = false;
+                    }
+                }
+                pending?.Throw();
+                return receivedError && suppressedError;
+            }
+
+            static Func<Exception?, bool>? ContextExit(object manager)
+            {
+                object? exit = Builtins.getattr(manager, "__exit__", MissingExit);
+                if (!ReferenceEquals(exit, MissingExit))
+                    return error => InvokeExit(exit, error);
+                if (manager is IDisposable resource)
+                    return _ => { resource.Dispose(); return false; };
+                return null;
+            }
+
+            static bool InvokeExit(object? function, Exception? error)
+            {
+                var traceback = error == null ? null : types.TracebackType.Of(error);
+                return Builtins.truthy((object?)Builtins.__invoke(function, new object?[] { error?.GetType(), error, traceback }));
+            }
+        }
     }
 }

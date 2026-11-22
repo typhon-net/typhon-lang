@@ -1,0 +1,37 @@
+from typing import Any
+
+class Receiver:
+    def combine(self, first: int, *, second: int = 6) -> int:
+        return first * 10 + second
+
+    @classmethod
+    def label(cls, *, suffix: str) -> str:
+        return cls.__name__ + suffix
+
+class Child(Receiver):
+    def combine(self, first: int, *, second: int = 6) -> int:
+        return first * 100 + second
+
+def dynamic_spread(receiver: Any, args: tuple[int], keywords: dict[str, int]):
+    return receiver.combine(*args, **keywords)
+
+def typed_class_spread(receiver: type, keywords: dict[str, str]):
+    return receiver.label(**keywords)
+
+def plain_spread(receiver: Any, keywords: dict[str, int]):
+    return receiver.combine(**keywords)
+
+class Holder:
+    pass
+
+item = Holder()
+setattr(item, "combine", lambda first, second=0: first * 1000 + second)
+print(dynamic_spread(Receiver(), (4,), {"second": 2}))
+print(dynamic_spread(Child(), (4,), {"second": 2}))
+print(dynamic_spread(item, (4,), {"second": 2}))
+print(typed_class_spread(Child, {"suffix": "!"}))
+print(plain_spread(Receiver(), {"first": 4}))
+try:
+    print(plain_spread(Receiver(), {"unknown": 4}))
+except TypeError:
+    print("unexpected keyword rejected")

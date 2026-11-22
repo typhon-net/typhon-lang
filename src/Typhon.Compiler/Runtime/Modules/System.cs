@@ -82,7 +82,7 @@ namespace Typhon.Stdlib
         public static readonly string prefix = AppContext.BaseDirectory.TrimEnd('/', '\\'), exec_prefix = prefix, base_prefix = prefix, base_exec_prefix = prefix;
         /// <summary>The module search path: the script's directory (imports are resolved when compiling).</summary>
         public static List<string> path = new List<string>();
-        public static readonly List<object?> meta_path = new List<object?>(), path_hooks = new List<object?>();
+        public static readonly List<object?> meta_path = new(), path_hooks = pkgutil.DefaultPathHooks();
         public static readonly OrderedDictionary<string, object?> path_importer_cache = new OrderedDictionary<string, object?>();
 
         public static readonly PyTextStream __stdout__ = new PyTextStream(0), __stderr__ = new PyTextStream(1), __stdin__ = new PyTextStream(2);
@@ -123,18 +123,18 @@ namespace Typhon.Stdlib
         public static string intern(string s) => string.Intern(s);
         public static bool is_finalizing() => false;
 
-        // ── auditing, tracing and profiling: accepted, never called ──
+        // ── auditing, tracing and profiling ──
 
         /// <summary>audit(event, *args): raises an auditing event (no hooks are ever called).</summary>
         public static void audit(string @event, params object?[] args) { }
         public static void addaudithook(object? hook) { }
         public static void settrace(object? function) { _trace = function; }
         public static object? gettrace() => _trace;
-        public static void setprofile(object? function) { _profile = function; }
-        public static object? getprofile() => _profile;
+        public static void setprofile(object? function) => PyProfiling.Callback = function;
+        public static object? getprofile() => PyProfiling.Callback;
         public static void _settraceallthreads(object? function) { _trace = function; }
-        public static void _setprofileallthreads(object? function) { _profile = function; }
-        static object? _trace, _profile;
+        public static void _setprofileallthreads(object? function) => PyProfiling.Callback = function;
+        static object? _trace;
 
         // ── exceptions ──
 
@@ -273,8 +273,9 @@ namespace Typhon.Stdlib
         /// <summary>A frame of sys._getframe(): f_code (co_name, co_filename, co_firstlineno), f_lineno, f_back, f_globals, f_locals.</summary>
         internal sealed class frame : IPyRepr
         {
-            readonly List<frame> _stack;
+            readonly List<frame>? _stack;
             readonly int _index;
+            readonly frame? _caller;
             public readonly code f_code;
             public readonly long f_lineno;
             public readonly long f_lasti = 0;
@@ -286,7 +287,14 @@ namespace Typhon.Stdlib
                 _stack = stack; _index = index; f_code = c; f_lineno = line;
                 f_globals = new OrderedDictionary<string, object?> { ["__name__"] = module, ["__file__"] = c.co_filename };
             }
-            public frame? f_back => _index + 1 < _stack.Count ? _stack[_index + 1] : null;
+            internal frame(code c, string module, frame? caller)
+            {
+                f_code = c;
+                f_lineno = c.co_firstlineno;
+                _caller = caller;
+                f_globals = new OrderedDictionary<string, object?> { ["__name__"] = module, ["__file__"] = c.co_filename };
+            }
+            public frame? f_back => _stack == null ? _caller : _index + 1 < _stack.Count ? _stack[_index + 1] : null;
             public string __repr__() => $"<frame at 0x{System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(this):x}, file {Builtins.repr(f_code.co_filename)}, line {f_lineno}, code {f_code.co_name}>";
             public override string ToString() => __repr__();
 
@@ -323,8 +331,8 @@ namespace Typhon.Stdlib
         {
             public readonly string co_name, co_qualname, co_filename;
             public readonly long co_firstlineno, co_flags;
-            public code(string name, string file, long line, long flags = 0)
-            { co_name = name; co_qualname = name; co_filename = file; co_firstlineno = line; co_flags = flags; }
+            public code(string name, string file, long line, long flags = 0, string? qualname = null)
+            { co_name = name; co_qualname = qualname ?? name; co_filename = file; co_firstlineno = line; co_flags = flags; }
             public string __repr__() => $"<code object {co_name} at 0x{System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(this):x}, file {Builtins.repr(co_filename)}, line {co_firstlineno}>";
             public override string ToString() => __repr__();
         }
@@ -346,6 +354,10 @@ namespace Typhon.Runtime
     internal sealed class PyModule : DynamicObject, IPyRepr
     {
         public readonly string __name__;
+        internal static readonly object Unbound = new object();
+        internal static dynamic? ReadLateGlobal(object? value, string name) =>
+            ReferenceEquals(value, Unbound) ? Builtins.__unbound_import(name) : value;
+
         readonly Type? _type;
         readonly PySourceAttribute? _source;
         readonly System.Collections.Concurrent.ConcurrentDictionary<string, PyBoundMethod> _methodValues = new();
@@ -391,7 +403,11 @@ namespace Typhon.Runtime
             if (_type == null || !IsModuleName(name)) return false;
             if (_type == typeof(Typhon.Stdlib.os_) && name == "path") { result = Typhon.Stdlib.os_.__path_module__; return true; }
             if (_type.GetField(name, Members) is FieldInfo f) { result = f.GetValue(null); return true; }
-            if (_type.GetProperty(name, Members) is PropertyInfo p && p.GetIndexParameters().Length == 0) { result = p.GetValue(null); return true; }
+            if (_type.GetProperty(name, Members) is PropertyInfo p && p.GetIndexParameters().Length == 0)
+            {
+                try { result = p.GetValue(null); return true; }
+                catch (TargetInvocationException e) when (p.IsDefined(typeof(PyLateAttributeAttribute)) && e.InnerException is NameError) { return false; }
+            }
             if (_type.GetNestedType(name, BindingFlags.Public | BindingFlags.NonPublic) is Type nested) { result = nested; return true; }
             if (_type.GetMethods(Members).Any(m => m.Name == name && IsNamespaceMethod(m)))
             {
@@ -409,6 +425,12 @@ namespace Typhon.Runtime
                 Builtins.setattr(_type, name, value);
                 return true;
             }
+            if (_type?.GetProperty(name, Members) is PropertyInfo property && property.CanWrite &&
+                property.IsDefined(typeof(PyLateAttributeAttribute)))
+            {
+                property.SetValue(null, value);
+                return true;
+            }
             return false;
         }
 
@@ -422,7 +444,8 @@ namespace Typhon.Runtime
             if (__file__ != null) yield return "__file__";
             if (_type == null) yield break;
             foreach (var member in _type.GetMembers(Members))
-                if (IsModuleName(member.Name) && (member is FieldInfo or PropertyInfo || member is MethodInfo method && IsNamespaceMethod(method)))
+                if (IsModuleName(member.Name) && (member is FieldInfo or PropertyInfo || member is MethodInfo method && IsNamespaceMethod(method)) &&
+                    (member is not PropertyInfo property || !property.IsDefined(typeof(PyLateAttributeAttribute)) || TryGetNamespaceMember(property.Name, out _)))
                     yield return member.Name;
             foreach (var nested in _type.GetNestedTypes(BindingFlags.Public | BindingFlags.NonPublic))
                 if (IsModuleName(nested.Name)) yield return nested.Name;

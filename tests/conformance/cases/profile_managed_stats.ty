@@ -1,0 +1,37 @@
+from profiling.tracing import Profile
+import marshal
+
+
+def leaf(value: int) -> int:
+    return value * 2
+
+
+def recur(depth: int) -> int:
+    if depth == 0:
+        return leaf(5)
+    return 1 + recur(depth - 1)
+
+
+profiler = Profile()
+print(profiler.runcall(recur, 3))
+records: list[str] = []
+for entry in profiler.getstats():
+    if not hasattr(entry.code, 'co_name'):
+        continue
+    children: list[str] = []
+    for child in entry.calls or []:
+        children.append(f'{child.code.co_name}={child.callcount}/{child.reccallcount}')
+    records.append(f'{entry.code.co_name} {entry.callcount}/{entry.reccallcount} {",".join(sorted(children))}'.rstrip())
+for record in sorted(records):
+    print(record)
+
+profiler.clear()
+with profiler as active:
+    print(active is profiler, recur(1))
+print(sorted([entry.code.co_name for entry in profiler.getstats() if getattr(entry.code, 'co_name', '') in ('leaf', 'recur')]))
+
+stats = Profile(subcalls=False)
+namespace: dict[str, object] = {}
+stats.runctx('def executed():\n    return 19\nvalue = executed()\n', namespace, namespace)
+print(namespace['value'], sorted([entry.code.co_name for entry in stats.getstats() if hasattr(entry.code, 'co_name')]))
+print(marshal.dumps(('é', 72, 1.25, None, [False]), 2).hex())

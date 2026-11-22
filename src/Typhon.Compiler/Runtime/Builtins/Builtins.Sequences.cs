@@ -40,12 +40,15 @@ namespace Typhon.Runtime
         {
             switch (o)
             {
+                case Type type when type == typeof(Typhon.Stdlib.types.UnionType):
+                    return Typhon.Stdlib.types.UnionType.Subscribe(key);
                 // a dict first: .NET's OrderedDictionary is an IList too, but d[3] is a key, not a position
                 case IDictionary d:
                 {
                     var k = KeyFor(d, key);
-                    if (!d.Contains(k!)) throw new KeyNotFoundException(repr(key));
-                    return d[k!];
+                    if (d.Contains(k!)) return d[k!];
+                    if (o is IPyMissingKey mapping) return mapping.GetMissingKey(k!);
+                    throw new KeyNotFoundException(repr(key));
                 }
                 case PyBytes bytes when key is PySlice byteSlice:
                 {
@@ -470,7 +473,7 @@ namespace Typhon.Runtime
         public static void __extend_cast<T, U>(List<T> l, IEnumerable<U> xs) { foreach (var x in xs) l.Add((T)(dynamic)x!); }
         /// <summary>Is a late-bound value one of Python's built-in values (str, list, dict, set, tuple, number), whose methods are the runtime's static ones?</summary>
         public static bool __is_pyvalue(object? o) => o is string || o is System.Collections.IList ||
-            o is System.Collections.IDictionary and not Typhon.Stdlib.types.MappingProxyType || o is IConvertible ||
+            o is System.Collections.IDictionary and not (Typhon.Stdlib.types.MappingProxyType or PyAttrDict) || o is IConvertible ||
             o is BigInteger || o is ITuple || o != null && o.GetType().IsGenericType && o.GetType().GetGenericTypeDefinition() == typeof(HashSet<>);
 
         /// <summary>a += b on late-bound values: a list extends in place (Python's list.__iadd__), anything else adds.</summary>

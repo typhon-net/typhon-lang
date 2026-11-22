@@ -1,0 +1,17 @@
+from abc import ABCMeta
+
+class Root(metaclass=ABCMeta):
+    pass
+
+class Other:
+    pass
+
+class Bridge(Other, Root):
+    pass
+
+class Foreign:
+    pass
+
+Bridge.register(Foreign)
+print(issubclass(Bridge, Root), issubclass(Foreign, Root))
+print(isinstance(Foreign(), Bridge), isinstance(Foreign(), Root))

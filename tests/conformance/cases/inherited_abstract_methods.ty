@@ -1,0 +1,30 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+from abc import ABCMeta, abstractmethod
+import inspect
+
+class Base(metaclass=ABCMeta):
+    @abstractmethod
+    def required(self) -> str:
+        raise NotImplementedError()
+
+    @abstractmethod
+    def second(self) -> str:
+        raise NotImplementedError()
+
+class Intermediate(Base):
+    def second(self) -> str:
+        return "second"
+
+class Further(Intermediate):
+    pass
+
+class Concrete(Further):
+    def required(self) -> str:
+        return "required"
+
+print(inspect.isabstract(Base), inspect.isabstract(Intermediate), inspect.isabstract(Further))
+print(inspect.isabstract(Concrete))
+concrete = Concrete()
+print(concrete.required(), concrete.second())

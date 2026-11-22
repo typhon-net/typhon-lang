@@ -1,0 +1,31 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import sys
+
+class Reader:
+    def read(self):
+        return branch_value
+
+def read_other():
+    return chosen
+
+def enabled() -> bool:
+    return True
+
+reader = Reader()
+module = sys.modules[__name__]
+print(hasattr(module, "branch_value"), "branch_value" in globals())
+try:
+    reader.read()
+except NameError as error:
+    print(str(error))
+
+if enabled():
+    branch_value = None
+    if enabled():
+        chosen = 42
+        factory = Reader
+
+print(reader.read() is None, read_other(), factory().read() is None)
+print(hasattr(module, "branch_value"), "branch_value" in globals())

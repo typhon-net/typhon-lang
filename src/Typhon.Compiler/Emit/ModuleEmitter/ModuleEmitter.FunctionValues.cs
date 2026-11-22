@@ -517,8 +517,22 @@ namespace Typhon.Compiler.Emit
             }
             _comprehensionTypes.Add(bindings);
             _lambdaParams.Push(parameters);
-            try { return code.Append($"return {EmitValue(lambda.Body)}; }})").ToString(); }
+            try { return code.Append($" {LambdaValueStatements(lambda.Body)} }})").ToString(); }
             finally { _lambdaParams.Pop(); _comprehensionTypes.Remove(bindings); }
+        }
+
+        string LambdaValueStatements(Expr body) =>
+            LambdaReturnsVoid(body) ? $"{EmitExpr(body)}; return null;" : $"return {EmitValue(body)};";
+
+        bool LambdaReturnsVoid(Expr body)
+        {
+            if (InferType(body) == "void") return true;
+            if (body is not CallExpr call) return false;
+            if (call.Func is NameExpr { Id: "print" } && !IsShadowed("print")) return true;
+            int positional = call.Args.Count(arg => arg.Name == null && !arg.Star && !arg.DoubleStar);
+            var named = call.Args.Where(arg => arg.Name != null).Select(arg => arg.Name).ToList();
+            var methods = DotNetOverloads(call)?.Where(method => Applicable(method, positional, named)).ToList();
+            return methods is { Count: > 0 } && methods.All(method => method.ReturnsVoid);
         }
 
         /// <summary>A lambda bound to a local name: Func&lt;T..., R&gt; when its calls give the parameter types, else a delegate of dynamic values.</summary>
@@ -539,7 +553,8 @@ namespace Typhon.Compiler.Emit
             {
                 string ret = sig != null ? PyType(InferType(lam.Body)) : null;
                 bool typed = sig != null && ret != null && ret != TypeInference.Pending && ret != "void" && !ret.Contains(TypeInference.Pending);
-                string body = typed ? EmitExpr(lam.Body, targetTyped: true) : EmitValue(lam.Body);
+                string body = LambdaReturnsVoid(lam.Body) ? $"{{ {LambdaValueStatements(lam.Body)} }}" :
+                    typed ? EmitExpr(lam.Body, targetTyped: true) : EmitValue(lam.Body);
                 var ps = lam.Params.Select((p, i) => $"{(typed ? sig[i] : "dynamic")} {parameters[p]}");
                 code = $"(({string.Join(", ", ps)}) => {body})";
                 var types = (typed ? sig : lam.Params.Select(_ => "dynamic")).Concat(new[] { typed ? ret : "dynamic" });

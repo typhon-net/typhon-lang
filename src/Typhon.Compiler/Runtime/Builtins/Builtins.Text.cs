@@ -61,6 +61,7 @@ namespace Typhon.Runtime
                 case Enum en when Enum.GetUnderlyingType(en.GetType()) == typeof(long): return Convert.ToInt64(en, Inv).ToString(Inv);
                 case Enum en: return en.GetType().Name + "." + en.ToString();
                 case Exception e: return ExceptionText(e);
+                case Type type: return $"<class '{PythonQualifiedTypeName(type)}'>";
                 case IPyRepr own: return own.ToString() ?? own.__repr__(); // str(): Fraction → 1/2, Path → /tmp/x
                 case IFormattable fmt when o is int || o is long || o is short || o is byte || o is sbyte || o is uint || o is ulong || o is ushort || o is decimal || o is BigInteger:
                     return fmt.ToString(null, Inv);
@@ -756,6 +757,10 @@ namespace Typhon.Runtime
         public static string join<T>(this string sep, IEnumerable<T> items) => string.Join(sep, items.Select(x => str(x)));
         public static bool startswith(this string s, string prefix) => s.StartsWith(prefix, StringComparison.Ordinal);
         public static bool endswith(this string s, string suffix) => s.EndsWith(suffix, StringComparison.Ordinal);
+        public static bool startswith(this PyBytes value, PyBytes prefix) => value.startswith(prefix);
+        public static bool endswith(this PyBytes value, PyBytes suffix) => value.endswith(suffix);
+        public static bool startswith(this PyByteArray value, PyBytes prefix) => value.startswith(prefix);
+        public static bool endswith(this PyByteArray value, PyBytes suffix) => value.endswith(suffix);
         public static bool startswith(this string s, ITuple prefixes) => Enumerable.Range(0, prefixes.Length).Any(i => s.StartsWith((string)prefixes[i]!, StringComparison.Ordinal));
         public static bool endswith(this string s, ITuple suffixes) => Enumerable.Range(0, suffixes.Length).Any(i => s.EndsWith((string)suffixes[i]!, StringComparison.Ordinal));
         public static bool startswith(this string s, string prefix, long start, long? end = null) => slice(s, start, end).StartsWith(prefix, StringComparison.Ordinal);

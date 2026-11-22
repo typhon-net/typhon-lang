@@ -30,14 +30,25 @@ namespace Typhon.Runtime
         bool ReadHeader(bool first)
         {
             _bits = 0; // Each concatenated member starts on a byte boundary.
-            int b = _source.ReadByte();
-            if (b != 'B' || _source.ReadByte() != 'Z' || _source.ReadByte() != 'h')
+            int next = _source.ReadByte();
+            if (next < 0 && !first) return false;
+            foreach (byte expected in "BZh"u8)
             {
-                if (first) throw Invalid("invalid stream header");
-                return false; // Like Python's file reader, allow trailing non-bzip2 data.
+                if (next < 0) throw Truncated();
+                if (next != expected)
+                {
+                    if (!first) return false;
+                    throw Invalid("invalid stream header");
+                }
+                next = _source.ReadByte();
             }
-            int level = _source.ReadByte() - '0';
-            if (level is < 1 or > 9) throw Invalid("invalid block size");
+            if (next < 0) throw Truncated();
+            int level = next - '0';
+            if (level is < 1 or > 9)
+            {
+                if (!first) return false;
+                throw Invalid("invalid block size");
+            }
             _blockSize = level * 100000;
             _streamCrc = 0;
             return true;
@@ -48,7 +59,7 @@ namespace Typhon.Runtime
             while (_bits < count)
             {
                 int next = _source.ReadByte();
-                if (next < 0) throw new EndOfStreamException("Compressed file ended before the end-of-stream marker was reached");
+                if (next < 0) throw Truncated();
                 _bitBuffer = (_bitBuffer << 8) | (uint)next;
                 _bits += 8;
             }
@@ -259,6 +270,9 @@ namespace Typhon.Runtime
                 throw Invalid("invalid Huffman code");
             }
         }
+
+        static EndOfStreamException Truncated() =>
+            new EndOfStreamException("Compressed file ended before the end-of-stream marker was reached");
 
         static IOException Invalid(string reason) => new IOException("Invalid bzip2 data: " + reason);
 

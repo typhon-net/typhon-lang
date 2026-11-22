@@ -49,6 +49,9 @@ namespace Typhon.Stdlib
 
         // ── the abstract classes ──
 
+        public static readonly Type _IOBase = typeof(IOBase), _RawIOBase = typeof(RawIOBase),
+            _BufferedIOBase = typeof(BufferedIOBase), _TextIOBase = typeof(TextIOBase);
+
         /// <summary>io.IOBase: close/closed, flush, the capability queries, and with-statement support (IDisposable).</summary>
         internal class IOBase : IDisposable
         {

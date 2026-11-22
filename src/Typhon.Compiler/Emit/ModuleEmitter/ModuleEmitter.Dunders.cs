@@ -216,6 +216,9 @@ namespace Typhon.Compiler.Emit
         void EmitIteratorBridge(ClassContext ctx, FunctionDef iter)
         {
             string enumerator = $"IEnumerator<{ctx.IterElementType}>";
+            string Enumerate(string value) => ctx.IterElementType == "object"
+                ? $"global::Typhon.Runtime.Builtins.__iter_dyn((object?)({value})).GetEnumerator()"
+                : value + ".GetEnumerator()";
             if (iter.Params.Count > 0 && DefinesInHierarchy(ctx.Def, "__next__") &&
                 AstWalker.ContainsOutsideNestedScopes(iter.Body,
                     n => n is ReturnStmt { Value: NameExpr self } && self.Id == iter.Params[0].Name))
@@ -225,7 +228,7 @@ namespace Typhon.Compiler.Emit
                 _w.Line($"public {enumerator} GetEnumerator()");
                 _w.Open();
                 _w.Line("var iterator = __iter__();");
-                _w.Line($"return global::System.Object.ReferenceEquals((object?)iterator, this) ? {fromNext}() : iterator.GetEnumerator();");
+                _w.Line($"return global::System.Object.ReferenceEquals((object?)iterator, this) ? {fromNext}() : {Enumerate("iterator")};");
                 _w.Close();
                 _w.Line($"private {enumerator} {fromNext}()");
                 _w.Open();
@@ -237,7 +240,7 @@ namespace Typhon.Compiler.Emit
                 _w.Close();
                 _w.Close();
             }
-            else _w.Line($"public {enumerator} GetEnumerator() => __iter__().GetEnumerator();");
+            else _w.Line($"public {enumerator} GetEnumerator() => {Enumerate("__iter__()")};");
             _w.Line("global::System.Collections.IEnumerator global::System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();");
         }
     }

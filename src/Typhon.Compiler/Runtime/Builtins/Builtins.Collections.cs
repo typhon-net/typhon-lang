@@ -178,8 +178,9 @@ namespace Typhon.Runtime
 
 
         public static PyIterator<T> iter<T>(IEnumerable<T> xs) => xs as PyIterator<T> ?? new PyIterator<T>(xs.GetEnumerator());
+        public static PyIterator<K> iter<K, V>(IDictionary<K, V> mapping) => new PyIterator<K>(mapping.Keys.GetEnumerator());
         public static PyIterator<string> iter(string s) => new PyIterator<string>(s.Select(c => c.ToString()).GetEnumerator());
-        public static PyIterator<object?> iter(IEnumerable xs) => new PyIterator<object?>(xs.Cast<object?>().GetEnumerator());
+        public static PyIterator<object?> iter(IEnumerable xs) => new PyIterator<object?>(__iter_dyn(xs).GetEnumerator());
         public static PyIterator<object?> iter(object? xs) => new PyIterator<object?>(__iter_dyn(xs).GetEnumerator());
         /// <summary>iter(f, sentinel): f() called until it returns the sentinel (iter(read_char, "") reads to the end).</summary>
         public static PyIterator<T> iter<T>(Func<T> f, T sentinel) => new PyIterator<T>(CallUntil(f, sentinel).GetEnumerator());
@@ -252,9 +253,28 @@ namespace Typhon.Runtime
         public static OrderedDictionary<K, V> dict_or<K, V>(IDictionary<K, V> a, IDictionary<K, V> b) where K : notnull { var r = dict(a); foreach (var kv in b) r[kv.Key] = kv.Value; return r; }
         // late-bound operands: sets use set algebra, everything else binds normally
         public static dynamic sub(dynamic a, dynamic b) => IsSet((object)a) ? SetOp((object)a, (object)b, '-') : checked(a - b);
-        public static dynamic or_(dynamic a, dynamic b) => IsSet((object)a) ? SetOp((object)a, (object)b, '|') : a is IDictionary ? dict_or((dynamic)a, (dynamic)b) : a | b;
-        public static dynamic and_(dynamic a, dynamic b) => IsSet((object)a) ? SetOp((object)a, (object)b, '&') : a & b;
-        public static dynamic xor_(dynamic a, dynamic b) => IsSet((object)a) ? SetOp((object)a, (object)b, '^') : a ^ b;
+        public static dynamic __key_difference(object? mapping, object? other)
+        {
+            if (mapping is not (IDictionary or PyAttrDict))
+                return sub(__invoke((object?)getattr(mapping, "keys"), []), (dynamic?)other);
+            var keys = set(__iter_dyn(mapping));
+            keys.ExceptWith(__iter_dyn(other));
+            return keys;
+        }
+
+        public static dynamic or_(dynamic a, dynamic b) =>
+            Typhon.Stdlib.types.UnionType.IsOperand((object?)a) || Typhon.Stdlib.types.UnionType.IsOperand((object?)b)
+                ? __union__((object?)a, (object?)b)
+                : IsSet((object)a) ? SetOp((object)a, (object)b, '|') : a is IDictionary ? dict_or((dynamic)a, (dynamic)b)
+                : BitwiseOperand((object?)a, (object?)b) | BitwiseOperand((object?)b, (object?)a);
+        public static dynamic and_(dynamic a, dynamic b) => IsSet((object)a) ? SetOp((object)a, (object)b, '&')
+            : BitwiseOperand((object?)a, (object?)b) & BitwiseOperand((object?)b, (object?)a);
+        public static dynamic xor_(dynamic a, dynamic b) => IsSet((object)a) ? SetOp((object)a, (object)b, '^')
+            : BitwiseOperand((object?)a, (object?)b) ^ BitwiseOperand((object?)b, (object?)a);
+
+        // Two bools produce a bool. A bool paired with a Python int participates as 0 or 1.
+        static dynamic? BitwiseOperand(object? value, object? other) =>
+            value is bool bit && other != null && IsIntType(other.GetType()) ? (bit ? 1L : 0L) : value;
 
         /// <summary>
         /// Set algebra on late-bound sets: typed when both hold the same item type, else on their items as objects (a set of
@@ -292,7 +312,7 @@ namespace Typhon.Runtime
         public static V __ro_get<K, V>(IReadOnlyDictionary<K, V> d, K key, V dflt) => d.TryGetValue(key, out var v) ? v : dflt;
         public static ICollection<K> keys<K, V>(this IDictionary<K, V> d) => d.Keys;
         public static ICollection<V> values<K, V>(this IDictionary<K, V> d) => d.Values;
-        public static V get<K, V>(this IDictionary<K, V> d, K key, V @default) => d.TryGetValue(key, out var v) ? v : @default;
+        public static V get<K, V>(this IDictionary<K, V> d, K key, V @default) => key != null && d.TryGetValue(key, out var v) ? v : @default;
         public static V setdefault<K, V>(this IDictionary<K, V> d, K key, V @default = default!) { if (!d.TryGetValue(key, out var v)) d[key] = v = @default; return v; }
         public static V pop<K, V>(this IDictionary<K, V> d, K key) { var v = d[key]; d.Remove(key); return v; }
         public static V pop<K, V>(this IDictionary<K, V> d, K key, V @default) { if (!d.TryGetValue(key, out var v)) return @default; d.Remove(key); return v; }
@@ -301,8 +321,36 @@ namespace Typhon.Runtime
             if (d.Count == 0) throw new KeyNotFoundException("popitem(): dictionary is empty");
             var last = d.Last(); d.Remove(last.Key); return (last.Key, last.Value);
         }
+        public static object? __dict_update_keywords(object target, object?[] args, IDictionary<string, object?> keywords)
+        {
+            if (target is not IDictionary dictionary) return __invoke_kw(getattr(target, "update"), args, keywords);
+            if (args.Length > 1) throw new InvalidCastException($"update expected at most 1 argument, got {args.Length}");
+            if (args.Length == 1)
+            {
+                if (args[0] is IDictionary source) update(dictionary, source);
+                else foreach (object? item in __iter_dyn(args[0]))
+                {
+                    var pair = __unpack_items(__iter_dyn(item), 2);
+                    dictionary[KeyFor(dictionary, pair[0])!] = pair[1];
+                }
+            }
+            foreach (var (name, value) in keywords) dictionary[KeyFor(dictionary, name)!] = value;
+            return null;
+        }
+
+        public static void update(IDictionary target, IDictionary source)
+        {
+            if (ReferenceEquals(target, source)) return;
+            foreach (DictionaryEntry entry in source) target[KeyFor(target, entry.Key)!] = entry.Value;
+        }
+
         public static void update<K, V>(this IDictionary<K, V> d, IDictionary<K, V> other) { foreach (var kv in other) d[kv.Key] = kv.Value; }
         public static void update<K, V>(this IDictionary<K, V> d, IEnumerable<(K, V)> pairs) { foreach (var (k, v) in pairs) d[k] = v; }
+        public static void __dict_update<K, V, SourceKey, SourceValue>(
+            IDictionary<K, V> target, IEnumerable<KeyValuePair<SourceKey, SourceValue>> source)
+        {
+            foreach (var item in source) target[__key<K>(item.Key)] = (V)(dynamic?)item.Value!;
+        }
         public static OrderedDictionary<K, V> fromkeys<K, V>(IEnumerable<K> keys, V value) where K : notnull { var d = new OrderedDictionary<K, V>(); foreach (var k in keys) d[k] = value; return d; }
         public static OrderedDictionary<K, object?> fromkeys<K>(IEnumerable<K> keys) where K : notnull => fromkeys<K, object?>(keys, null);
         public static Dictionary<K, V> copy<K, V>(this Dictionary<K, V> d) where K : notnull => new Dictionary<K, V>(d);
@@ -341,13 +389,13 @@ namespace Typhon.Runtime
     // in two classes and C# drops the one whose constraint the value type does not satisfy.
     internal static class DictGetStruct
     {
-        public static V? get<K, V>(this IDictionary<K, V> d, K key) where V : struct => d.TryGetValue(key, out var v) ? v : null;
+        public static V? get<K, V>(this IDictionary<K, V> d, K key) where V : struct => key != null && d.TryGetValue(key, out var v) ? v : null;
         /// <summary>d.pop(k, None) of a dict of value types: the value, or None (null).</summary>
         public static V? pop<K, V>(this IDictionary<K, V> d, K key, V? none) where V : struct => d.Remove(key, out var v) ? v : none;
     }
 
     internal static class DictGetClass
     {
-        public static V? get<K, V>(this IDictionary<K, V> d, K key) where V : class => d.TryGetValue(key, out var v) ? v : null;
+        public static V? get<K, V>(this IDictionary<K, V> d, K key) where V : class => key != null && d.TryGetValue(key, out var v) ? v : null;
     }
 }

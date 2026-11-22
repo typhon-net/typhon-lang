@@ -1,0 +1,20 @@
+from importlib.machinery import ModuleSpec
+from importlib.util import module_from_spec
+
+plain = ModuleSpec('demo.mod', None, origin='module.pyc')
+print(plain, plain.parent, plain.has_location, plain.cached)
+plain.has_location = True
+module = module_from_spec(plain)
+print(module.__name__, module.__package__, module.__file__, plain.cached, module.__spec__ is plain)
+print(plain == ModuleSpec('demo.mod', None, origin='module.pyc'))
+package = ModuleSpec('demo.sub', None, is_package=True)
+print(package.parent, package.submodule_search_locations)
+
+class Loader:
+    def create_module(self, spec):
+        print('create', spec.name)
+        return None
+
+loader = Loader()
+loaded = module_from_spec(ModuleSpec('demo.created', loader))
+print(loaded.__name__, loaded.__package__, loaded.__loader__ is loader)

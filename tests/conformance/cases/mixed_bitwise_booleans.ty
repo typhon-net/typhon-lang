@@ -1,0 +1,15 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+def mask(readable: bool, writable: bool):
+    return (readable and 1) | (writable and 2)
+
+def operations(left, right):
+    print(left | right, left & right, left ^ right)
+
+print([mask(False, False), mask(True, False), mask(False, True), mask(True, True)])
+value: int = 2
+print(True | value, False & value, True ^ 4, True | False)
+operations(True, 4)
+operations(4, True)
+operations(True, False)

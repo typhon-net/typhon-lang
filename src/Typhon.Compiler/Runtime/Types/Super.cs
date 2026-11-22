@@ -71,7 +71,7 @@ namespace Typhon.Stdlib
                 {
                     for (Type? owner = __thisclass__.BaseType; owner != null; owner = owner.BaseType)
                     {
-                        if (owner == typeof(object) && name is "__new__" or "__str__" or "__getattribute__" or "__setattr__" or "__delattr__")
+                        if (owner == typeof(object) && name is "__new__" or "__str__" or "__getattribute__" or "__getstate__" or "__setattr__" or "__delattr__")
                         {
                             var method = Builtins.__object_method("__object_" + name[2..^2]);
                             result = receiver != null && name != "__new__" ? new types.MethodType(method, receiver) : method;

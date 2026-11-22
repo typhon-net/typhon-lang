@@ -47,6 +47,9 @@ namespace Typhon.Runtime
             object? output = Typhon.Stdlib.sys_.stdout, input = Typhon.Stdlib.sys_.stdin;
             if (output == null || input == null) throw new InvalidOperationException("input(): lost sys.stdin or sys.stdout");
             WritePrint(output, prompt, true);
+            if (ReferenceEquals(input, Typhon.Stdlib.sys_.__stdin__) &&
+                ReferenceEquals(output, Typhon.Stdlib.sys_.__stdout__) && Typhon.Stdlib.readline_.CanEdit)
+                return Typhon.Stdlib.readline_.ReadLine(prompt) ?? throw new System.IO.EndOfStreamException("EOF when reading a line");
             string line = input is Typhon.Stdlib.io.TextIOBase file ? file.readline() : ((dynamic)input).readline();
             if (line.Length == 0) throw new System.IO.EndOfStreamException("EOF when reading a line");
             if (line.EndsWith('\n')) line = line[..^1];

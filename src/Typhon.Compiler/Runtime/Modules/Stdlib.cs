@@ -25,8 +25,13 @@ namespace Typhon.Runtime
         string __repr__();
     }
 
+    internal interface IPyMissingKey
+    {
+        object? GetMissingKey(object key);
+    }
+
     /// <summary>collections.Counter: a dict of counts; a missing key counts 0; most_common() orders by count, ties by insertion.</summary>
-    internal sealed class Counter<T> : OrderedDictionary<T, long>, IPyRepr where T : notnull
+    internal sealed class Counter<T> : OrderedDictionary<T, long>, IPyMissingKey, IPyRepr where T : notnull
     {
         public Counter() { }
         public Counter(IEnumerable<T> items) { update(items); }
@@ -45,7 +50,11 @@ namespace Typhon.Runtime
             return (n == null ? ordered : ordered.Take((int)Math.Max(0, Math.Min(n.Value, int.MaxValue)))).ToList();
         }
         public IEnumerable<T> elements() { foreach (var kv in this) for (long i = 0; i < kv.Value; i++) yield return kv.Key; }
+        object IPyMissingKey.GetMissingKey(object key) => 0L;
         public long total() => Values.Sum();
+        public IEnumerable<(T, long)> items() => this.Select(item => (item.Key, item.Value));
+        public IEnumerable<T> keys() => Keys;
+        public IEnumerable<long> values() => Values;
         public Counter<T> copy() { var c = new Counter<T>(); foreach (var kv in this) c[kv.Key] = kv.Value; return c; }
         static Counter<T> Keep(IEnumerable<KeyValuePair<T, long>> items) { var c = new Counter<T>(); foreach (var kv in items) if (kv.Value > 0) c[kv.Key] = kv.Value; return c; }
         public static Counter<T> operator +(Counter<T> a, Counter<T> b) => Keep(a.Keys.Concat(b.Keys).Distinct().Select(k => new KeyValuePair<T, long>(k, a[k] + b[k])));
@@ -57,7 +66,7 @@ namespace Typhon.Runtime
     }
 
     /// <summary>collections.defaultdict: reading a missing key stores and returns default_factory().</summary>
-    internal sealed class defaultdict<K, V> : OrderedDictionary<K, V>, IPyRepr where K : notnull
+    internal sealed class defaultdict<K, V> : OrderedDictionary<K, V>, IPyMissingKey, IPyRepr where K : notnull
     {
         readonly string _factoryName;
         public Func<V>? default_factory { get; }
@@ -74,6 +83,11 @@ namespace Typhon.Runtime
             }
             set => base[key] = value;
         }
+        object? IPyMissingKey.GetMissingKey(object key) => this[(K)key];
+        public IEnumerable<(K, V)> items() => this.Select(item => (item.Key, item.Value));
+        public IEnumerable<K> keys() => Keys;
+        public IEnumerable<V> values() => Values;
+
         public string __repr__() => $"defaultdict(<class '{_factoryName}'>, {{" + string.Join(", ", this.Select(kv => Builtins.repr(kv.Key) + ": " + Builtins.repr(kv.Value))) + "})";
         public override string ToString() => __repr__();
     }
@@ -229,7 +243,7 @@ namespace Typhon.Runtime
     }
 
     /// <summary>pathlib.Path: a filesystem path (also accepted wherever a str path is: open(), os.path.*).</summary>
-    internal sealed class Path : IEquatable<Path>, IPyRepr
+    internal sealed class Path : IEquatable<Path>, IComparable<Path>, IComparable, IPyRepr
     {
         readonly string _p;
         // like CPython's WindowsPath, a path on Windows uses backslashes (Path("/tmp") / "x" is \tmp\x there)
@@ -256,6 +270,48 @@ namespace Typhon.Runtime
         public PyFile open(string mode = "r", long buffering = -1, string? encoding = null, string? errors = null, string? newline = null) => new PyFile(_p, mode, encoding, errors, newline);
         public IEnumerable<Path> iterdir() => System.IO.Directory.EnumerateFileSystemEntries(_p).Select(e => new Path(e));
         public IEnumerable<Path> glob(string pattern) => System.IO.Directory.EnumerateFileSystemEntries(_p, pattern).Select(e => new Path(e));
+        public IEnumerable<Path> rglob(string pattern)
+        {
+            if (!is_dir()) yield break;
+            foreach (var entry in System.IO.Directory.EnumerateFileSystemEntries(_p))
+            {
+                if (Typhon.Stdlib.fnmatch_.fnmatch(System.IO.Path.GetFileName(entry), pattern))
+                    yield return new Path(entry);
+                var attributes = System.IO.File.GetAttributes(entry);
+                if ((attributes & (System.IO.FileAttributes.Directory | System.IO.FileAttributes.ReparsePoint)) != System.IO.FileAttributes.Directory)
+                    continue;
+                foreach (var descendant in new Path(entry).rglob(pattern)) yield return descendant;
+            }
+        }
+
+        public Path relative_to(object other)
+        {
+            string parent = Typhon.Stdlib.os_.__path(other);
+            string relative = System.IO.Path.GetRelativePath(parent, _p);
+            if (relative == ".." || relative.StartsWith(".." + System.IO.Path.DirectorySeparatorChar, StringComparison.Ordinal) ||
+                System.IO.Path.IsPathRooted(relative))
+                throw new ArgumentException($"{Builtins.repr(_p)} is not in the subpath of {Builtins.repr(parent)}");
+            return new Path(relative);
+        }
+
+        public Typhon.Stdlib.os_.stat_result stat() => Typhon.Stdlib.os_.stat(_p);
+        public void chmod(long mode) => Typhon.Stdlib.os_.chmod(_p, mode);
+        public int CompareTo(Path? other)
+        {
+            if (other == null) return 1;
+            var comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+            var left = parts;
+            var right = other.parts;
+            for (int i = 0; i < Math.Min(left.Count, right.Count); i++)
+            {
+                int order = comparer.Compare(left[i], right[i]);
+                if (order != 0) return order;
+            }
+            return left.Count.CompareTo(right.Count);
+        }
+
+        int IComparable.CompareTo(object? other) => other is Path path ? CompareTo(path) :
+            throw new InvalidCastException($"'<' not supported between instances of 'Path' and '{(other == null ? "NoneType" : Builtins.PyTypeName(other.GetType()))}'");
         public void mkdir(bool parents = false, bool exist_ok = false) { if (exists() && !exist_ok) throw new System.IO.IOException($"[Errno 17] File exists: '{_p}'"); System.IO.Directory.CreateDirectory(_p); }
         public void unlink() => System.IO.File.Delete(_p);
         public bool Equals(Path? o) => o is not null && _p == o._p;
@@ -542,7 +598,7 @@ namespace Typhon.Stdlib
     }
 
     /// <summary>collections: Counter, defaultdict, deque, OrderedDict (the classes live in Typhon.Runtime).</summary>
-    internal static class collections
+    internal static partial class collections
     {
         public static Typhon.Runtime.Counter<T> Counter<T>(IEnumerable<T> iterable) where T : notnull => new Typhon.Runtime.Counter<T>(iterable);
         public static Typhon.Runtime.Counter<string> Counter(string s) => new Typhon.Runtime.Counter<string>(new StrChars(s));
@@ -604,6 +660,7 @@ namespace Typhon.Stdlib
         public static double neg(double a) => -a;
         public static long and_(long a, long b) => a & b;
         public static long or_(long a, long b) => a | b;
+        public static readonly Func<object?, object?, dynamic?> getitem = Builtins.__getitem;
         public static long xor(long a, long b) => a ^ b;
         public static Func<IList<T>, T> itemgetter<T>(long i) => xs => xs[(int)i];
     }

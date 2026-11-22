@@ -1,0 +1,128 @@
+from typing import Any
+
+
+class Checkers:
+    checks = None
+    before = checks
+
+    def _first(self):
+        return 'first'
+
+    def _second(self):
+        return 'second'
+
+    checks = [_first, _second]
+
+    def run(self):
+        return [check(self) for check in self.checks]
+
+print(Checkers.before, Checkers().run())
+
+
+def parse_number(text, converter):
+    return converter(text, 16)
+
+print(parse_number('ff', int))
+
+
+class Base:
+    def add(self, *args, **kwargs):
+        return args, kwargs
+
+class Derived(Base):
+    def run(self):
+        return self.add('one', 'two', action='store')
+
+print(Derived().run())
+
+
+values: dict[object, object] = {2: 'before'}
+more: dict[str, object] = {'name': 3}
+values.update(more)
+print(values)
+
+
+class OptionType:
+    def __init__(self, attrs):
+        self.kind = 'string'
+        for key, value in attrs.items():
+            setattr(self, key, value)
+
+    def name(self):
+        if isinstance(self.kind, type):
+            return self.kind.__name__
+        return self.kind
+
+print(OptionType({'kind': int}).name(), OptionType({}).name())
+
+class Parcel:
+    def __init__(self, *contents, fragile=False, **details):
+        self.label = contents, fragile, details
+
+
+class ParcelFactory:
+    def __init__(self):
+        self.make = Parcel
+
+    def create(self, items, options):
+        return self.make(*items, **options)
+
+
+factory = ParcelFactory()
+print(factory.create(("a", "b"), {"fragile": True, "contents": "extra"}).label)
+print(factory.create(("a", "b", "c"), {}).label)
+
+class Recorded:
+    def __init__(self, payload):
+        setattr(self, "value", payload)
+
+    def receive(self):
+        return self.value
+
+
+print(Recorded("unbound").receive())
+
+class BaseConstructor:
+    def __init__(self, value):
+        self.value = value
+
+
+class DerivedConstructor(BaseConstructor):
+    def __init__(self, value=Parcel):
+        BaseConstructor.__init__(self, value)
+
+
+print(DerivedConstructor().value.__name__, DerivedConstructor("override").value)
+TOKEN = ("not", "provided")
+def keeps_identity(value=TOKEN):
+    return value is TOKEN
+
+print(keeps_identity(), keeps_identity(tuple(list(TOKEN))))
+
+class Config:
+    pass
+
+
+def configure(cfg: Any, branch: Any):
+    cfg.branch = branch
+    cfg.branch.label = "dynamic"
+    return cfg.branch.label
+
+
+print(configure(Config(), Config()))
+
+def combined(item: Any):
+    return item.add("one", mode="named")
+
+
+print(combined(Base()))
+catalog: dict[object, str] = {1: 'item'}
+print(catalog.get(None), catalog.get(None, 'missing'))
+
+def combine(tail: Any):
+    front = alias = []
+    front.append(1)
+    return front + tail, alias
+
+
+print(combine(["right"]))

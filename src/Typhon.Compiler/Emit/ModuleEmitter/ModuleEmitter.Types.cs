@@ -139,6 +139,7 @@ namespace Typhon.Compiler.Emit
                 }
                 case SubscriptExpr ix when !(ix.Index is SliceExpr):
                 {
+                    if (BuiltinGenericOrigin(ix.Target) != null) return "dynamic";
                     if (InferType(ix.Index) == "global::Typhon.Runtime.PySlice") return "dynamic";
                     var t = InferType(ix.Target);
                     if (IsBytesType(t)) return "long"; // b[i] is an int
@@ -181,6 +182,7 @@ namespace Typhon.Compiler.Emit
                 case CallExpr call: return CallType(call);
                 case BinOpExpr pf when pf.Op == "%" && (pf.Left is ConstExpr pfc && pfc.Kind == ConstKind.Str || InferType(pf.Left) == "string"): return "string";
                 case BinOpExpr lc when lc.Op == "+" && ListConcatMismatch(lc): return "List<dynamic>";
+                case BinOpExpr union when !_m.IsGdScript && IsUnionOperation(union): return "dynamic";
                 case BinOpExpr b: return BinOpType(b);
                 case UnaryExpr u: return u.Op == "not" ? "bool" : InferType(u.Operand) == "bool" ? "long" : InferType(u.Operand);
                 case CompareExpr ce:
@@ -274,6 +276,12 @@ namespace Typhon.Compiler.Emit
                 }
                 case TupleExpr t:
                 {
+                    if (_identityTuples.Contains(t))
+                    {
+                        var items = t.Elts.Select(e => PyType(InferType(e))).Distinct().ToList();
+                        string itemType = items.Count == 1 && !UnsureType(items[0]) ? items[0] : "dynamic";
+                        return PyTuplePrefix + itemType + ">";
+                    }
                     if (t.Elts.Count == 0) return null;
                     if (t.Elts.Count == 1) { var one = PyType(InferType(t.Elts[0])); return one == null || one == TypeInference.Pending ? one : $"ValueTuple<{one}>"; }
                     // a long tuple of one item type is a data sequence (a table of numbers), not a record: PyTuple<T>
@@ -300,7 +308,10 @@ namespace Typhon.Compiler.Emit
             // an object whose attributes exist only at run time (argparse.Namespace(a=1)): late-bound, as its annotation is
             if (DottedName(call.Func) is string lbt && !IsShadowed(lbt.Split('.')[0]) && IsLateBoundDotNetType(lbt)) return "dynamic";
             if (IsDataclassReplace(call)) { string rt0 = InferType(call.Args[0].Value); return rt0 == TypeInference.Pending ? rt0 : rt0 ?? "dynamic"; }
-            if (call.Func is NameExpr gtn && gtn.Id == "globals" && call.Args.Count == 0 && !IsShadowed("globals")) return "OrderedDictionary<string, object?>";
+            if (call.Func is NameExpr gtn && gtn.Id == "globals" && call.Args.Count == 0 && !IsShadowed("globals"))
+                return _m.RuntimeCodeMode != null || _lateModuleFields.Count != 0 ? "dynamic" : "OrderedDictionary<string, object?>";
+            if (_m.RuntimeCodeMode != null && _scopeKey == RuntimeCodeScopeKey && call.Func is NameExpr { Id: "locals" } &&
+                call.Args.Count == 0 && !IsShadowed("locals")) return "dynamic";
             if (call.Func is NameExpr dfn && IsLocal(dfn.Id) && KnownType(dfn.Id) is string dft && dft.StartsWith("global::System.Func<") && dft.EndsWith(">"))
             {
                 string last = SplitTypeArgs(GenericArg(dft)).Last();
@@ -425,6 +436,11 @@ namespace Typhon.Compiler.Emit
                         var pair = TupleElementTypes(ElementTypeOf(at));
                         return pair != null && pair.Count == 2 && !pair.Contains(TypeInference.Pending) ? $"OrderedDictionary<{PyType(pair[0])}, {PyType(pair[1])}>" : null;
                     }
+                    case "filter" when call.Args.Count == 2 && call.Args.All(a => a.Name == null && !a.Star && !a.DoubleStar):
+                    {
+                        string elem = IterElementType(InferType(call.Args[1].Value));
+                        return elem == null || elem == TypeInference.Pending ? elem : $"IEnumerable<{elem}>";
+                    }
                     case "map" when call.Args.Count == 2 && call.Args.All(a => a.Name == null && !a.Star):
                     {
                         // map(f, xs): what f gives for xs's items (a builtin conversion, a function value, a lambda)
@@ -497,7 +513,12 @@ namespace Typhon.Compiler.Emit
                 return PyTuplePrefix + (HomogeneousTupleItem(l) ?? HomogeneousTupleItem(r)) + ">";
             if (b.Op == "+" && TupleElementTypes(l) is List<string> tl && TupleElementTypes(r) is List<string> tr) return "(" + string.Join(", ", tl.Concat(tr)) + ")";
             if (b.Op == "|" && IsDictType(l) && IsDictType(r)) return l;
-            if (ArithmeticOps.Contains(b.Op)) { if (l == "bool") l = "long"; if (r == "bool") r = "long"; }
+            if (ArithmeticOps.Contains(b.Op) || IsBitwiseOperator(b.Op) &&
+                (l == "bool" && IsIntegral(r) || r == "bool" && IsIntegral(l)))
+            {
+                if (l == "bool") l = "long";
+                if (r == "bool") r = "long";
+            }
             // a literal next to a narrower .NET integer stays that type (see Operand)
             if (IsIntLiteral(b.Left) && IsSmallInt(r)) l = r;
             if (IsIntLiteral(b.Right) && IsSmallInt(l)) r = l;

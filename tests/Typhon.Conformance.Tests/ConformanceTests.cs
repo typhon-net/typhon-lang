@@ -236,6 +236,194 @@ public sealed class ConformanceTests(ITestOutputHelper output)
         finally { Directory.Delete(dir, recursive: true); }
     }
 
+    /// <summary>Compile the original selectors module and compare TCP readiness over localhost.</summary>
+    [Theory]
+    [InlineData("SelectSelector")]
+    [InlineData("DefaultSelector")]
+    public void PyLibSelectors(string selector)
+    {
+        string? python = Suite.FindPython(out string why);
+        if (python == null) { Console.WriteLine($"PyLibSelectors skipped: {why}"); return; }
+        var oracle = Suite.Run(python,
+            ["-c", "import sys, sysconfig; print(sysconfig.get_path('stdlib') if sys.version_info[:2] == (3, 15) else '')"],
+            TimeSpan.FromSeconds(30));
+        Assert.True(oracle.ExitCode == 0, oracle.StdErr);
+        string lib = oracle.StdOut.Trim();
+        if (lib.Length == 0) { Console.WriteLine("PyLibSelectors requires the CPython 3.15 library"); return; }
+
+        string dir = Directory.CreateTempSubdirectory("typhon-selectors-").FullName;
+        string script = Path.Combine(dir, "selector_loopback.ty");
+        File.WriteAllText(script, $"#:pylib {lib}\n" + $$"""
+            import selectors
+            import socket
+
+            with socket.socket() as listener:
+                listener.bind(("127.0.0.1", 0))
+                listener.listen(1)
+                address = listener.getsockname()
+                with selectors.{{selector}}() as mux:
+                    key = mux.register(listener, selectors.EVENT_READ, "listener")
+                    print(key.fileobj is listener, key.data, len(mux.get_map()))
+                    print(mux.select(0))
+                    with socket.create_connection(address, 2.0) as client:
+                        found = mux.select(1.0)
+                        print(len(found), found[0][0].data, found[0][1] == selectors.EVENT_READ)
+                        print(mux.unregister(listener).data)
+                        peer, _ = listener.accept()
+                        with peer:
+                            mux.register(peer, selectors.EVENT_READ, "peer")
+                            client.sendall(b"x")
+                            found = mux.select(1.0)
+                            print(found[0][0].data, peer.recv(1))
+                            print(list(mux.get_map().values())[0].fileobj is peer)
+            """);
+        try
+        {
+            var expected = Suite.Run(python, [script], TimeSpan.FromMinutes(1));
+            Assert.True(expected.ExitCode == 0, $"CPython exit code {expected.ExitCode}\n{expected.StdErr}");
+            var run = Suite.Run("dotnet", [Suite.Cli, "run", script, "--no-cache", "--no-server"], TimeSpan.FromMinutes(3));
+            Assert.True(run.ExitCode == 0, $"exit code {run.ExitCode}\n{run.StdErr}");
+            Assert.Equal(Suite.Normalize(expected.StdOut), Suite.Normalize(run.StdOut));
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    /// <summary>Execute source and archive entry points through the original runpy module.</summary>
+    [Fact]
+    public void PyLibRunpy()
+    {
+        string? python = Suite.FindPython(out string why);
+        if (python == null) { Console.WriteLine($"PyLibRunpy skipped: {why}"); return; }
+        var oracle = Suite.Run(python,
+            ["-c", "import sys, sysconfig; print(sysconfig.get_path('stdlib') if sys.version_info[:2] == (3, 15) else '')"],
+            TimeSpan.FromSeconds(30));
+        Assert.True(oracle.ExitCode == 0, oracle.StdErr);
+        string lib = oracle.StdOut.Trim();
+        if (lib.Length == 0) { Console.WriteLine("PyLibRunpy requires the CPython 3.15 library"); return; }
+
+        string dir = Directory.CreateTempSubdirectory("typhon-runpy-").FullName;
+        string script = Path.Combine(dir, "probe.ty");
+        const string payload = """
+            import sys
+
+            name_seen = __name__
+            package_seen = __package__
+            spec_seen = getattr(__spec__, "name", None)
+            argv_seen = sys.argv[0] == __file__
+            record_seen = __name__ in sys.modules and sys.modules[__name__].__dict__ is globals()
+            answer = seed + 1
+
+            if globals().get("fail_inside", False):
+                raise ValueError("failed while executing module")
+            """;
+        try
+        {
+            File.WriteAllText(Path.Combine(dir, "runner_payload.py"), payload);
+            File.WriteAllText(Path.Combine(dir, "runner_path.py"), payload);
+            string package = Path.Combine(dir, "runner_package");
+            Directory.CreateDirectory(package);
+            File.WriteAllText(Path.Combine(package, "__init__.py"), "");
+            File.WriteAllText(Path.Combine(package, "__main__.py"), payload);
+            using (var file = File.Create(Path.Combine(dir, "runner_archive.pyz")))
+            using (var archive = new System.IO.Compression.ZipArchive(file, System.IO.Compression.ZipArchiveMode.Create))
+            using (var entry = new StreamWriter(archive.CreateEntry("__main__.py").Open()))
+                entry.Write(payload);
+
+            File.WriteAllText(script, $"#:pylib {lib}\n" + """
+                import os
+                import runpy
+                import sys
+                from types import ModuleType
+
+                directory = os.path.dirname(__file__)
+                saved_argv = sys.argv[0]
+                saved_path = sys.path.copy()
+                saved_module = ModuleType("temporary_execution")
+                sys.modules["temporary_execution"] = saved_module
+                initial = {"seed": 7}
+
+                def report(result):
+                    print(result["name_seen"], repr(result["package_seen"]), result["spec_seen"], result["answer"],
+                          result["argv_seen"], result["record_seen"])
+
+                report(runpy.run_module("runner_payload", initial))
+                report(runpy.run_module("runner_payload", initial, "temporary_execution", True))
+                report(runpy.run_module("runner_package", initial, alter_sys=True))
+                report(runpy.run_path(os.path.join(directory, "runner_path.py"), initial))
+                report(runpy.run_path(os.path.join(directory, "runner_package"), initial, "task.entry"))
+                report(runpy.run_path(os.path.join(directory, "runner_archive.pyz"), initial, "archive_entry"))
+                print(initial, sys.argv[0] == saved_argv, sys.path == saved_path, sys.modules["temporary_execution"] is saved_module)
+
+                try:
+                    runpy.run_module("runner_payload", {"seed": 0, "fail_inside": True}, "temporary_execution", True)
+                except ValueError as error:
+                    print(str(error), sys.argv[0] == saved_argv, sys.modules["temporary_execution"] is saved_module)
+
+                try:
+                    runpy.run_path(os.path.join(directory, "runner_archive.pyz"), {"seed": 0, "fail_inside": True})
+                except ValueError as error:
+                    print(str(error), sys.argv[0] == saved_argv, sys.path == saved_path, "<run_path>" not in sys.modules)
+                """);
+            var expected = Suite.Run(python, [script], TimeSpan.FromMinutes(1));
+            Assert.True(expected.ExitCode == 0, $"CPython exit code {expected.ExitCode}\n{expected.StdErr}");
+            var run = Suite.Run("dotnet", [Suite.Cli, "run", script, "--no-cache", "--no-server"], TimeSpan.FromMinutes(3));
+            Assert.True(run.ExitCode == 0, $"exit code {run.ExitCode}\n{run.StdErr}");
+            Assert.Equal(Suite.Normalize(expected.StdOut), Suite.Normalize(run.StdOut));
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    /// <summary>A package run through runpy resolves relative imports using the executed code's package.</summary>
+    [Fact]
+    public void PyLibRunpyRelativeImports()
+    {
+        string? python = Suite.FindPython(out string why);
+        if (python == null) { Console.WriteLine($"PyLibRunpyRelativeImports skipped: {why}"); return; }
+        var oracle = Suite.Run(python,
+            ["-c", "import sys, sysconfig; print(sysconfig.get_path('stdlib') if sys.version_info[:2] == (3, 15) else '')"],
+            TimeSpan.FromSeconds(30));
+        Assert.True(oracle.ExitCode == 0, oracle.StdErr);
+        string lib = oracle.StdOut.Trim();
+        if (lib.Length == 0) { Console.WriteLine("PyLibRunpyRelativeImports requires the CPython 3.15 library"); return; }
+
+        string dir = Directory.CreateTempSubdirectory("typhon-runpy-relative-").FullName;
+        try
+        {
+            string package = Path.Combine(dir, "source_package");
+            Directory.CreateDirectory(package);
+            File.WriteAllText(Path.Combine(package, "__init__.py"), "initialized = 'parent initialized'\n");
+            File.WriteAllText(Path.Combine(package, "helper.py"), "value = 42\n");
+            File.WriteAllText(Path.Combine(package, "__main__.py"), """
+                from .helper import value
+                from . import helper
+
+                def local_import():
+                    from .helper import value as local_value
+                    return local_value + 1
+
+                via_parent = helper.value + 2
+                via_function = local_import()
+                """);
+            string script = Path.Combine(dir, "probe.ty");
+            File.WriteAllText(script, $"#:pylib {lib}\n" + """
+                import runpy
+                import sys
+
+                result = runpy.run_module("source_package")
+                print(result["value"], result["__package__"], result["__name__"])
+                print(getattr(sys.modules["source_package"], "initialized"))
+                print(getattr(sys.modules["source_package.helper"], "value"))
+                print(result["via_parent"], result["via_function"], sys.modules["source_package.helper"] is result["helper"])
+                """);
+            var expected = Suite.Run(python, [script], TimeSpan.FromMinutes(1));
+            Assert.True(expected.ExitCode == 0, $"CPython exit code {expected.ExitCode}\n{expected.StdErr}");
+            var run = Suite.Run("dotnet", [Suite.Cli, "run", script, "--no-cache", "--no-server"], TimeSpan.FromMinutes(3));
+            Assert.True(run.ExitCode == 0, $"exit code {run.ExitCode}\n{run.StdErr}");
+            Assert.Equal(Suite.Normalize(expected.StdOut), Suite.Normalize(run.StdOut));
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
     /// <summary>Compile the stock timeit module and run callable, string and CLI paths with deterministic timers.</summary>
     [Fact]
     public void PyLibTimeit()
@@ -528,6 +716,57 @@ public sealed class ConformanceTests(ITestOutputHelper output)
                 Convert.FromBase64String("H4sIAAAAAAAA/0tOTDu8kperODU5Py8FAE73/FQNAAAA"));
             File.WriteAllBytes(Path.Combine(dir, "second.bz2"),
                 Convert.FromBase64String("QlpoOTFBWSZTWRPK/Y0AAADBgAAQASAcACAAIYAMAycu4u5IpwoSAnlfsaBCWmg5MUFZJlNZOWNjfwAAAcGUABIvAYgAACAIACAAIgA00EDQNBjNWCDe93i7kinChIHLGxv4"));
+            var expected = Suite.Run(python, [script], TimeSpan.FromMinutes(1));
+            Assert.True(expected.ExitCode == 0, expected.StdErr);
+            var actual = Suite.Run("dotnet", [Suite.Cli, "run", script], TimeSpan.FromMinutes(3));
+            Assert.True(actual.ExitCode == 0, actual.StdErr);
+            Assert.Equal(Suite.Normalize(expected.StdOut), Suite.Normalize(actual.StdOut));
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    [Fact]
+    public void PyLibCmd()
+    {
+        string? python = Suite.FindPython(out string why);
+        if (python == null) { Console.WriteLine($"PyLibCmd skipped: {why}"); return; }
+        var oracle = Suite.Run(python,
+            ["-c", "import sys, sysconfig; print(sysconfig.get_path('stdlib') if sys.version_info[:2] == (3, 15) else '')"],
+            TimeSpan.FromSeconds(30));
+        Assert.True(oracle.ExitCode == 0, oracle.StdErr);
+        string lib = oracle.StdOut.Trim();
+        if (lib.Length == 0) { Console.WriteLine("PyLibCmd requires the CPython 3.15 library"); return; }
+        string dir = Directory.CreateTempSubdirectory("typhon-cmd-").FullName;
+        try
+        {
+            string script = Path.Combine(dir, "uses_cmd.ty");
+            File.WriteAllText(script, $"#:pylib {lib}\n" + """"
+                import cmd
+                import io
+
+                class Demo(cmd.Cmd):
+                    prompt = 'demo> '
+
+                    def do_say(self, value):
+                        """Echo a command argument."""
+                        self.stdout.write('said: ' + value + '\n')
+
+                    def do_stop(self, value):
+                        return True
+
+                    def complete_say(self, text, line, begidx, endidx):
+                        return ['hello', 'help']
+
+                out = io.StringIO()
+                session = Demo(stdin=io.StringIO('say first\nsay next\nstop\n'), stdout=out)
+                session.use_rawinput = False
+                session.cmdloop('begin')
+                print(repr(out.getvalue()))
+                print(session.parseline('?say'), session.parseline('say another'))
+                print(session.completenames('s'))
+                session.onecmd('help say')
+                print(out.getvalue().endswith('Echo a command argument.\n'))
+                """");
             var expected = Suite.Run(python, [script], TimeSpan.FromMinutes(1));
             Assert.True(expected.ExitCode == 0, expected.StdErr);
             var actual = Suite.Run("dotnet", [Suite.Cli, "run", script], TimeSpan.FromMinutes(3));

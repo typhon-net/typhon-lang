@@ -217,6 +217,8 @@ namespace Typhon.Compiler.Emit
             }
         }
 
+        Dictionary<string, string> _baseInitializerArguments;
+
         void EmitConstructorCore(FunctionDef f, ClassContext ctx, List<Expr> bases, string[] paramTypes)
         {
             var sig = BuildSignature(f, dropFirst: true, paramTypes: paramTypes);
@@ -266,6 +268,8 @@ namespace Typhon.Compiler.Emit
             if (superArgs != null)
             {
                 var saved = _scope; _scope = sig.Scope;
+                var savedBaseArguments = _baseInitializerArguments;
+                _baseInitializerArguments = sig.DefaultArguments;
                 var baseInit = NearestInitAncestor(ctx.Def)?.Body.OfType<FunctionDef>().FirstOrDefault(fd => fd.Name == "__init__");
                 string kwBase = superArgs.Any(x => x.Name != null || x.DoubleStar) ? KwargsCallArgs(baseInit, 1, superArgs) : null;
                 // CLR constructor initializers require static binding even when a Python argument is dynamic.
@@ -286,6 +290,7 @@ namespace Typhon.Compiler.Emit
                 if (Obs != null && bases.Count > 0 && ResolveBase(bases[0], out var basePy, out _) && basePy != null &&
                     _p.TryFindClass(_m, basePy.Name, out var bcls, out var bowner))
                     RecordCall(InitTarget(bowner, bcls), superArgs);
+                _baseInitializerArguments = savedBaseArguments;
                 _scope = saved;
                 body = body.Where((s, i) => i != first).ToList();
                 sig.Locals = LocalsAnalyzer.Analyze(body, f.Params.Select(p => p.Name), null);
