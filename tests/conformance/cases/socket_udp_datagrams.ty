@@ -7,7 +7,7 @@ with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as receiver:
         sender.bind(("127.0.0.1", 0))
         sender.settimeout(2.0)
         print(sender.sendto(b"abcdef", receiver.getsockname()))
-        message, peer = receiver.recvfrom(3)
+        message, peer = receiver.recvfrom(64)
         print(message, peer == sender.getsockname())
         print(receiver.sendto(b"", 0, peer))
         reply, address = sender.recvfrom(64)
