@@ -53,11 +53,27 @@ namespace Typhon.Compiler
         public bool BigIntPragma;
         /// <summary>A GDScript (.gd) module: parsed by the GDScript front end, emitted with GDScript's semantics where they differ.</summary>
         public bool IsGdScript;
+        /// <summary>The module is the initializer of a Python package.</summary>
+        public bool IsPackage;
+        /// <summary>Execution mode for a snippet compiled by the host at run time, or null for a regular module.</summary>
+        public string RuntimeCodeMode;
+        public readonly HashSet<string> RuntimeBindings = new HashSet<string>(StringComparer.Ordinal);
         /// <summary>What the GDScript front end knows about a .gd module (its script class, exports, inner classes).</summary>
         public GdScriptModule GdScript;
 
         public string QualifiedClassName => "global::" + (string.IsNullOrEmpty(Namespace) ? "" : Namespace + ".") + ClassName;
         public bool IsMainModule => Name == "__main__" || Name.EndsWith(".__main__");
+        public string PackageName => IsPackage ? Name : Name.Substring(0, Math.Max(0, Name.LastIndexOf('.')));
+
+        /// <summary>The absolute name of an import from this module, or null when its level goes beyond the package.</summary>
+        public string ResolveImport(string module, int level)
+        {
+            if (level == 0) return module;
+            string package = PackageName;
+            for (int i = 1; i < level && package.Length > 0; i++)
+                package = package.Substring(0, Math.Max(0, package.LastIndexOf('.')));
+            return package.Length == 0 ? null : module.Length == 0 ? package : package + "." + module;
+        }
     }
 
     public sealed class ProjectContext
@@ -86,7 +102,7 @@ namespace Typhon.Compiler
         internal readonly Dictionary<Syntax.ClassDef, List<(Syntax.ClassDef Class, ModuleInfo Module)>> MixedInto =
             new Dictionary<Syntax.ClassDef, List<(Syntax.ClassDef, ModuleInfo)>>();
 
-        public ModuleInfo FindModule(string dotted) => Modules.TryGetValue(dotted, out var m) ? m : null;
+        public ModuleInfo FindModule(string dotted) => dotted != null && Modules.TryGetValue(dotted, out var m) ? m : null;
 
         /// <summary>Find a Typhon class by simple name across modules (used for base-class lookups).</summary>
         public bool TryFindClass(ModuleInfo module, string className, out ClassDef cls, out ModuleInfo owner)
@@ -105,6 +121,17 @@ namespace Typhon.Compiler
         public const string FileExtension = ".ty";
         /// <summary>GDScript files (Godot 4): compiled by the GDScript front end into the same AST.</summary>
         public const string GdScriptExtension = ".gd";
+
+        /// <summary>Imports anywhere in the module, including imports in functions and control-flow blocks.</summary>
+        public static IReadOnlyList<Stmt> Imports(ModuleInfo module)
+        {
+            var imports = new List<Stmt>();
+            AstWalker.VisitAll(module.Ast.Body, node =>
+            {
+                if (node is ImportStmt || node is ImportFromStmt) imports.Add((Stmt)node);
+            });
+            return imports;
+        }
 
         /// <summary>Is the file a GDScript module (by its extension)?</summary>
         public static bool IsGdScriptPath(string path) => path != null && path.EndsWith(GdScriptExtension, StringComparison.OrdinalIgnoreCase);
@@ -163,7 +190,8 @@ namespace Typhon.Compiler
             ModuleAliases.Apply(info.Ast);
             foreach (var s in info.Ast.Body)
             {
-                if (s is AssignStmt alias && alias.Targets.Count == 1 && alias.Targets[0] is NameExpr an0 && IsTypeAliasValue(alias.Value))
+                if (s is AssignStmt alias && alias.Targets.Count == 1 && alias.Targets[0] is NameExpr an0 &&
+                    IsTypeAliasValue(alias.Value) && !UsesKnownValue(alias.Value, info))
                     info.TypeAliases[an0.Id] = alias.Value;
                 if (s is AnnAssignStmt ta && ta.Target is NameExpr tn0 && ta.Value != null && (ta.Annotation is NameExpr tan && tan.Id == "TypeAlias" || ta.Annotation is AttributeExpr taa && taa.Name == "TypeAlias"))
                     info.TypeAliases[tn0.Id] = ta.Value;
@@ -177,6 +205,13 @@ namespace Typhon.Compiler
             }
             return info;
         }
+
+        static bool UsesKnownValue(Expr expression, ModuleInfo module) => expression switch
+        {
+            NameExpr name => module.Globals.Contains(name.Id) && !module.TypeAliases.ContainsKey(name.Id),
+            BinOpExpr binary => UsesKnownValue(binary.Left, module) || UsesKnownValue(binary.Right, module),
+            _ => false,
+        };
 
         static readonly HashSet<string> AliasGenerics = new HashSet<string>
         {

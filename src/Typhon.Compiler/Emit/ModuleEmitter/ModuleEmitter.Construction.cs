@@ -46,21 +46,26 @@ namespace Typhon.Compiler.Emit
                         foreach (var types in baseSigs)
                         {
                             var tps = it.Params.Select((p, i) => $"{(types[i] == TypeInference.Declared ? MapType(p.Annotation, init) : types[i])} {Esc(p.Name)}").ToList();
-                            // the base __init__'s defaults where they fit this signature's types (optional parameters last, as C# wants)
-                            for (int i = tps.Count - 1; i >= 0; i--)
+                            var defaults = new string[tps.Count];
+                            for (int i = 0; i < tps.Count; i++)
                             {
                                 var p = it.Params[i];
                                 string pt = types[i] == TypeInference.Declared ? MapType(p.Annotation, init) : types[i];
-                                if (p.Default == null) break;
+                                if (p.Default == null) continue;
                                 if (pt == "dynamic" || pt == "object")
                                 {
-                                    if (!IsConstantDefault(p.Default)) break;
-                                    tps[i] = IsNone(p.Default) ? tps[i] + " = null"
-                                        : $"[global::System.Runtime.InteropServices.Optional, global::System.Runtime.InteropServices.DefaultParameterValue({EmitValue(p.Default)})] {tps[i]}";
+                                    if (!IsConstantDefault(p.Default)) continue;
+                                    if (IsNone(p.Default)) defaults[i] = "null";
+                                    else
+                                    {
+                                        tps[i] = WithOptionalDefault(tps[i], EmitValue(p.Default));
+                                        defaults[i] = "";
+                                    }
                                 }
-                                else if (InferType(p.Default) == pt || IsNone(p.Default) && pt.EndsWith("?")) tps[i] += " = " + EmitExpr(p.Default, targetTyped: true);
-                                else break;
+                                else if (InferType(p.Default) == pt || IsNone(p.Default) && pt.EndsWith("?"))
+                                    defaults[i] = EmitExpr(p.Default, targetTyped: true);
                             }
+                            ApplyParameterDefaults(tps, defaults);
                             // (a dynamic parameter goes as object: a constructor initializer cannot be dispatched dynamically)
                             var baseArgs = it.Params.Select((p, i) => types[i] == "dynamic" ? $"(object?){Esc(p.Name)}" : Esc(p.Name));
                             _w.Line($"{SurfaceVisibility("public", string.Join(", ", tps))} {Esc(ctx.Name)}({string.Join(", ", tps)}) : base({string.Join(", ", baseArgs)}) {{ }}");
@@ -68,7 +73,7 @@ namespace Typhon.Compiler.Emit
                         _w.Line();
                         if (!Ti.Fallback.Contains(it.Key)) return;
                     }
-                    var ps = new List<string>(); var names = new List<string>();
+                    var ps = new List<string>(); var names = new List<string>(); var baseDefaults = new List<string>();
                     foreach (var p in init.Params.Skip(1))
                     {
                         if (p.Kind != ParamKind.Normal) return; // *args/**kwargs: no faithful C# mirror, write an __init__
@@ -76,11 +81,19 @@ namespace Typhon.Compiler.Emit
                         // (a late-bound parameter with a number/bool/str default: C# allows only null as a dynamic parameter's
                         // default, but honours [Optional, DefaultParameterValue(...)])
                         if (p.Default != null && (type == "dynamic" || type == "object") && IsConstantDefault(p.Default) && !IsNone(p.Default))
-                            ps.Add($"[global::System.Runtime.InteropServices.Optional, global::System.Runtime.InteropServices.DefaultParameterValue({EmitValue(p.Default)})] {type} {Esc(p.Name)}");
-                        else ps.Add($"{type} {Esc(p.Name)}" + (p.Default != null ? " = " + EmitExpr(p.Default, targetTyped: true) : ""));
+                        {
+                            ps.Add(WithOptionalDefault($"{type} {Esc(p.Name)}", EmitValue(p.Default)));
+                            baseDefaults.Add("");
+                        }
+                        else
+                        {
+                            ps.Add($"{type} {Esc(p.Name)}");
+                            baseDefaults.Add(p.Default != null ? EmitExpr(p.Default, targetTyped: true) : null);
+                        }
                         // a constructor initializer cannot be dispatched dynamically: late-bound values go as object
                         names.Add(type == "dynamic" ? $"(object?){Esc(p.Name)}" : Esc(p.Name));
                     }
+                    ApplyParameterDefaults(ps, baseDefaults);
                     _w.Line($"{SurfaceVisibility("public", string.Join(", ", ps))} {Esc(ctx.Name)}({string.Join(", ", ps)}) : base({string.Join(", ", names)}) {{ }}");
                     _w.Line();
                     return;
@@ -162,6 +175,16 @@ namespace Typhon.Compiler.Emit
             return found && deferred;
         }
 
+        bool ForwardsBaseInit(ClassDef cls, FunctionDef init)
+        {
+            if (NearestInitAncestor(cls) is not ClassDef parent || parent.TypeParams.Count > 0 ||
+                parent.Body.OfType<FunctionDef>().FirstOrDefault(f => f.Name == "__init__") is not FunctionDef baseInit ||
+                baseInit.Params.Any(p => p.Kind != ParamKind.Normal)) return false;
+            return AstWalker.ContainsOutsideNestedScopes(init.Body, node =>
+                node is CallExpr { Func: AttributeExpr { Name: "__init__", Target: CallExpr { Func: NameExpr { Id: "super" } } } } call &&
+                call.Args.Any(a => a.Star || a.DoubleStar));
+        }
+
         /// <summary>The nearest Typhon ancestor (along first bases) that defines __init__; null if none (or a .NET base comes first).</summary>
         ClassDef NearestInitAncestor(ClassDef c)
         {
@@ -186,7 +209,8 @@ namespace Typhon.Compiler.Emit
                 {
                     var init = c.Body.OfType<FunctionDef>().FirstOrDefault(f => f.Name == "__init__");
                     // (an __init__ that never calls its base's: Python allows it, the base is then only allocated)
-                    if (init == null || !(DefersBaseInit(init) || NeverCallsBaseInit(init) && NearestInitAncestor(c) != null)) continue;
+                    if (init == null || !(DefersBaseInit(init) || ForwardsBaseInit(c, init) ||
+                        NeverCallsBaseInit(init) && NearestInitAncestor(c) != null)) continue;
                     for (var b = NearestInitAncestor(c); b != null && set.Add(b); b = NearestInitAncestor(b)) { }
                 }
                 return _p.TwoPhaseClasses = set;
@@ -196,10 +220,12 @@ namespace Typhon.Compiler.Emit
         void EmitConstructorCore(FunctionDef f, ClassContext ctx, List<Expr> bases, string[] paramTypes)
         {
             var sig = BuildSignature(f, dropFirst: true, paramTypes: paramTypes);
+            sig.Scope.ReturnType = "void";
             sig.Scope.HasSelf = true;
             sig.Scope.Params.Remove(f.Params[0].Name);
             bool twoPhase = TwoPhaseClasses.Contains(ctx.Def) && f.Params.All(x => x.Kind == ParamKind.Normal);
-            if (twoPhase || DefersBaseInit(f) || NeverCallsBaseInit(f) && NearestInitAncestor(ctx.Def) != null)
+            if (twoPhase || DefersBaseInit(f) || ForwardsBaseInit(ctx.Def, f) ||
+                NeverCallsBaseInit(f) && NearestInitAncestor(ctx.Def) != null)
             {
                 // allocate with the base's allocation-only constructor; super().__init__(...) runs where the body has it
                 string alloc = NearestInitAncestor(ctx.Def) != null ? $" : base(default({NoInitType}))" : "";

@@ -507,9 +507,21 @@ namespace Typhon.Stdlib
             public static bool isabs(string s) => Win ? NtPath.isabs(s) : PosixPath.isabs(s);
             /// <summary>join(a, *p): an absolute part starts over; join(d, "") ends in a separator.</summary>
             public static string join(string a, params string[] p) => Win ? NtPath.join(a, p) : PosixPath.join(a, p);
+            public static string __join_paths(object? paths)
+            {
+                var parts = Builtins.__iter_dyn(paths).Select(part => os_.__path((object?)part)).ToArray();
+                if (parts.Length == 0) throw new InvalidCastException("join() missing 1 required positional argument: 'a'");
+                return join(parts[0], parts[1..]);
+            }
             public static (string, string) split(string p) => Win ? NtPath.split(p) : PosixPath.split(p);
             public static (string, string) splitext(string p) => Win ? GenericPath.splitext(p, '\\', '/') : GenericPath.splitext(p, '/', null);
             public static (string, string) splitdrive(string p) => Win ? NtPath.splitdrive(p) : ("", p);
+            public static (PyBytes, PyBytes) splitdrive(PyBytes p)
+            {
+                if (!Win) return (PyBytes.Empty, p);
+                var (drive, tail) = NtPath.splitdrive(p.decode("latin-1"));
+                return (PyBytes.Latin1(drive), PyBytes.Latin1(tail));
+            }
             public static (string, string, string) splitroot(string p) => Win ? NtPath.splitroot(p) : PosixPath.splitroot(p);
             public static string basename(string p) => Win ? NtPath.basename(p) : PosixPath.basename(p);
             public static string dirname(string p) => Win ? NtPath.dirname(p) : PosixPath.dirname(p);

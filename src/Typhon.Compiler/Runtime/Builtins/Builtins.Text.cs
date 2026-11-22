@@ -64,6 +64,14 @@ namespace Typhon.Runtime
             }
         }
 
+        public static string str(object? @object, string encoding, string errors = "strict") => @object switch
+        {
+            PyBytes bytes => bytes.decode(encoding, errors),
+            PyByteArray bytes => bytes.decode(encoding, errors),
+            global::memoryview view => ByteOps.Decode(view.ToArray(), encoding, errors),
+            _ => throw new InvalidCastException("decoding to str: need a bytes-like object"),
+        };
+
         public static string repr(object? o) => o switch
         {
             string s => Quote(s),
@@ -72,20 +80,51 @@ namespace Typhon.Runtime
             _ => str(o),
         };
 
+        /// <summary>object.__str__ delegates to repr and avoids any overridden __str__.</summary>
+        public static string __object_str(object? value)
+        {
+            if (value == null || value is IPyRepr) return repr(value);
+            Type type = value.GetType();
+            string module = ModuleOfType(type);
+            if (type == typeof(object)) return $"<object object at 0x{id(value):x}>";
+            if (module == "builtins") return repr(value);
+            string name = PyTypeName(type);
+            for (var parent = type.DeclaringType; parent?.DeclaringType != null; parent = parent.DeclaringType)
+                name = PyTypeName(parent) + "." + name;
+            return $"<{module}.{name} object at 0x{id(value):x}>";
+        }
+
         static string Quote(string s)
         {
             char q = s.Contains('\'') && !s.Contains('"') ? '"' : '\'';
             var sb = new StringBuilder().Append(q);
-            foreach (char c in s)
+            for (int index = 0; index < s.Length;)
             {
-                switch (c)
+                bool valid = Rune.TryGetRuneAt(s, index, out Rune rune);
+                int codePoint = valid ? rune.Value : s[index];
+                int width = valid ? rune.Utf16SequenceLength : 1;
+                switch (codePoint)
                 {
                     case '\\': sb.Append("\\\\"); break;
                     case '\n': sb.Append("\\n"); break;
                     case '\r': sb.Append("\\r"); break;
                     case '\t': sb.Append("\\t"); break;
-                    default: if (c == q) sb.Append('\\'); sb.Append(c); break;
+                    default:
+                        UnicodeCategory category = valid ? Rune.GetUnicodeCategory(rune) : UnicodeCategory.Surrogate;
+                        bool printable = codePoint == ' ' || category is not (UnicodeCategory.Control or UnicodeCategory.Format or
+                            UnicodeCategory.Surrogate or UnicodeCategory.PrivateUse or UnicodeCategory.OtherNotAssigned or
+                            UnicodeCategory.SpaceSeparator or UnicodeCategory.LineSeparator or UnicodeCategory.ParagraphSeparator);
+                        if (printable)
+                        {
+                            if (codePoint == q) sb.Append('\\');
+                            sb.Append(s, index, width);
+                        }
+                        else if (codePoint <= 0xff) sb.Append("\\x").Append(codePoint.ToString("x2", Inv));
+                        else if (codePoint <= 0xffff) sb.Append("\\u").Append(codePoint.ToString("x4", Inv));
+                        else sb.Append("\\U").Append(codePoint.ToString("x8", Inv));
+                        break;
                 }
+                index += width;
             }
             return sb.Append(q).ToString();
         }
@@ -685,10 +724,56 @@ namespace Typhon.Runtime
             if (delete != null) foreach (char c in delete) d[c] = null;
             return d;
         }
+
+        public static OrderedDictionary<object, object?> maketrans(IDictionary table)
+        {
+            var result = __newdict<object, object?>(table.Count);
+            foreach (DictionaryEntry entry in table)
+            {
+                object key = entry.Key;
+                if (key is char c) key = (long)c;
+                else if (key is string s)
+                {
+                    if (s.Length == 1) key = (long)s[0];
+                    else if (s.Length == 2 && char.IsSurrogatePair(s, 0)) key = (long)char.ConvertToUtf32(s, 0);
+                    else throw new ArgumentException("string keys in translatetable must be of length 1");
+                }
+                else if (key is not BigInteger && !IntLike(key, out _))
+                    throw new InvalidCastException("keys in translate table mustbe strings or integers");
+                result[key] = entry.Value;
+            }
+            return result;
+        }
+
+        public static OrderedDictionary<object, object?> maketrans(this string _, IDictionary table) => maketrans(table);
+
         public static string translate(this string s, IDictionary<long, string?> table)
         {
             var sb = new StringBuilder();
             foreach (char c in s) { if (table.TryGetValue(c, out var r)) { if (r != null) sb.Append(r); } else sb.Append(c); }
+            return sb.ToString();
+        }
+
+        public static string translate(this string s, OrderedDictionary<object, object?> table)
+        {
+            var sb = new StringBuilder();
+            for (int i = 0; i < s.Length;)
+            {
+                bool surrogatePair = char.IsSurrogatePair(s, i);
+                int width = surrogatePair ? 2 : 1;
+                long codepoint = surrogatePair ? char.ConvertToUtf32(s, i) : s[i];
+                if (!table.TryGetValue(codepoint, out var replacement)) sb.Append(s, i, width);
+                else if (replacement is string text) sb.Append(text);
+                else if (replacement != null)
+                {
+                    long number = replacement is BigInteger big ? big >= 0 && big <= 0x10ffff ? (long)big : -1
+                        : IntLike(replacement, out long n) ? n : throw new InvalidCastException("character mapping must return integer, None or str");
+                    if (number < 0 || number > 0x10ffff) throw new ArgumentException("character mapping must be in range(0x110000)");
+                    if (number <= char.MaxValue) sb.Append((char)number);
+                    else sb.Append(char.ConvertFromUtf32((int)number));
+                }
+                i += width;
+            }
             return sb.ToString();
         }
         public static long rfind(this string s, string sub) => s.LastIndexOf(sub, StringComparison.Ordinal);

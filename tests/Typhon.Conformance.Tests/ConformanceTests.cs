@@ -84,7 +84,7 @@ public sealed class ConformanceTests(ITestOutputHelper output)
     }
 
     /// <summary>
-    /// #:pylib: modules Typhon's runtime lacks (graphlib, colorsys) are compiled from CPython's standard library source, with
+    /// #:pylib: modules Typhon's runtime lacks (graphlib, colorsys, shlex, quopri) are compiled from CPython's standard library source, with
     /// the program, and print what CPython prints.
     /// </summary>
     [Fact]
@@ -98,17 +98,176 @@ public sealed class ConformanceTests(ITestOutputHelper output)
         string script = Path.Combine(dir, "uses_lib.ty");
         File.WriteAllText(script,
             $"#:pylib {lib}\n" +
-            "import graphlib\nimport colorsys\n\n" +
+            "import graphlib\nimport colorsys\nimport shlex\nfrom shlex import shlex as Lexer\nimport _shlex\nimport quopri\n\n" +
             "ts = graphlib.TopologicalSorter({\"b\": {\"a\"}, \"c\": {\"b\"}})\n" +
             "print(list(ts.static_order()))\n" +
             "h, s, v = colorsys.rgb_to_hsv(0.2, 0.4, 0.4)\n" +
             "print(round(h, 3), round(s, 3), round(v, 3))\n" +
-            "print(colorsys.hls_to_rgb(0.5, 0.5, 0.5))\n");
+            "print(colorsys.hls_to_rgb(0.5, 0.5, 0.5))\n" +
+            "print(shlex.split('command \"two words\"'), _shlex.answer())\n" +
+            "lexer = Lexer('hello')\nprint(lexer.get_token(), type(lexer).__module__)\n" +
+            "print(quopri.encodestring(b'hello world\\t\\nbytes\\x00\\xff'))\n" +
+            "print(quopri.decodestring(b'hello_world=21=\\ncontinued', header=True))\n");
         try
         {
+            const string sibling = "def answer() -> int:\n    return 42\n";
+            File.WriteAllText(Path.Combine(dir, "_shlex.ty"), sibling);
+            File.WriteAllText(Path.Combine(dir, "_shlex.py"), sibling);
             var run = Suite.Run("dotnet", [Suite.Cli, "run", script], TimeSpan.FromMinutes(3));
             Assert.True(run.ExitCode == 0, $"exit code {run.ExitCode}\n{run.StdErr}");
             var expected = Suite.Run(python, [script], TimeSpan.FromMinutes(1));
+            Assert.True(expected.ExitCode == 0, $"CPython exit code {expected.ExitCode}\n{expected.StdErr}");
+            Assert.Equal(Suite.Normalize(expected.StdOut), Suite.Normalize(run.StdOut));
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    /// <summary>Compile CPython's doctest source and execute examples with the runtime compiler.</summary>
+    [Fact]
+    public void PyLibDoctest()
+    {
+        string? python = Suite.FindPython(out string why);
+        if (python == null) { Console.WriteLine($"PyLibDoctest skipped: {why}"); return; }
+        var oracle = Suite.Run(python,
+            ["-c", "import sys, sysconfig; print(sysconfig.get_path('stdlib') if sys.version_info[:2] == (3, 15) else '')"],
+            TimeSpan.FromSeconds(30));
+        Assert.True(oracle.ExitCode == 0, oracle.StdErr);
+        string lib = oracle.StdOut.Trim();
+        if (lib.Length == 0) { Console.WriteLine("PyLibDoctest requires the CPython 3.15 library"); return; }
+        string dir = Directory.CreateTempSubdirectory("typhon-doctest-").FullName;
+        string script = Path.Combine(dir, "uses_doctest.ty");
+        File.WriteAllText(script, $"#:pylib {lib}\n" + """
+            import doctest
+
+            source = '''
+            >>> x = 2
+            >>> x + 3
+            5
+            >>> print("hello")
+            hello
+            >>> raise ValueError("bad")
+            Traceback (most recent call last):
+            ...
+            ValueError: bad
+            >>> 6  # doctest: +SKIP
+            '''
+            test = doctest.DocTestParser().get_doctest(source, {}, "sample", "<sample>", 0)
+            result = doctest.DocTestRunner().run(test)
+            print(result.failed, result.attempted, result.skipped)
+            """);
+        string moduleScript = Path.Combine(dir, "discovers_doctests.ty");
+        File.WriteAllText(moduleScript, $"#:pylib {lib}\n" + """
+            '''Read a compiled global.
+
+            >>> base
+            8
+            '''
+            import doctest
+            import sys
+
+            base = 8
+
+            def doubled(value: int) -> int:
+                '''Double an integer.
+
+                >>> doubled(base)
+                16
+                '''
+                return value * 2
+
+            found = doctest.DocTestFinder(exclude_empty=True).find(sys.modules["__main__"])
+            print([(test.name, len(test.examples)) for test in found])
+            result = doctest.testmod(report=False, exclude_empty=True)
+            print(result.failed, result.attempted, result.skipped)
+            """);
+        try
+        {
+            foreach (string source in new[] { script, moduleScript })
+            {
+                var expected = Suite.Run(python, [source], TimeSpan.FromMinutes(1));
+                Assert.True(expected.ExitCode == 0, expected.StdErr);
+                var run = Suite.Run("dotnet", [Suite.Cli, "run", source], TimeSpan.FromMinutes(3));
+                Assert.True(run.ExitCode == 0, run.StdErr);
+                Assert.Equal(Suite.Normalize(expected.StdOut), Suite.Normalize(run.StdOut));
+            }
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    [Fact]
+    public void PyLibPackages()
+    {
+        string? python = Suite.FindPython(out string why);
+        if (python == null) { Console.WriteLine($"PyLibPackages skipped: {why}"); return; }
+        string dir = Directory.CreateTempSubdirectory("typhon-pylib-package-").FullName;
+        try
+        {
+            string lib = Path.Combine(dir, "Lib");
+            string package = Path.Combine(lib, "pylib_example");
+            string nested = Path.Combine(package, "nested");
+            Directory.CreateDirectory(nested);
+            File.WriteAllText(Path.Combine(package, "__init__.py"), """
+                print("package")
+                BASE = 39
+                from .helpers import answer as exported, Answer
+                from . import nested as branch
+                """);
+            File.WriteAllText(Path.Combine(package, "helpers.py"), """
+                from . import BASE
+                print("helpers")
+
+                def answer() -> int:
+                    return BASE + 3
+
+                class Answer:
+                    def get(self) -> int:
+                        return answer()
+                """);
+            File.WriteAllText(Path.Combine(nested, "__init__.py"), "print('nested')\n");
+            File.WriteAllText(Path.Combine(nested, "reader.py"), """
+                from ..helpers import answer as original
+                print("reader")
+
+                def read() -> int:
+                    return original()
+                """);
+            File.WriteAllText(Path.Combine(nested, "main.py"), """
+                def setup() -> str:
+                    print("named module")
+                    return "module function"
+
+                LABEL = setup()
+
+                def main() -> str:
+                    return LABEL
+                """);
+            File.WriteAllText(Path.Combine(nested, "__main__.py"), """
+                print("imported __main__")
+                if __name__ == "__main__":
+                    print("executed as script")
+                """);
+            // The entry is already loaded as __main__. Its path must not be compiled again when it imports os.
+            string script = Path.Combine(dir, "os.ty");
+            File.WriteAllText(script, """
+                #:pylib Lib
+                import os
+                import pylib_example.nested.reader
+                import pylib_example.nested.reader as direct
+                import pylib_example.nested.main as with_module_name
+                import pylib_example.nested.__main__
+                from pylib_example import exported as reexport, Answer as Value
+                from pylib_example.nested import reader as from_package
+                print(pylib_example.branch.__package__)
+                print(reexport(), pylib_example.exported(), Value().get())
+                print(with_module_name.main(), hasattr(direct, "read"), direct is from_package)
+                print(direct.read(), pylib_example.nested.reader.read(), from_package.read())
+                print(os.path.basename("folder/file"))
+                """);
+            var expected = Suite.Run(python, [script], TimeSpan.FromMinutes(1),
+                new Dictionary<string, string> { ["PYTHONPATH"] = lib });
+            Assert.True(expected.ExitCode == 0, $"CPython exited with {expected.ExitCode}\n{expected.StdErr}");
+            var run = Suite.Run("dotnet", [Suite.Cli, "run", script], TimeSpan.FromMinutes(3));
+            Assert.True(run.ExitCode == 0, $"exit code {run.ExitCode}\n{run.StdErr}");
             Assert.Equal(Suite.Normalize(expected.StdOut), Suite.Normalize(run.StdOut));
         }
         finally { Directory.Delete(dir, recursive: true); }

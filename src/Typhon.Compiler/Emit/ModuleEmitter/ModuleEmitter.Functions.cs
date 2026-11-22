@@ -116,7 +116,7 @@ namespace Typhon.Compiler.Emit
                 if (!ResolveBase(b, out var py, out var meta)) continue;
                 if (py != null)
                 {
-                    if (py == c || py.Body.OfType<FunctionDef>().Any(x => x.Name == f.Name)) return null;
+                    if (py == c) return null;
                     if (DotNetBaseMethod(py, f, depth + 1) is Semantics.MemberSig inherited) return inherited;
                     continue;
                 }
@@ -169,7 +169,8 @@ namespace Typhon.Compiler.Emit
             if (_big && FoldInt(e) != null) return false;
             switch (e)
             {
-                case ConstExpr c: return c.Kind != ConstKind.Ellipsis && !(c.Kind == ConstKind.Int && !long.TryParse(c.Raw.Replace("_", ""), out _));
+                case ConstExpr c: return c.Kind != ConstKind.Ellipsis && c.Kind != ConstKind.Bytes &&
+                    !(c.Kind == ConstKind.Int && !long.TryParse(c.Raw.Replace("_", ""), out _));
                 case UnaryExpr u when (u.Op == "-" || u.Op == "+") && u.Operand is ConstExpr uc && (uc.Kind == ConstKind.Int || uc.Kind == ConstKind.Float): return true;
                 default: return FoldInt(e) is System.Numerics.BigInteger v && v >= long.MinValue && v <= long.MaxValue;
             }
@@ -266,6 +267,31 @@ namespace Typhon.Compiler.Emit
             n is AssignStmt a && a.Value is YieldExpr ay && !ay.From || n is AnnAssignStmt an && an.Value is YieldExpr ny && !ny.From ||
             n is ReturnStmt r && r.Value != null && !(r.Value is ConstExpr rc && rc.Kind == ConstKind.None));
 
+        static bool NeedsPackedVarArgs(FunctionDef f)
+        {
+            int index = f.Params.FindIndex(p => p.Kind == ParamKind.VarArgs);
+            return index >= 0 && index < f.Params.Count - 1;
+        }
+
+        static void ApplyParameterDefaults(List<string> parameters, IReadOnlyList<string> defaults)
+        {
+            // C# requires syntactically optional parameters to follow metadata-only optional and required ones.
+            bool useAttributes = false;
+            for (int i = parameters.Count - 1; i >= 0; i--)
+            {
+                var value = defaults[i];
+                if (string.IsNullOrEmpty(value))
+                    useAttributes = true;
+                else if (useAttributes)
+                    parameters[i] = WithOptionalDefault(parameters[i], value);
+                else
+                    parameters[i] += " = " + value;
+            }
+        }
+
+        static string WithOptionalDefault(string parameter, string value) =>
+            $"[global::System.Runtime.InteropServices.Optional, global::System.Runtime.InteropServices.DefaultParameterValue({value})] {parameter}";
+
         Signature BuildSignature(FunctionDef f, bool dropFirst, string selfName = null, string[] paramTypes = null, string retKey = null)
         {
             var sig = new Signature();
@@ -280,6 +306,7 @@ namespace Typhon.Compiler.Emit
 
             var ps = new List<string>();
             var defaults = new List<string>();
+            bool packedVarArgs = NeedsPackedVarArgs(f);
             int pi = 0;
             // an override of a .NET or runtime class's method: unannotated parameters take the base method's types
             var baseMethod = dropFirst && _cls != null && !_cls.IsInterface && _cls.Def.Body.Contains(f) ? DotNetBaseMethod(_cls.Def, f) : null;
@@ -293,7 +320,7 @@ namespace Typhon.Compiler.Emit
                 {
                     // **kwargs: the extra keyword arguments as a dict (call sites pass it by name; omitted, it is empty)
                     ps.Add($"OrderedDictionary<string, dynamic>? {Esc(p.Name)}");
-                    defaults.Add(" = null");
+                    defaults.Add("null");
                     scope.Types[p.Name] = "OrderedDictionary<string, dynamic>";
                     sig.Prologue.Add($"{Esc(p.Name)} ??= new OrderedDictionary<string, dynamic>();");
                     pi++;
@@ -307,7 +334,7 @@ namespace Typhon.Compiler.Emit
                 {
                     // (the C# parameter gets another name: the body's calls go to the function, which it must not hide)
                     ps.Add($"object? __alias_{p.Name}");
-                    defaults.Add(" = null");
+                    defaults.Add("null");
                     scope.Params.Remove(p.Name);
                     scope.Aliases[p.Name] = p.Default;
                     _aliasTargetNodes.Add(p.Default);
@@ -322,15 +349,16 @@ namespace Typhon.Compiler.Emit
                 if (p.Kind == ParamKind.VarArgs)
                 {
                     if (p.Annotation == null) type = "object";
-                    decl = f.Params.Any(x => x.Kind == ParamKind.KwArgs) ? $"{type}[]? {Esc(p.Name)}" : $"params {type}[] {Esc(p.Name)}";
-                    if (f.Params.Any(x => x.Kind == ParamKind.KwArgs)) { sig.Prologue.Add($"{Esc(p.Name)} ??= global::System.Array.Empty<{type}>();"); defaults.Add(" = null"); ps.Add(decl); scope.Types[p.Name] = type + "[]"; continue; }
+                    decl = packedVarArgs ? $"{type}[]? {Esc(p.Name)}" : $"params {type}[] {Esc(p.Name)}";
+                    if (packedVarArgs) { sig.Prologue.Add($"{Esc(p.Name)} ??= global::System.Array.Empty<{type}>();"); defaults.Add("null"); ps.Add(decl); scope.Types[p.Name] = type + "[]"; continue; }
                     scope.Types[p.Name] = type + "[]";
                 }
                 else decl = $"{type} {Esc(p.Name)}";
                 // an inferred overload keeps a default only if the default has the overload's parameter type
                 // (a method's late-bound version beside typed overloads takes no defaults: a call leaving a parameter out
                 // binds to the typed overload, C# would find the two ambiguous)
-                bool keepDefault = p.Default != null && (paramTypes == null || p.Annotation != null || InferType(p.Default) == type) && !_quietDynamic;
+                bool keepDefault = p.Default != null && !_quietDynamic &&
+                    (paramTypes == null || p.Annotation != null || InferType(p.Default) == type);
                 string defaultCode = null;
                 // a parameter the body rebinds to values of another type (in a nested block): the body uses a wider local
                 string wider = p.Kind == ParamKind.Normal ? ConflictType(p.Name) : null;
@@ -339,7 +367,7 @@ namespace Typhon.Compiler.Emit
                     // a definition-time default: optional (null) parameter, the body uses a non-null local that falls back to it
                     string local = p.Name + "__arg";
                     decl = $"{NullableOf(type)} {Esc(p.Name)}";
-                    defaultCode = " = null";
+                    defaultCode = "null";
                     sig.Prologue.Add($"{wider ?? type} {Esc(local)} = {Esc(p.Name)} ?? {source};");
                     sig.Renames[p.Name] = local;
                     if (wider != null) scope.Types[p.Name] = wider;
@@ -355,17 +383,11 @@ namespace Typhon.Compiler.Emit
                             ? (ConstIntValue(p.Default) is long lv ? lv + "L" : null) : EmitExpr(p.Default);
                         if (constant != null)
                         {
-                            decl = $"[global::System.Runtime.InteropServices.Optional, global::System.Runtime.InteropServices.DefaultParameterValue({constant})] {decl}";
+                            decl = WithOptionalDefault(decl, constant);
                             defaultCode = "";
                         }
                     }
-                    else if (keepDefault) defaultCode = " = " + EmitExpr(p.Default, targetTyped: true);
-                    // an inferred overload whose type for this parameter is not its default's (bigendian=0 for bigendian=True):
-                    // every call that made the overload passes it, so it stays optional without its value (an earlier optional
-                    // parameter would otherwise have to lose its default, C# allowing no required parameter after optional ones)
-                    else if (p.Default != null && paramTypes != null && p.Annotation == null && !_quietDynamic && p.Kind == ParamKind.Normal &&
-                             defaults.Any(d => d != null))
-                        defaultCode = " = default!";
+                    else if (keepDefault) defaultCode = EmitExpr(p.Default, targetTyped: true);
                     if (wider != null)
                     {
                         string local = p.Name + "__v";
@@ -377,21 +399,7 @@ namespace Typhon.Compiler.Emit
                 ps.Add(decl);
                 defaults.Add(defaultCode);
             }
-            // C#: optional parameters must come last
-            bool attributeOptional = false;
-            for (int i = ps.Count - 1, required = 0; i >= 0; i--)
-            {
-                if (defaults[i] == null) required = 1;
-                else if (required == 0)
-                {
-                    // before a parameter made optional by attributes (a dynamic one with a str/number default), C# wants the
-                    // attribute form too: `= value` would make a later parameter "required"
-                    if (attributeOptional && defaults[i].StartsWith(" = "))
-                        ps[i] = $"[global::System.Runtime.InteropServices.Optional, global::System.Runtime.InteropServices.DefaultParameterValue({defaults[i].Substring(3)})] {ps[i]}";
-                    else ps[i] += defaults[i];
-                    if (defaults[i] == "") attributeOptional = true;
-                }
-            }
+            ApplyParameterDefaults(ps, defaults);
             sig.Params = string.Join(", ", ps);
 
             string elem;
@@ -413,6 +421,7 @@ namespace Typhon.Compiler.Emit
             }
             else if (sig.IsGenerator) elem = ImplicitDynamic(f, $"the values yielded by '{f.Name}'");
             // (an override of a .NET or runtime method: the base method's return type)
+            else if (!f.IsAsync && baseMethod?.ReturnsDynamic == true) elem = "dynamic";
             else if (locals.HasValueReturn && !f.IsAsync && baseMethod?.Type != null) elem = baseMethod.Type;
             else if (locals.HasValueReturn)
                 elem = retKey != null && Ti != null && Ti.Returns.TryGetValue(retKey, out var inferredReturn) && inferredReturn != "dynamic" ? inferredReturn
@@ -519,6 +528,13 @@ namespace Typhon.Compiler.Emit
             var sig = BuildSignature(f, dropFirst: false, paramTypes: paramTypes, retKey: retKey);
             EmitDocComment(f.Body);
             LineDirective(f);
+            if (!_m.IsGdScript)
+            {
+                string doc = f.Body.FirstOrDefault() is ExprStmt statement && statement.Value is ConstExpr { Kind: ConstKind.Str } text
+                    ? CsString(text.Str) : "null";
+                string kind = f.IsAsync ? (sig.IsGenerator ? "AsyncGenerator" : "Coroutine") : sig.IsGenerator ? "Generator" : "Ordinary";
+                _w.Line($"[global::Typhon.Runtime.PySource({CsString(_path)}, {CsString(PythonModuleName)}, global::Typhon.Runtime.PyCallableKind.{kind}, doc: {doc}, line: {f.Line})]");
+            }
             EmitAttributes(f.Decorators);
             string vis = SurfaceVisibility(Visibility(f.Name, topLevel: true), sig.ReturnType, sig.Params);
             string asyncKw = f.IsAsync && !sig.IsGenerator ? "async " : (f.IsAsync ? "async " : "");
@@ -665,11 +681,17 @@ namespace Typhon.Compiler.Emit
                 }
             var sig = BuildSignature(f, dropFirst: false);
             sig.Scope.HasSelf = false;
-            if (!f.IsAsync && !sig.IsGenerator) _funcReturnTypes[f.Name] = sig.ReturnType;
-            _localFunctionSigs[f.Name] = (f, sig);
+            bool shadowsParameter = _scope != null && _scope.Params.Contains(f.Name) && IsUnknownType(KnownTypeCore(f.Name));
+            string name = shadowsParameter ? NewTmp("fn") : Esc(f.Name);
+            if (!shadowsParameter)
+            {
+                if (!f.IsAsync && !sig.IsGenerator) _funcReturnTypes[f.Name] = sig.ReturnType;
+                _localFunctionSigs[f.Name] = (f, sig);
+            }
             string asyncKw = f.IsAsync ? "async " : "";
-            _w.Line($"{asyncKw}{sig.ReturnType} {Esc(f.Name)}{TypeParamList(f.TypeParams)}({sig.Params}){TypeParamConstraints(f.TypeParams, f)}");
+            _w.Line($"{asyncKw}{sig.ReturnType} {name}{TypeParamList(f.TypeParams)}({sig.Params}){TypeParamConstraints(f.TypeParams, f)}");
             EmitSignatureBody(f.Body, sig);
+            if (shadowsParameter) _w.Line($"{EmitName(new NameExpr { Id = f.Name })} = {ClosureCode(f, sig, name, null)};");
             foreach (var tp in f.TypeParams) _currentFuncTypeParams.Remove(tp.Name);
             _retKey = savedRet;
         }

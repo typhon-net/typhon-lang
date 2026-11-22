@@ -26,11 +26,12 @@ namespace Typhon.Stdlib
     /// builtins: the builtin functions as members of a module (builtins.open(...), builtins.print(...)). They forward to
     /// Typhon's builtins. (The module itself is not a value: getattr(builtins, name) and builtins.__dict__ do not work.)
     /// </summary>
-    internal static class builtins
+    internal static partial class builtins
     {
         public static readonly Typhon.Stdlib.types.NotImplementedType NotImplemented = Builtins.NotImplemented;
         public static readonly Typhon.Stdlib.types.EllipsisType Ellipsis = Builtins.Ellipsis;
         public const bool __debug__ = true;
+        public static object? _ = null;
 
         public static void print() => Builtins.print();
         public static void print(object? value, string? sep = " ", string? end = "\n", object? file = null, bool flush = false) => Builtins.print_kw(new[] { value }, sep, end, file, flush);

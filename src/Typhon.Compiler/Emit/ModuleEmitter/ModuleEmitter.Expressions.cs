@@ -86,6 +86,7 @@ namespace Typhon.Compiler.Emit
                 case NameExpr bt when !Receivers.Contains(bt) && BuiltinTypeValues.TryGetValue(bt.Id, out var btType) && !IsShadowed(bt.Id) && !IsLocal(bt.Id) &&
                                       !_moduleFieldTypes.ContainsKey(bt.Id) && !_renames.ContainsKey(bt.Id):
                     return $"typeof({btType})";
+                case NameExpr pm when !Receivers.Contains(pm) && PackageModuleValue(pm) is string moduleValue: return moduleValue;
                 case NameExpr n: return EmitName(n);
                 case FStringExpr f: return EmitFString(f);
                 // one of the runtime's classes as a value ({weakref.ref: ...}, cls is collections.deque): its type object
@@ -345,19 +346,37 @@ namespace Typhon.Compiler.Emit
         /// <summary>The module's expressions that are the target of an attribute or the function of a call: names, not values.</summary>
         HashSet<Expr> Receivers => _receivers ??= CollectReceivers();
         HashSet<Expr> _receivers;
+        readonly HashSet<Expr> _attributeStores = new HashSet<Expr>();
+
+        bool IsAttributeStore(AttributeExpr value)
+        {
+            _ = Receivers;
+            return _attributeStores.Contains(value);
+        }
+
         HashSet<Expr> CollectReceivers()
         {
             var set = new HashSet<Expr>();
+            void Store(Expr target)
+            {
+                if (target is AttributeExpr) _attributeStores.Add(target);
+                if (target is TupleExpr tuple) foreach (var item in tuple.Elts) Store(item);
+                if (target is ListExpr list) foreach (var item in list.Elts) Store(item);
+            }
             if (_m.Ast != null)
                 AstWalker.VisitAll(_m.Ast.Body, n =>
                 {
                     if (n is AttributeExpr x) set.Add(x.Target);
                     else if (n is CallExpr c) set.Add(c.Func);
                     // (places, not values: assignment, augmented assignment and del targets)
-                    else if (n is AssignStmt a) foreach (var t in a.Targets) AstWalker.VisitAll(t, tn => { if (tn is AttributeExpr || tn is SubscriptExpr) set.Add((Expr)tn); });
-                    else if (n is AugAssignStmt au) set.Add(au.Target);
-                    else if (n is AnnAssignStmt an) set.Add(an.Target);
-                    else if (n is DelStmt d) foreach (var t in d.Targets) set.Add(t);
+                    else if (n is AssignStmt a) foreach (var t in a.Targets)
+                    {
+                        Store(t);
+                        AstWalker.VisitAll(t, tn => { if (tn is AttributeExpr || tn is SubscriptExpr) set.Add((Expr)tn); });
+                    }
+                    else if (n is AugAssignStmt au) { Store(au.Target); set.Add(au.Target); }
+                    else if (n is AnnAssignStmt an) { Store(an.Target); set.Add(an.Target); }
+                    else if (n is DelStmt d) foreach (var t in d.Targets) { Store(t); set.Add(t); }
                 });
             return set;
         }
@@ -380,6 +399,8 @@ namespace Typhon.Compiler.Emit
         {
             ["int"] = "long", ["float"] = "double", ["bool"] = "bool", ["str"] = "string", ["object"] = "object", ["type"] = "global::System.Type",
             ["bytes"] = "global::Typhon.Runtime.PyBytes", ["bytearray"] = "global::Typhon.Runtime.PyByteArray",
+            ["property"] = "global::Typhon.Stdlib.builtins.property", ["staticmethod"] = "global::Typhon.Stdlib.builtins.staticmethod",
+            ["classmethod"] = "global::Typhon.Stdlib.builtins.classmethod",
             ["complex"] = "global::System.Numerics.Complex", ["tuple"] = "global::System.Runtime.CompilerServices.ITuple",
             ["list"] = "global::System.Collections.Generic.List<object>", ["set"] = "global::System.Collections.Generic.HashSet<object>",
             ["dict"] = "global::System.Collections.Generic.OrderedDictionary<object, object>",
@@ -457,13 +478,24 @@ namespace Typhon.Compiler.Emit
             return _r.TypeExists(meta) && IsRuntimeClassMeta(meta) ? $"typeof({CsTypeName(meta)})" : null;
         }
 
+        string PackageModuleValue(Expr e)
+        {
+            if (DottedName(e) is not string dotted || _m.Globals.Contains(dotted.Split('.')[0]) ||
+                ModuleRef(dotted) is not ModuleInfo module || !IsProjectPackageModule(module)) return null;
+            return $"global::Typhon.Runtime.PyModule.Of(typeof({ModuleClassName(module)}), {CsString(module.Name)})";
+        }
+
         string ModuleOrClassValue(Expr e)
         {
+            if (PackageModuleValue(e) is string projectModule) return projectModule;
             if (e is NameExpr cn && RuntimeClassValue(cn) is string imported) return imported;
             if (e is NameExpr n && !IsLocal(n.Id) && !_moduleFieldTypes.ContainsKey(n.Id) && !_renames.ContainsKey(n.Id) &&
                 _dotnetAliases.TryGetValue(n.Id, out var meta) && meta.StartsWith("Typhon.Stdlib.") && !meta.Contains('+'))
                 return $"global::Typhon.Runtime.PyModule.Of(typeof({EmitName(n)}), {CsString(meta.Substring("Typhon.Stdlib.".Length).TrimEnd('_'))})";
             if (e is AttributeExpr a && DottedName(a) is string dotted && !IsLocal(dotted.Split('.')[0]))
+            {
+                if (ProjectPackageMember(dotted) is string projectMember && TryResolveType(dotted, 0, out _, out var projectClass) && projectClass != null)
+                    return $"typeof({projectMember})";
                 // (a generic class such as collections.deque: the type with object for its type arguments, constructible and a dict key)
                 for (int arity = 0; arity <= 3; arity++)
                     // (not a module nested in a module, os.path or numpy.linalg: a static class)
@@ -471,6 +503,7 @@ namespace Typhon.Compiler.Emit
                         IsRuntimeClassMeta(tmeta))
                         return arity == 0 ? $"typeof({CsTypeName(tmeta)})"
                              : $"typeof({CsTypeName(tmeta.Split('`')[0])}<{string.Join(", ", Enumerable.Repeat("object", arity))}>)";
+            }
             // a class the runtime defines beside its module, made by a factory function of the module (collections.deque)
             if (e is AttributeExpr fa && fa.Target is NameExpr fm && !IsLocal(fm.Id) && !_moduleFieldTypes.ContainsKey(fm.Id) &&
                 _dotnetAliases.TryGetValue(fm.Id, out var fmeta) && fmeta.StartsWith("Typhon.Stdlib.") && !fmeta.Contains('+') &&
@@ -492,6 +525,16 @@ namespace Typhon.Compiler.Emit
 
         string EmitAttribute(AttributeExpr a)
         {
+            if (a.Name == "__traceback__" && IsExceptionType(InferType(a.Target)))
+                return $"global::Typhon.Stdlib.types.TracebackType.Of({EmitExpr(a.Target)})";
+            if (DottedName(a.Target) is string prefix && ModuleRef(prefix) is ModuleInfo projectModule &&
+                IsProjectPackageModule(projectModule))
+            {
+                if (a.Name == "__name__") return CsString(projectModule.Name);
+                if (a.Name == "__package__") return CsString(projectModule.PackageName);
+                if (a.Name == "__file__") return CsString(System.IO.Path.GetFullPath(projectModule.Path));
+                if (ProjectPackageMember(prefix + "." + a.Name) is string member) return member;
+            }
             // e.args on an exception whose class does not declare args (a .NET exception or a Typhon subclass of one)
             if (a.Name == "args" && InferType(a.Target) is string ext && IsExceptionType(ext) && !ext.Contains("Typhon.Runtime.") &&
                 !(ClassKeyOfType(ext, out _) is string eck && ClassDefOfKey(eck) is ClassDef ecd && AssignsArgs(ecd)))
@@ -530,10 +573,14 @@ namespace Typhon.Compiler.Emit
                 if (nt == null || nt == "dynamic" || nt == "object" || nt == "object?" || nt == "global::System.Type" || nt == "System.Type")
                     return $"{Rt("__name_of")}((object?){Paren(EmitExpr(a.Target))})";
             }
+            if (a.Name is "__func__" or "__doc__" or "__code__" && !IsAttributeStore(a))
+                return $"{Rt("getattr")}((object?){Paren(EmitValue(a.Target))}, {CsString(a.Name)})";
             // it.__next__ / xs.append as a value (not called here) on a late-bound value: a bound method (C#'s dynamic binder reads
             // properties only); found at run time, like getattr
-            if (!Receivers.Contains(a) && IsMethodName(a.Name) &&
-                (UnsureType(InferType(a.Target)) || IsDynamicallyDispatched(a.Target) || a.Target is CallExpr bmc && bmc.Args.Any(x => UnsureType(InferType(x.Value)))) &&
+            if (!Receivers.Contains(a) &&
+                (InferType(a.Target) == "dynamic" ||
+                 IsMethodName(a.Name) && (UnsureType(InferType(a.Target)) || IsDynamicallyDispatched(a.Target) ||
+                     a.Target is CallExpr bmc && bmc.Args.Any(x => UnsureType(InferType(x.Value))))) &&
                 !(a.Target is NameExpr bmn && (bmn.Id == "self" || bmn.Id == "cls" || ModuleRef(bmn.Id) != null || _dotnetAliases.ContainsKey(bmn.Id) || TryResolveType(bmn.Id, 0, out _, out _))))
                 return $"{Rt("getattr")}((object?){Paren(EmitExpr(a.Target))}, {CsString(a.Name)})";
             // self.x that neither the class nor its bases define (a mixin using an attribute of the classes it is mixed
@@ -542,7 +589,7 @@ namespace Typhon.Compiler.Emit
                 return $"((dynamic)this).{Esc(a.Name)}";
             // obj.__dict__: a live view of its attributes
             if (a.Name == "__dict__" && !(a.Target is NameExpr dn0 && TryResolveType(dn0.Id, 0, out _, out _)))
-                return $"{Rt("__dict__")}((object){Paren(EmitExpr(a.Target))})";
+                return $"{Rt("__dict__")}((object){Paren(ModuleOrClassValue(a.Target) ?? EmitExpr(a.Target))})";
             // self.m1 / self.__class__.m1 / type(self).m1 where m1 is a class variable (a static field): read through the class
             bool selfClass = a.Target is NameExpr selfRef && selfRef.Id == "self" ||
                              a.Target is AttributeExpr sca && sca.Name == "__class__" && sca.Target is NameExpr scs && scs.Id == "self" ||

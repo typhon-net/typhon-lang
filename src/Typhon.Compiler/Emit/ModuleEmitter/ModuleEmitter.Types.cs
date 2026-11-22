@@ -257,6 +257,7 @@ namespace Typhon.Compiler.Emit
                     var ks = d.Keys.Select(InferType).Distinct().ToList();
                     var vs = d.Values.Select(InferType).Distinct().ToList();
                     if (ks.Count == 1 && ks[0] != null && vs.Count == 1 && vs[0] != null) return $"OrderedDictionary<{ks[0]}, {vs[0]}>";
+                    if (ks.Count == 1 && ks[0] != null && d.Values.All(IsNone)) return $"OrderedDictionary<{PyType(ks[0])}, dynamic>";
                     if (ks.Count == 1 && ks[0] != null && TypeAmidEmpties(d.Values) is string vWithEmpties) return $"OrderedDictionary<{ks[0]}, {vWithEmpties}>";
                     if (ks.Count == 1 && ks[0] != null && TupleSequenceAmid(d.Values) is string vTupleSeq) return $"OrderedDictionary<{ks[0]}, {vTupleSeq}>";
                     return null;
@@ -319,6 +320,8 @@ namespace Typhon.Compiler.Emit
                 return rt == "void" ? null : rt;
             if (call.Func is AttributeExpr mc && !(mc.Target is NameExpr mcs && mcs.Id == "self"))
             {
+                if (mc is { Name: "fromhex", Target: NameExpr { Id: "float" } } && !IsShadowed("float"))
+                    return "double";
                 if (MathCall(mc) is string mathType) return mathType;
                 var ot = InferType(mc.Target);
                 if (ot == TypeInference.Pending) return TypeInference.Pending;
@@ -343,6 +346,7 @@ namespace Typhon.Compiler.Emit
                     case "len": case "ord": case "hash": return "long";
                     case "float": return "double";
                     case "complex": return "global::System.Numerics.Complex";
+                    case "getattr": return "dynamic";
                     case "dict" when HasDictKeywords(call): return KeywordDictType(call);
                     case "bool": case "isinstance": case "any": case "all": return "bool";
                     case "cast": return call.Args.Count == 2 ? MapType(call.Args[0].Value, call) : null;   // typing.cast(T, x) is a C# cast to T

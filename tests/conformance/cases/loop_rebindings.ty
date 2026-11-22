@@ -1,0 +1,24 @@
+def ordinal(value):
+    assert isinstance(value, bytes)
+    return ord(value)
+
+def byte_loop(raw: bytes):
+    for c in raw:
+        c = bytes((c,))
+        if b'0' <= c <= b'9':
+            print(ordinal(c))
+
+def range_loop():
+    for n in range(2):
+        if n == 0:
+            n = b'x'
+        print(n)
+
+def list_loop(items: list[int]):
+    for item in items:
+        item = bytes((item,))
+        print(item)
+
+byte_loop(b'7N')
+range_loop()
+list_loop([65, 90])

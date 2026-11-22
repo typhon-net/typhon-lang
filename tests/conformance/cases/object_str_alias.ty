@@ -1,0 +1,34 @@
+from builtins import repr as builtin_repr
+
+def repr(value: object) -> str:
+    return 'shadowed'
+
+class Base:
+    def __str__(self) -> str:
+        return 'base str'
+
+    def __repr__(self) -> str:
+        return 'base repr'
+
+class Child(Base):
+    __str__ = object.__str__
+
+class Grandchild(Child):
+    def __repr__(self) -> str:
+        return 'grandchild repr'
+
+class Override(Child):
+    def description(self):
+        return 'overridden str'
+
+    __str__ = description
+
+class Plain:
+    __str__ = object.__str__
+
+print(str(Base()), builtin_repr(Base()))
+print(str(Child()), Child().__str__())
+print(str(Grandchild()), repr(Grandchild()))
+print(str(Override()), builtin_repr(Override()))
+print(str(Plain()).startswith('<__main__.Plain object at 0x'))
+print(object.__str__('a'))

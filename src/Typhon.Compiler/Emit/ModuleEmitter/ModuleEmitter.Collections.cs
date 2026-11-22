@@ -109,16 +109,35 @@ namespace Typhon.Compiler.Emit
             // iterating a str yields one-character strs
             if (e is ConstExpr sc && sc.Kind == ConstKind.Str || e is FStringExpr) return $"{Rt("chars")}({code})";
             // for x in (1, 2, 3): a tuple literal iterates as a list of its items
-            if (e is TupleExpr te && te.Elts.Count > 0 && !te.Elts.Any(x => x is StarredExpr)) return EmitList(new ListExpr { Elts = te.Elts, Line = te.Line, Col = te.Col }, false);
+            if (e is TupleExpr te && te.Elts.Count > 0 && !te.Elts.Any(x => x is StarredExpr))
+            {
+                // A slice can bind dynamically even when its result type is known.
+                // Give the items an explicit type to keep the following LINQ call static.
+                if (te.Elts.Any(x => x is SubscriptExpr { Index: SliceExpr } || LateBoundArg(x)))
+                {
+                    if (HomogeneousTupleItem(InferType(te)) is string itemType && !IsUnknownType(itemType) && itemType != "object")
+                        return $"new {itemType}[] {{ {string.Join(", ", te.Elts.Select(x => $"({itemType}){Paren(EmitValue(x))}"))} }}";
+                    return $"{Rt("__iter_dyn")}(new object?[] {{ {string.Join(", ", te.Elts.Select(x => EmitValue(x)))} }})";
+                }
+                return EmitList(new ListExpr { Elts = te.Elts, Line = te.Line, Col = te.Col }, false);
+            }
             if (e is ListExpr || e is TupleExpr || e is SetExpr || e is ComprehensionExpr || e is ConstExpr) return code;
             // a late-bound value: a typed sequence of dynamic items (LINQ lambdas cannot take part in dynamic dispatch); the
             // argument is passed as object so that the call itself is bound statically
-            if (InferType(e) is "dynamic" or "object" or "object?") return $"{Rt("__iter_dyn")}((object){Paren(code)})";
+            string t = InferType(e);
+            if (t is "dynamic" or "object" or "object?")
+                return $"{Rt("__iter_dyn")}((object){Paren(code)})";
+            if (e is CallExpr { Func: AttributeExpr } && IsDynamicallyDispatched(e))
+            {
+                string late = $"{Rt("__iter_dyn")}((object){Paren(code)})";
+                string elem = IterElementType(t);
+                return elem == null || elem == "dynamic" || elem == TypeInference.Pending
+                    ? late : $"global::System.Linq.Enumerable.Cast<{elem}>({late})";
+            }
             // str(n), "".join(...), s.lower(): a str-valued call iterates as one-character strs too
             if (e is CallExpr && InferType(e) == "string") return $"{Rt("chars")}({code})";
             if (e is CallExpr ce && ce.Func is NameExpr cn && !IsShadowed(cn.Id) && NonDictResults.Contains(cn.Id)) return code;
             if (e is CallExpr me && me.Func is AttributeExpr ma && (ma.Name == "items" || ma.Name == "keys" || ma.Name == "values" || ma.Name == "split" || ma.Name == "splitlines")) return code;
-            string t = InferType(e);
             if (t == "string") return $"{Rt("chars")}({code})";
             // a late-bound value: a typed sequence of dynamic items (LINQ lambdas cannot take part in dynamic dispatch)
             if (t == "dynamic") return $"{Rt("__iter_dyn")}({code})";
@@ -261,6 +280,11 @@ namespace Typhon.Compiler.Emit
                 ImplicitDynamic(d, "the key/value types of an empty dict (annotate the variable, e.g. 'd: dict[str, int] = {}')");
                 return $"{Rt("__newdict")}<dynamic, dynamic>()";
             }
+            if (d.Values.All(IsNone))
+            {
+                string key = DictTypes(InferType(d))?[0] ?? "dynamic";
+                return $"{Rt("__dict")}<{key}, dynamic>({string.Join(", ", d.Keys.Select(k => $"({EmitValue(k)}, null)"))})";
+            }
             string typeArgs = "";
             if (!MixedTypes(d.Keys) && PyType(InferType(d.Keys[0])) is string tk && tk != TypeInference.Pending && TupleSequenceAmid(d.Values) is string tv)
                 return $"{Rt("__dict")}<{tk}, {tv}>(" + string.Join(", ", d.Keys.Select((k, i) => $"({EmitValue(k)}, {EmitAsPyTuple(d.Values[i], tv)})")) + ")";
@@ -329,11 +353,12 @@ namespace Typhon.Compiler.Emit
                 // [x async for x in agen()]: one async generator, collected by awaiting (System.Linq's async operators)
                 if (g.IsAsync && c.Generators.Count > 1) Unsupported(c, "an async comprehension with several 'for' clauses");
                 string iter = g.IsAsync ? EmitExpr(g.Iter) : EmitIterable(g.Iter); // (an async iterable stays one)
-                BindTargetTypes(bindings, g.Target, IterElementType(InferType(g.Iter)));
+                string elemType = !g.IsAsync && iter.StartsWith(Rt("__iter_dyn") + "(")
+                    ? "dynamic" : IterElementType(InferType(g.Iter));
+                BindTargetTypes(bindings, g.Target, elemType);
                 string param; string deconstruct = null;
                 var bound = new HashSet<string>();
                 AstWalker.VisitAll(g.Target, n => { if (n is NameExpr ne) bound.Add(ne.Id); });
-                string elemType = IterElementType(InferType(g.Iter));
                 if (g.Target is NameExpr tn) param = Esc(tn.Id);
                 else if (g.Target is TupleExpr lt && lt.Elts.All(x => x is NameExpr) && (elemType == null || elemType == "dynamic" || elemType == "object"))
                 {

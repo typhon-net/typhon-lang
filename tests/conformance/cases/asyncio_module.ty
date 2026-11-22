@@ -119,10 +119,13 @@ async def main_two() -> None:
         t2 = tg.create_task(worker2("y", 2))
     print(t1.result(), t2.result())
     order = []
-    async def finish(d: float, tag: str) -> str:
-        await asyncio.sleep(d)
+    async def finish(gate: asyncio.Event, tag: str) -> str:
+        await gate.wait()
         return tag
-    for f in asyncio.as_completed([finish(0.03, "slow"), finish(0.01, "fast"), finish(0.02, "mid")]):
+    fast, mid, slow = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    gates = iter([fast, mid, slow])
+    for f in asyncio.as_completed([finish(slow, "slow"), finish(fast, "fast"), finish(mid, "mid")]):
+        next(gates).set()
         order.append(await f)
     print(order)
     q = asyncio.Queue()

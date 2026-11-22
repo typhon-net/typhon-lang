@@ -150,10 +150,10 @@ namespace Typhon.Compiler.Emit
             }
             else if (call.Func is AttributeExpr a && DottedName(a.Target) is string dotted && !IsLocal(dotted.Split('.')[0]) && ModuleRef(dotted) is ModuleInfo mref)
             {
-                mod = mref; name = a.Name;
+                (mod, name) = ProjectExport(mref, a.Name);
             }
             else if (call.Func is AttributeExpr ma && MethodTarget(ma) is InferenceTarget mt) return mt;
-            if (mod == null) return null;
+            if (mod == null || name == null) return null;
             if (mod.Classes.TryGetValue(name, out var cls)) { isConstructor = true; return InitTarget(mod, cls); }
             return mod.Functions.Contains(name) ? TargetOf(mod, null, name) : null;
         }
@@ -255,9 +255,16 @@ namespace Typhon.Compiler.Emit
             return isCtor ? null : InferredCallType(t, call.Args);
         }
 
+        internal static string UnannotatedGeneratorReturnType(FunctionDef f)
+        {
+            bool receives = GeneratorNeedsAsyncForm(f.Body) || GeneratorReceivesValues(f.Body);
+            return receives ? $"{PyGeneratorPrefix}dynamic>" : "IEnumerable<dynamic>";
+        }
+
         string InferredCallType(InferenceTarget t, List<Arg> args)
         {
             if (t == null || t.Def.Returns != null && !TypeInference.IsBareContainer(t.Def.Returns) || t.Def.IsAsync) return null;
+            if (t.GeneratorReturnType != null) return t.GeneratorReturnType;
             string sig = "";
             if (t.InferParams)
             {
@@ -287,6 +294,21 @@ namespace Typhon.Compiler.Emit
             if (csType == null) return null;
             if (_m.Classes.ContainsKey(csType)) { sameModule = true; return TypeInference.ClassKey(_m, csType); }
             if (_importedFromModules.TryGetValue(csType, out var imp) && imp.Key.Classes.ContainsKey(imp.Value)) return TypeInference.ClassKey(imp.Key, imp.Value);
+            int dot = csType.LastIndexOf('.');
+            if (dot > "global::".Length && csType.StartsWith("global::"))
+            {
+                string module = csType.Substring(0, dot);
+                string name = csType.Substring(dot + 1).TrimStart('@');
+                string logicalName = module.Substring("global::".Length);
+                var owner = _p.FindModule(logicalName);
+                if (owner == null || ModuleClassName(owner) != module)
+                    owner = _p.Modules.Values.FirstOrDefault(m => m.Classes.ContainsKey(name) && IsProjectPackageModule(m) && ModuleClassName(m) == module);
+                if (owner != null && owner.Classes.ContainsKey(name))
+                {
+                    sameModule = owner == _m;
+                    return TypeInference.ClassKey(owner, name);
+                }
+            }
             return null;
         }
 

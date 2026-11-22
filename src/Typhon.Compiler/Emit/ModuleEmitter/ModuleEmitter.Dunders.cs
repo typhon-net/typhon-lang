@@ -54,7 +54,11 @@ namespace Typhon.Compiler.Emit
             }
             string repr = $"$\"{c.Name}({string.Join(", ", fs.Select(f => $"{f}={{(global::Typhon.Runtime.Builtins.repr({F(f)}))}}"))})\"";
             if (!Has("__repr__")) _w.Line($"public string __repr__() => {repr};");
-            else _w.Line("string global::Typhon.Runtime.IPyRepr.__repr__() => __repr__();");
+            else
+            {
+                _w.Line("string global::Typhon.Runtime.IPyRepr.__repr__() => __repr__();");
+                _w.Line($"private string {ClassModel.NamedTupleRepr}() => {repr};");
+            }
             if (!Has("__repr__") && !Has("__str__")) _w.Line("public override string ToString() => __repr__();");
             if (!Has("__eq__"))
             {
@@ -71,12 +75,15 @@ namespace Typhon.Compiler.Emit
             if (!Has("__le__")) _w.Line($"public static bool operator <=({self} a, {self} b) => a.CompareTo(b) <= 0;");
             if (!Has("__ge__")) _w.Line($"public static bool operator >=({self} a, {self} b) => a.CompareTo(b) >= 0;");
             // _replace(field=value, ...): a copy with some fields replaced
+            string allocation = c.NamedTupleCustomNew ? $"default({NoInitType}), " : "";
+            if (c.NamedTupleCustomNew && fs.Count > 0)
+                _w.Line($"private {Esc(c.Name)}({NoInitType} _, {string.Join(", ", fs.Select(f => $"{T(f)} {Esc(f)}"))}) {{ {string.Join(" ", fs.Select(f => $"{F(f)} = {Esc(f)};"))} }}");
             if (fs.Count > 0)
-                _w.Line($"public {self} _replace({string.Join(", ", fs.Select(f => $"object? {Esc(f)} = null"))}) => new {self}({string.Join(", ", fs.Select(f => $"{Esc(f)} is null ? {F(f)} : ({T(f)})(dynamic){Esc(f)}"))});");
+                _w.Line($"public {self} _replace({string.Join(", ", fs.Select(f => $"object? {Esc(f)} = null"))}) => new {self}({allocation}{string.Join(", ", fs.Select(f => $"{Esc(f)} is null ? {F(f)} : ({T(f)})(dynamic){Esc(f)}"))});");
             _w.Line($"public OrderedDictionary<string, object?> _asdict() => new OrderedDictionary<string, object?> {{ {string.Join(", ", fs.Select(f => $"[{CsString(f)}] = {F(f)}"))} }};");
             _w.Line($"internal static readonly global::Typhon.Runtime.PyTuple<string> _fields = new global::Typhon.Runtime.PyTuple<string>(new string[] {{ {string.Join(", ", fs.Select(CsString))} }});");
             if (fs.Count > 0)
-                _w.Line($"public static {self} _make(global::System.Collections.IEnumerable __items) {{ var __l = global::System.Linq.Enumerable.ToList(global::System.Linq.Enumerable.Cast<object?>(__items)); if (__l.Count != {fs.Count}) throw new global::System.ArgumentException(\"Expected {fs.Count} arguments, got \" + __l.Count); return new {self}({string.Join(", ", fs.Select((f, i) => $"({T(f)})(dynamic)__l[{i}]!"))}); }}");
+                _w.Line($"public static {self} _make(global::System.Collections.IEnumerable __items) {{ var __l = global::System.Linq.Enumerable.ToList(global::System.Linq.Enumerable.Cast<object?>(__items)); if (__l.Count != {fs.Count}) throw new global::System.ArgumentException(\"Expected {fs.Count} arguments, got \" + __l.Count); return new {self}({allocation}{string.Join(", ", fs.Select((f, i) => $"({T(f)})(dynamic)__l[{i}]!"))}); }}");
         }
 
         bool LtComparesSelf(ClassDef c, ClassContext ctx)
@@ -119,7 +126,6 @@ namespace Typhon.Compiler.Emit
             var self = ctx.CsSelfType;
             string ParamType(FunctionDef f, int i) => f.Params.Count > i && f.Params[i].Annotation != null ? MapType(f.Params[i].Annotation, f) : "dynamic";
             string RetType(FunctionDef f) => f.Returns != null ? MapType(f.Returns, f, isReturn: true) : "dynamic";
-            var names = new HashSet<string>(methods.Select(m => m.Name));
             var definedOps = new HashSet<string>();
 
             foreach (var f in methods)
@@ -127,7 +133,11 @@ namespace Typhon.Compiler.Emit
                 switch (f.Name)
                 {
                     case "__str__": _w.Line("public override string ToString() => __str__();"); break;
-                    case "__repr__": if (!names.Contains("__str__")) _w.Line("public override string ToString() => __repr__();"); break;
+                    case "__repr__":
+                        if (ctx.Def.NamedTupleFields == null)
+                            _w.Line("string global::Typhon.Runtime.IPyRepr.__repr__() => __repr__();");
+                        if (!DefinesInHierarchy(ctx.Def, "__str__")) _w.Line("public override string ToString() => __repr__();");
+                        break;
                     case "__hash__": _w.Line("public override int GetHashCode() => __hash32(__hash__());"); break;
                     case "__eq__":
                     {
@@ -156,8 +166,7 @@ namespace Typhon.Compiler.Emit
                     }
                     case "__len__": if (!ctx.Members.Contains("Count")) _w.Line("public int Count => checked((int)__len__());"); break;
                     case "__iter__":
-                        _w.Line($"public IEnumerator<{ctx.IterElementType}> GetEnumerator() => __iter__().GetEnumerator();");
-                        _w.Line("global::System.Collections.IEnumerator global::System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();");
+                        EmitIteratorBridge(ctx, f);
                         break;
                     default:
                         if (BinaryDunders.TryGetValue(f.Name, out var op))
@@ -186,6 +195,34 @@ namespace Typhon.Compiler.Emit
                     else if (pt == "dynamic" || pt == "object") _w.Line($"public static {RetType(f)} operator {partner}({self} a, {pt} b) => ((dynamic)b).{f.Name}(a);");
                     else _w.Line($"public static {RetType(f)} operator {partner}({self} a, {pt} b) => throw new global::System.InvalidCastException(\"'{partner}' not supported between instances of '{ctx.Name}' and '{pt}'\");");
                 }
+        }
+
+        void EmitIteratorBridge(ClassContext ctx, FunctionDef iter)
+        {
+            string enumerator = $"IEnumerator<{ctx.IterElementType}>";
+            if (iter.Params.Count > 0 && DefinesInHierarchy(ctx.Def, "__next__") &&
+                AstWalker.ContainsOutsideNestedScopes(iter.Body,
+                    n => n is ReturnStmt { Value: NameExpr self } && self.Id == iter.Params[0].Name))
+            {
+                // An iterator can return itself from __iter__. Advance it through __next__ instead of recursing into GetEnumerator.
+                const string fromNext = "__typhon_next_enumerator__";
+                _w.Line($"public {enumerator} GetEnumerator()");
+                _w.Open();
+                _w.Line("var iterator = __iter__();");
+                _w.Line($"return global::System.Object.ReferenceEquals((object?)iterator, this) ? {fromNext}() : iterator.GetEnumerator();");
+                _w.Close();
+                _w.Line($"private {enumerator} {fromNext}()");
+                _w.Open();
+                _w.Line("while (true)");
+                _w.Open();
+                _w.Line($"{ctx.IterElementType} item;");
+                _w.Line("try { item = __next__(); } catch (global::Typhon.Runtime.StopIteration) { break; }");
+                _w.Line("yield return item;");
+                _w.Close();
+                _w.Close();
+            }
+            else _w.Line($"public {enumerator} GetEnumerator() => __iter__().GetEnumerator();");
+            _w.Line("global::System.Collections.IEnumerator global::System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();");
         }
     }
 }

@@ -20,6 +20,8 @@ namespace Typhon.Compiler.Emit
         public bool InferParams;
         /// <summary>A method: its late-bound version is always emitted (calls through untyped receivers), so its body's calls count.</summary>
         public bool AlwaysFallback;
+        /// <summary>The CLR result of an unannotated synchronous generator, known before any call is inferred.</summary>
+        public string GeneratorReturnType;
         public List<Param> Params => Def.Params.Skip(FirstParam).ToList();
     }
 
@@ -400,9 +402,11 @@ namespace Typhon.Compiler.Emit
             var locals = LocalsAnalyzer.Analyze(f.Body, f.Params.Select(x => x.Name), null);
             bool inferReturn = (f.Returns == null || IsBareContainer(f.Returns)) && locals.HasValueReturn && !locals.HasYield;
             bool inferParams = allowParams && unannotated;
-            if (!inferParams && !inferReturn) return;
+            string generatorReturn = locals.HasYield && !f.IsAsync && f.Returns == null ? ModuleEmitter.UnannotatedGeneratorReturnType(f) : null;
+            if (!inferParams && !inferReturn && generatorReturn == null) return;
             var key = FuncKey(m, c, f.Name);
             Targets[key] = new InferenceTarget { Key = key, Module = m, Class = c, Def = f, FirstParam = first, InferParams = inferParams,
+                                                 GeneratorReturnType = generatorReturn,
                                                  AlwaysFallback = inferParams && c != null && f.Name != "__init__" };
         }
 

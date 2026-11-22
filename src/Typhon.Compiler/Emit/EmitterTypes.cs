@@ -27,6 +27,7 @@ namespace Typhon.Compiler.Emit
     /// <summary>Per-function emission state.</summary>
     internal sealed class Scope
     {
+        public bool DisplaysExpressionValues;
         public Scope Parent;
         public LocalsResult Locals;
         public readonly HashSet<string> Params = new HashSet<string>();

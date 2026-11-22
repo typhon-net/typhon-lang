@@ -122,15 +122,26 @@ namespace Typhon.Runtime
         public static string Decolor(string s) => s.IndexOf('\x1b') < 0 ? s : Ansi.Replace(s, "");
 
         /// <summary>_colorize.can_colorize(file=sys.stdout).</summary>
-        public static bool CanColorize()
+        public static bool CanColorize() => CanColorize(null, Typhon.Stdlib._colorize.COLORIZE);
+
+        public static bool CanColorize(object? file, bool enabled)
         {
             string? Env(string k) => Environment.GetEnvironmentVariable(k);
             if (Env("PYTHON_COLORS") == "0") return false;
             if (Env("PYTHON_COLORS") == "1") return true;
             if (!string.IsNullOrEmpty(Env("NO_COLOR"))) return false;
+            if (!enabled) return false;
             if (!string.IsNullOrEmpty(Env("FORCE_COLOR"))) return true;
             if (Env("TERM") == "dumb") return false;
-            try { return !Console.IsOutputRedirected; } catch (Exception) { return false; }
+            file ??= (object?)Typhon.Stdlib.sys_.stdout;
+            object? fileno = Builtins.getattr(file, "fileno", null);
+            if (fileno == null) return false;
+            try { return Typhon.Stdlib.os_.isatty((long)Builtins.__invoke(fileno, [])); }
+            catch (System.IO.IOException)
+            {
+                object? isatty = Builtins.getattr(file, "isatty", null);
+                return isatty != null && Builtins.truthy((object?)Builtins.__invoke(isatty, []));
+            }
         }
 
         /// <summary>shutil.get_terminal_size().columns: $COLUMNS, else the width of the terminal on stdout, else 80.</summary>

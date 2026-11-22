@@ -28,18 +28,40 @@ namespace Typhon.Runtime
     internal sealed class PyBoundMethod : System.Dynamic.DynamicObject
     {
         readonly object _target; readonly string _name;
-        public PyBoundMethod(object target, string name) { _target = target; _name = name; }
+        internal object Target => _target;
+        internal string Name => _name;
+        internal bool IncludesNonPublic => (_visibility & System.Reflection.BindingFlags.NonPublic) != 0;
+        readonly System.Reflection.BindingFlags _visibility;
+        public PyBoundMethod(object target, string name, bool includeNonPublic = false)
+        {
+            _target = target;
+            _name = name;
+            _visibility = System.Reflection.BindingFlags.Public;
+            if (includeNonPublic) _visibility |= System.Reflection.BindingFlags.NonPublic;
+        }
+
+        PySourceAttribute? Source => (_target as Type ?? _target.GetType())
+            .GetMethods(_visibility | (_target is Type ? System.Reflection.BindingFlags.Static : System.Reflection.BindingFlags.Instance))
+            .Where(method => method.Name == _name)
+            .Select(method => method.GetCustomAttributes(typeof(PySourceAttribute), false).OfType<PySourceAttribute>().FirstOrDefault())
+            .FirstOrDefault(attribute => attribute != null);
+
+        public string __name__ => _name;
+        public string? __doc__ => Source?.DocString;
+        public string __module__ => Source?.Module ?? Builtins.__module_of(_target as Type ?? _target.GetType());
+        public Typhon.Stdlib.sys_.code? __code__ => Source is { } source ? new Typhon.Stdlib.sys_.code(_name, source.Filename, source.Line) : null;
+
         public dynamic? __call__(object?[] args)
         {
             // a class's method (getattr(Cls, "m")): a static method, or an instance method with self as the first argument
             var type = _target as Type ?? _target.GetType();
-            var flags = _target is Type ? System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public : System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public;
+            var flags = _visibility | (_target is Type ? System.Reflection.BindingFlags.Static : System.Reflection.BindingFlags.Instance);
             if (_target is Type && args.Length > 0 && args[0] != null && type.IsInstanceOfType(args[0]) &&
                 !type.GetMethods(flags).Any(m => m.Name == _name))
                 return new PyBoundMethod(args[0]!, _name).__call__(args.Skip(1).ToArray());
             foreach (var m in type.GetMethods(flags))
             {
-                if (m.Name != _name) continue;
+                if (m.Name != _name || m.IsGenericMethodDefinition) continue;
                 var ps = m.GetParameters();
                 bool hasParams = ps.Length > 0 && ps[^1].GetCustomAttributes(typeof(ParamArrayAttribute), false).Length > 0;
                 int fixedCount = hasParams ? ps.Length - 1 : ps.Length;
@@ -70,7 +92,7 @@ namespace Typhon.Runtime
         {
             if (kw == null || kw.Count == 0) return __call__(args);
             var type = _target as Type ?? _target.GetType();
-            var flags = _target is Type ? System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public : System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public;
+            var flags = _visibility | (_target is Type ? System.Reflection.BindingFlags.Static : System.Reflection.BindingFlags.Instance);
             var candidates = type.GetMethods(flags).Where(m => m.Name == _name && !m.IsGenericMethodDefinition).ToList();
             var best = PyArgs.Best(candidates, args, kw, out var call) ?? throw PyArgs.NoFit(_name, kw, candidates);
             try { return best.Invoke(_target is Type ? null : _target, call); }
@@ -222,6 +244,7 @@ namespace Typhon.Runtime
         {
             Type t => PyTypeName(t),
             PyFunction f => f.__name__,
+            PyBoundMethod m => m.Name,
             Delegate d => d.Method.Name,
             null => throw new MissingMemberException("'NoneType' object has no attribute '__name__'"),
             _ => (string)((dynamic)o).__name__,
@@ -239,9 +262,11 @@ namespace Typhon.Runtime
         /// <summary>The module of a class: a Typhon class's is the module class it is nested in; the runtime's and .NET's are builtins.</summary>
         static string ModuleOfType(Type t)
         {
-            if (t.Namespace is string ns && (ns == "System" || ns.StartsWith("System.") || ns.StartsWith("Microsoft.") || ns.StartsWith("Typhon."))) return "builtins";
             var outer = t;
             while (outer.DeclaringType != null) outer = outer.DeclaringType;
+            if (outer.GetCustomAttributes(typeof(PySourceAttribute), inherit: false).FirstOrDefault() is PySourceAttribute source)
+                return source.Module;
+            if (t.Namespace is string ns && (ns == "System" || ns.StartsWith("System.") || ns.StartsWith("Microsoft.") || ns.StartsWith("Typhon."))) return "builtins";
             return outer != t ? outer.Name : t.Namespace ?? "builtins";
         }
 
@@ -257,6 +282,7 @@ namespace Typhon.Runtime
             if (t == typeof(PyByteArray)) return "bytearray";
             if (typeof(PyFunction).IsAssignableFrom(t)) return "function";
             if (t == typeof(PyModule)) return "module";
+            if (t == typeof(Typhon.Stdlib.types.TracebackType)) return "traceback";
             if (t.IsArray && t != typeof(byte[])) return "tuple";
             if (t.IsGenericType)
             {
@@ -276,6 +302,7 @@ namespace Typhon.Runtime
             if (kw == null || kw.Count == 0) return __invoke(f, args);
             if (f is PyFunction pf) return pf.__call_kw__(args, kw);
             if (f is PyBoundMethod bm) return bm.__call_kw__(args, kw);
+            if (f is IPyKeywordCallable callable) return callable.__call_kw__(args, kw);
             // a typed function's value (a delegate of the method itself, or of a lambda): its parameters by name
             if (f is Delegate d)
             {
@@ -367,6 +394,11 @@ namespace Typhon.Runtime
         };
     }
 
+    internal interface IPyKeywordCallable
+    {
+        object? __call_kw__(object?[] args, IDictionary<string, object?>? kwargs);
+    }
+
     /// <summary>
     /// Selects a Typhon class's allocation-only constructor: in a hierarchy where a subclass runs its base class's
     /// __init__ later in its own (after setting attributes the base's __init__ reads), construction is two-phase like
@@ -388,6 +420,9 @@ namespace Typhon.Runtime
         public object? __wrapped__;
         public string __module__ = "__main__";
         public string __qualname__ { get => __name__; set => __name__ = value; }
+        public Typhon.Stdlib.sys_.code? __code__ =>
+            GetType().GetCustomAttributes(typeof(PySourceAttribute), false).FirstOrDefault() is PySourceAttribute { Line: > 0 } source
+                ? new Typhon.Stdlib.sys_.code(__name__, source.Filename, source.Line) : null;
         internal Dictionary<string, object?>? _attrs;
         protected PyFunction(string name) { __name__ = name; }
         /// <summary>Calls the function with arguments of any type (dynamic overload resolution).</summary>

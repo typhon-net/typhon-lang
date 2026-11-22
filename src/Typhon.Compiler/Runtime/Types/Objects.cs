@@ -70,11 +70,14 @@ namespace Typhon.Runtime
     {
         static readonly ConditionalWeakTable<object, OrderedDictionary<string, object?>> Extra = new ConditionalWeakTable<object, OrderedDictionary<string, object?>>();
         readonly object _o;
+        readonly PyModule? _module;
         readonly List<System.Reflection.PropertyInfo> _props;
         public PyAttrDict(object o)
         {
             _o = o;
+            _module = o as PyModule;
             _props = new List<System.Reflection.PropertyInfo>();
+            if (_module != null) return;
             var seen = new HashSet<string>();
             // base classes first: their __init__ usually runs first, so that is the order Python assigned the attributes in
             var chain = new List<Type>();
@@ -96,25 +99,35 @@ namespace Typhon.Runtime
 
         public object? this[string key]
         {
-            get => Prop(key) is { } p ? p.GetValue(_o) : Extras.TryGetValue(key, out var v) ? v : throw new KeyNotFoundException(Builtins.repr(key));
-            set { if (Prop(key) is { } p) p.SetValue(_o, Convert(value, p.PropertyType)); else Extras[key] = value; }
+            get => TryGetValue(key, out var value) ? value : throw new KeyNotFoundException(Builtins.repr(key));
+            set
+            {
+                if (_module?.TrySetNamespaceMember(key, value) == true) return;
+                if (Prop(key) is { } p) p.SetValue(_o, Convert(value, p.PropertyType));
+                else Extras[key] = value;
+            }
         }
         static object? Convert(object? v, Type t) => v == null || t.IsInstanceOfType(v) ? v : t == typeof(object) ? v : System.Convert.ChangeType(v, Nullable.GetUnderlyingType(t) ?? t, CultureInfo.InvariantCulture);
-        public ICollection<string> Keys => _props.Select(p => p.Name).Concat(Extras.Keys).ToList();
+        public ICollection<string> Keys => (_module?.NamespaceNames() ?? _props.Select(p => p.Name)).Concat(Extras.Keys).Distinct().ToList();
         public ICollection<object?> Values => Keys.Select(k => this[k]).ToList();
-        public int Count => _props.Count + Extras.Count;
+        public int Count => _module == null ? _props.Count + Extras.Count : Keys.Count;
         public bool IsReadOnly => false;
         public void Add(string key, object? value) => this[key] = value;
         public void Add(KeyValuePair<string, object?> item) => this[item.Key] = item.Value;
         public void Clear() => Extras.Clear();
         public bool Contains(KeyValuePair<string, object?> item) => ContainsKey(item.Key) && Equals(this[item.Key], item.Value);
-        public bool ContainsKey(string key) => Prop(key) != null || Extras.ContainsKey(key);
+        public bool ContainsKey(string key) => _module == null ? Prop(key) != null || Extras.ContainsKey(key) : TryGetValue(key, out _);
         public void CopyTo(KeyValuePair<string, object?>[] array, int arrayIndex) { foreach (var kv in this) array[arrayIndex++] = kv; }
         public IEnumerator<KeyValuePair<string, object?>> GetEnumerator() { foreach (var k in Keys) yield return new KeyValuePair<string, object?>(k, this[k]); }
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
         public bool Remove(string key) => Extras.Remove(key);
         public bool Remove(KeyValuePair<string, object?> item) => Extras.Remove(item.Key);
-        public bool TryGetValue(string key, out object? value) { if (ContainsKey(key)) { value = this[key]; return true; } value = null; return false; }
+        public bool TryGetValue(string key, out object? value)
+        {
+            if (Prop(key) is { } property) { value = property.GetValue(_o); return true; }
+            if (Extras.TryGetValue(key, out value)) return true;
+            return _module?.TryGetNamespaceMember(key, out value) == true;
+        }
 
         public void update(object? other)
         {

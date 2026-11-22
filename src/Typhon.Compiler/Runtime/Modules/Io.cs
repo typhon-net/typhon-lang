@@ -70,7 +70,7 @@ namespace Typhon.Stdlib
             public virtual bool seekable() => false;
             public virtual long seek(long offset, long whence = 0) => throw Unsupported("seek");
             public virtual long tell() => seek(0, 1);
-            public virtual long truncate(long? size = null) => throw Unsupported("truncate");
+            public virtual dynamic? truncate(long? size = null) => throw Unsupported("truncate");
             public void _checkClosed(string? msg = null) { if (closed) throw new ArgumentException(msg ?? "I/O operation on closed file."); }
             public void _checkReadable(string? msg = null) { if (!readable()) throw Unsupported(msg ?? "File or stream is not readable."); }
             public void _checkWritable(string? msg = null) { if (!writable()) throw Unsupported(msg ?? "File or stream is not writable."); }
@@ -196,7 +196,7 @@ namespace Typhon.Stdlib
                 return S.Seek(offset, StreamOps.Origin(whence));
             }
             public override long tell() => S.Position;
-            public override long truncate(long? size = null)
+            public override dynamic? truncate(long? size = null)
             {
                 long n = size ?? S.Position;
                 if (n < 0) throw new ArgumentException($"negative size value {n}");
@@ -241,7 +241,7 @@ namespace Typhon.Stdlib
             public override long write(PyBytes b) => StreamOps.Write(S, b.Data);
             public override long seek(long offset, long whence = 0) => S.Seek(offset, StreamOps.Origin(whence));
             public override long tell() => S.Position;
-            public override long truncate(long? size = null) { long n = size ?? S.Position; S.SetLength(n); return n; }
+            public override dynamic? truncate(long? size = null) { long n = size ?? S.Position; S.SetLength(n); return n; }
             public override bool readable() { _checkClosed(); return _s.CanRead; }
             public override bool writable() { _checkClosed(); return _s.CanWrite; }
             public override bool seekable() { _checkClosed(); return _s.CanSeek; }
@@ -284,7 +284,7 @@ namespace Typhon.Stdlib
             public override long write(PyBytes b) => StreamOps.Write(S, b.Data);
             public override long seek(long offset, long whence = 0) => S.Seek(offset, StreamOps.Origin(whence));
             public override long tell() => S.Position;
-            public override long truncate(long? size = null) { long n = size ?? S.Position; S.Flush(); S.SetLength(n); return n; }
+            public override dynamic? truncate(long? size = null) { long n = size ?? S.Position; S.Flush(); S.SetLength(n); return n; }
             public override void flush() { _checkClosed(); if (_s.CanWrite) _s.Flush(); }
             public override bool readable() => _s.CanRead;
             public override bool writable() => _s.CanWrite;
@@ -555,7 +555,7 @@ namespace Typhon.Stdlib
                 return target;
             }
 
-            public override long truncate(long? size = null)
+            public override dynamic? truncate(long? size = null)
             {
                 var s = S;
                 long n = size ?? tell();

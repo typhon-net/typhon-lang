@@ -20,6 +20,7 @@ name = "Typhon"
 print(f"Hello {name}! len={len(name)} upper={name.upper()} repr={name!r}")
 print("{} + {} = {}".format(1, 2, 3), "{0}{1}{0}".format("a", "b"), "{:>4}".format("x"))
 print(repr("it's"), repr('say "hi"'), repr("tab\there"), str(42), str(2.5), str(True), str(None))
+print(repr("\x00\x1b\x7f\x85\v\f"), repr("\u00a0\u200b\ufeff"), repr("\ue000\U000f0000"), repr("é 雪 😀"))
 print(ord("A"), chr(97), "äöü".upper(), "Straße".lower(), len("äöü"))
 chars = [c for c in "abc"]
 print(chars, list("hey"), sorted("banana"))

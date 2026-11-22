@@ -729,7 +729,7 @@ namespace Typhon.Stdlib
             public readonly string? encoding, errors;
             public readonly bool delay;
 
-            public FileHandler(string filename, string mode = "a", string? encoding = null, bool delay = false, string? errors = null) : base(sys_.stderr)
+            public FileHandler(string filename, string mode = "a", string? encoding = null, bool delay = false, string? errors = null) : base((object?)sys_.stderr)
             {
                 baseFilename = System.IO.Path.GetFullPath(filename);
                 this.mode = mode;

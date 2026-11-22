@@ -60,7 +60,9 @@ namespace Typhon.Compiler.Emit
         {
             if (t == null || v == null || t == v || t == "dynamic" || v == "dynamic" || t == "object" || t == TypeInference.Pending || v == TypeInference.Pending) return false;
             if (IsIntegral(t) && IsIntegral(v) || t == "double" && IsIntegral(v) || t == v + "?") return false;
+            if (t.StartsWith("List<") && v.StartsWith("IEnumerable<")) return true;
             bool Plain(string x) => PrimitiveCsTypes.Contains(x) || x.StartsWith("List<") || x.StartsWith("HashSet<") || IsDictType(x) || x.StartsWith("(") ||
+                                    x is "global::Typhon.Runtime.PyAttrDict" or "global::Typhon.Runtime.PyBytes" or "global::Typhon.Runtime.PyByteArray" ||
                                     x.StartsWith("global::Typhon.Runtime.PyTuple<");
             return Plain(t) && Plain(v);
         }
@@ -92,8 +94,8 @@ namespace Typhon.Compiler.Emit
                 case ReturnStmt r: EmitReturn(r); break;
                 case RaiseStmt r: EmitRaise(r); break;
                 case GlobalStmt _: break;
-                case ImportStmt _: break;
-                case ImportFromStmt _: break;
+                case ImportStmt _:
+                case ImportFromStmt _: EmitPackageImports(s); break;
                 case AssertStmt a when a.Msg == null && IsTestModule && _scope != null && AssertWithValues(a): break;
                 case AssertStmt a:
                     _w.Line($"if (!{Paren(Cond(a.Test))}) throw new global::Typhon.Runtime.AssertionError({(a.Msg != null ? "str(" + EmitExpr(a.Msg) + ")" : "\"assertion failed\"")});");
@@ -122,6 +124,11 @@ namespace Typhon.Compiler.Emit
 
         void EmitExprStmt(ExprStmt e)
         {
+            if (_scope?.DisplaysExpressionValues == true && e.Value is not CallExpr { Func: NameExpr { Id: "__typhon_export" } })
+            {
+                _w.Line($"global::Typhon.Runtime.Builtins.__display_runtime_result({EmitExpr(e.Value)});");
+                return;
+            }
             // d.sort() / d.append(x) on a late-bound value as a statement: the method may return nothing (void), so an if
             // statement, not a conditional expression, chooses between the runtime's method and the object's own
             // (also on an attribute of a value whose type is not known: late-bound in C# then too, pred_info.successors.append(x))
@@ -192,10 +199,13 @@ namespace Typhon.Compiler.Emit
                 _w.Line("yield break;");
                 return;
             }
-            if (Obs != null && _retKey != null)
-                Obs.AddReturn(_retKey, r.Value == null || (r.Value is ConstExpr rc && rc.Kind == ConstKind.None) ? TypeInference.NoneType : (PyType(InferType(r.Value)) ?? TypeInference.Unknown));
-            if (r.Value == null) { _w.Line("return;"); return; }
             string rt = _scope?.ReturnType;
+            string bound = rt is null or "dynamic" or "object" ? BoundMethodValue(r.Value) : null;
+            if (Obs != null && _retKey != null)
+                Obs.AddReturn(_retKey, r.Value == null || IsNone(r.Value) ? TypeInference.NoneType :
+                    bound != null ? "dynamic" : PyType(InferType(r.Value)) ?? TypeInference.Unknown);
+            if (r.Value == null) { _w.Line("return;"); return; }
+            if (bound != null) { _w.Line($"return {bound};"); return; }
             if (r.Value is CallExpr { Func: AttributeExpr { Target: NameExpr { Id: "self" } } callee } call &&
                 _cls != null && MethodInHierarchy(_cls.Def, callee.Name) is FunctionDef method && !method.IsAsync &&
                 !_m.Ast.MethodDecorators.ContainsKey(method) &&

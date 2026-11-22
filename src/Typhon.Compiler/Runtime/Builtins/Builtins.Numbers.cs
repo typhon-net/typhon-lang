@@ -106,7 +106,8 @@ namespace Typhon.Runtime
         public static string oct(long i) => (i < 0 ? "-0o" : "0o") + Convert.ToString(Math.Abs(i), 8);
         public static long hash(object? o) => o?.GetHashCode() ?? 0;
         public static long id(object o) => RuntimeHelpers.GetHashCode(o);
-        public static bool callable(object? o) => o is Delegate;
+        public static bool callable(object? o) => o is Delegate or Type or PyFunction or PyBoundMethod or IPyKeywordCallable ||
+            o != null && o.GetType().GetMethods().Any(m => !m.IsStatic && m.Name == "__call__");
 
 
         public static double truediv(int a, int b) => b == 0 ? throw new DivideByZeroException("division by zero") : (double)a / b;

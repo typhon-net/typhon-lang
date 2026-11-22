@@ -63,6 +63,17 @@ namespace Typhon.Compiler.Emit
                 case "Typhon.Stdlib.collections.deque": return pos.Count >= 1 ? Wrap(InferType(pos[0]) == "string" ? "string" : Elem(0), "global::Typhon.Runtime.deque<{0}>") : null;
                 case "Typhon.Stdlib.functools.reduce":
                     return pos.Count == 3 ? PyType(InferType(pos[2])) : Elem(1);
+                case "Typhon.Stdlib.re.compile":
+                {
+                    var pattern = call.Args.FirstOrDefault(a => a.Name == "pattern")?.Value ?? pos.FirstOrDefault();
+                    if (pattern == null) break;
+                    return InferType(pattern) switch
+                    {
+                        "string" or "global::Typhon.Stdlib.re.Pattern" => "global::Typhon.Stdlib.re.Pattern",
+                        PyBytesType or "global::Typhon.Stdlib.re.BytesPattern" => "global::Typhon.Stdlib.re.BytesPattern",
+                        _ => null,
+                    };
+                }
                 case "Typhon.Stdlib.fractions.Fraction": return "global::Typhon.Runtime.Fraction";
                 case "Typhon.Stdlib.pathlib.Path": return "global::Typhon.Runtime.Path";
             }

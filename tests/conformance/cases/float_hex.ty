@@ -1,0 +1,20 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+print(float.fromhex(" \t-0x1.Cp+2\n"), float.fromhex("0.8"), float.fromhex("+10"))
+print(float.fromhex("0x1.00000000000008p+0"), float.fromhex("0x1.00000000000018p+0"))
+print(float.fromhex("0x1p-1074"), float.fromhex("0x1p-1075"), float.fromhex("-0x1p-1076"))
+print(float.fromhex("0x1.fffffffffffffp+1023"))
+print(float.fromhex("Inf"), float.fromhex("-infinity"), float.fromhex("NaN"))
+print(float.fromhex("-0x0p9999999999999999999999999"))
+
+for sample in ["0x", "0x.1p+", "0x1..2", "0x1\x00", "0x1_2"]:
+    try:
+        print(float.fromhex(sample))
+    except ValueError:
+        print("invalid", repr(sample))
+
+try:
+    print(float.fromhex("0x1.fffffffffffff8p+1023"))
+except OverflowError:
+    print("overflow")

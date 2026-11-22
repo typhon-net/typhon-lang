@@ -1,0 +1,20 @@
+3
+subtest (i=0) True
+cleanup test_pass
+success test_pass
+subtest (i=1) False
+subtest (i=3) True
+continued past subtests
+cleanup test_checks
+cleanup test_error
+True
+3 3 1 1 1
+False
+True
+True not available
+subtest (i=1) False
+cleanup test_checks
+True 1 1 0
+__main__.Sample.test_pass [example]
+restored True
+rejected non-test

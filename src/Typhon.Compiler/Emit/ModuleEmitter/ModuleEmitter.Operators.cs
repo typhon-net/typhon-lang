@@ -293,8 +293,15 @@ namespace Typhon.Compiler.Emit
             {
                 case "in": return $"{Rt("contains")}({(right is TupleExpr ? EmitIterable(right) : r)}, {l})";
                 case "not in": return $"!{Rt("contains")}({(right is TupleExpr ? EmitIterable(right) : r)}, {l})";
-                case "is": return IsNone(right) ? $"({l} is null)" : IsNone(left) ? $"({r} is null)" : $"ReferenceEquals({l}, {r})";
-                case "is not": return IsNone(right) ? $"({l} is not null)" : IsNone(left) ? $"({r} is not null)" : $"!ReferenceEquals({l}, {r})";
+                case "is":
+                case "is not":
+                {
+                    bool negated = op == "is not";
+                    string none = negated ? "not null" : "null";
+                    if (IsNone(right)) return $"((object?){Paren(l)} is {none})";
+                    if (IsNone(left)) return $"((object?){Paren(r)} is {none})";
+                    return $"{(negated ? "!" : "")}{Rt("__same_object")}((object?){Paren(l)}, (object?){Paren(r)})";
+                }
                 default: return $"({l} {op} {r})";
             }
         }

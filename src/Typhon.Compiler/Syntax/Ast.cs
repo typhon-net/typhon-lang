@@ -236,6 +236,10 @@ namespace Typhon.Compiler.Syntax
         public List<Expr> Decorators = new List<Expr>();
         /// <summary>Set for a class made from namedtuple(...) / typing.NamedTuple: its fields in order (it behaves like a tuple of them).</summary>
         public List<string> NamedTupleFields;
+        /// <summary>The namedtuple subclass provides its own allocation logic, lowered to its constructor.</summary>
+        public bool NamedTupleCustomNew;
+        /// <summary>The class statement applies object.__new__ and binds the uninitialized instance to the class name.</summary>
+        public bool UninitializedSingleton;
     }
 
     public sealed class ModuleAst

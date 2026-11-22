@@ -144,8 +144,9 @@ namespace Typhon.Compiler.Emit
                 if (direct) { SetType(tn.Id, "long"); EmitBlock(f.Body); }
                 else
                 {
-                    string prologue = inline ? $"var {Esc(tn.Id)} = {iv};" : $"{EmitName(tn)} = {iv};";
-                    if (inline) SetType(tn.Id, "long");
+                    string wider = inline ? ConflictType(tn.Id) : null;
+                    string prologue = inline ? $"{wider ?? "var"} {Esc(tn.Id)} = {iv};" : $"{EmitName(tn)} = {iv};";
+                    if (inline) SetType(tn.Id, wider ?? "long");
                     EmitBlock(f.Body, prologue);
                 }
                 if (counts) _nonNegative.Remove(tn.Id);
@@ -156,7 +157,8 @@ namespace Typhon.Compiler.Emit
             string iterType = f.IsAsync ? null : InferType(f.Iter);
             // (items unpacked into names: only items C# can deconstruct, not late-bound ones)
             if (iterType != null && iterType.StartsWith("List<") &&
-                (f.Target is NameExpr || f.Target is TupleExpr tt0 && tt0.Elts.All(e => e is NameExpr) && !IsUnknownType(ElementTypeOf(iterType))))
+                (f.Target is NameExpr || f.Target is TupleExpr tt0 && tt0.Elts.Count >= 2 &&
+                 tt0.Elts.All(e => e is NameExpr) && !IsUnknownType(ElementTypeOf(iterType))))
             {
                 string list = NewTmp("l"), idx = NewTmp("i");
                 _w.Line($"var {list} = {EmitExpr(f.Iter)};");
@@ -165,7 +167,12 @@ namespace Typhon.Compiler.Emit
                 string prologue;
                 if (f.Target is NameExpr ln)
                 {
-                    if (IsInline(f, ln.Id)) { prologue = $"var {Esc(ln.Id)} = {item};"; SetType(ln.Id, IterElementType(iterType)); }
+                    if (IsInline(f, ln.Id))
+                    {
+                        string wider = ConflictType(ln.Id);
+                        prologue = $"{wider ?? "var"} {Esc(ln.Id)} = {item};";
+                        SetType(ln.Id, wider ?? IterElementType(iterType));
+                    }
                     else prologue = $"{EmitName(ln)} = {item};";
                 }
                 else
@@ -187,13 +194,15 @@ namespace Typhon.Compiler.Emit
                 // the body rebinds the loop variable (case = case.strip(), an inner `for _ in`): a C# foreach variable is
                 // read-only, so the item goes into an ordinary variable
                 // (an iterable of unknown type is iterated through __iter_dyn: its items are late-bound)
-                string loopType = IterElementType(IterableType(f.Iter)) ?? (iter.Contains("__iter_dyn(") ? "dynamic" : null);
+                string loopType = IsDynamicallyDispatched(f.Iter) || iter.StartsWith(Rt("__iter_dyn") + "(")
+                    ? "dynamic" : IterElementType(IterableType(f.Iter));
                 if (IsInline(f, n.Id) && AssignsName(f.Body, n.Id))
                 {
                     string item = NewTmp("it");
-                    SetType(n.Id, loopType);
+                    string wider = ConflictType(n.Id);
+                    SetType(n.Id, wider ?? loopType);
                     _w.Line($"{kw} (var {item} in {iter})");
-                    EmitBlock(f.Body, $"var {Esc(n.Id)} = {item};");
+                    EmitBlock(f.Body, $"{wider ?? "var"} {Esc(n.Id)} = {item};");
                 }
                 else if (IsInline(f, n.Id)) { SetType(n.Id, loopType); _w.Line($"{kw} (var {Esc(n.Id)} in {iter})"); EmitBlock(f.Body); }
                 else
@@ -211,33 +220,37 @@ namespace Typhon.Compiler.Emit
                 // (also a call dispatched dynamically, enumerate(u) with u late-bound: its C# type is dynamic, whatever it returns)
                 string loopElem = IterElementType(IterableType(f.Iter));
                 // (also when the loop iterates late-bound itself, for bit, char in table with table an object: __iter_dyn(table))
-                if ((loopElem == "dynamic" || IsDynamicallyDispatched(f.Iter) || IsUnknownType(IterableType(f.Iter)) && !(f.Iter is NameExpr) ||
+                if ((tup.Elts.Count < 2 || loopElem == "dynamic" || IsDynamicallyDispatched(f.Iter) || IsUnknownType(IterableType(f.Iter)) && !(f.Iter is NameExpr) ||
                      iter.StartsWith(Rt("__iter_dyn") + "(") ||
                      (loopElem == null || loopElem == "object") && f.Iter is CallExpr && UnpackPartTypes(loopElem, tup.Elts.Count) == null) &&
                     !tup.Elts.Any(e => e is StarredExpr))
                 {
-                    string item = NewTmp("x"), seq = NewTmp("u");
+                    string item = NewTmp("x");
                     _w.Line($"{kw} (var {item} in {iter})");
                     _w.Open();
-                    _w.Line($"var {seq} = {Rt("list")}({Rt("__iter_dyn")}((object){item}));");
-                    _w.Line($"if ({seq}.Count != {tup.Elts.Count}) throw new global::System.ArgumentException(\"expected {tup.Elts.Count} values to unpack, got \" + {seq}.Count);");
-                    for (int i = 0; i < tup.Elts.Count; i++)
-                    {
-                        EmitAssignTo(tup.Elts[i], null, f, $"{seq}[{i}]");
-                        if (tup.Elts[i] is NameExpr un && IsInline(f, un.Id)) SetType(un.Id, "dynamic");
-                    }
+                    EmitUnpackedItems(tup.Elts, f, $"{Rt("__iter_dyn")}((object?){item})", "dynamic");
                     EmitBlockStatements(f.Body);
                     _w.Close();
                     return;
                 }
                 if (allInline)
                 {
-                    _w.Line($"{kw} (var {DeconstructionPattern(tup)} in {iter})");
                     // for i, x in enumerate(xs) / for k, v in d.items(): the names get the tuple's element types
                     var parts = UnpackPartTypes(ElementTypeOf(IterableType(f.Iter)), tup.Elts.Count);
                     if (parts != null)
                         for (int i = 0; i < parts.Count; i++) SetType(((NameExpr)tup.Elts[i]).Id, parts[i]);
-                    EmitBlock(f.Body);
+                    string pattern = DeconstructionPattern(tup);
+                    if (tup.Elts.Cast<NameExpr>().Any(n => AssignsName(f.Body, n.Id)))
+                    {
+                        string item = NewTmp("item");
+                        _w.Line($"{kw} (var {item} in {iter})");
+                        EmitBlock(f.Body, $"var {pattern} = {item};");
+                    }
+                    else
+                    {
+                        _w.Line($"{kw} (var {pattern} in {iter})");
+                        EmitBlock(f.Body);
+                    }
                 }
                 else
                 {

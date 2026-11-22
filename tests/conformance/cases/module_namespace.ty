@@ -1,0 +1,30 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+"""A module whose dictionary is visible at run time."""
+import inspect
+import sys as system
+
+unreferenced = 8
+
+class Sample:
+    pass
+
+
+def _double(value: int) -> int:
+    """Double the argument."""
+    return value * 2
+
+
+module = system.modules["__main__"]
+namespace = vars(module)
+print(module.__name__, module.__doc__)
+print(namespace is module.__dict__, namespace["unreferenced"], namespace["Sample"] is Sample)
+print("unreferenced" in namespace, "missing" in namespace)
+method = namespace["_double"]
+print(method.__name__, method.__doc__, method.__module__, method(6))
+print(inspect.getmodule(method) is module, method.__code__.co_firstlineno > 0)
+namespace["unreferenced"] = 12
+print(unreferenced, getattr(module, "unreferenced"))
+namespace["another"] = "hello"
+print(getattr(module, "another"), namespace.copy()["another"])

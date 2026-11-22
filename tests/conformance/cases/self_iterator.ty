@@ -1,0 +1,21 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+
+class Countdown:
+    def __init__(self, count: int):
+        self.count = count
+
+    def __iter__(self):
+        return self
+
+    def __next__(self) -> int:
+        if self.count == 0:
+            raise StopIteration
+        n = self.count
+        self.count -= 1
+        return n
+
+
+counter = Countdown(4)
+print(next(counter), list(counter), list(counter))

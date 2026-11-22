@@ -35,6 +35,7 @@ namespace Typhon.Stdlib
         }
 
         static readonly Dictionary<(string, long), Pattern> Cache = new Dictionary<(string, long), Pattern>();
+        static readonly Dictionary<(PyBytes, long), BytesPattern> BytesCache = new Dictionary<(PyBytes, long), BytesPattern>();
 
         public static Pattern compile(string pattern, long flags = 0)
         {
@@ -46,6 +47,16 @@ namespace Typhon.Stdlib
             }
         }
         public static Pattern compile(Pattern pattern, long flags = 0) => pattern;
+        public static BytesPattern compile(PyBytes pattern, long flags = 0)
+        {
+            lock (BytesCache)
+            {
+                if (BytesCache.TryGetValue((pattern, flags), out var compiled)) return compiled;
+                if (BytesCache.Count >= 512) BytesCache.Clear();
+                return BytesCache[(pattern, flags)] = new BytesPattern(pattern, flags);
+            }
+        }
+        public static BytesPattern compile(BytesPattern pattern, long flags = 0) => pattern;
 
         public static Match? search(string pattern, string @string, long flags = 0) => compile(pattern, flags).search(@string);
         public static Match? match(string pattern, string @string, long flags = 0) => compile(pattern, flags).match(@string);
@@ -67,7 +78,15 @@ namespace Typhon.Stdlib
         public static string sub(Pattern pattern, string repl, string @string, long count = 0, long flags = 0) => pattern.sub(repl, @string, count);
         public static string sub(Pattern pattern, Func<Match, string> repl, string @string, long count = 0, long flags = 0) => pattern.sub(repl, @string, count);
         public static List<string?> split(Pattern pattern, string @string, long maxsplit = 0, long flags = 0) => pattern.split(@string, maxsplit);
-        public static void purge() { lock (Cache) Cache.Clear(); }
+        public static BytesMatch? search(PyBytes pattern, PyBytes @string, long flags = 0) => compile(pattern, flags).search(@string);
+        public static BytesMatch? match(PyBytes pattern, PyBytes @string, long flags = 0) => compile(pattern, flags).match(@string);
+        public static BytesMatch? fullmatch(PyBytes pattern, PyBytes @string, long flags = 0) => compile(pattern, flags).fullmatch(@string);
+        public static PyBytes sub(PyBytes pattern, PyBytes repl, PyBytes @string, long count = 0, long flags = 0) => compile(pattern, flags).sub(repl, @string, count);
+        public static void purge()
+        {
+            lock (Cache) Cache.Clear();
+            lock (BytesCache) BytesCache.Clear();
+        }
 
         /// <summary>re.escape: a backslash before every character that is special in a pattern (CPython 3.7+'s set).</summary>
         public static string escape(string pattern)
@@ -93,16 +112,21 @@ namespace Typhon.Stdlib
             readonly NetRegex _search;
             NetRegex? _anchored, _full;
 
-            public Pattern(string pattern, long flags)
+            public Pattern(string pattern, long flags, bool binary = false)
             {
                 this.pattern = pattern;
                 long f = flags;
                 try
                 {
-                    _translated = Translate(pattern, ref f, out int count, out var names);
+                    _translated = Translate(pattern, ref f, out int count, out var names, binary);
                     groups = count;
                     groupindex = names;
-                    if ((f & ASCII) == 0) f |= UNICODE;
+                    if (binary)
+                    {
+                        if ((f & UNICODE) != 0) throw new ArgumentException("cannot use UNICODE flag with a bytes pattern");
+                        if ((f & (ASCII | LOCALE)) == (ASCII | LOCALE)) throw new ArgumentException("ASCII and LOCALE flags are incompatible");
+                    }
+                    else if ((f & ASCII) == 0) f |= UNICODE;
                     this.flags = f;
                     _options = RegexOptions.CultureInvariant;
                     if ((f & IGNORECASE) != 0) _options |= RegexOptions.IgnoreCase;
@@ -211,18 +235,76 @@ namespace Typhon.Stdlib
                 return result;
             }
 
-            public string __repr__()
+            internal string ReprWithPattern(object value)
             {
                 var names = new List<string>();
                 long shown = flags & ~UNICODE;
                 foreach (var (bit, name) in new[] { (TEMPLATE, "re.TEMPLATE"), (IGNORECASE, "re.IGNORECASE"), (LOCALE, "re.LOCALE"), (MULTILINE, "re.MULTILINE"),
                                                     (DOTALL, "re.DOTALL"), (VERBOSE, "re.VERBOSE"), (DEBUG, "re.DEBUG"), (ASCII, "re.ASCII") })
                     if ((shown & bit) != 0) names.Add(name);
-                return $"re.compile({Builtins.repr(pattern)}{(names.Count > 0 ? ", " + string.Join("|", names) : "")})";
+                return $"re.compile({Builtins.repr(value)}{(names.Count > 0 ? ", " + string.Join("|", names) : "")})";
             }
+            public string __repr__() => ReprWithPattern(pattern);
             public override string ToString() => __repr__();
             public override bool Equals(object? obj) => obj is Pattern p && p.pattern == pattern && p.flags == flags;
             public override int GetHashCode() => HashCode.Combine(pattern, flags);
+        }
+
+        // Latin-1 preserves the offset of every byte while reusing the regex engine and replacement templates.
+        static string RegexText(PyBytes bytes) => Encoding.Latin1.GetString(bytes.Data);
+        static PyBytes? RegexBytes(string? text) => text == null ? null : PyBytes.Latin1(text);
+
+        internal sealed class BytesPattern : IPyRepr
+        {
+            readonly Pattern _pattern;
+            public readonly PyBytes pattern;
+            public long flags => _pattern.flags;
+            public long groups => _pattern.groups;
+            public OrderedDictionary<string, long> groupindex => _pattern.groupindex;
+
+            internal BytesPattern(PyBytes pattern, long flags)
+            {
+                this.pattern = pattern;
+                _pattern = new Pattern(RegexText(pattern), flags, binary: true);
+            }
+
+            BytesMatch? Wrap(Match? match, PyBytes text) => match == null ? null : new BytesMatch(match, this, text);
+            public BytesMatch? search(PyBytes @string, long pos = 0, long? endpos = null) => Wrap(_pattern.search(RegexText(@string), pos, endpos), @string);
+            public BytesMatch? match(PyBytes @string, long pos = 0, long? endpos = null) => Wrap(_pattern.match(RegexText(@string), pos, endpos), @string);
+            public BytesMatch? fullmatch(PyBytes @string, long pos = 0, long? endpos = null) => Wrap(_pattern.fullmatch(RegexText(@string), pos, endpos), @string);
+            public PyBytes sub(PyBytes repl, PyBytes @string, long count = 0) => subn(repl, @string, count).Item1;
+            public (PyBytes, long) subn(PyBytes repl, PyBytes @string, long count = 0)
+            {
+                var (result, replaced) = _pattern.subn(RegexText(repl), RegexText(@string), count);
+                return (PyBytes.Latin1(result), replaced);
+            }
+
+            public string __repr__() => _pattern.ReprWithPattern(pattern);
+            public override string ToString() => __repr__();
+            public override bool Equals(object? obj) => obj is BytesPattern other && _pattern.Equals(other._pattern);
+            public override int GetHashCode() => _pattern.GetHashCode();
+        }
+
+        internal sealed class BytesMatch : IPyRepr
+        {
+            readonly Match _match;
+            public readonly BytesPattern re;
+            public readonly PyBytes @string;
+            public long pos => _match.pos;
+            public long endpos => _match.endpos;
+            public long? lastindex => _match.lastindex;
+            public string? lastgroup => _match.lastgroup;
+
+            internal BytesMatch(Match match, BytesPattern re, PyBytes text) { _match = match; this.re = re; @string = text; }
+            public PyBytes group() => PyBytes.Latin1(_match.group());
+            public PyBytes? group(object? index) => RegexBytes(_match.group(index));
+            public PyBytes? this[object? index] => group(index);
+            public long start(object? index = null) => _match.start(index);
+            public long end(object? index = null) => _match.end(index);
+            public (long, long) span(object? index = null) => _match.span(index);
+            public PyBytes expand(PyBytes template) => PyBytes.Latin1(_match.expand(RegexText(template)));
+            public string __repr__() => $"<re.Match object; span=({start()}, {end()}), match={Builtins.repr(group())}>";
+            public override string ToString() => __repr__();
         }
 
         /// <summary>A match (re.Match): groups by number or name, positions, the matched string.</summary>
@@ -358,7 +440,7 @@ namespace Typhon.Stdlib
         /// Python regex syntax → .NET's. Named groups become plain numbered groups (the names kept on the side), so every
         /// group has its Python number: .NET would number named groups after all unnamed ones.
         /// </summary>
-        static string Translate(string p, ref long flags, out int groupCount, out OrderedDictionary<string, long> names)
+        static string Translate(string p, ref long flags, out int groupCount, out OrderedDictionary<string, long> names, bool binary)
         {
             names = new OrderedDictionary<string, long>();
             groupCount = 0;
@@ -372,7 +454,7 @@ namespace Typhon.Stdlib
                     flags |= f switch { 'a' => ASCII, 'i' => IGNORECASE, 'L' => LOCALE, 'm' => MULTILINE, 's' => DOTALL, 'u' => UNICODE, 'x' => VERBOSE, _ => 0 };
                 p = p.Substring(lead.Length);
             }
-            bool ascii = (flags & ASCII) != 0, verbose = (flags & VERBOSE) != 0;
+            bool ascii = binary || (flags & ASCII) != 0, verbose = (flags & VERBOSE) != 0;
             for (int i = 0; i < p.Length; i++)
             {
                 char c = p[i];

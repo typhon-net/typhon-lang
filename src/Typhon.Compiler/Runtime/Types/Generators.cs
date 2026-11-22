@@ -205,8 +205,8 @@ namespace Typhon.Runtime
         }
 
         /// <summary>obj.__dict__ / vars(obj): a live view of the object's attributes.</summary>
-        public static PyAttrDict __dict__(object o) => new PyAttrDict(o);
-        public static PyAttrDict vars(object o) => new PyAttrDict(o);
+        public static PyAttrDict __dict__(object o) => o is PyModule module ? module.__dict__ : new PyAttrDict(o);
+        public static PyAttrDict vars(object o) => __dict__(o);
         public static frozenset<string> frozenset(string s) => new frozenset<string>(chars(s));
         public static frozenset<object> frozenset() => new frozenset<object>();
         public static OrderedDictionary<K, V> dict<K, V>(IEnumerable<(K, V)> xs) where K : notnull { var d = new OrderedDictionary<K, V>(); foreach (var (k, v) in xs) d[k] = v; return d; }

@@ -1,0 +1,69 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import unittest
+from unittest import TestCase, TestResult, TestSuite
+
+def cleanup(name: str) -> None:
+    print("cleanup", name)
+
+class Sample(TestCase):
+    def setUp(self) -> None:
+        self.addCleanup(cleanup, self._testMethodName)
+
+    def test_pass(self) -> None:
+        self.assertEqual([1, 2], [1, 2])
+        with self.subTest(i=0):
+            self.assertTrue(1)
+
+    def test_checks(self) -> None:
+        with self.subTest(i=1):
+            self.assertEqual(1, 2)
+        with self.subTest("offline", i=2):
+            self.skipTest("not available")
+        with self.subTest(i=3):
+            self.assertFalse(False)
+        print("continued past subtests")
+
+    def test_error(self) -> None:
+        raise ValueError("bad input")
+
+class Result(TestResult):
+    def addSubTest(self, test, subtest, err) -> None:
+        print("subtest", str(subtest).split()[-1], err is None)
+        super().addSubTest(test, subtest, err)
+
+    def addSuccess(self, test) -> None:
+        print("success", str(test).split()[0])
+
+suite = TestSuite([Sample("test_pass"), TestSuite([Sample("test_checks"), Sample("test_error")])])
+results = Result()
+print(suite.countTestCases())
+print(suite.run(results) is results)
+print(suite.countTestCases(), results.testsRun, len(results.failures), len(results.errors), len(results.skipped))
+print(results.wasSuccessful())
+print(results.failures[0][1].endswith("AssertionError: 1 != 2\n"))
+print(results.errors[0][1].endswith("ValueError: bad input\n"), results.skipped[0][1])
+
+fast = Result()
+fast.failfast = True
+next_suite = TestSuite([Sample("test_checks"), Sample("test_pass")])
+next_suite.run(fast)
+print(fast.shouldStop, fast.testsRun, len(fast.failures), len(fast.skipped))
+
+subtest = unittest.case._SubTest(Sample("test_pass"), "example", {})
+print(subtest.id())
+
+class Buffered(TestCase):
+    def test_quiet(self) -> None:
+        print("captured during test")
+
+buffered_result = TestResult()
+buffered_result.buffer = True
+Buffered("test_quiet").run(buffered_result)
+print("restored", buffered_result.wasSuccessful())
+
+try:
+    TestSuite().addTest(42)
+except TypeError:
+    print("rejected non-test")

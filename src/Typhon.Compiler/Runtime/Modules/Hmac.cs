@@ -48,6 +48,7 @@ namespace Typhon.Stdlib
                     string s => s,
                     PyHash h => h.name,
                     Delegate d => d.Method.Name,
+                    PyBoundMethod m => m.Name,
                     PyFunction f => f.__name__,
                     _ => digestmod.ToString() ?? "",
                 }).ToLowerInvariant().Replace("-", "");

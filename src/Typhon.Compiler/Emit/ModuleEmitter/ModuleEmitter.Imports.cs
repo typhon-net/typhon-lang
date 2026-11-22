@@ -19,20 +19,95 @@ namespace Typhon.Compiler.Emit
         {
             var m = _p.FindModule(dotted);
             if (m != null) return m;
-            // relative to this module's package
-            int lastDot = _m.Name.LastIndexOf('.');
-            if (lastDot > 0) return _p.FindModule(_m.Name.Substring(0, lastDot) + "." + dotted);
-            return null;
+            return _m.PackageName.Length == 0 ? null : _p.FindModule(_m.PackageName + "." + dotted);
         }
 
-        string ResolveRelative(string module, int level)
+        bool IsProjectPackageModule(ModuleInfo module) =>
+            module.IsPackage || module.PackageName.Length > 0 && _p.FindModule(module.PackageName)?.IsPackage == true;
+
+        readonly HashSet<string> _qualifiedPackageImports = new HashSet<string>();
+
+        string PackageImportedMember(string name)
         {
-            if (level == 0) return module;
-            var parts = _m.Name.Split('.').ToList();
-            parts.RemoveAt(parts.Count - 1);
-            for (int i = 1; i < level && parts.Count > 0; i++) parts.RemoveAt(parts.Count - 1);
-            if (!string.IsNullOrEmpty(module)) parts.Add(module);
-            return string.Join(".", parts);
+            if (!_qualifiedPackageImports.Contains(name) || IsLocal(name) || _m.Globals.Contains(name) ||
+                _m.Functions.Contains(name) || _m.Classes.ContainsKey(name)) return null;
+            if (_moduleAliases.TryGetValue(name, out var module)) return ModuleClassName(module);
+            return _importedFromModules.TryGetValue(name, out var member)
+                ? ModuleClassName(member.Key) + "." + Esc(member.Value) : null;
+        }
+
+        /// <summary>A member's declaration, following package re-exports. A null member name denotes a submodule.</summary>
+        (ModuleInfo Owner, string Member) ProjectExport(ModuleInfo module, string name,
+            HashSet<(ModuleInfo, string)> seen = null)
+        {
+            if (module.Functions.Contains(name) || module.Classes.ContainsKey(name) || module.Globals.Contains(name))
+                return (module, name);
+            if (!IsProjectPackageModule(module)) return default;
+            if (seen == null) seen = new HashSet<(ModuleInfo, string)>();
+            if (!seen.Add((module, name))) return default;
+            foreach (var s in module.Ast.Body)
+            {
+                if (s is ImportStmt direct)
+                {
+                    foreach (var a in direct.Names)
+                    {
+                        var boundName = a.AsName ?? a.Name.Split('.')[0];
+                        if (boundName == name && _p.FindModule(a.AsName == null ? boundName : a.Name) is ModuleInfo submodule)
+                            return (submodule, null);
+                    }
+                }
+                else if (s is ImportFromStmt from && module.ResolveImport(from.Module, from.Level) is string absolute &&
+                         _p.FindModule(absolute) is ModuleInfo imported)
+                {
+                    foreach (var a in from.Names)
+                    {
+                        string original = a.Name == "*" && !name.StartsWith("_") ? name
+                            : (a.AsName ?? a.Name) == name ? a.Name : null;
+                        if (original == null) continue;
+                        var export = ProjectExport(imported, original, seen);
+                        if (export.Owner != null) return export;
+                    }
+                }
+            }
+            return module.IsPackage ? (_p.FindModule(module.Name + "." + name), null) : default;
+        }
+
+        string ProjectPackageMember(string dotted)
+        {
+            int dot = dotted.LastIndexOf('.');
+            if (dot <= 0 || ModuleRef(dotted.Substring(0, dot)) is not ModuleInfo module || !IsProjectPackageModule(module)) return null;
+            var (owner, member) = ProjectExport(module, dotted.Substring(dot + 1));
+            return owner == null ? null : member == null ? ModuleClassName(owner) : ModuleClassName(owner) + "." + Esc(member);
+        }
+
+        IEnumerable<ModuleInfo> PackageImports(Stmt stmt)
+        {
+            IEnumerable<ModuleInfo> Ancestors(ModuleInfo module)
+            {
+                var parents = new Stack<ModuleInfo>();
+                while (module != null && IsProjectPackageModule(module))
+                {
+                    if (module != _m) parents.Push(module);
+                    string parent = module.IsPackage
+                        ? module.Name.Substring(0, Math.Max(0, module.Name.LastIndexOf('.')))
+                        : module.PackageName;
+                    module = _p.FindModule(parent);
+                }
+                return parents;
+            }
+            if (stmt is ImportStmt direct)
+                return direct.Names.SelectMany(a => Ancestors(ResolvePsModule(a.Name))).Distinct();
+            if (stmt is ImportFromStmt from && _m.ResolveImport(from.Module, from.Level) is string absolute &&
+                ResolvePsModule(absolute) is ModuleInfo imported)
+                return Ancestors(imported).Concat(from.Names.Select(a => ProjectExport(imported, a.Name))
+                    .Where(x => x.Member == null).SelectMany(x => Ancestors(x.Owner))).Distinct();
+            return Enumerable.Empty<ModuleInfo>();
+        }
+
+        void EmitPackageImports(Stmt stmt)
+        {
+            foreach (var module in PackageImports(stmt))
+                _w.Line($"global::System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(typeof({ModuleClassName(module)}).TypeHandle);");
         }
 
         static readonly HashSet<string> IgnoredModules = new HashSet<string> { "typing", "abc", "enum", "__future__", "collections.abc", "typing_extensions", "clr" };
@@ -42,12 +117,23 @@ namespace Typhon.Compiler.Emit
             foreach (var alias in s.Names)
             {
                 string name = alias.Name, local = alias.AsName;
-                if (IgnoredModules.Contains(PublicModule(name))) { _typingOnlyNames.Add(local ?? name.Split('.')[0]); continue; }
+                if (name != "__future__" && IgnoredModules.Contains(PublicModule(name))) { _typingOnlyNames.Add(local ?? name.Split('.')[0]); continue; }
                 var mod = ResolvePsModule(name);
                 if (mod != null)
                 {
                     _moduleAliases[local ?? name] = mod;
-                    if (local != null) _usingLines.Add($"using {Esc(local)} = {mod.QualifiedClassName};");
+                    if (IsProjectPackageModule(mod))
+                    {
+                        string head = name.Split('.')[0];
+                        if (local != null) _qualifiedPackageImports.Add(local);
+                        else if (_p.FindModule(head) is ModuleInfo package)
+                        {
+                            _moduleAliases[head] = package;
+                            _qualifiedPackageImports.Add(head);
+                        }
+                    }
+                    else if (local != null || !name.Contains(".") && mod.ClassName != name)
+                        _usingLines.Add($"using {Esc(local ?? name)} = {ModuleClassName(mod)};");
                     continue;
                 }
                 string stdlib = StdlibType(name);
@@ -77,20 +163,26 @@ namespace Typhon.Compiler.Emit
 
         void ProcessImportFrom(ImportFromStmt s)
         {
-            string modName = ResolveRelative(s.Module, s.Level);
+            string modName = _m.ResolveImport(s.Module, s.Level);
+            if (modName == null) { Report(s, "TY0101", Severity.Error, "attempted relative import beyond the current package"); return; }
             if (IgnoredModules.Contains(PublicModule(modName))) { foreach (var a in s.Names) _typingOnlyNames.Add(a.AsName ?? a.Name); return; }
 
             var mod = ResolvePsModule(modName);
             if (mod != null)
             {
-                _usingLines.Add($"using static {mod.QualifiedClassName};");
+                if (!IsProjectPackageModule(mod) || s.Names.Any(a => a.Name == "*"))
+                    _usingLines.Add($"using static {mod.QualifiedClassName};");
                 foreach (var a in s.Names)
                 {
                     if (a.Name == "*") { _wildcardModules.Add(mod); continue; }
-                    if (!mod.Classes.ContainsKey(a.Name) && !mod.Functions.Contains(a.Name) && !mod.Globals.Contains(a.Name))
+                    var (owner, member) = ProjectExport(mod, a.Name);
+                    if (owner == null)
                     { Report(s, "TY0102", Severity.Error, $"cannot import name '{a.Name}' from '{modName}'"); continue; }
-                    _importedFromModules[a.AsName ?? a.Name] = new KeyValuePair<ModuleInfo, string>(mod, a.Name);
-                    if (a.AsName != null)
+                    string bound = a.AsName ?? a.Name;
+                    if (member == null) _moduleAliases[bound] = owner;
+                    else _importedFromModules[bound] = new KeyValuePair<ModuleInfo, string>(owner, member);
+                    if (IsProjectPackageModule(mod)) _qualifiedPackageImports.Add(bound);
+                    if (a.AsName != null && !IsProjectPackageModule(mod))
                     {
                         if (mod.Classes.ContainsKey(a.Name)) _usingLines.Add($"using {Esc(a.AsName)} = {mod.QualifiedClassName}.{Esc(a.Name)};");
                         else Unsupported(s, $"renaming the function or variable '{a.Name}' on import");
@@ -188,7 +280,7 @@ namespace Typhon.Compiler.Emit
             ["_collections"] = "collections", ["_contextvars"] = "contextvars", ["_hashlib"] = "hashlib", ["_sha2"] = "hashlib",
             ["_md5"] = "hashlib", ["_sha1"] = "hashlib", ["_sha3"] = "hashlib", ["_blake2"] = "hashlib", ["_pydecimal"] = "decimal",
             ["_decimal"] = "decimal", ["_pickle"] = "pickle", ["_bz2"] = "bz2", ["_lzma"] = "lzma", ["_locale"] = "locale",
-            ["_stat"] = "stat", ["_warnings"] = "warnings", ["_abc"] = "abc", ["_typing"] = "typing", ["_queue"] = "queue",
+            ["_stat"] = "stat", ["_warnings"] = "warnings", ["_py_warnings"] = "warnings", ["_abc"] = "abc", ["_typing"] = "typing", ["_queue"] = "queue",
         };
 
         static string PublicModule(string dotted)
@@ -201,12 +293,12 @@ namespace Typhon.Compiler.Emit
         /// <summary>from m import a, b: m exists and has each name (a function, value, class or submodule), or is a typing-only module.</summary>
         bool ImportFromResolves(ImportFromStmt imf)
         {
-            if (!ModuleExists(imf.Module)) return false;
-            string name = PublicModule(imf.Module);
+            string absolute = _m.ResolveImport(imf.Module, imf.Level);
+            if (absolute == null || !ModuleExists(absolute)) return false;
+            string name = PublicModule(absolute);
             if (IgnoredModules.Contains(name)) return true;
             if (ResolvePsModule(name) is ModuleInfo mod)
-                return imf.Names.All(a => a.Name == "*" || mod.Functions.Contains(a.Name) || mod.Classes.ContainsKey(a.Name) || mod.Globals.Contains(a.Name) ||
-                                          ResolvePsModule(name + "." + a.Name) != null);
+                return imf.Names.All(a => a.Name == "*" || ProjectExport(mod, a.Name).Owner != null);
             if (StdlibType(name) is string meta)
                 return imf.Names.All(a => a.Name == "*" || _r.GetMembers(meta, a.Name).Count > 0 || AnyArity(meta + "+" + a.Name, out _) ||
                                           StdlibType(name + "." + a.Name) != null);
@@ -236,13 +328,13 @@ namespace Typhon.Compiler.Emit
                         var handler = t.Handlers.FirstOrDefault(h => h.Type == null ||
                             (h.Type is TupleExpr tt ? tt.Elts : new List<Expr> { h.Type }).Any(e => e is NameExpr en && en.Id is "ImportError" or "ModuleNotFoundError" or "Exception"));
                         int failing = t.Body.FindIndex(st => st is ImportStmt im && im.Names.Any(a => !ModuleExists(a.Name)) ||
-                                                             st is ImportFromStmt imf && imf.Level == 0 && !ImportFromResolves(imf));
+                                                             st is ImportFromStmt imf && !ImportFromResolves(imf));
                         // try: from _queue import Empty / except ImportError: class Empty...: the imports all succeed, so
                         // the handler never runs (Typhon resolves imports when it compiles)
                         if (failing < 0 && t.Handlers.Count > 0 && t.FinalBody.Count == 0 &&
                             t.Handlers.All(h => h.Type != null && h.Name == null &&
                                 (h.Type is TupleExpr ht ? ht.Elts : new List<Expr> { h.Type }).All(e => e is NameExpr en && en.Id is "ImportError" or "ModuleNotFoundError")) &&
-                            t.Body.Count > 0 && t.Body.All(st => st is ImportStmt || st is ImportFromStmt imp && imp.Level == 0 || st is PassStmt))
+                            t.Body.Count > 0 && t.Body.All(st => st is ImportStmt || st is ImportFromStmt || st is PassStmt))
                         {
                             var kept = t.Body.Concat(t.OrElse).ToList();
                             body.RemoveAt(i);

@@ -33,13 +33,25 @@ namespace Typhon.Runtime
         {
             value = null;
             if (o == null || name.StartsWith("<")) return false;
+            if (o is PyModule module)
+            {
+                if (name == "__dict__") { value = module.__dict__; return true; }
+                if (name == "__class__") { value = typeof(PyModule); return true; }
+                return module.__dict__.TryGetValue(name, out value);
+            }
+            if (o is Exception error && name == "__traceback__")
+            {
+                value = Typhon.Stdlib.types.TracebackType.Of(error);
+                return true;
+            }
             if (o is Type t)
             {
                 if (name == "__name__" || name == "__qualname__") { value = PyTypeName(t); return true; }
+                if (name == "__module__") { value = ModuleOfType(t); return true; }
                 if (t.GetProperty(name, StaticMembers) is PropertyInfo sp && sp.GetIndexParameters().Length == 0) { value = sp.GetValue(null); return true; }
                 if (t.GetField(name, StaticMembers) is FieldInfo sf) { value = sf.GetValue(null); return true; }
                 if (t.GetMethods(StaticMembers | InstanceMembers).Any(m => m.Name == name)) { value = new PyBoundMethod(t, name); return true; }
-                return false;
+                // CLR reflection consumers may also read members of the Type object itself.
             }
             if (o is PyFunction pf)
             {
@@ -56,8 +68,6 @@ namespace Typhon.Runtime
             if (type.GetProperty(name, InstanceMembers) is PropertyInfo p && p.GetIndexParameters().Length == 0) { value = p.GetValue(o); return true; }
             if (type.GetField(name, InstanceMembers) is FieldInfo f) { value = f.GetValue(o); return true; }
             if (type.GetMethods(BindingFlags.Instance | BindingFlags.Public).Any(m => m.Name == name)) { value = new PyBoundMethod(o, name); return true; }
-            if (type.GetProperty(name, StaticMembers) is PropertyInfo csp && csp.GetIndexParameters().Length == 0) { value = csp.GetValue(null); return true; }
-            if (type.GetField(name, StaticMembers) is FieldInfo csf) { value = csf.GetValue(null); return true; }
             if (PyAttrDict.TryGetExtra(o, name, out value)) return true;
             switch (name)
             {
@@ -84,9 +94,11 @@ namespace Typhon.Runtime
                     value = site.Target(site, o);
                     return true;
                 }
-                catch (Microsoft.CSharp.RuntimeBinder.RuntimeBinderException) { return false; }
-                catch (MissingMemberException) { return false; }
+                catch (Microsoft.CSharp.RuntimeBinder.RuntimeBinderException) { }
+                catch (MissingMemberException) { }
             }
+            if (type.GetProperty(name, StaticMembers) is PropertyInfo csp && csp.GetIndexParameters().Length == 0) { value = csp.GetValue(null); return true; }
+            if (type.GetField(name, StaticMembers) is FieldInfo csf) { value = csf.GetValue(null); return true; }
             return false;
         }
 

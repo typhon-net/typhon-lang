@@ -61,6 +61,28 @@ public sealed class DotNetInteropTests
             "ByInitial GetKeyForItem protected\n", stdout);
     }
 
+    [Fact]
+    public void DelegateConstructorsAcceptInstanceMethods()
+    {
+        const string source = """
+            from System import EventArgs, EventHandler
+
+            class Subscriber:
+                def __init__(self):
+                    self.calls = 0
+                    callback = EventHandler(self.receive)
+                    callback.Invoke(self, EventArgs.Empty)
+
+                def receive(self, sender: object, args: EventArgs) -> None:
+                    self.calls += 1
+
+            print(Subscriber().calls)
+            """;
+        string stdout = IntegerTests.RunScript(source, out int exit, out string stderr);
+        Assert.True(exit == 0, stderr);
+        Assert.Equal("1\n", stdout);
+    }
+
     /// <summary>
     /// typing.Annotated metadata that names a .NET attribute puts the attribute on the property a class-level annotation
     /// declares (Blazor's [Parameter] and [Inject], DataAnnotations' [Required]); other metadata is ignored.

@@ -220,8 +220,10 @@ namespace Typhon.Runtime
 
         public static IEnumerable<R> map<T, R>(Func<T, R> f, IEnumerable<T> xs) => xs.Select(f);
         public static IEnumerable<dynamic?> map<T>(PyClosure f, IEnumerable<T> xs) => xs.Select(x => f.__call__([x]));
+        public static IEnumerable<dynamic?> map<T>(PyBoundMethod f, IEnumerable<T> xs) => xs.Select(x => f.__call__([x]));
         public static IEnumerable<T> filter<T>(Func<T, bool> f, IEnumerable<T> xs) => xs.Where(f);
         public static IEnumerable<T> filter<T>(PyClosure f, IEnumerable<T> xs) => xs.Where(x => truthy(f.__call__([x])));
+        public static IEnumerable<T> filter<T>(PyBoundMethod f, IEnumerable<T> xs) => xs.Where(x => truthy(f.__call__([x])));
 
         public static List<T> list<T>(IEnumerable<T> xs) => new List<T>(xs);
         public static PyTuple<T> tuple<T>(IEnumerable<T> xs) => xs as PyTuple<T> ?? new PyTuple<T>(xs);
@@ -396,6 +398,22 @@ namespace Typhon.Runtime
         public static dynamic __unpack(object xs, int i, int n) => xs is ITuple t && !(xs is IEnumerable)
             ? (t.Length == n ? t[i]! : throw new InvalidCastException($"expected {n} positional arguments from *args, got {t.Length}")) // a tuple of fixed shape
             : __unpack(((IEnumerable)xs).Cast<object?>().ToList(), i, n)!;
+
+        /// <summary>Fixed-arity unpacking reads up to one extra item to check for surplus values.</summary>
+        public static T[] __unpack_items<T>(IEnumerable<T> source, int count)
+        {
+            var items = new T[count];
+            using var iterator = source.GetEnumerator();
+            for (int i = 0; i < count; i++)
+            {
+                if (!iterator.MoveNext())
+                    throw new ArgumentException($"not enough values to unpack (expected {count}, got {i})");
+                items[i] = iterator.Current;
+            }
+            if (iterator.MoveNext())
+                throw new ArgumentException($"too many values to unpack (expected {count})");
+            return items;
+        }
 
         public static OrderedDictionary<K, V> __dict_merge<K, V>(params IEnumerable<KeyValuePair<K, V>>[] parts) where K : notnull
         {

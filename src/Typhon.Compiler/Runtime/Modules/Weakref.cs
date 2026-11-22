@@ -170,21 +170,37 @@ namespace Typhon.Stdlib
         /// <summary>weakref.WeakMethod(method, callback=None): a weak reference to a bound method (to its object).</summary>
         internal class WeakMethod : @ref
         {
-            readonly System.Reflection.MethodInfo _method;
-            readonly Type _delegateType;
+            readonly System.Reflection.MethodInfo? _method;
+            readonly Type? _delegateType;
+            readonly string? _name;
+            readonly bool _includesNonPublic;
 
             public WeakMethod(object? meth, object? callback = null) : base(SelfOf(meth), callback)
             {
-                var d = (Delegate)meth!;
-                _method = d.Method;
-                _delegateType = d.GetType();
+                if (meth is PyBoundMethod bound)
+                {
+                    _name = bound.Name;
+                    _includesNonPublic = bound.IncludesNonPublic;
+                }
+                else if (meth is Delegate del)
+                {
+                    _method = del.Method;
+                    _delegateType = del.GetType();
+                }
             }
 
-            static object SelfOf(object? meth) => meth is Delegate { Target: not null } d && !d.Method.Name.StartsWith("<")
-                ? d.Target : throw new InvalidCastException($"argument should be a bound method, not {(meth == null ? "NoneType" : Builtins.PyTypeName(meth.GetType()))}");
+            static object SelfOf(object? meth) => meth switch
+            {
+                PyBoundMethod { Target: not Type } bound => bound.Target,
+                Delegate { Target: not null } del when !del.Method.Name.StartsWith("<") => del.Target,
+                _ => throw new InvalidCastException($"argument should be a bound method, not {(meth == null ? "NoneType" : Builtins.PyTypeName(meth.GetType()))}"),
+            };
 
             /// <summary>The method bound to its object again, or None once the object has been collected.</summary>
-            public override dynamic? __call__() => Target is object self ? Delegate.CreateDelegate(_delegateType, self, _method) : null;
+            public override dynamic? __call__() => Target is object self
+                ? _name != null ? new PyBoundMethod(self, _name, _includesNonPublic)
+                    : (object)Delegate.CreateDelegate(_delegateType!, self, _method!)
+                : null;
             public override string __repr__() => $"<weakref at {PyWait.Address(this)}; {(Target == null ? "dead" : $"to 'method' at {PyWait.Address(this)}")}>";
         }
 

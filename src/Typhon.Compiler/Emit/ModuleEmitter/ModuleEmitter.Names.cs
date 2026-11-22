@@ -161,7 +161,8 @@ namespace Typhon.Compiler.Emit
             return false;
         }
 
-        bool IsShadowed(string name) => IsLocal(name) || IsValueName(name) || _m.Classes.ContainsKey(name) || _importedFromModules.ContainsKey(name);
+        bool IsShadowed(string name) => IsLocal(name) || IsValueName(name) || _m.RuntimeBindings.Contains(name) ||
+            _m.Classes.ContainsKey(name) || _importedFromModules.ContainsKey(name);
 
         /// <summary>A Typhon runtime helper (mod, pow, slice, str, ...): qualified when a Python name in scope hides it (a parameter called 'mod').</summary>
         string Rt(string helper) => IsShadowed(helper) || _renames.ContainsKey(helper) || BuiltinClashes(helper) ? "global::Typhon.Runtime.Builtins." + helper : helper;
@@ -198,10 +199,14 @@ namespace Typhon.Compiler.Emit
             string id = n.Id;
             if (_renames.TryGetValue(id, out var renamed)) return Esc(renamed);
             if (IsLocal(id)) return Esc(id);
+            if (_m.RuntimeCodeMode != null && _m.RuntimeBindings.Contains(id))
+                return $"__typhon_execution.{(_scopeKey == RuntimeCodeScopeKey ? "Local" : "Global")}[{CsString(id)}]";
             if (id == "self" && HasSelfInScope()) return "this";
             if (id == "cls" && ClsNameInScope() != null) return ClsNameInScope();
             if (id == "__name__") return CsString(_m.Name);
+            if (id == "__package__" && !IsShadowed(id)) return _m.PackageName.Length == 0 ? "null" : CsString(_m.PackageName);
             if (id == "__file__" && !IsShadowed(id)) return CsString(System.IO.Path.GetFullPath(_path));
+            if (PackageImportedMember(id) is string packageMember) return packageMember;
             if (ExceptionMap.TryGetValue(id, out var ex) && !IsShadowed(id)) return ex;
             if (!IsShadowed(id))
             {
@@ -225,8 +230,14 @@ namespace Typhon.Compiler.Emit
 
         ModuleInfo ModuleRef(string dotted)
         {
-            if (_moduleAliases.TryGetValue(dotted, out var m)) return m;
             if (IsLocal(dotted.Split('.')[0])) return null;
+            if (_moduleAliases.TryGetValue(dotted, out var m)) return m;
+            int dot = dotted.LastIndexOf('.');
+            if (dot > 0 && ModuleRef(dotted.Substring(0, dot)) is ModuleInfo parent && IsProjectPackageModule(parent))
+            {
+                var (owner, member) = ProjectExport(parent, dotted.Substring(dot + 1));
+                return member == null ? owner : null;
+            }
             return _p.FindModule(dotted);
         }
 
@@ -255,7 +266,11 @@ namespace Typhon.Compiler.Emit
             {
                 string prefix = string.Join(".", parts, 0, parts.Length - 1);
                 var mod = ModuleRef(prefix);
-                if (mod != null) return mod.Classes.TryGetValue(parts[parts.Length - 1], out pyClass);
+                if (mod != null)
+                {
+                    var (owner, member) = ProjectExport(mod, parts[parts.Length - 1]);
+                    return member != null && owner.Classes.TryGetValue(member, out pyClass);
+                }
             }
 
             string expanded = dotted;
@@ -263,10 +278,11 @@ namespace Typhon.Compiler.Emit
             foreach (var cand in Candidates(expanded))
             {
                 if (_r.TypeExists(cand + sfx)) { meta = cand + sfx; return true; }
-                int lastDot = cand.LastIndexOf('.');
-                if (lastDot > 0)
+                // A module can contain several levels of nested types (unittest.case._SubTest).
+                // Roslyn metadata separates enclosing type names with '+', not '.'.
+                for (int dot = cand.LastIndexOf('.'); dot > 0; dot = cand.LastIndexOf('.', dot - 1))
                 {
-                    string nestedName = cand.Substring(0, lastDot) + "+" + cand.Substring(lastDot + 1);
+                    string nestedName = cand.Substring(0, dot) + "+" + cand.Substring(dot + 1).Replace('.', '+');
                     if (_r.TypeExists(nestedName + sfx)) { meta = nestedName + sfx; return true; }
                 }
             }
@@ -291,6 +307,8 @@ namespace Typhon.Compiler.Emit
             ["int"] = "long", ["float"] = "double", ["str"] = "string", ["bool"] = "bool", ["object"] = "object", ["type"] = "global::System.Type",
             ["complex"] = "global::System.Numerics.Complex",
             ["bytes"] = "global::Typhon.Runtime.PyBytes", ["bytearray"] = "global::Typhon.Runtime.PyByteArray",
+            ["property"] = "global::Typhon.Stdlib.builtins.property", ["staticmethod"] = "global::Typhon.Stdlib.builtins.staticmethod",
+            ["classmethod"] = "global::Typhon.Stdlib.builtins.classmethod",
             ["Any"] = "dynamic", ["typing.Any"] = "dynamic",
             ["float32"] = "float", ["float64"] = "double", ["int8"] = "sbyte", ["int16"] = "short", ["int32"] = "int", ["int64"] = "long",
             ["uint8"] = "byte", ["uint16"] = "ushort", ["uint32"] = "uint", ["uint64"] = "ulong",
@@ -388,7 +406,7 @@ namespace Typhon.Compiler.Emit
                     if (ExceptionMap.TryGetValue(n.Id, out var ex) && !IsShadowed(n.Id)) return ex;
                     if (IsLateBoundDotNetType(n.Id)) return "dynamic";
                     if (TryResolveType(n.Id, 0, out var stdMeta, out var stdPy) && StdlibTypeCode(stdMeta, stdPy) is string stdName) return stdName;
-                    return Esc(n.Id);
+                    return PackageImportedMember(n.Id) ?? Esc(n.Id);
                 }
                 case AttributeExpr a:
                 {
@@ -398,7 +416,7 @@ namespace Typhon.Compiler.Emit
                     if (stripped != dotted) return MapType(new NameExpr { Id = stripped, Line = a.Line, Col = a.Col }, at, isReturn);
                     if (IsLateBoundDotNetType(dotted)) return "dynamic";
                     if (TryResolveType(dotted, 0, out var stdMeta, out var stdPy) && StdlibTypeCode(stdMeta, stdPy) is string stdName) return stdName;
-                    return StdlibNestedType(dotted) ?? string.Join(".", dotted.Split('.').Select(Esc));
+                    return (stdPy == null ? null : ProjectPackageMember(dotted)) ?? StdlibNestedType(dotted) ?? string.Join(".", dotted.Split('.').Select(Esc));
                 }
                 case SubscriptExpr s:
                 {
@@ -501,13 +519,13 @@ namespace Typhon.Compiler.Emit
                 case NameExpr n:
                     if (BuiltinConversionNames.Contains(n.Id) && !IsShadowed(n.Id)) return false;
                     if (!TryResolveType(n.Id, 0, out var nameMeta, out var namePy)) return false;
-                    code = ExceptionMap.TryGetValue(n.Id, out var ex) && !IsShadowed(n.Id) ? ex : (_cls != null && _cls.Name == n.Id ? _cls.CsSelfType : StdlibTypeCode(nameMeta, namePy) ?? StdlibNestedType(n.Id) ?? Esc(n.Id));
+                    code = ExceptionMap.TryGetValue(n.Id, out var ex) && !IsShadowed(n.Id) ? ex : (_cls != null && _cls.Name == n.Id ? _cls.CsSelfType : PackageImportedMember(n.Id) ?? StdlibTypeCode(nameMeta, namePy) ?? StdlibNestedType(n.Id) ?? Esc(n.Id));
                     return true;
                 case AttributeExpr a:
                 {
                     string dotted = DottedName(a);
                     if (dotted == null || !TryResolveType(dotted, 0, out var attrMeta, out var attrPy)) return false;
-                    code = StdlibTypeCode(attrMeta, attrPy) ?? StdlibNestedType(dotted) ?? string.Join(".", dotted.Split('.').Select(Esc));
+                    code = (attrPy == null ? null : ProjectPackageMember(dotted)) ?? StdlibTypeCode(attrMeta, attrPy) ?? StdlibNestedType(dotted) ?? string.Join(".", dotted.Split('.').Select(Esc));
                     return true;
                 }
                 case SubscriptExpr s:

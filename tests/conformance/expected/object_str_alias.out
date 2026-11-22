@@ -1,0 +1,6 @@
+base str base repr
+base repr base repr
+grandchild repr shadowed
+overridden str base repr
+True
+'a'

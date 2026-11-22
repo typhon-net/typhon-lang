@@ -1,0 +1,14 @@
+import fnmatch
+import os
+import re
+
+pattern = re.compile(br'([*?[])')
+print(pattern.pattern, pattern.flags)
+print(pattern.sub(br'[\1]', b'a?[b*'))
+match = pattern.search(b'\xffz[--')
+print(match.group(), match.span())
+print(re.compile(br'(\w+)').match(b'Name_42\xff').group(1))
+print(fnmatch._translate('a**b?.[!a-z]', '[^/]*', '[^/]'))
+print(fnmatch._translate('a[b-c-x]x[!z-a]', '.*', '.'))
+print(fnmatch._translate('é😀**.txt', '.*', '.'))
+print(os.path.splitdrive(b'a*b?'))

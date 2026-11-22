@@ -94,7 +94,9 @@ references. Restoring needs the .NET SDK and, the first time, access to the pack
 ## Standard library modules from CPython's source (`#:pylib`, experimental)
 
 Typhon's runtime implements the standard library modules programs use most, in C#. With a `#:pylib` line, a module it
-does not have is compiled from CPython's own source instead, `Lib/<name>.py`, together with the program:
+does not have is compiled together with the program from CPython's own source. Typhon looks for
+`Lib/<name>.py` and for packages with `Lib/<name>/__init__.py`, and follows their imported submodules
+and relative imports.
 
 ```python
 #:pylib
@@ -106,8 +108,9 @@ print(list(ts.static_order()), colorsys.rgb_to_hsv(0.2, 0.4, 0.4))
 ```
 
 The module is compiled like a module of the program: its functions get typed versions for the program's calls, and the
-compile cache keeps the result until a source changes. Typhon's own modules always come first; `Lib/` only supplies
-the rest, single-file modules for now (not packages such as `json/`). Which modules compile is tracked by compiling
+compile cache keeps the result until a source changes. Typhon's runtime modules normally take precedence over `Lib/`
+sources. With the directive enabled, `doctest` comes from CPython's source and runs examples through the Typhon CLI.
+Which modules compile is tracked by compiling
 each of CPython's modules alone (`docs/conformance.md`); a module that does not compile reports its errors with
 `Lib/<name>.py` lines, and tracebacks show its frames. The `Lib` folder is `#:pylib DIR`, else the `TYPHON_PYLIB`
 environment variable, else the standard library of the `python3` (`python` on Windows) on the PATH. The plan is to

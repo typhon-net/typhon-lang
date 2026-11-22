@@ -1,0 +1,106 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import builtins
+from functools import cached_property
+
+class Sample:
+    def __init__(self, value: int) -> None:
+        self.value = value
+        self.calls = 0
+
+
+def get_value(obj: Sample) -> int:
+    """The value stored on the instance."""
+    return obj.value
+
+
+def set_value(obj: Sample, value: int) -> None:
+    obj.value = value
+
+
+def reset_value(obj: Sample) -> None:
+    obj.value = 0
+
+
+def cached_value(obj: Sample) -> int | None:
+    """Count cache misses."""
+    obj.calls += 1
+    return obj.value if obj.value else None
+
+
+def describe(cls: type, suffix: str = "!") -> str:
+    return cls.__name__ + suffix
+
+
+def greet(word: str, suffix: str = "!") -> str:
+    """Greet someone."""
+    return word + suffix
+
+
+sample = Sample(7)
+prop = property(get_value).setter(set_value).deleter(reset_value)
+prop.__set_name__(Sample, "number")
+print(isinstance(prop, builtins.property), prop.__name__, prop.__doc__)
+print(prop.__get__(None, Sample) is prop, prop.fget is get_value, prop.__get__(sample, Sample))
+getter = prop.fget
+print(getter(sample))
+prop.__set__(sample, 9)
+print(sample.value)
+prop.__delete__(sample)
+print(sample.value)
+try:
+    property().__get__(sample)
+except AttributeError:
+    print("unreadable property")
+
+st = staticmethod(greet)
+print(isinstance(st, (staticmethod, classmethod)), st.__func__ is greet, st.__doc__)
+print(st.__get__(sample, Sample) is greet, callable(st), st("Hi", suffix="."))
+other_static = builtins.staticmethod(greet)
+print(other_static("Bye"))
+cls_method = classmethod(describe)
+bound = cls_method.__get__(None, Sample)
+print(cls_method.__func__ is describe, bound.__self__ is Sample, bound(suffix="?"))
+print(cls_method.__get__(sample)(), callable(cls_method), callable(bound))
+
+cache = cached_property(cached_value)
+print(isinstance(cache, cached_property), cache.func is cached_value, cache.__doc__)
+try:
+    cache.__get__(sample)
+except TypeError:
+    print("unassigned name")
+cache.__set_name__(Sample, "cached")
+print(cache.__get__(None, Sample) is cache, cache.__get__(sample), cache.__get__(sample), sample.calls)
+sample.__dict__["cached"] = 12
+print(cache.__get__(sample), sample.calls)
+del sample.__dict__["cached"]
+sample.value = 3
+print(cache.__get__(sample), sample.calls)
+other = Sample(21)
+print(cache.__get__(other), other.calls)
+try:
+    cache.__set_name__(Sample, "other")
+except TypeError:
+    print("duplicate name")
+try:
+    cache.__get__(3)
+except TypeError:
+    print("missing dictionary")
+
+class Slotted:
+    __slots__ = ()
+
+class WithDictionary(Slotted):
+    __slots__ = ("__dict__",)
+
+def label(obj: Slotted) -> str:
+    return "label"
+
+slot_cache = cached_property(label)
+slot_cache.__set_name__(Slotted, "label")
+try:
+    slot_cache.__get__(Slotted())
+except TypeError:
+    print("slots without dictionary")
+print(slot_cache.__get__(WithDictionary()))

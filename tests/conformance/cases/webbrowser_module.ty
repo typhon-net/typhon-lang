@@ -1,0 +1,36 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import webbrowser
+
+
+class Recorder:
+    def __init__(self, label: str = "factory", succeeds: bool = True):
+        self.label = label
+        self.succeeds = succeeds
+
+    def open(self, url: str, new: int = 0, autoraise: bool = True) -> bool:
+        print(self.label, url, new, autoraise)
+        return self.succeeds
+
+
+webbrowser.register("typhon-record", None, Recorder("accept"), preferred=True)
+webbrowser.register("typhon-reject", None, Recorder("reject", False), preferred=True)
+print(webbrowser.open("https://example.invalid/record", 1, False))
+print(webbrowser.open_new_tab("https://example.invalid/record"))
+
+webbrowser.register("typhon-factory", Recorder)
+browser = webbrowser.get("TYPHON-FACTORY")
+print(browser.label)
+
+template = webbrowser.get('"recording browser" "--url=%s" &')
+print(template.name, template.args)
+try:
+    template.open("-not-a-url")
+except ValueError:
+    print("rejected before launch")
+
+try:
+    webbrowser.get("typhon-nonexistent-browser")
+except webbrowser.Error:
+    print("no controller")

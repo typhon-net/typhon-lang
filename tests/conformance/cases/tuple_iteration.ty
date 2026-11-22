@@ -1,0 +1,13 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import hashlib
+from typing import Any
+
+
+def split(data: Any) -> None:
+    hashed = hashlib.md5(data).hexdigest()
+    print([part.upper() for part in (hashed[:4], hashed[4:8])])
+
+
+split(b"abcdef")

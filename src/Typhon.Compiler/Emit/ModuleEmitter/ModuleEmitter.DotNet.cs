@@ -69,9 +69,14 @@ namespace Typhon.Compiler.Emit
             if (c.Func is AttributeExpr fa)
             {
                 if (DotNetStaticMeta(fa.Target) is string sm) return _r.GetMembers(sm, fa.Name).Where(m => m.IsMethod && m.IsStatic).ToList();
-                if (fa.Target is NameExpr sn && sn.Id == "self") return GdSelfMembers(fa.Name).Where(m => m.IsMethod).ToList() is { Count: > 0 } gs ? gs : null;
+                if (fa.Target is NameExpr sn && sn.Id == "self")
+                {
+                    if (GdSelfMembers(fa.Name).Where(m => m.IsMethod).ToList() is { Count: > 0 } gs) return gs;
+                    return _cls == null ? null : InheritedDotNetOverloads(_cls.Def, fa.Name);
+                }
                 var rt = InferType(fa.Target);
-                if (ClassKeyOfType(rt, out _) != null) return null;
+                if (ClassKeyOfType(rt, out _) is string key && ClassDefOfKey(key) is ClassDef cls)
+                    return InheritedDotNetOverloads(cls, fa.Name);
                 if (DotNetMeta(rt) is string im)
                 {
                     var instance = _r.GetMembers(im, fa.Name).Where(m => m.IsMethod && !m.IsStatic).ToList();
@@ -93,6 +98,24 @@ namespace Typhon.Compiler.Emit
                     var bs = _r.GetMembers("Typhon.Runtime.Builtins", fn.Id).Where(m => m.IsMethod && m.IsStatic).ToList();
                     if (bs.Count > 0) return bs;
                 }
+            }
+            return null;
+        }
+
+        /// <summary>Instance members inherited from a .NET base, unless a Typhon class defines that member.</summary>
+        IReadOnlyList<Semantics.MemberSig> InheritedDotNetOverloads(ClassDef cls, string name, int depth = 0)
+        {
+            if (depth > 20 || cls.Body.OfType<FunctionDef>().Any(f => f.Name == name)) return null;
+            foreach (var b in cls.Bases)
+            {
+                if (!ResolveBase(b, out var py, out var meta)) continue;
+                if (py != null)
+                {
+                    if (DefinesInHierarchy(py, name)) return null;
+                    if (InheritedDotNetOverloads(py, name, depth + 1) is { } inherited) return inherited;
+                }
+                else if (meta != null && _r.GetMembers(meta, name).Where(m => m.IsMethod && !m.IsStatic).ToList() is { Count: > 0 } methods)
+                    return methods;
             }
             return null;
         }
@@ -184,10 +207,32 @@ namespace Typhon.Compiler.Emit
         IEnumerable<Semantics.MemberSig> DotNetMembers(Expr receiver, string name)
         {
             if (DotNetStaticMeta(receiver) is string sm) return _r.GetMembers(sm, name).Where(m => m.IsStatic);
-            if (receiver is NameExpr sn && sn.Id == "self") return GdSelfMembers(name);
+            if (receiver is NameExpr sn && sn.Id == "self")
+            {
+                var gd = GdSelfMembers(name).ToList();
+                return gd.Count > 0 || _cls == null ? gd : InheritedDotNetDataMembers(_cls.Def, name);
+            }
             var rt = InferType(receiver);
-            if (rt == null || ClassKeyOfType(rt, out _) != null) return Enumerable.Empty<Semantics.MemberSig>();
+            if (ClassKeyOfType(rt, out _) is string key && ClassDefOfKey(key) is ClassDef cls)
+                return InheritedDotNetDataMembers(cls, name);
             return DotNetMeta(rt) is string im ? _r.GetMembers(im, name).Where(m => !m.IsStatic) : Enumerable.Empty<Semantics.MemberSig>();
+        }
+
+        /// <summary>Instance fields and properties supplied by a .NET base of a Typhon class.</summary>
+        List<Semantics.MemberSig> InheritedDotNetDataMembers(ClassDef cls, string name, int depth = 0)
+        {
+            if (depth > 20 || cls.Body.Any(s => s is FunctionDef f && f.Name == name ||
+                s is AnnAssignStmt annotation && annotation.Target is NameExpr annotated && annotated.Id == name ||
+                s is AssignStmt assignment && assignment.Targets.OfType<NameExpr>().Any(target => target.Id == name)))
+                return new List<Semantics.MemberSig>();
+            foreach (var b in cls.Bases)
+            {
+                if (!ResolveBase(b, out var py, out var meta)) continue;
+                var members = py != null ? InheritedDotNetDataMembers(py, name, depth + 1) :
+                    _r.GetMembers(meta, name).Where(member => !member.IsStatic && !member.IsMethod).ToList();
+                if (members.Count > 0) return members;
+            }
+            return new List<Semantics.MemberSig>();
         }
 
         /// <summary>Result type of a .NET property, field or method call when it is a special type all candidates agree on.</summary>
@@ -201,8 +246,7 @@ namespace Typhon.Compiler.Emit
                 ms = ms.Where(m => Applicable(m, positional, named)).ToList();
             }
             if (ms.Count == 0) return null;
-            // a method declared to return dynamic (argparse's parse_args): late-bound, like such module functions (json.loads)
-            if (call != null && ms.All(m => m.ReturnsDynamic)) return "dynamic";
+            if (ms.All(m => m.ReturnsDynamic)) return "dynamic";
             string t = ms[0].Type;
             if (_m.IsGdScript && call != null && !ms.All(m => m.Type == t)) return GdOverloadType(ms, call);
             return t != null && ms.All(m => m.Type == t) ? t : null;

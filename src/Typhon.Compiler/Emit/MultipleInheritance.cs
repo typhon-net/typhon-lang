@@ -85,13 +85,7 @@ namespace Typhon.Compiler.Emit
         }
 
         static string Absolute(ModuleInfo m, ImportFromStmt imp)
-        {
-            if (imp.Level == 0) return imp.Module;
-            var parts = m.Name.Split('.').ToList();
-            int drop = System.Math.Min(parts.Count, imp.Level);
-            var pkg = parts.Take(parts.Count - drop);
-            return string.Join(".", pkg.Concat(string.IsNullOrEmpty(imp.Module) ? Enumerable.Empty<string>() : new[] { imp.Module }));
-        }
+            => m.ResolveImport(imp.Module, imp.Level);
 
         /// <summary>C3 linearization (Python's MRO): the class, then a merge of its bases' linearizations and the bases. Null if none exists.</summary>
         static List<object> Linearize(Context cx, ClassDef c, HashSet<ClassDef> visiting)

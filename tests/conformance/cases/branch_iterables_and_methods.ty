@@ -1,0 +1,25 @@
+import re
+
+def branches(recursive: bool):
+    if recursive:
+        items = branches(False)
+    else:
+        items = ['leaf']
+    for item in items:
+        yield item
+
+class Selector:
+    def values(self):
+        yield 'method'
+
+    def selector(self):
+        return self.values
+
+def matcher():
+    return re.compile(r'ab+').match
+
+print(list(branches(True)), list(branches(False)))
+select = Selector().selector()
+print(list(select()))
+match = matcher()
+print(match('abbb.').group())

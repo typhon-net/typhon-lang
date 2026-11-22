@@ -1019,7 +1019,7 @@ namespace Typhon.Stdlib
             var e = Fd(fd);
             var bytes = ByteOps.From(data);
             // the console: in order with print() (and to where it is redirected in-process)
-            if ((fd == 1 || fd == 2) && e.Path == null) return (fd == 1 ? sys_.stdout : sys_.stderr).buffer.write(new PyBytes(bytes));
+            if ((fd == 1 || fd == 2) && e.Path == null) return (fd == 1 ? sys_.__stdout__ : sys_.__stderr__).buffer.write(new PyBytes(bytes));
             try
             {
                 if (!e.Stream.CanWrite) throw OsErrors.BadFd();

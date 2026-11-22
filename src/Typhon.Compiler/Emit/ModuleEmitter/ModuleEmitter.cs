@@ -78,6 +78,8 @@ namespace Typhon.Compiler.Emit
             if (n != null && n.Line > 0) _w.Raw("#line " + n.Line + " \"" + _path + "\"");
         }
 
+        string PythonModuleName => _m.IsMainModule && (_p.MainModule == null || _p.MainModule == _m.Name) ? "__main__" : _m.Name;
+
 
         public string Emit()
         {
@@ -126,6 +128,12 @@ namespace Typhon.Compiler.Emit
             if (GdScriptClass != null) _w.Line($"using static {ModuleClassName(_m)};");
             EmitDocComment(body);
             LineDirective(body.FirstOrDefault());
+            if (!_m.IsGdScript)
+            {
+                string doc = body.FirstOrDefault() is ExprStmt statement && statement.Value is ConstExpr { Kind: ConstKind.Str } text
+                    ? CsString(text.Str) : "null";
+                _w.Line($"[global::Typhon.Runtime.PySource({CsString(_path)}, {CsString(PythonModuleName)}, doc: {doc})]");
+            }
             _w.Line("public static partial class " + Esc(_m.ClassName));
             _w.Open();
             EmitModuleBody(body);
@@ -154,7 +162,17 @@ namespace Typhon.Compiler.Emit
 
         void EmitModuleBody(List<Stmt> body)
         {
-            bool isMainModule = _m.IsMainModule;
+            bool isMainModule = _m.IsMainModule && (_p.MainModule == null || _p.MainModule == _m.Name);
+            bool runtimeCode = _m.RuntimeCodeMode != null;
+            if (runtimeCode)
+            {
+                _m.RuntimeBindings.UnionWith(_m.Globals);
+                _m.RuntimeBindings.UnionWith(LocalsAnalyzer.Analyze(body, Enumerable.Empty<string>(), null).AllLocals);
+                _m.RuntimeBindings.ExceptWith(_m.Functions);
+                _m.RuntimeBindings.ExceptWith(_m.Classes.Keys);
+                foreach (var name in _m.RuntimeBindings) _moduleFieldTypes[name] = "dynamic";
+                _w.Line("private static global::Typhon.Runtime.ExecutionScope __typhon_execution;");
+            }
 
             // free variables of functions/classes in this module → must be static fields, not Main locals
             var usedInDefs = new HashSet<string>();
@@ -162,7 +180,7 @@ namespace Typhon.Compiler.Emit
             // globals() reads module names by string: every module-level name is a field then
             bool usesGlobals = false;
             AstWalker.VisitAll(body, n => { if (n is CallExpr gc && gc.Func is NameExpr gn && gn.Id == "globals" && gc.Args.Count == 0) usesGlobals = true; });
-            if (usesGlobals)
+            if (usesGlobals || isMainModule && _p.Modules.Values.Any(source => ReadsModuleRegistry(source.Ast.Body)))
                 foreach (var s in body)
                     if (s is AssignStmt ga) foreach (var t in ga.Targets) foreach (var nm in NamesIn(t)) usedInDefs.Add(nm);
                     else if (s is AnnAssignStmt gaa && gaa.Target is NameExpr gan) usedInDefs.Add(gan.Id);
@@ -177,16 +195,43 @@ namespace Typhon.Compiler.Emit
                 // defaults Python evaluates when the def / class statement runs: fields assigned at this position
                 if (s is FunctionDef fdef) RegisterDefaultFields(fdef, null, fields, execStmts);
                 if (s is ClassDef cdef) foreach (var m in cdef.Body.OfType<FunctionDef>()) RegisterDefaultFields(m, cdef.Name, fields, execStmts);
-                if (s is FunctionDef || s is ClassDef || s is ImportStmt || s is ImportFromStmt || s is PassStmt) continue;
+                if (s is ImportStmt || s is ImportFromStmt)
+                {
+                    if (PackageImports(s).Any()) execStmts.Add(s);
+                    continue;
+                }
+                if (s is FunctionDef || s is ClassDef)
+                {
+                    if (runtimeCode)
+                    {
+                        string name = s is FunctionDef df ? df.Name : ((ClassDef)s).Name;
+                        execStmts.Add(new ExprStmt
+                        {
+                            Line = s.Line, Col = s.Col, Value = new CallExpr
+                            {
+                                Func = new NameExpr { Id = "__typhon_export" },
+                                Args = { new Arg { Value = new ConstExpr { Kind = ConstKind.Str, Str = name } }, new Arg { Value = new NameExpr { Id = name } } },
+                            },
+                        });
+                    }
+                    continue;
+                }
+                if (s is PassStmt) continue;
                 if (s is AssignStmt aliasStmt && aliasStmt.Targets.Count == 1 && aliasStmt.Targets[0] is NameExpr aliasName && _m.TypeAliases.ContainsKey(aliasName.Id)) continue;
                 if (s is AssignStmt fnAlias && fnAlias.Targets.Count == 1 && fnAlias.Targets[0] is NameExpr fnAliasName && _functionAliases.ContainsKey(fnAliasName.Id)) continue;
                 if (s is AnnAssignStmt aliasAnn && aliasAnn.Target is NameExpr aliasAnnName && _m.TypeAliases.ContainsKey(aliasAnnName.Id)) continue;
-                if (s is ExprStmt es && es.Value is ConstExpr ce && (ce.Kind == ConstKind.Str || ce.Kind == ConstKind.Ellipsis)) continue;
-                if (IsMainGuard(s)) { mainBlocks.AddRange(((IfStmt)s).Body); continue; }
+                if (_m.RuntimeCodeMode != "single" && s is ExprStmt es && es.Value is ConstExpr ce &&
+                    (ce.Kind == ConstKind.Str || ce.Kind == ConstKind.Ellipsis)) continue;
+                if (!runtimeCode && IsMainGuard(s)) { mainBlocks.AddRange(((IfStmt)s).Body); continue; }
 
                 string fieldName = null; Expr ann = null, value = null;
                 if (s is AssignStmt a && a.Targets.Count == 1 && a.Targets[0] is NameExpr an) { fieldName = an.Id; value = a.Value; }
                 else if (s is AnnAssignStmt aa && aa.Target is NameExpr aan) { fieldName = aan.Id; ann = aa.Annotation; value = aa.Value; }
+                if (runtimeCode)
+                {
+                    execStmts.Add(s);
+                    continue;
+                }
 
                 // remember the type of every module-level name (field or Main local) for later inference
                 if (fieldName != null && !_moduleFieldTypes.ContainsKey(fieldName))
@@ -256,7 +301,16 @@ namespace Typhon.Compiler.Emit
             foreach (var f in body.OfType<FunctionDef>())
                 if (FunctionValueKeys.Contains(TypeInference.FuncKey(_m, null, f.Name))) { EmitFunctionValueClass(f); _w.Line(); }
 
-            if (isMainModule)
+            if (runtimeCode)
+            {
+                _scopeKey = RuntimeCodeScopeKey;
+                if (CanFallThrough(execStmts)) execStmts.Add(new ReturnStmt { Value = new ConstExpr { Kind = ConstKind.None } });
+                _w.Line("public static object? ExecutePythonCode(global::System.Collections.IDictionary globals, global::System.Collections.IDictionary locals)");
+                EmitFunctionBody(execStmts, new Scope { ReturnType = "dynamic", DisplaysExpressionValues = _m.RuntimeCodeMode == "single" },
+                    fields.Keys.Concat(_m.RuntimeBindings),
+                    prologue: "__typhon_execution = new global::Typhon.Runtime.ExecutionScope(globals, locals);");
+            }
+            else if (isMainModule)
             {
                 var all = new List<Stmt>(execStmts);
                 all.AddRange(mainBlocks);
@@ -264,7 +318,9 @@ namespace Typhon.Compiler.Emit
             }
             else
             {
-                if (execStmts.Count > 0)
+                // A package module initializes at the import statement, including when its
+                // entire module body consists of C# field initializers.
+                if (execStmts.Count > 0 || IsProjectPackageModule(_m))
                 {
                     _scopeKey = TypeInference.FuncKey(_m, null, "<module>");
                     _w.Line("static " + Esc(_m.ClassName) + "()");
@@ -275,6 +331,8 @@ namespace Typhon.Compiler.Emit
             }
         }
 
+        string RuntimeCodeScopeKey => TypeInference.FuncKey(_m, null, "<runtime code>");
+
         /// <summary>Module fields that start as an empty container (their element types come from what the module adds).</summary>
         readonly Dictionary<string, char> _emptyModuleFields = new Dictionary<string, char>();
         string ModuleFieldKey(string name) => _m.Name + "|module." + name;
@@ -282,15 +340,50 @@ namespace Typhon.Compiler.Emit
         /// <summary>The module's static fields (module-level variables functions can see).</summary>
         readonly HashSet<string> _moduleFieldNames = new HashSet<string>();
 
+        /// <summary>Reading sys.modules can expose the entry module's globals by name, including to another module.</summary>
+        static bool ReadsModuleRegistry(List<Stmt> body)
+        {
+            var aliases = new HashSet<string>();
+            bool readsRegistry = false;
+            AstWalker.VisitAll(body, node =>
+            {
+                if (node is ImportStmt imported)
+                    foreach (var name in imported.Names)
+                        if (name.Name == "sys") aliases.Add(name.AsName ?? name.Name);
+                if (node is ImportFromStmt from && from.Level == 0 && from.Module == "sys" && from.Names.Any(name => name.Name == "modules" || name.Name == "*"))
+                    readsRegistry = true;
+            });
+            if (aliases.Count > 0 && !readsRegistry)
+                AstWalker.VisitAll(body, node =>
+                {
+                    if (node is AttributeExpr { Name: "modules", Target: NameExpr sys } && aliases.Contains(sys.Id)) readsRegistry = true;
+                });
+            return readsRegistry;
+        }
+
         /// <summary>globals(): the module's names and values (fields, classes, functions used as values), read when called.</summary>
         string EmitGlobals()
         {
+            if (_m.RuntimeCodeMode != null) return "__typhon_execution.Globals";
             var entries = new List<string> { $"[\"__name__\"] = {CsString(_m.Name)}" };
             foreach (var f in _moduleFieldNames.OrderBy(x => x, StringComparer.Ordinal)) entries.Add($"[{CsString(f)}] = {Esc(f)}");
             foreach (var c in _m.Classes.Keys.OrderBy(x => x, StringComparer.Ordinal)) entries.Add($"[{CsString(c)}] = typeof({Esc(c)})");
             foreach (var fn in _m.Ast.Body.OfType<FunctionDef>())
                 if (FunctionValueKeys.Contains(TypeInference.FuncKey(_m, null, fn.Name))) entries.Add($"[{CsString(fn.Name)}] = {FunctionValueType(_m, fn.Name)}.Instance");
             return $"new OrderedDictionary<string, object?> {{ {string.Join(", ", entries)} }}";
+        }
+
+        string EmitLocals()
+        {
+            if (_scope == null || _scopeKey == TypeInference.FuncKey(_m, null, "<main>") ||
+                _scopeKey == TypeInference.FuncKey(_m, null, "<module>")) return EmitGlobals();
+            var names = new HashSet<string>(_scope.Params);
+            if (_scope.Locals != null)
+                foreach (var block in _blocks)
+                    names.UnionWith(block.Declared.Where(_scope.Locals.AllLocals.Contains));
+            var values = names.OrderBy(name => name, StringComparer.Ordinal)
+                .Select(name => $"[{CsString(name)}] = {EmitName(new NameExpr { Id = name })}");
+            return $"new OrderedDictionary<string, object?> {{ {string.Join(", ", values)} }}";
         }
 
         /// <summary>The type each name in an assignment target gets (null: unknown): a, (b, c) = 1, (2.0, "x"); x, y = point; i, j = range(2).</summary>
@@ -353,7 +446,7 @@ namespace Typhon.Compiler.Emit
             scope.IsAsync = isAsync;
             // an uncaught SystemExit (sys.exit) ends the program with its code, without a traceback
             string tests = PytestEpilogue();
-            EmitFunctionBody(stmts, scope, moduleFields, locals, prologue: "global::Typhon.Stdlib.sys_.__init__(__argv);\ntry\n{",
+            EmitFunctionBody(stmts, scope, moduleFields, locals, prologue: $"global::Typhon.Stdlib.sys_.__init__(__argv, typeof({ModuleClassName(_m)}));\ntry\n{{",
                              epilogue: (tests != null ? tests + "\n" : "") + "}\ncatch (global::Typhon.Runtime.SystemExit __exit) { __exit.Exit(); }");
         }
 

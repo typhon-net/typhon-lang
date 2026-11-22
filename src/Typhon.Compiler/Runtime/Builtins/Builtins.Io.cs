@@ -23,21 +23,35 @@ namespace Typhon.Runtime
 
     internal static partial class Builtins
     {
-        public static void print() => Console.WriteLine();
-        public static void print(object? value) => Console.WriteLine(str(value));
-        public static void print(params object?[]? args) => Console.WriteLine(args == null ? "None" : string.Join(" ", args.Select(str)));
+        public static void print() => WritePrint((object?)Typhon.Stdlib.sys_.stdout, "\n", false);
+        public static void print(object? value) => WritePrint((object?)Typhon.Stdlib.sys_.stdout, str(value) + "\n", false);
+        public static void print(params object?[]? args) => print_kw(args ?? new object?[] { null });
         public static void print_kw(object?[] args, string? sep = " ", string? end = "\n", object? file = null, bool flush = false)
         {
             string text = string.Join(sep ?? " ", args.Select(str)) + (end ?? "\n");
-            if (file == null) Console.Write(text);
-            else ((dynamic)file).write(text); // a file, io.StringIO, sys.stdout / sys.stderr
-            if (flush) Console.Out.Flush();
+            WritePrint(file ?? (object?)Typhon.Stdlib.sys_.stdout, text, flush);
+        }
+
+        static void WritePrint(object? stream, string text, bool flush)
+        {
+            if (stream == null) return;
+            PyConsole.Write(stream, text);
+            if (!flush) return;
+            if (stream is Typhon.Stdlib.io.IOBase file) file.flush();
+            else if (stream is System.IO.TextWriter writer) writer.Flush();
+            else ((dynamic)stream).flush();
         }
 
         public static string input(string prompt = "")
         {
-            Console.Write(prompt);
-            return Console.ReadLine() ?? throw new System.IO.EndOfStreamException("EOF when reading a line");
+            object? output = Typhon.Stdlib.sys_.stdout, input = Typhon.Stdlib.sys_.stdin;
+            if (output == null || input == null) throw new InvalidOperationException("input(): lost sys.stdin or sys.stdout");
+            WritePrint(output, prompt, true);
+            string line = input is Typhon.Stdlib.io.TextIOBase file ? file.readline() : ((dynamic)input).readline();
+            if (line.Length == 0) throw new System.IO.EndOfStreamException("EOF when reading a line");
+            if (line.EndsWith('\n')) line = line[..^1];
+            if (line.EndsWith('\r')) line = line[..^1];
+            return line;
         }
 
         public static PyFile open(string path, string mode = "r", long buffering = -1, string? encoding = null, string? errors = null, string? newline = null) =>

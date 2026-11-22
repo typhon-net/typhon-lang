@@ -80,7 +80,7 @@ namespace Typhon.Runtime
         public long write(object data) => StreamOps.Write(S, ByteOps.From(data));
         public override long seek(long offset, long whence = 0) => S.Seek(offset, StreamOps.Origin(whence));
         public override long tell() => S.Position;
-        public override long truncate(long? size = null) { long n = size ?? S.Position; S.Flush(); S.SetLength(n); return n; }
+        public override dynamic? truncate(long? size = null) { long n = size ?? S.Position; S.Flush(); S.SetLength(n); return n; }
         public override void flush() { if (S.CanWrite) _s.Flush(); }
         public override bool readable() => S.CanRead;
         public override bool writable() => S.CanWrite;
@@ -140,7 +140,7 @@ namespace Typhon.Runtime
         public override bool seekable() => false;
         public override long seek(long offset, long whence = 0) => throw io.Unsupported("underlying stream is not seekable");
         public override long tell() => throw io.Unsupported("underlying stream is not seekable");
-        public override long truncate(long? size = null) => throw io.Unsupported("truncate");
+        public override dynamic? truncate(long? size = null) => throw io.Unsupported("truncate");
         public override object? detach() => throw io.Unsupported("detach");
         public override void close() { if (!_closed) { flush(); _closed = true; } }
         public override string ToString() => _which == 0 ? "<_io.TextIOWrapper name='<stdout>' mode='w' encoding='utf-8'>" : _which == 1 ? "<_io.TextIOWrapper name='<stderr>' mode='w' encoding='utf-8'>" : "<_io.TextIOWrapper name='<stdin>' mode='r' encoding='utf-8'>";

@@ -1,0 +1,36 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import difflib
+from difflib import SequenceMatcher, get_close_matches
+
+before = ["header", "old first", "one", "two", "three", "four", "old second", "footer"]
+after = ["header", "new first", "one", "two", "three", "four", "new second", "footer"]
+print(list(difflib.unified_diff(before, after, "original", "updated", fromfiledate="2026-01-01", n=1, lineterm="")))
+print(list(difflib.context_diff(before, after, n=1, lineterm="")))
+print(list(difflib.unified_diff([], ["new"], n=0, lineterm="")))
+print(list(difflib.context_diff(["old"], [], n=0, lineterm="")))
+print(list(difflib.unified_diff(before, before)))
+
+original = ["\t the cat\n", "the mouse\n", "an anchor\n"]
+modified = ["\t the bat\n", "an anchor\n", "a dog\n"]
+delta = list(difflib.Differ(charjunk=difflib.IS_CHARACTER_JUNK).compare(original, modified))
+print(delta)
+print(list(difflib.restore(delta, 1)))
+print(list(difflib.restore(list(difflib.ndiff(original, modified)), 2)))
+
+matcher = SequenceMatcher(None, "saved", "shaved")
+print(matcher.find_longest_match())
+print(matcher.get_matching_blocks())
+print(matcher.get_opcodes())
+print(list(matcher.get_grouped_opcodes(n=1)))
+print(matcher.ratio(), matcher.quick_ratio(), matcher.real_quick_ratio())
+matcher.set_seqs("abcd", "bcde")
+print(matcher.ratio(), matcher.quick_ratio(), matcher.real_quick_ratio())
+print(SequenceMatcher(lambda ch: ch == " ", " abcd", "abcd abcd").find_longest_match())
+print(SequenceMatcher(None, "😀abc", "q😀abd").find_longest_match())
+print(SequenceMatcher(None, "a" * 205, "b" + "a" * 205).find_longest_match())
+print(SequenceMatcher(None, "a" * 205, "b" + "a" * 205, autojunk=False).find_longest_match())
+
+print(get_close_matches("apple", ["ape", "snapple", "peach", "puppy", "apply"]))
+print(get_close_matches("cat", ["bat", "cap", "cab"], n=2))

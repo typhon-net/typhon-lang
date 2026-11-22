@@ -91,6 +91,13 @@ namespace Typhon.Compiler.Semantics
         MemberSig MethodSig(IMethodSymbol m)
         {
             var sig = new MemberSig { IsMethod = true, IsStatic = m.IsStatic, Type = Display(m.ReturnType), ReturnsDynamic = m.ReturnType.TypeKind == TypeKind.Dynamic };
+            // C# constructs a delegate from one callable. The CLR metadata's target and
+            // method pointer are implementation details, not the source parameter list.
+            if (m.MethodKind == MethodKind.Constructor && m.ContainingType.TypeKind == TypeKind.Delegate)
+            {
+                sig.Parameters.Add(new ParamSig { Name = "method", TakesFunction = true, GenericType = Display(m.ContainingType) });
+                return sig;
+            }
             if (m.TypeParameters.Length > 0)
             {
                 sig.TypeParams = m.TypeParameters.Select(tp => tp.Name).ToList();
@@ -175,11 +182,11 @@ namespace Typhon.Compiler.Semantics
                             break;
                         case IPropertySymbol prop when !prop.IsIndexer:
                             BigFit(prop.Type, out var pbn, out _);
-                            result.Add(new MemberSig { IsStatic = prop.IsStatic, Type = Display(prop.Type), ValueFit = Fit(prop.Type, out var pn), ValueNarrowTo = pn, ValueBigNarrowTo = pbn });
+                            result.Add(new MemberSig { IsStatic = prop.IsStatic, Type = Display(prop.Type), ReturnsDynamic = prop.Type.TypeKind == TypeKind.Dynamic, ValueFit = Fit(prop.Type, out var pn), ValueNarrowTo = pn, ValueBigNarrowTo = pbn });
                             break;
                         case IFieldSymbol field:
                             BigFit(field.Type, out var fbn, out _);
-                            result.Add(new MemberSig { IsStatic = field.IsStatic, Type = Display(field.Type), ValueFit = Fit(field.Type, out var fn), ValueNarrowTo = fn, ValueBigNarrowTo = fbn });
+                            result.Add(new MemberSig { IsStatic = field.IsStatic, Type = Display(field.Type), ReturnsDynamic = field.Type.TypeKind == TypeKind.Dynamic, ValueFit = Fit(field.Type, out var fn), ValueNarrowTo = fn, ValueBigNarrowTo = fbn });
                             break;
                     }
                 }

@@ -70,7 +70,7 @@ namespace Typhon.Compiler.Emit
             // d[k] with a late-bound k on a typed dict: the key converted, so the lookup (and its result) stays static
             // (also a number of another type: d[3.0] finds the key 3, as in Python)
             if (IsDictType(targetType) && DictTypes(targetType) is List<string> skv && skv[0] != "dynamic" && !skv[0].Contains(TypeInference.Pending) &&
-                !(s.Index is TupleExpr) && (InferType(s.Index) == "dynamic" || IsNumeric(skv[0]) && InferType(s.Index) is string kit && IsNumeric(kit) && kit != skv[0] && !(skv[0] == "double" && IsIntegral(kit))))
+                !(s.Index is TupleExpr) && (InferType(s.Index) is "dynamic" or "object" or "object?" || IsNumeric(skv[0]) && InferType(s.Index) is string kit && IsNumeric(kit) && kit != skv[0] && !(skv[0] == "double" && IsIntegral(kit))))
                 return $"{target}[{Rt("__key")}<{skv[0]}>((object?){Paren(ModuleOrClassValue(s.Index) ?? EmitExpr(s.Index))})]";
             // self[x, y] on a Typhon class: its __getitem__ takes one key, the tuple (x, y)
             if (s.Index is TupleExpr tk && !tk.Parenthesized && (ClassKeyOfType(targetType, out _) != null || _cls != null && targetType == _cls.CsSelfType || s.Target is NameExpr sn0 && sn0.Id == "self"))

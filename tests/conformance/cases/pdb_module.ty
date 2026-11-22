@@ -1,0 +1,74 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import pdb
+import sys
+from io import StringIO
+from typing import Any
+
+
+class RedirectingDebugger(pdb.Pdb):
+    def __init__(self, source, target):
+        super().__init__(stdin=source, stdout=target, nosigint=True, readrc=False)
+        self.use_rawinput = 1
+
+    def set_trace(self, frame=None, *, commands=None):
+        if frame is None:
+            frame = sys._getframe().f_back
+        pdb.Pdb.set_trace(self, frame, commands=commands)
+
+    def set_continue(self):
+        pdb.Pdb.set_continue(self)
+
+
+out = StringIO()
+debugger = RedirectingDebugger(StringIO(""), out)
+print(debugger.use_rawinput)
+
+
+def pause():
+    debugger.set_trace(commands=["where", "up", "down", "list .", "continue"])
+
+
+debugger.reset()
+pause()
+screen = out.getvalue()
+print("pause()" in screen, "->" in screen, "(Pdb)" in screen)
+
+
+def stopped_with_error():
+    raise ValueError("test")
+
+
+try:
+    stopped_with_error()
+except ValueError as err:
+    debugger.cmdqueue.extend(["where", "continue"])
+    debugger.interaction(None, err.__traceback__)
+print("stopped_with_error()" in out.getvalue())
+
+
+def add(a: int, b: int) -> int:
+    return a + b
+
+
+trace_before = sys.gettrace()
+debugger.cmdqueue.append("continue")
+silent = debugger.runcall(add, 4, 5)
+print(silent, sys.gettrace() is trace_before)
+
+
+saved = pdb.set_trace
+pdb.set_trace = lambda *args, **kwargs: "rebound"
+print(pdb.set_trace())
+pdb.set_trace = saved
+
+
+source_out = StringIO()
+source_debugger = pdb.Pdb(stdin=StringIO(""), stdout=source_out, nosigint=True, readrc=False)
+source_debugger.set_trace(commands=["p 1 + 2", "continue"])
+print(source_out.getvalue().strip())
+source_debugger.cmdqueue.append("continue")
+scope: dict[str, Any] = {"x": 2}
+source_debugger.run("x = x + 5", scope)
+print(scope["x"])

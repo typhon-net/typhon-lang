@@ -23,17 +23,36 @@ namespace Typhon.Runtime
         abstract class Token { public abstract bool Matches(char c); }
         sealed class Star : Token { public override bool Matches(char c) => true; }
         sealed class AnyChar : Token { public override bool Matches(char c) => true; }
+        sealed class NegatedEmptySet : Token { public override bool Matches(char c) => true; }
         sealed class Literal : Token { public readonly char C; public Literal(char c) { C = c; } public override bool Matches(char c) => c == C; }
         sealed class CharSet : Token
         {
             public readonly bool Negate;
             public readonly List<(char Lo, char Hi)> Ranges = new List<(char, char)>();
-            public CharSet(bool negate) { Negate = negate; }
+            readonly List<string> _chunks;
+            public CharSet(bool negate, List<string> chunks) { Negate = negate; _chunks = chunks; }
             public override bool Matches(char c)
             {
                 bool hit = false;
                 foreach (var (lo, hi) in Ranges) if (c >= lo && c <= hi) { hit = true; break; }
                 return hit != Negate;
+            }
+
+            public string RegexSource()
+            {
+                var source = new StringBuilder("[");
+                if (Negate) source.Append('^');
+                else if (_chunks[0][0] is '^' or '[') source.Append('\\');
+                for (int i = 0; i < _chunks.Count; i++)
+                {
+                    if (i > 0) source.Append('-');
+                    foreach (char c in _chunks[i])
+                    {
+                        if (c is '\\' or '-' or '&' or '~' or '|') source.Append('\\');
+                        source.Append(c);
+                    }
+                }
+                return source.Append(']').ToString();
             }
         }
         sealed class Never : Token { public override bool Matches(char c) => false; }
@@ -106,10 +125,10 @@ namespace Typhon.Runtime
                     }
             }
             if (chunks.Count == 1 && chunks[0].Length == 0) return new Never();
-            if (chunks.Count == 1 && chunks[0] == "!") return new AnyChar();
+            if (chunks.Count == 1 && chunks[0] == "!") return new NegatedEmptySet();
             bool negate = chunks[0].Length > 0 && chunks[0][0] == '!';
             if (negate) chunks[0] = chunks[0].Substring(1);
-            var set = new CharSet(negate);
+            var set = new CharSet(negate, chunks);
             // consecutive chunks are joined by a range: the last char of one to the first char of the next
             for (int m = 0; m < chunks.Count; m++)
             {
@@ -120,6 +139,35 @@ namespace Typhon.Runtime
                 for (int t = start; t < end; t++) set.Ranges.Add((s[t], s[t]));
             }
             return set;
+        }
+
+        public (List<string>, List<long>) RegexParts(string star, string questionMark)
+        {
+            var parts = new List<string>(_tokens.Count);
+            var stars = new List<long>();
+            for (int i = 0; i < _tokens.Count; i++)
+            {
+                var token = _tokens[i];
+                if (token is Literal first && char.IsHighSurrogate(first.C) && i + 1 < _tokens.Count &&
+                    _tokens[i + 1] is Literal second && char.IsLowSurrogate(second.C))
+                {
+                    parts.Add(first.C.ToString() + second.C);
+                    i++;
+                    continue;
+                }
+                if (token is Star) stars.Add(parts.Count);
+                parts.Add(token switch
+                {
+                    Star => star,
+                    AnyChar => questionMark,
+                    NegatedEmptySet => ".",
+                    Never => "(?!)",
+                    Literal literal => global::Typhon.Stdlib.re.escape(literal.C.ToString()),
+                    CharSet set => set.RegexSource(),
+                    _ => throw new InvalidOperationException("unknown fnmatch token"),
+                });
+            }
+            return (parts, stars);
         }
 
         /// <summary>Does the whole name match (re.match with the pattern's \z)?</summary>
@@ -305,5 +353,6 @@ namespace Typhon.Stdlib
         public static bool fnmatchcase(string name, string pat) => FnPattern.FnMatchCase(name, pat);
         public static List<string> filter(IEnumerable<string> names, string pat) => names.Where(n => FnPattern.FnMatch(n, pat)).ToList();
         public static List<string> filterfalse(IEnumerable<string> names, string pat) => names.Where(n => !FnPattern.FnMatch(n, pat)).ToList();
+        public static (List<string>, List<long>) _translate(string pat, string star, string question_mark) => FnPattern.Of(pat).RegexParts(star, question_mark);
     }
 }

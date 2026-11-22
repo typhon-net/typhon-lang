@@ -17,6 +17,7 @@ namespace Typhon.Runtime
     using System.Globalization;
     using System.Linq;
     using System.Numerics;
+    using System.Runtime.CompilerServices;
     using System.Text;
 
     /// <summary>Shared byte-sequence operations of bytes and bytearray.</summary>
@@ -50,6 +51,7 @@ namespace Typhon.Runtime
             string => throw new InvalidCastException("string argument without an encoding"),
             long or int or BigInteger => new byte[(int)Convert.ToInt64(o, CultureInfo.InvariantCulture)],
             IEnumerable e => e.Cast<object?>().Select(Byte).ToArray(),
+            ITuple t => Enumerable.Range(0, t.Length).Select(i => Byte(t[i])).ToArray(),
             _ => throw new InvalidCastException($"cannot convert '{o.GetType().Name}' object to bytes"),
         };
 
@@ -96,9 +98,68 @@ namespace Typhon.Runtime
             if (errors == "strict") return enc;
             // 'replace' / 'ignore': U+FFFD (or ?) / dropped instead of an error
             var clone = (Encoding)enc.Clone();
-            clone.DecoderFallback = errors == "ignore" ? new DecoderReplacementFallback("") : new DecoderReplacementFallback("�");
-            clone.EncoderFallback = errors == "ignore" ? new EncoderReplacementFallback("") : new EncoderReplacementFallback("?");
+            clone.DecoderFallback = errors switch
+            {
+                "ignore" => new DecoderReplacementFallback(""),
+                "backslashreplace" => new ByteEscapeFallback(),
+                _ => new DecoderReplacementFallback("�"),
+            };
+            clone.EncoderFallback = errors switch
+            {
+                "ignore" => new EncoderReplacementFallback(""),
+                "backslashreplace" => new CodepointEscapeFallback(),
+                _ => new EncoderReplacementFallback("?"),
+            };
             return clone;
+        }
+
+        sealed class EscapeBuffer
+        {
+            string _text = "";
+            int _offset;
+            public int Remaining => _text.Length - _offset;
+            public bool Set(string text) { _text = text; _offset = 0; return true; }
+            public char Next() => Remaining == 0 ? '\0' : _text[_offset++];
+            public bool MovePrevious()
+            {
+                if (_offset == 0) return false;
+                _offset--;
+                return true;
+            }
+        }
+
+        sealed class ByteEscapeFallback : DecoderFallback
+        {
+            public override int MaxCharCount => 4;
+            public override DecoderFallbackBuffer CreateFallbackBuffer() => new Buffer();
+
+            sealed class Buffer : DecoderFallbackBuffer
+            {
+                readonly EscapeBuffer _escape = new EscapeBuffer();
+                public override int Remaining => _escape.Remaining;
+                public override bool Fallback(byte[] bytesUnknown, int index) =>
+                    _escape.Set(string.Concat(bytesUnknown.Select(b => $"\\x{b:x2}")));
+                public override char GetNextChar() => _escape.Next();
+                public override bool MovePrevious() => _escape.MovePrevious();
+            }
+        }
+
+        sealed class CodepointEscapeFallback : EncoderFallback
+        {
+            public override int MaxCharCount => 10;
+            public override EncoderFallbackBuffer CreateFallbackBuffer() => new Buffer();
+
+            sealed class Buffer : EncoderFallbackBuffer
+            {
+                readonly EscapeBuffer _escape = new EscapeBuffer();
+                public override int Remaining => _escape.Remaining;
+                public override bool Fallback(char charUnknown, int index) =>
+                    _escape.Set(charUnknown <= '\xff' ? $"\\x{(int)charUnknown:x2}" : $"\\u{(int)charUnknown:x4}");
+                public override bool Fallback(char high, char low, int index) =>
+                    _escape.Set($"\\U{char.ConvertToUtf32(high, low):x8}");
+                public override char GetNextChar() => _escape.Next();
+                public override bool MovePrevious() => _escape.MovePrevious();
+            }
         }
 
         public static string Decode(byte[] data, string encoding, string errors)

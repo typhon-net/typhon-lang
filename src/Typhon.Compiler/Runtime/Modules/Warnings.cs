@@ -25,6 +25,7 @@ namespace Typhon.Stdlib
     internal static class warnings
     {
         static readonly object _lock = new object();
+        static object? _module;
 
         /// <summary>
         /// The filters, most recent first: (action, message regex or None, category, module regex or None, lineno).
@@ -72,13 +73,81 @@ namespace Typhon.Stdlib
         }
 
         /// <summary>CPython's default filters (a release build): DeprecationWarning shows only in __main__; Pending/Import/ResourceWarning never.</summary>
-        static void _setup_defaults()
+        public static void _setup_defaults()
         {
             filterwarnings("default", category: typeof(DeprecationWarning), module: "__main__", append: true);
             simplefilter("ignore", category: typeof(DeprecationWarning), append: true);
             simplefilter("ignore", category: typeof(PendingDeprecationWarning), append: true);
             simplefilter("ignore", category: typeof(ImportWarning), append: true);
             simplefilter("ignore", category: typeof(ResourceWarning), append: true);
+        }
+
+        public static void _acquire_lock() => System.Threading.Monitor.Enter(_lock);
+        public static void _release_lock() => System.Threading.Monitor.Exit(_lock);
+        public static void _set_module(object? module) => _module = module;
+
+        internal sealed class _OptionError : Exception
+        {
+            public _OptionError(string message) : base(message) { }
+        }
+
+        public static void _processoptions(IEnumerable<string> options)
+        {
+            foreach (string option in options)
+            {
+                try { _setoption(option); }
+                catch (_OptionError e) { Builtins.print_kw(["Invalid -W option ignored:", e.Message], file: (object?)sys_.stderr); }
+            }
+        }
+
+        public static void _setoption(string option)
+        {
+            var parts = option.Split(':').Select(part => part.Trim()).ToArray();
+            if (parts.Length > 5) throw new _OptionError($"too many fields (max 5): {Builtins.repr(option)}");
+            Array.Resize(ref parts, 5);
+            string action = _getaction(parts[0]);
+            Type category = _getcategory(parts[2]);
+            long lineno = 0;
+            if (!string.IsNullOrEmpty(parts[4]) && (!long.TryParse(parts[4], out lineno) || lineno < 0))
+                throw new _OptionError($"invalid lineno {Builtins.repr(parts[4])}");
+            filterwarnings(action, WarningPattern(parts[1], false), category, WarningPattern(parts[3], true), lineno);
+        }
+
+        static string WarningPattern(string? text, bool exact)
+        {
+            if (string.IsNullOrEmpty(text)) return "";
+            if (text.Length >= 2 && text[0] == '/' && text[^1] == '/') return text[1..^1];
+            return System.Text.RegularExpressions.Regex.Escape(text) + (exact ? @"\z" : "");
+        }
+
+        public static string _getaction(string? action)
+        {
+            if (string.IsNullOrEmpty(action)) return "default";
+            string? match = new[] { "default", "always", "all", "ignore", "module", "once", "error" }
+                .FirstOrDefault(name => name.StartsWith(action, StringComparison.Ordinal));
+            return match ?? throw new _OptionError($"invalid action: {Builtins.repr(action)}");
+        }
+
+        public static Type _getcategory(string? category)
+        {
+            if (string.IsNullOrEmpty(category)) return typeof(Warning);
+            int dot = category.LastIndexOf('.');
+            object? value;
+            if (dot < 0 || category[..dot] == "builtins")
+            {
+                string name = category[(dot + 1)..];
+                value = typeof(Warning).Assembly.GetType(typeof(Warning).Namespace + "." + name);
+            }
+            else
+            {
+                string name = category[..dot];
+                if (!sys_.modules.TryGetValue(name, out var module)) throw new _OptionError($"invalid module name: {Builtins.repr(name)}");
+                value = Builtins.getattr(module, category[(dot + 1)..], null);
+            }
+            if (value == null) throw new _OptionError($"unknown warning category: {Builtins.repr(category)}");
+            if (value is not Type type || !typeof(Warning).IsAssignableFrom(type))
+                throw new _OptionError($"invalid warning category: {Builtins.repr(category)}");
+            return type;
         }
 
         // ── filters ──
@@ -264,7 +333,7 @@ namespace Typhon.Stdlib
         /// <summary>Shows a warning through showwarning (a replacement gets the classic arguments), or records it.</summary>
         static void ShowMessage(WarningMessage msg)
         {
-            object sw = showwarning;
+            object sw = Builtins.getattr(_module, "showwarning", (object)showwarning);
             if (!ReferenceEquals(sw, _showwarning_orig))
             {
                 Builtins.__invoke(sw, new object?[] { msg.message, msg.category, msg.filename, msg.lineno, msg.file, msg.line });
@@ -278,9 +347,10 @@ namespace Typhon.Stdlib
             List<WarningMessage>? log;
             lock (_lock) log = _log;
             if (log != null) { lock (log) log.Add(msg); return; }
-            string text = ReferenceEquals((object)formatwarning, _formatwarning_orig)
+            object formatter = Builtins.getattr(_module, "formatwarning", (object)formatwarning);
+            string text = ReferenceEquals(formatter, _formatwarning_orig)
                 ? FormatImpl(msg)
-                : Builtins.str(Builtins.__invoke(formatwarning, new object?[] { msg.message, msg.category, msg.filename, msg.lineno, msg.line }));
+                : Builtins.str(Builtins.__invoke(formatter, new object?[] { msg.message, msg.category, msg.filename, msg.lineno, msg.line }));
             try
             {
                 if (msg.file != null) ((dynamic)msg.file).write(text);

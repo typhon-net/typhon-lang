@@ -9,7 +9,7 @@ namespace Typhon.Cli;
 
 /// <summary>
 /// "#:pylib" (opt-in): a module the program imports that neither the program's folder nor Typhon's runtime has is compiled
-/// from CPython's standard library source (Lib/name.py), with the program, so its functions are typed by the program's
+/// from CPython's standard library source, with the program, so its functions are typed by the program's
 /// calls. "#:pylib DIR" names the Lib folder; without it, TYPHON_PYLIB or the stdlib of the python3 on the PATH.
 /// </summary>
 internal static class PyLib
@@ -69,15 +69,18 @@ internal static class PyLib
     {
         if (TypingOnly.Contains(module)) return true;
         string head = module.Split('.')[0];
+        // The runtime's doctest compatibility surface only returns empty results.
+        // With #:pylib, use the source module to discover and execute examples.
+        if (head == "doctest") return false;
         var asm = Runtime.Value;
         return asm != null && (asm.GetType("Typhon.Stdlib." + head) != null || asm.GetType("Typhon.Stdlib." + head + "_") != null);
     }
 
-    /// <summary>Lib/name.py for a single-file module of the standard library (packages are not taken yet), or null.</summary>
-    public static string? SourceOf(string lib, string module)
+    /// <summary>Python's search order for a source-only package or module under this root.</summary>
+    public static IEnumerable<(string Path, bool Package)> SourceCandidates(string root, string module, string extension = ".py")
     {
-        if (module.Contains('.') || module.Length == 0) return null;
-        string path = Path.Combine(lib, module + ".py");
-        return File.Exists(path) ? path : null;
+        string path = Path.Combine(root, module.Replace('.', Path.DirectorySeparatorChar));
+        yield return (Path.GetFullPath(Path.Combine(path, "__init__" + extension)), true);
+        yield return (Path.GetFullPath(path + extension), false);
     }
 }

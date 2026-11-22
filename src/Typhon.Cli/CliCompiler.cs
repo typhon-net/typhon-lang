@@ -9,6 +9,7 @@ using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.Emit;
 using Typhon.Compiler;
 using Typhon.Compiler.Semantics;
+using Typhon.Compiler.Syntax;
 
 namespace Typhon.Cli;
 
@@ -113,15 +114,17 @@ internal static class CliCompiler
         var project = new ProjectContext { TypeMode = mode, BigInts = bigInts, MainModule = "__main__" };
         string dir = Path.GetDirectoryName(entryPath)!;
         var modules = new List<ModuleInfo>();
-        var pending = new Queue<(string Path, string Name)>();
-        pending.Enqueue((entryPath, "__main__"));
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { entryPath };
+        var pending = new Queue<ModuleInfo>();
+        var probedModules = new HashSet<string>(StringComparer.Ordinal);
+        var sourcePaths = new HashSet<string>(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal)
+        {
+            Path.GetFullPath(entryPath),
+        };
         string? aspNetReason = null;
         // #:pylib: modules neither the folder nor the runtime has come from CPython's standard library source
         string? pylib = null;
-        while (pending.Count > 0)
+        ModuleInfo ReadModule(string path, string name, bool isPackage)
         {
-            var (path, name) = pending.Dequeue();
             string source = ReadSource(path, output.Probes);
             if (aspNetReason == null && SharedFrameworks.HasWebSdkDirective(source)) aspNetReason = $"{Path.GetFileName(path)} has #:sdk Microsoft.NET.Sdk.Web";
             foreach (var package in Packages.Directives(source))
@@ -129,24 +132,76 @@ internal static class CliCompiler
             if (name == "__main__" && PyLib.Requested(source, dir, out var givenLib))
             {
                 pylib = PyLib.Resolve(givenLib);
+                if (pylib != null) pylib = Path.TrimEndingDirectorySeparator(Path.GetFullPath(pylib));
                 if (pylib == null) output.Messages.Add($"{path}: warning TY0102: #:pylib: no CPython standard library found (give #:pylib DIR or set TYPHON_PYLIB)");
             }
             var m = TyphonCompiler.Parse(path, source, name, "");
+            if (isPackage)
+            {
+                m.IsPackage = true;
+                m.Namespace = name;
+                m.ClassName = "__init__";
+            }
             project.Modules[name] = m;
             modules.Add(m);
-            foreach (var imported in ImportedModuleNames(m))
+            pending.Enqueue(m);
+            return m;
+        }
+
+        ModuleInfo? Discover(string name)
+        {
+            if (project.FindModule(name) is ModuleInfo seen) return seen;
+            if (!probedModules.Add(name)) return null;
+            int dot = name.LastIndexOf('.');
+            var parent = dot < 0 ? null : Discover(name[..dot]);
+            IEnumerable<(string Path, bool Package)> choices = PyLib.SourceCandidates(dir, name, TyphonCompiler.FileExtension);
+            // A library child is visible only through its package. Local namespace directories
+            // containing .ty files continue to work on their own.
+            if (pylib != null && !PyLib.ProvidedByTyphon(name) &&
+                (dot < 0 || parent?.IsPackage == true && parent.Path.StartsWith(Path.EndsInDirectorySeparator(pylib) ? pylib : pylib + Path.DirectorySeparatorChar, StringComparison.Ordinal)))
+                choices = choices.Concat(PyLib.SourceCandidates(pylib, name));
+            foreach (var (candidate, package) in choices)
             {
-                if (aspNetReason == null && SharedFrameworks.IsAspNetCoreNamespace(imported)) aspNetReason = $"{Path.GetFileName(path)} imports {imported}";
-                string candidate = Path.GetFullPath(Path.Combine(dir, imported.Replace('.', Path.DirectorySeparatorChar) + TyphonCompiler.FileExtension));
-                if (!seen.Add(candidate)) continue;
-                if (File.Exists(candidate)) pending.Enqueue((candidate, imported));
-                else
-                {
-                    output.Probes.Add(new SourceProbe(candidate, null));
-                    if (pylib != null && !PyLib.ProvidedByTyphon(imported) && PyLib.SourceOf(pylib, imported) is string libSource && seen.Add(libSource))
-                        pending.Enqueue((libSource, imported));
-                }
+                if (File.Exists(candidate))
+                    return sourcePaths.Add(candidate) ? ReadModule(candidate, name, package) : null;
+                output.Probes.Add(new SourceProbe(candidate, null));
             }
+            return null;
+        }
+
+        ReadModule(entryPath, "__main__", isPackage: false);
+        while (pending.TryDequeue(out var m))
+        {
+            ModuleInfo? Import(string name)
+            {
+                if (aspNetReason == null && SharedFrameworks.IsAspNetCoreNamespace(name)) aspNetReason = $"{Path.GetFileName(m.Path)} imports {name}";
+                return Discover(name);
+            }
+            foreach (var stmt in TyphonCompiler.Imports(m))
+            {
+                if (stmt is ImportStmt direct)
+                    foreach (var alias in direct.Names) Import(alias.Name);
+                else if (stmt is ImportFromStmt from && m.ResolveImport(from.Module, from.Level) is string name &&
+                         Import(name) is ModuleInfo { IsPackage: true } package)
+                    foreach (var alias in from.Names)
+                        if (alias.Name != "*" && !package.Classes.ContainsKey(alias.Name) &&
+                            !package.Functions.Contains(alias.Name) && !package.Globals.Contains(alias.Name))
+                            Discover(name + "." + alias.Name);
+            }
+        }
+
+        // C# reserves the containing class name, which Python permits as a module member.
+        // Keep replacement names distinct from all discovered module classes and namespaces.
+        bool ConflictsWithMember(ModuleInfo m) =>
+            m.Functions.Contains(m.ClassName) || m.Globals.Contains(m.ClassName) || m.Classes.ContainsKey(m.ClassName);
+        var occupiedNames = modules.Select(m => m.QualifiedClassName).ToHashSet(StringComparer.Ordinal);
+        foreach (var m in modules)
+            for (string ns = m.Namespace; ns.Length > 0; ns = ns[..Math.Max(0, ns.LastIndexOf('.'))])
+                occupiedNames.Add("global::" + ns);
+        foreach (var m in modules.Where(ConflictsWithMember))
+        {
+            do { m.ClassName = "_" + m.ClassName; }
+            while (ConflictsWithMember(m) || !occupiedNames.Add(m.QualifiedClassName));
         }
 
         // the shared frameworks the imports need (decided before the compilation: they are its references)
@@ -242,21 +297,4 @@ internal static class CliCompiler
 
     public static string Sha256(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes));
 
-    static IEnumerable<string> ImportedModuleNames(ModuleInfo m)
-    {
-        var names = new List<string>();
-        void Visit(IEnumerable<Typhon.Compiler.Syntax.Stmt> body)
-        {
-            foreach (var s in body)
-            {
-                if (s is Typhon.Compiler.Syntax.ImportStmt i) names.AddRange(i.Names.Select(n => n.Name));
-                else if (s is Typhon.Compiler.Syntax.ImportFromStmt f && f.Level == 0) names.Add(f.Module);
-                else if (s is Typhon.Compiler.Syntax.FunctionDef fd) Visit(fd.Body);
-                else if (s is Typhon.Compiler.Syntax.ClassDef cd) Visit(cd.Body);
-                else if (s is Typhon.Compiler.Syntax.IfStmt ifs) { Visit(ifs.Body); Visit(ifs.OrElse); }
-            }
-        }
-        Visit(m.Ast.Body);
-        return names;
-    }
 }

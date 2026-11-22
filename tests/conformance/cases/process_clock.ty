@@ -1,0 +1,14 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import time
+
+before = time.process_time()
+before_ns = time.process_time_ns()
+total = 0
+for i in range(10000):
+    total += i
+after = time.process_time()
+after_ns = time.process_time_ns()
+print(isinstance(after, float), isinstance(after_ns, int), 0 <= before <= after, 0 <= before_ns <= after_ns)
+print(total)

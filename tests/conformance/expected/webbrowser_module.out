@@ -1,0 +1,10 @@
+reject https://example.invalid/record 1 False
+accept https://example.invalid/record 1 False
+True
+reject https://example.invalid/record 2 True
+accept https://example.invalid/record 2 True
+True
+factory
+recording browser ['--url=%s']
+rejected before launch
+no controller

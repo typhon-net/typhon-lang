@@ -101,7 +101,7 @@ namespace Typhon.Runtime
             return _pos;
         }
         public override long tell() { _checkClosed(); return _pos; }
-        public override long truncate(long? size = null)
+        public override dynamic? truncate(long? size = null)
         {
             var buf = Buf;
             int n = (int)(size ?? _pos);

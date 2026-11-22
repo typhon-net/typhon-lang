@@ -1,0 +1,21 @@
+True number The value stored on the instance.
+True True 7
+7
+9
+0
+unreadable property
+True True Greet someone.
+True True Hi.
+Bye!
+True True Sample?
+Sample! False True
+True True Count cache misses.
+unassigned name
+True None None 1
+12 1
+3 2
+21 1
+duplicate name
+missing dictionary
+slots without dictionary
+label

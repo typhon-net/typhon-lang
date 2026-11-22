@@ -494,7 +494,7 @@ namespace Typhon.Stdlib
     }
 
     /// <summary>functools (reduce, cmp_to_key; @cache / @lru_cache are lowered by the compiler).</summary>
-    internal static class functools
+    internal static partial class functools
     {
         /// <summary>@functools.wraps(f) on a decorator's wrapper: the wrapper takes f's name and docstring, and keeps f as __wrapped__.</summary>
         public static dynamic wraps(object? wrapped) => new PyClosure("wraps", (a, kw) => update_wrapper(a[0], wrapped));

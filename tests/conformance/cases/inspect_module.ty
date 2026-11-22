@@ -1,0 +1,68 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import inspect
+import sys
+from functools import wraps
+
+
+def greeting() -> str:
+    """First line.
+
+       Second line.
+    """
+    return "hello"
+
+
+@wraps(greeting)
+def wrapper() -> str:
+    return greeting()
+
+
+class Sample:
+    def __init__(self):
+        self.count = 3
+
+    @property
+    def title(self) -> str:
+        print("title getter ran")
+        return "quiet"
+
+    def echo(self) -> int:
+        return self.count
+
+
+def generate():
+    yield 1
+
+
+async def action() -> int:
+    return 2
+
+
+sample = Sample()
+bound = getattr(sample, "echo")
+print(inspect.ismodule(sys), inspect.isclass(Sample), inspect.isfunction(greeting))
+print(inspect.ismethod(bound), inspect.isroutine(bound), inspect.isroutine(Sample))
+print(inspect.isfunction(getattr(Sample, "echo")), inspect.isbuiltin(getattr(sys, "_getframe")))
+print(inspect.unwrap(wrapper) is greeting)
+print(inspect.getdoc(greeting))
+print(inspect.cleandoc("  head\n\t first\n\t second\n"))
+print(inspect.getattr_static(sample, "count"), inspect.getattr_static(sample, "missing", 17))
+print(inspect.isdatadescriptor(inspect.getattr_static(sample, "title")))
+
+print(inspect.getmodule(greeting).__name__)
+greeting.__module__ = "inspect"
+print(inspect.getmodule(greeting).__name__)
+greeting.__module__ = "__main__"
+print(inspect.getfile(greeting).rsplit(".", 1)[0].endswith("inspect_module"))
+print(inspect.getsourcefile(Sample).rsplit(".", 1)[0].endswith("inspect_module"))
+print(inspect.getmodulename("dir/sample.py"), inspect.getmodulename("dir/readme.txt"))
+frame = inspect.currentframe()
+print(inspect.isframe(frame), inspect.iscode(frame.f_code))
+print(inspect.iscoroutinefunction(action), inspect.isgeneratorfunction(generate), inspect.isgenerator(generate()))
+try:
+    raise ValueError("test")
+except ValueError as error:
+    print(inspect.istraceback(error), inspect.istraceback(error.__traceback__))
+    print(inspect.getfile(error.__traceback__).rsplit(".", 1)[0].endswith("inspect_module"))

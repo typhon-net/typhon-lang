@@ -12,6 +12,7 @@ internal static class ProgramRunner
 {
     public static int Run(byte[] pe, byte[]? pdb, string[] programArgs, bool timing, IReadOnlyCollection<string> frameworks, IReadOnlyCollection<string>? packageAssemblies = null)
     {
+        RuntimeCodeHost.Install();
         if (packageAssemblies != null) SharedFrameworks.EnablePackages(packageAssemblies);
         // ASP.NET Core and the like are not on this process's list of platform assemblies: they load from their folder
         try { SharedFrameworks.EnableAtRunTime(frameworks); }

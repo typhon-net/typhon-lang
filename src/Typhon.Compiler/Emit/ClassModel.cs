@@ -25,7 +25,17 @@ namespace Typhon.Compiler.Emit
         public static void Complete(ProjectContext p)
         {
             foreach (var m in p.Modules.Values)
-                if (m.Ast != null && m.ParseDiagnostics.Count == 0) { HoistBlockClasses(m); HoistLocalClasses(m); SynthesizeNamedTuples(m); }
+            {
+                if (m.Ast == null || m.ParseDiagnostics.Count > 0) continue;
+                HoistBlockClasses(m);
+                HoistLocalClasses(m);
+                SynthesizeNamedTuples(m);
+                if (!ShadowsObject(m))
+                {
+                    foreach (var c in m.Classes.Values) LowerObjectStrAliases(c);
+                    LowerSingletonClasses(m);
+                }
+            }
             // several bases: one stays the C# base, the others' members are copied in, in MRO order
             MultipleInheritance.Apply(p);
             foreach (var m in p.Modules.Values)
@@ -34,6 +44,79 @@ namespace Typhon.Compiler.Emit
                 foreach (var c in m.Classes.Values) { DropTypingOnlyMembers(c); NormalizeSelfNames(c); AddMethodAliases(c); NormalizeSuper(c); }
             }
             AddBaseStubs(p);
+        }
+
+        internal const string AllocateSingleton = "__typhon_allocate_singleton__";
+
+        static bool ShadowsObject(ModuleInfo m) =>
+            m.Classes.ContainsKey("object") || m.Functions.Contains("object") || m.Globals.Contains("object") ||
+            m.Ast.Body.Any(s => s is ImportStmt im && im.Names.Any(a => (a.AsName ?? a.Name.Split('.')[0]) == "object") ||
+                                s is ImportFromStmt fr && fr.Names.Any(a => (a.AsName ?? a.Name) == "object"));
+
+        /// <summary>Bind object.__str__ as a method that uses the instance's repr, including on subclasses.</summary>
+        static void LowerObjectStrAliases(ClassDef c)
+        {
+            bool shadowsObject = false;
+            for (int i = 0; i < c.Body.Count; i++)
+            {
+                var s = c.Body[i];
+                if (s is ClassDef nested) LowerObjectStrAliases(nested);
+                if (s is ClassDef { Name: "object" } or FunctionDef { Name: "object" } or AnnAssignStmt { Target: NameExpr { Id: "object" } } ||
+                    s is AssignStmt bind && bind.Targets.Any(t => t is NameExpr { Id: "object" }))
+                    shadowsObject = true;
+                if (shadowsObject || s is not AssignStmt { Value: AttributeExpr { Name: "__str__", Target: NameExpr { Id: "object" } } builtin } a ||
+                    a.Targets.Count != 1 || a.Targets[0] is not NameExpr { Id: "__str__" }) continue;
+
+                c.Body[i] = new FunctionDef
+                {
+                    Name = "__str__", Line = a.Line, Col = a.Col,
+                    Params = { new Param { Name = "self", Line = a.Line, Col = a.Col } },
+                    Returns = new NameExpr { Id = "str", Line = a.Line, Col = a.Col },
+                    Body = { new ReturnStmt
+                    {
+                        Line = a.Line, Col = a.Col,
+                        Value = new CallExpr
+                        {
+                            Func = builtin, Line = a.Line, Col = a.Col,
+                            Args = { new Arg { Value = new NameExpr { Id = "self", Line = a.Line, Col = a.Col } } },
+                        },
+                    } },
+                };
+            }
+        }
+
+        /// <summary>Apply @object.__new__ to a plain class, keeping the real type behind the singleton's Python name.</summary>
+        static void LowerSingletonClasses(ModuleInfo m)
+        {
+            var body = m.Ast.Body;
+            for (int i = 0; i < body.Count; i++)
+            {
+                if (body[i] is not ClassDef c || c.TypeParams.Count != 0 || c.NamedTupleFields != null ||
+                    c.Bases.Any(b => b is not NameExpr { Id: "object" }) || c.Decorators.Count != 1 ||
+                    c.Decorators[0] is not AttributeExpr { Name: "__new__", Target: NameExpr { Id: "object" } } ||
+                    !m.Classes.TryGetValue(c.Name, out var registered) || registered != c)
+                    continue;
+
+                // The CLR type keeps the original short name for type(obj).__name__, while the module binds that name to the instance.
+                var scope = new ClassDef { Name = "_typhon_singleton_" + c.Name, Line = c.Line, Col = c.Col };
+                while (BoundElsewhere(body, scope)) scope.Name += "_";
+                c.Decorators.Clear();
+                c.UninitializedSingleton = true;
+                scope.Body.Add(c);
+                var owner = new NameExpr { Id = scope.Name, Line = c.Line, Col = c.Col };
+                var hiddenType = new AttributeExpr { Target = owner, Name = c.Name, Line = c.Line, Col = c.Col };
+                var allocator = new AttributeExpr { Target = hiddenType, Name = AllocateSingleton, Line = c.Line, Col = c.Col };
+                body[i] = scope;
+                body.Insert(++i, new AssignStmt
+                {
+                    Targets = { new NameExpr { Id = c.Name, Line = c.Line, Col = c.Col } },
+                    Value = new CallExpr { Func = allocator, Line = c.Line, Col = c.Col },
+                    Line = c.Line, Col = c.Col,
+                });
+                m.Classes.Remove(c.Name);
+                m.Classes[scope.Name] = scope;
+                m.Globals.Add(c.Name);
+            }
         }
 
         /// <summary>
@@ -173,6 +256,7 @@ namespace Typhon.Compiler.Emit
                     {
                         c.Bases.Remove(ntBase);
                         MakeNamedTuple(c, bf, ntBase.Args.FirstOrDefault(x => x.Name == "defaults")?.Value, annotated: null);
+                        RewriteNamedTupleSuperRepr(c);
                         continue;
                     }
                     var typed = c.Bases.FirstOrDefault(b => b is NameExpr bn && bn.Id == "NamedTuple" || b is AttributeExpr ba && ba.Name == "NamedTuple");
@@ -189,7 +273,12 @@ namespace Typhon.Compiler.Emit
         static void MakeNamedTuple(ClassDef c, List<string> fields, Expr defaults, List<AnnAssignStmt> annotated)
         {
             c.NamedTupleFields = fields;
-            if (c.Body.OfType<FunctionDef>().Any(f => f.Name == "__init__" || f.Name == "__new__")) return;
+            if (c.Body.OfType<FunctionDef>().Any(f => f.Name == "__init__")) return;
+            if (c.Body.OfType<FunctionDef>().FirstOrDefault(f => f.Name == "__new__") is FunctionDef allocate)
+            {
+                c.NamedTupleCustomNew = LowerNamedTupleNew(allocate, fields);
+                return;
+            }
             var init = new FunctionDef { Name = "__init__", Line = c.Line, Col = c.Col };
             init.Params.Add(new Param { Name = "self", Line = c.Line, Col = c.Col });
             var defaultValues = defaults is TupleExpr dt ? dt.Elts : defaults is ListExpr dl ? dl.Elts : new List<Expr>();
@@ -211,6 +300,110 @@ namespace Typhon.Compiler.Emit
             c.Body.Insert(0, init);
             // a docstring-only or empty class body was `pass`
             c.Body.RemoveAll(st => st is PassStmt);
+        }
+
+        /// <summary>Lower a namedtuple allocator that returns the instance built by a single super().__new__ call.</summary>
+        static bool LowerNamedTupleNew(FunctionDef method, List<string> fields)
+        {
+            if (method.IsAsync || method.TypeParams.Count != 0 || method.Decorators.Count != 0 || method.Params.Count == 0 ||
+                method.Params[0].Kind != ParamKind.Normal || method.Params.Skip(1).Any(p => p.Name == "self") ||
+                method.Body.LastOrDefault() is not ReturnStmt returned) return false;
+
+            string className = method.Params[0].Name;
+            CallExpr BaseAllocation(Expr expr) =>
+                expr is CallExpr call && call.Func is AttributeExpr { Name: "__new__", Target: CallExpr { Func: NameExpr { Id: "super" }, Args.Count: 0 } } &&
+                call.Args.FirstOrDefault() is Arg { Name: null, Star: false, DoubleStar: false, Value: NameExpr cls } && cls.Id == className
+                    ? call : null;
+
+            CallExpr allocation = BaseAllocation(returned.Value);
+            Stmt allocateAt = returned;
+            NameExpr instance = null;
+            if (allocation == null && returned.Value is NameExpr result)
+            {
+                var assignments = method.Body.OfType<AssignStmt>()
+                    .Where(a => a.Targets.Count == 1 && a.Targets[0] is NameExpr name && name.Id == result.Id)
+                    .ToList();
+                if (assignments.Count != 1) return false;
+                var assignment = assignments[0];
+                allocation = BaseAllocation(assignment.Value);
+                allocateAt = assignment;
+                instance = (NameExpr)assignment.Targets[0];
+            }
+            if (allocation == null) return false;
+
+            if (instance != null)
+            {
+                var remainder = method.Body.Where(s => s != allocateAt && s != returned).ToList();
+                var locals = LocalsAnalyzer.Analyze(remainder, System.Array.Empty<string>(), null);
+                if (method.Params.Any(p => p.Name == instance.Id) || locals.AllLocals.Contains(instance.Id) ||
+                    locals.Globals.Contains(instance.Id) || locals.LocalFunctions.Contains(instance.Id))
+                    return false;
+            }
+
+            // This constructor form cannot return a different object or use cls after the allocation.
+            bool otherUse = AstWalker.ContainsOutsideNestedScopes(method.Body,
+                n => n is ReturnStmt && n != returned || n is YieldExpr);
+            AstWalker.VisitAll(method.Body, n =>
+            {
+                if (n is NameExpr name && (name.Id == className && name != allocation.Args[0].Value ||
+                    name.Id == "self" && instance?.Id != "self")) otherUse = true;
+            });
+            if (otherUse) return false;
+
+            AttributeExpr Field(string name) => new AttributeExpr
+            {
+                Target = new NameExpr { Id = "self", Line = allocateAt.Line, Col = allocateAt.Col },
+                Name = name, Line = allocateAt.Line, Col = allocateAt.Col,
+            };
+            AssignStmt Assign(Expr target, Expr value) => new AssignStmt
+            {
+                Targets = { target }, Value = value, Line = allocateAt.Line, Col = allocateAt.Col,
+            };
+
+            var args = allocation.Args.Skip(1).ToList();
+            var initialize = new List<Stmt>();
+            if (fields.Count > 0 && args.Count == 1 && args[0].Star)
+                initialize.Add(Assign(new TupleExpr { Elts = fields.Select(f => (Expr)Field(f)).ToList(), Line = allocateAt.Line, Col = allocateAt.Col }, args[0].Value));
+            else
+            {
+                if (args.Count != fields.Count || args.Any(a => a.Star || a.DoubleStar)) return false;
+                var assigned = new HashSet<string>();
+                for (int i = 0; i < args.Count; i++)
+                {
+                    string name = args[i].Name ?? fields[i];
+                    if (!fields.Contains(name) || !assigned.Add(name)) return false;
+                    initialize.Add(Assign(Field(name), args[i].Value));
+                }
+            }
+            if (instance != null && instance.Id != "self")
+                initialize.Add(Assign(instance, new NameExpr { Id = "self", Line = instance.Line, Col = instance.Col }));
+
+            int position = method.Body.IndexOf(allocateAt);
+            method.Body.Remove(returned);
+            method.Body.Remove(allocateAt);
+            method.Body.InsertRange(position, initialize);
+            method.Name = "__init__";
+            method.Params[0].Name = "self";
+            method.Returns = null;
+            return true;
+        }
+
+        internal const string NamedTupleRepr = "__typhon_namedtuple_repr__";
+
+        /// <summary>A namedtuple factory base is represented by the same CLR class as its subclass.</summary>
+        static void RewriteNamedTupleSuperRepr(ClassDef c)
+        {
+            var repr = c.Body.OfType<FunctionDef>().FirstOrDefault(f => f.Name == "__repr__" && f.Params.Count != 0);
+            if (repr == null) return;
+            AstWalker.VisitAll(repr.Body, n =>
+            {
+                if (n is CallExpr { Args.Count: 0, Func: AttributeExpr { Name: "__repr__", Target: CallExpr { Func: NameExpr { Id: "super" }, Args.Count: 0 } } } call)
+                    call.Func = new AttributeExpr
+                    {
+                        Target = new NameExpr { Id = repr.Params[0].Name, Line = call.Line, Col = call.Col },
+                        Name = NamedTupleRepr, Line = call.Line, Col = call.Col,
+                    };
+            });
         }
 
         /// <summary>Does a class body bind the name itself (a method parameter or local, a class variable)?</summary>
@@ -300,6 +493,10 @@ namespace Typhon.Compiler.Emit
                     Decorators = def.Decorators, IsAsync = def.IsAsync, Line = a.Line, Col = a.Col,
                 };
             }
+            // Python's text protocols require a string, including when a class aliases an unannotated method.
+            foreach (var f in c.Body.OfType<FunctionDef>())
+                if (f.Returns == null && f.Name is "__str__" or "__repr__")
+                    f.Returns = new NameExpr { Id = "str", Line = f.Line, Col = f.Col };
             foreach (var nested in c.Body.OfType<ClassDef>()) AddMethodAliases(nested);
         }
 

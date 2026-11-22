@@ -41,6 +41,7 @@ namespace Typhon.Compiler.Emit
                     if (n is ImportFromStmt imp) aliases.AddRange(imp.Names.Where(a => a.AsName != null));
                 });
                 AstWalker.VisitAll(m.Ast.Body, n => { if (n is NameExpr ne && !callees.Contains(ne)) names.Add(ne.Id); });
+                if (m.RuntimeCodeMode != null) names.UnionWith(m.Functions);
                 foreach (var a in aliases) if (names.Contains(a.AsName)) names.Add(a.Name);
             }
             var keys = new HashSet<string>();
@@ -170,6 +171,7 @@ namespace Typhon.Compiler.Emit
         /// <summary>A value passed where its static type is lost (a late-bound call's argument): functions become callable objects.</summary>
         string EmitLooseValue(Expr e)
         {
+            if (BoundMethodValue(e) is string bound) return bound;
             if (e is NameExpr n)
             {
                 if (LocalFunctionValue(n) is string closure) return closure;
@@ -226,11 +228,18 @@ namespace Typhon.Compiler.Emit
             var locals = LocalsAnalyzer.Analyze(f.Body, ps.Select(p => p.Name), null);
             bool returnsValue = f.IsAsync || locals.HasYield || locals.HasValueReturn ||
                                 f.Returns != null && !(f.Returns is ConstExpr rc && rc.Kind == ConstKind.None);
+            if (!_m.IsGdScript)
+            {
+                string kind = f.IsAsync ? (locals.HasYield ? "AsyncGenerator" : "Coroutine")
+                    : locals.HasYield ? "Generator" : "Ordinary";
+                _w.Line($"[global::Typhon.Runtime.PySource({CsString(_path)}, {CsString(PythonModuleName)}, global::Typhon.Runtime.PyCallableKind.{kind}, line: {f.Line})]");
+            }
             _w.Line($"internal sealed class {cls} : global::Typhon.Runtime.PyFunction");
             _w.Open();
             _w.Line($"public static readonly {cls} Instance = new {cls}();");
             string doc = f.Body.Count > 0 && f.Body[0] is ExprStmt ds && ds.Value is ConstExpr dc && dc.Kind == ConstKind.Str ? CsString(dc.Str) : null;
-            _w.Line($"{cls}() : base({CsString(f.PyName ?? f.Name)}) {{ {(doc != null ? $"__doc__ = {doc}; " : "")}}}");
+            string module = _m.IsGdScript ? "" : $"__module__ = {CsString(PythonModuleName)}; ";
+            _w.Line($"{cls}() : base({CsString(f.PyName ?? f.Name)}) {{ {module}{(doc != null ? $"__doc__ = {doc}; " : "")}}}");
             // parameter names: keyword arguments of a late-bound call (f(*args, **kwargs) in a decorator's wrapper) by name
             if (ps.Count > 0 && ps.All(x => x.Kind == ParamKind.Normal))
                 _w.Line($"protected override string[] __params__ => new[] {{ {string.Join(", ", ps.Select(x => CsString(x.Name)))} }};");
@@ -238,7 +247,9 @@ namespace Typhon.Compiler.Emit
             _w.Open();
             for (int n = required; n <= ps.Count; n++)
             {
-                string call = $"{Esc(f.Name)}({string.Join(", ", Enumerable.Range(0, n).Select(i => $"(dynamic?)a[{i}]"))})";
+                var args = Enumerable.Range(0, ps.Count).Select(i => i < n ? $"(dynamic?)a[{i}]"
+                    : _defaultSources.ContainsKey(ps[i]) || IsParamAlias(f, ps[i]) ? "null" : EmitValue(ps[i].Default));
+                string call = $"{Esc(f.Name)}({string.Join(", ", args)})";
                 _w.Line(returnsValue ? $"if (a.Length == {n}) return {call};" : $"if (a.Length == {n}) {{ {call}; return null; }}");
             }
             _w.Line($"throw ArgCount({CsString(f.Name)}, {required}, {ps.Count}, a.Length);");

@@ -27,6 +27,15 @@ namespace Typhon.Stdlib
         static readonly DateTime Epoch = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
         public static double perf_counter() => Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency;
         public static long perf_counter_ns() => (long)(Stopwatch.GetTimestamp() * (1e9 / Stopwatch.Frequency));
+        public static double process_time() => ProcessCpuTime().TotalSeconds;
+        public static long process_time_ns() => checked(ProcessCpuTime().Ticks * 100);
+
+        static TimeSpan ProcessCpuTime()
+        {
+            using var process = Process.GetCurrentProcess();
+            return process.TotalProcessorTime;
+        }
+
         public static double monotonic() => perf_counter();
         public static double time() => (DateTime.UtcNow - Epoch).TotalSeconds;
         public static void sleep(double seconds) => System.Threading.Thread.Sleep(TimeSpan.FromSeconds(seconds));
@@ -76,10 +85,12 @@ namespace Typhon.Stdlib
         public static readonly List<object?> meta_path = new List<object?>(), path_hooks = new List<object?>();
         public static readonly OrderedDictionary<string, object?> path_importer_cache = new OrderedDictionary<string, object?>();
 
-        public static readonly Typhon.Runtime.PyTextStream stdout = new Typhon.Runtime.PyTextStream(0), stderr = new Typhon.Runtime.PyTextStream(1), stdin = new Typhon.Runtime.PyTextStream(2);
-        public static readonly Typhon.Runtime.PyTextStream __stdout__ = stdout, __stderr__ = stderr, __stdin__ = stdin;
+        public static readonly PyTextStream __stdout__ = new PyTextStream(0), __stderr__ = new PyTextStream(1), __stdin__ = new PyTextStream(2);
+        public static dynamic? stdout = __stdout__, stderr = __stderr__, stdin = __stdin__;
 
-        public static void __init__(string[] args)
+        static Type? _mainModule;
+
+        public static void __init__(string[] args, Type? mainModule = null)
         {
             // Like CPython 3.15 (UTF-8 mode by default), Typhon programs write UTF-8 regardless of the console code page.
             try { Console.OutputEncoding = new UTF8Encoding(false); } catch (System.IO.IOException) { }
@@ -90,6 +101,8 @@ namespace Typhon.Stdlib
             string dir = "";
             try { dir = argv[0].Length > 0 ? System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(argv[0])) ?? "" : ""; } catch (Exception) { }
             path = new List<string> { dir };
+            _mainModule = mainModule;
+            if (_modules != null && mainModule != null) _modules["__main__"] = PyModule.Of(mainModule, "__main__");
             // sys.exc_info() / sys.exception(): the exception being handled is the last one raised on the thread
             PyExcInfo.Install();
         }
@@ -127,10 +140,10 @@ namespace Typhon.Stdlib
 
         /// <summary>
         /// exc_info(): (type, value, traceback) of the exception being handled. .NET cannot tell whether a handler is running,
-        /// so this is the last exception raised on the thread (in an except block: the one it caught), and the traceback is
-        /// None. Before any exception it is (None, None, None).
+        /// so this is the last exception raised on the thread (in an except block: the one it caught).
         /// </summary>
-        public static (Type?, Exception?, object?) exc_info() => PyExcInfo.Current is Exception e ? (e.GetType(), e, null) : (null, null, null);
+        public static (Type?, Exception?, types.TracebackType?) exc_info() =>
+            PyExcInfo.Current is Exception e ? (e.GetType(), e, types.TracebackType.Of(e)) : (null, null, null);
         /// <summary>exception(): the exception being handled (see exc_info), or None.</summary>
         public static Exception? exception() => PyExcInfo.Current;
         /// <summary>The last uncaught exception (set by CPython's interactive interpreter only): None.</summary>
@@ -147,7 +160,9 @@ namespace Typhon.Stdlib
         static void DefaultDisplayHook(object? value)
         {
             if (value == null) return;
-            Console.WriteLine(Builtins.repr(value));
+            builtins._ = null;
+            Builtins.print(Builtins.repr(value));
+            builtins._ = value;
         }
         public static readonly Action<object?> __displayhook__ = DefaultDisplayHook;
         public static Action<object?> displayhook = __displayhook__;
@@ -161,7 +176,7 @@ namespace Typhon.Stdlib
         /// sys.modules: the Typhon runtime's standard modules and the program's __main__, by name (module objects with their
         /// functions and values as attributes). Imports are resolved when compiling: adding entries imports nothing.
         /// </summary>
-        public static OrderedDictionary<string, object?> modules => _modules ??= PyModule.All();
+        public static OrderedDictionary<string, object?> modules => _modules ??= PyModule.All(_mainModule);
 
         // ── frames ──
 
@@ -276,11 +291,12 @@ namespace Typhon.Stdlib
             public override string ToString() => __repr__();
 
             /// <summary>The Typhon frames of the current stack, innermost first, skipping the runtime's own (and skip more).</summary>
-            internal static List<frame> Stack(int skip)
+            internal static List<frame> Stack(int skip) => FromStack(new StackTrace(skip + 1, true));
+
+            internal static List<frame> FromStack(StackTrace stack)
             {
                 var result = new List<frame>();
-                var st = new StackTrace(skip + 1, true);
-                foreach (var f in st.GetFrames())
+                foreach (var f in stack.GetFrames())
                 {
                     if (PyExcInfo.Caller(f) is not var (file, line, func)) continue;
                     string module = f.GetMethod()?.DeclaringType is Type t ? ModuleOf(t) : "__main__";
@@ -303,7 +319,7 @@ namespace Typhon.Stdlib
         }
 
         /// <summary>A frame's code object: co_name, co_qualname, co_filename, co_firstlineno.</summary>
-        internal sealed class code : IPyRepr
+        internal class code : IPyRepr
         {
             public readonly string co_name, co_qualname, co_filename;
             public readonly long co_firstlineno;
@@ -330,29 +346,85 @@ namespace Typhon.Runtime
     {
         public readonly string __name__;
         readonly Type? _type;
-        public PyModule(string name, Type? type) { __name__ = name; _type = type; }
+        readonly PySourceAttribute? _source;
+        readonly System.Collections.Concurrent.ConcurrentDictionary<string, PyBoundMethod> _methodValues = new();
+        internal Type? SourceType => _type;
+        public PyModule(string name, Type? type)
+        {
+            __name__ = name;
+            _type = type;
+            _source = type?.GetCustomAttribute<PySourceAttribute>();
+            __dict__ = new PyAttrDict(this);
+        }
         static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, PyModule> _of = new();
         /// <summary>A standard module used as a value (hasattr(os, "sep")): one object per module, like sys.modules' entry.</summary>
         public static PyModule Of(Type type, string name) => _of.GetOrAdd(type, t => new PyModule(name, t));
-        public string? __file__ => null;
-        public override bool TryGetMember(GetMemberBinder binder, out object? result) => TryGet(binder.Name, out result);
-        bool TryGet(string name, out object? result)
+        public string? __file__ => _source?.Filename;
+        public string? __doc__ => _source?.DocString;
+        public PyAttrDict __dict__ { get; }
+        public override bool TryGetMember(GetMemberBinder binder, out object? result) => __dict__.TryGetValue(binder.Name, out result);
+        public override bool TrySetMember(SetMemberBinder binder, object? value) { __dict__[binder.Name] = value; return true; }
+
+        BindingFlags Members => BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly |
+            (_source != null ? BindingFlags.NonPublic : 0);
+        static bool IsModuleName(string name) => !name.StartsWith("<", StringComparison.Ordinal) && !name.StartsWith("__fn_", StringComparison.Ordinal) &&
+            !name.StartsWith("__undecorated_", StringComparison.Ordinal) && !name.StartsWith("__typhon_", StringComparison.Ordinal) &&
+            !name.StartsWith("__default_", StringComparison.Ordinal) && !name.StartsWith("__memo_", StringComparison.Ordinal);
+
+        internal bool TryGetNamespaceMember(string name, out object? result)
         {
+            switch (name)
+            {
+                case "__name__": result = __name__; return true;
+                case "__file__" when __file__ != null: result = __file__; return true;
+                case "__doc__": result = __doc__; return true;
+            }
             result = null;
-            if (_type == null) return false;
-            if (_type.GetField(name, BindingFlags.Public | BindingFlags.Static) is FieldInfo f) { result = f.GetValue(null); return true; }
-            if (_type.GetProperty(name, BindingFlags.Public | BindingFlags.Static) is PropertyInfo p && p.GetIndexParameters().Length == 0) { result = p.GetValue(null); return true; }
+            if (_type == null || !IsModuleName(name)) return false;
+            if (_type.GetField(name, Members) is FieldInfo f) { result = f.GetValue(null); return true; }
+            if (_type.GetProperty(name, Members) is PropertyInfo p && p.GetIndexParameters().Length == 0) { result = p.GetValue(null); return true; }
             if (_type.GetNestedType(name, BindingFlags.Public | BindingFlags.NonPublic) is Type nested) { result = nested; return true; }
-            if (_type.GetMethods(BindingFlags.Public | BindingFlags.Static).Any(m => m.Name == name)) { result = new PyBoundMethod(_type, name); return true; }
+            if (_type.GetMethods(Members).Any(m => m.Name == name && IsNamespaceMethod(m)))
+            {
+                var fn = _type.GetNestedType("__fn_" + name, BindingFlags.NonPublic)?.GetField("Instance", BindingFlags.Public | BindingFlags.Static);
+                result = fn?.GetValue(null) ?? _methodValues.GetOrAdd(name, key => new PyBoundMethod(_type, key, includeNonPublic: true));
+                return true;
+            }
             return false;
         }
-        public override IEnumerable<string> GetDynamicMemberNames() =>
-            _type == null ? Enumerable.Empty<string>() : _type.GetMembers(BindingFlags.Public | BindingFlags.Static).Select(m => m.Name).Where(n => !n.StartsWith("<") && !n.StartsWith("get_")).Distinct();
+
+        internal bool TrySetNamespaceMember(string name, object? value)
+        {
+            if (_type?.GetField(name, Members) is FieldInfo field && !field.IsInitOnly && !field.IsLiteral)
+            {
+                Builtins.setattr(_type, name, value);
+                return true;
+            }
+            return false;
+        }
+
+        bool IsNamespaceMethod(MethodInfo method) => !method.IsSpecialName &&
+            (_source == null || method.IsDefined(typeof(PySourceAttribute)));
+
+        internal IEnumerable<string> NamespaceNames()
+        {
+            yield return "__name__";
+            yield return "__doc__";
+            if (__file__ != null) yield return "__file__";
+            if (_type == null) yield break;
+            foreach (var member in _type.GetMembers(Members))
+                if (IsModuleName(member.Name) && (member is FieldInfo or PropertyInfo || member is MethodInfo method && IsNamespaceMethod(method)))
+                    yield return member.Name;
+            foreach (var nested in _type.GetNestedTypes(BindingFlags.Public | BindingFlags.NonPublic))
+                if (IsModuleName(nested.Name)) yield return nested.Name;
+        }
+
+        public override IEnumerable<string> GetDynamicMemberNames() => __dict__.Keys;
         public string __repr__() => __name__ == "__main__" ? "<module '__main__'>" : $"<module {Builtins.repr(__name__)} (built-in)>";
         public override string ToString() => __repr__();
 
         /// <summary>The standard modules of the runtime (Typhon.Stdlib's static classes, 'x_' named 'x') and __main__.</summary>
-        internal static OrderedDictionary<string, object?> All()
+        internal static OrderedDictionary<string, object?> All(Type? mainModule = null)
         {
             var d = new OrderedDictionary<string, object?>();
             Type[] types;
@@ -361,12 +433,13 @@ namespace Typhon.Runtime
             foreach (var t in types.Where(t => t.Namespace == "Typhon.Stdlib" && !t.IsNested && t.IsAbstract && t.IsSealed).OrderBy(t => t.Name, StringComparer.Ordinal))
             {
                 string name = t.Name.EndsWith('_') ? t.Name.Substring(0, t.Name.Length - 1) : t.Name;
-                if (!d.ContainsKey(name)) d[name] = new PyModule(name, t);
+                if (!d.ContainsKey(name)) d[name] = Of(t, name);
                 foreach (var nested in t.GetNestedTypes().Where(n => n.IsAbstract && n.IsSealed && char.IsLower(n.Name[0])))
-                    d.TryAdd(name + "." + nested.Name, new PyModule(name + "." + nested.Name, nested));
+                    d.TryAdd(name + "." + nested.Name, Of(nested, name + "." + nested.Name));
             }
-            d.TryAdd("builtins", new PyModule("builtins", typeof(Builtins)));
-            d["__main__"] = new PyModule("__main__", Assembly.GetEntryAssembly()?.GetType("__main__"));
+            d.TryAdd("builtins", Of(typeof(Builtins), "builtins"));
+            mainModule ??= Assembly.GetEntryAssembly()?.GetType("__main__");
+            d["__main__"] = mainModule == null ? new PyModule("__main__", null) : Of(mainModule, "__main__");
             return d;
         }
     }

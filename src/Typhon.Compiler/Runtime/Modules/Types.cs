@@ -166,7 +166,7 @@ namespace Typhon.Stdlib
         }
 
         /// <summary>MethodType(function, instance): the function bound to the instance (called with it as the first argument).</summary>
-        internal sealed class MethodType : System.Dynamic.DynamicObject, IPyRepr
+        internal sealed class MethodType : System.Dynamic.DynamicObject, IPyRepr, IPyKeywordCallable
         {
             public readonly object? __func__;
             public readonly object? __self__;
@@ -177,17 +177,18 @@ namespace Typhon.Stdlib
                 __func__ = function; __self__ = instance;
             }
             public string __name__ => __func__ is PyFunction f ? f.__name__ : "method";
-            public object? __call__(params object?[] args) => Builtins.__invoke(__func__, new[] { __self__ }.Concat(args).ToArray());
+            public object? __call__(params object?[] args) => __call_kw__(args, null);
+            public object? __call_kw__(object?[] args, IDictionary<string, object?>? kwargs) =>
+                Builtins.__invoke_kw(__func__, [__self__, .. args], kwargs);
             public override bool TryInvoke(System.Dynamic.InvokeBinder binder, object?[]? args, out object? result)
             {
                 args ??= Array.Empty<object?>();
                 var names = binder.CallInfo.ArgumentNames;
+                if (names.Count == 0) { result = __call__(args); return true; }
                 int positional = args.Length - names.Count;
-                var all = new[] { __self__ }.Concat(args.Take(positional)).ToArray();
-                if (names.Count == 0) { result = Builtins.__invoke(__func__, all); return true; }
                 var kw = new Dictionary<string, object?>();
                 for (int i = 0; i < names.Count; i++) kw[names[i]] = args[positional + i];
-                result = Builtins.__invoke_kw(__func__, all, kw);
+                result = __call_kw__(args[..positional], kw);
                 return true;
             }
             public override bool Equals(object? obj) => obj is MethodType m && Equals(m.__func__, __func__) && ReferenceEquals(m.__self__, __self__);
@@ -272,7 +273,34 @@ namespace Typhon.Stdlib
         internal sealed class CodeType { CodeType() { } }
         internal sealed class CellType { CellType() { } }
         internal sealed class FrameType { FrameType() { } }
-        internal sealed class TracebackType { TracebackType() { } }
+        internal sealed class TracebackType
+        {
+            static readonly System.Runtime.CompilerServices.ConditionalWeakTable<System.Exception, TracebackType> Cache = new();
+            public TracebackType? tb_next { get; set; }
+            public sys_.frame tb_frame { get; }
+            public long tb_lasti { get; }
+            public long tb_lineno { get; }
+
+            public TracebackType(TracebackType? tb_next, sys_.frame tb_frame, long tb_lasti, long tb_lineno)
+            {
+                this.tb_next = tb_next;
+                this.tb_frame = tb_frame;
+                this.tb_lasti = tb_lasti;
+                this.tb_lineno = tb_lineno;
+            }
+
+            internal static TracebackType? Of(System.Exception exception)
+            {
+                if (exception.StackTrace == null) return null;
+                return Cache.GetValue(exception, e =>
+                {
+                    TracebackType? next = null;
+                    foreach (var frame in sys_.frame.FromStack(new System.Diagnostics.StackTrace(e, true)))
+                        next = new TracebackType(next, frame, frame.f_lasti, frame.f_lineno);
+                    return next!;
+                });
+            }
+        }
         internal sealed class GeneratorType { GeneratorType() { } }
         internal sealed class CoroutineType { CoroutineType() { } }
         internal sealed class AsyncGeneratorType { AsyncGeneratorType() { } }

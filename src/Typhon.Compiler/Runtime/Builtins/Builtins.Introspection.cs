@@ -45,14 +45,6 @@ namespace Typhon.Runtime
             if (System.Diagnostics.Debugger.IsAttached) System.Diagnostics.Debugger.Break();
         }
 
-        // ── code at run time: Typhon compiles ahead of time and has no interpreter ──
-
-        static Exception NoInterpreter(string what) =>
-            new NotImplementedException($"{what}() is not supported: Typhon compiles programs ahead of time and has no Python interpreter at run time");
-        public static dynamic? compile(object? source, object? filename = null, object? mode = null, long flags = 0, bool dont_inherit = false, long optimize = -1) => throw NoInterpreter("compile");
-        public static void exec(object? source, object? globals = null, object? locals = null) => throw NoInterpreter("exec");
-        public static dynamic? eval(object? source, object? globals = null, object? locals = null) => throw NoInterpreter("eval");
-
         // ── issubclass ──
 
         static bool IsIntType(Type t) => t == typeof(long) || t == typeof(int) || t == typeof(short) || t == typeof(byte) || t == typeof(BigInteger);

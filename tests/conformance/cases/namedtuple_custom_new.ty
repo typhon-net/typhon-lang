@@ -1,0 +1,34 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+from collections import namedtuple
+
+
+class Summary(namedtuple("Summary", "failed attempted")):
+    def __new__(cls, failed, attempted, *, skipped=0):
+        summary = super().__new__(cls, failed, attempted)
+        summary.skipped = skipped
+        return summary
+
+    def __repr__(self):
+        if self.skipped:
+            return f"Summary(failed={self.failed!r}, attempted={self.attempted!r}, skipped={self.skipped!r})"
+        return super().__repr__()
+
+
+ordinary = Summary(1, 4)
+extra = Summary(2, 5, skipped=3)
+print(repr(ordinary), repr(extra))
+print(extra.failed, extra.attempted, extra.skipped)
+a, b = extra
+print(a, b, extra[0], extra[-1], len(extra), tuple(extra))
+print(extra._asdict())
+print(tuple(extra._replace(failed=0)), tuple(Summary._make([5, 9])))
+
+
+class Shifted(namedtuple("Shifted", ("left", "right"))):
+    def __new__(cls, coords: list[int]):
+        return super().__new__(cls, *coords)
+
+
+print(tuple(Shifted([6, 7])), tuple(Shifted._make([8, 9])))

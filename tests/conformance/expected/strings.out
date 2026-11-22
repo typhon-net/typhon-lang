@@ -12,5 +12,6 @@ left    |   right|-3.5|+3|1e+10|0.00012|123.456
 Hello Typhon! len=6 upper=TYPHON repr='Typhon'
 1 + 2 = 3 aba    x
 "it's" 'say "hi"' 'tab\there' 42 2.5 True None
+'\x00\x1b\x7f\x85\x0b\x0c' '\xa0\u200b\ufeff' '\ue000\U000f0000' 'é 雪 😀'
 65 a ÄÖÜ straße 3
 ['a', 'b', 'c'] ['h', 'e', 'y'] ['a', 'a', 'a', 'b', 'n', 'n']

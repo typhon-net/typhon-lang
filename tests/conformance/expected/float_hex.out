@@ -1,0 +1,12 @@
+-7.0 0.5 16.0
+1.0 1.0000000000000004
+5e-324 0.0 -0.0
+1.7976931348623157e+308
+inf -inf nan
+-0.0
+invalid '0x'
+invalid '0x.1p+'
+invalid '0x1..2'
+invalid '0x1\x00'
+invalid '0x1_2'
+overflow

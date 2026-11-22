@@ -76,10 +76,11 @@ namespace Typhon.Compiler.Emit
             if (!isInterface && c.Body.OfType<FunctionDef>().Any(f => f.Name == "__len__" && f.Params.Count == 1 && f.Returns is NameExpr rn && rn.Id == "int"))
                 baseTypes.Add("global::Typhon.Runtime.IPyLen");
             // a namedtuple: a tuple of its fields (unpacking, indexing, iteration, len, comparison, repr)
+            if (!isInterface && (c.NamedTupleFields != null || c.Body.OfType<FunctionDef>().Any(f => f.Name == "__repr__")))
+                baseTypes.Add("global::Typhon.Runtime.IPyRepr");
             if (c.NamedTupleFields != null && !isInterface)
             {
                 baseTypes.Add("global::System.Runtime.CompilerServices.ITuple");
-                baseTypes.Add("global::Typhon.Runtime.IPyRepr");
                 baseTypes.Add("global::System.IComparable");
                 if (!baseTypes.Contains("global::Typhon.Runtime.IPyLen")) baseTypes.Add("global::Typhon.Runtime.IPyLen");
                 if (iter == null) { baseTypes.Add("global::System.Collections.Generic.IEnumerable<object?>"); ctx.IterElementType = "object"; }
@@ -89,7 +90,12 @@ namespace Typhon.Compiler.Emit
             _w.Open();
 
             if (isInterface) EmitInterfaceBody(c);
-            else EmitClassBody(c, ctx, bases, isAbstract);
+            else
+            {
+                EmitClassBody(c, ctx, bases, isAbstract);
+                if (c.UninitializedSingleton)
+                    _w.Line($"internal static dynamic {ClassModel.AllocateSingleton}() => global::System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(typeof({ctx.CsSelfType}));");
+            }
 
             _w.Close();
             _cls = savedCls; _scope = savedScope; _emptyFields = savedEmptyFields;
@@ -318,6 +324,14 @@ namespace Typhon.Compiler.Emit
         void EmitClassBody(ClassDef c, ClassContext ctx, List<Expr> bases, bool isAbstract)
         {
             var methods = c.Body.OfType<FunctionDef>().ToList();
+            string InstanceStorage(string name, string type, string visibility, string initializer = "")
+            {
+                // An auto-property reserves get_name and set_name in C#. A Python data attribute can coexist with those methods.
+                bool reservesMethod = methods.Any(m => m.Name == "get_" + name || m.Name == "set_" + name);
+                string suffix = reservesMethod ? (initializer.Length == 0 ? ";" : initializer) : " { get; set; }" + initializer;
+                return $"{SurfaceVisibility(visibility, type)} {type} {Esc(name)}{suffix}";
+            }
+
             var declared = new HashSet<string>();
             foreach (var m in methods)
                 if (m.Returns != null && !m.IsAsync && m.TypeParams.Count == 0 && !AstWalker.ContainsOutsideNestedScopes(m.Body, n => n is YieldExpr))
@@ -355,7 +369,7 @@ namespace Typhon.Compiler.Emit
                         else
                         {
                             if (_m.IsGdScript) GdFieldAttributes(c, n.Id, type);
-                            _w.Line($"{SurfaceVisibility(Visibility(n.Id, false), type)} {type} {Esc(n.Id)} {{ get; set; }}{init}");
+                            _w.Line(InstanceStorage(n.Id, type, Visibility(n.Id, false), init));
                             if (isDataclass) dataFields.Add(a);
                         }
                         break;
@@ -371,7 +385,8 @@ namespace Typhon.Compiler.Emit
                         ctx.Members.Add(n.Id);
                         ctx.FieldTypes[n.Id] = type; // read as self.name too (through the class)
                         LineDirective(s);
-                        _w.Line($"{SurfaceVisibility(Visibility(n.Id, false), type)} {GdStaticKeyword(c, n.Id, a.Value, type)} {type} {Esc(n.Id)} = {Checked(type != "dynamic" ? EmitExpr(a.Value, targetTyped: true) : EmitValue(a.Value))};");
+                        string value = type != "dynamic" ? EmitExpr(a.Value, targetTyped: true) : BoundMethodValue(a.Value) ?? EmitValue(a.Value);
+                        _w.Line($"{SurfaceVisibility(Visibility(n.Id, false), type)} {GdStaticKeyword(c, n.Id, a.Value, type)} {type} {Esc(n.Id)} = {Checked(value)};");
                         break;
                     }
                     case FunctionDef f: ctx.Members.Add(f.Name); break;
@@ -435,7 +450,7 @@ namespace Typhon.Compiler.Emit
                 ctx.Members.Add(name);
                 ctx.FieldTypes[name] = type;
                 LineDirective(method);
-                _w.Line($"{SurfaceVisibility(Visibility(name, false), type)} {type} {Esc(name)} {{ get; set; }}");
+                _w.Line(InstanceStorage(name, type, Visibility(name, false)));
             }
             // 2b. attributes other code creates (obj.attr = v, Cls.ATTR = v)
             if (Ti != null && _m.Classes.TryGetValue(c.Name, out var extCls) && extCls == c)
@@ -451,7 +466,7 @@ namespace Typhon.Compiler.Emit
                     ctx.Members.Add(name);
                     ctx.FieldTypes[name] = type;
                     LineDirective(c);
-                    _w.Line(isStatic ? $"{SurfaceVisibility("public", type)} static {type} {Esc(name)};" : $"{SurfaceVisibility("public", type)} {type} {Esc(name)} {{ get; set; }}");
+                    _w.Line(isStatic ? $"{SurfaceVisibility("public", type)} static {type} {Esc(name)};" : InstanceStorage(name, type, "public"));
                 }
             }
             if (declared.Count > 0) _w.Line();

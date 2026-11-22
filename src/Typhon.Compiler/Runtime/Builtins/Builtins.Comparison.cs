@@ -23,6 +23,20 @@ namespace Typhon.Runtime
 
     internal static partial class Builtins
     {
+        // CPython shares the boolean singletons and the cached ints when boxing would create separate objects.
+        public static bool __same_object(object? a, object? b)
+        {
+            if (ReferenceEquals(a, b)) return true;
+            if (a is bool x && b is bool y) return x == y;
+            return CachedInt(a, out long left) && CachedInt(b, out long right) && left == right;
+        }
+
+        static bool CachedInt(object? value, out long integer)
+        {
+            if (value is BigInteger big && big >= -5 && big <= 256) { integer = (long)big; return true; }
+            return AsInt(value, out integer) && integer is >= -5 and <= 256;
+        }
+
         /// <summary>Python's ==: numbers by value (1 == 1.0 == True), str by characters, containers element by element.</summary>
         public static bool eq(object? a, object? b)
         {

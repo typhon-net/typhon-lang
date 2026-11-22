@@ -63,12 +63,20 @@ namespace Typhon.Stdlib
         /// <summary>getline(filename, lineno): the line with its newline, or '' when the file or line does not exist.</summary>
         public static string getline(string filename, long lineno, object? module_globals = null)
         {
-            var lines = getlines(filename, module_globals);
-            return lineno >= 1 && lineno <= lines.Count ? lines[(int)lineno - 1] : "";
+            object lines = Builtins.__invoke((object)getlines, [filename, module_globals]);
+            return lineno >= 1 && lineno <= Builtins.len(lines) ? (string)Builtins.__getitem(lines, lineno - 1) : "";
         }
 
         /// <summary>getlines(filename): the file's lines (each with its newline), or [] when it cannot be read.</summary>
-        public static List<string> getlines(string filename, object? module_globals = null)
+        public static dynamic getlines = new PyClosure("getlines", (args, kwargs) =>
+        {
+            var bound = PyClosure.Args("getlines", ["filename", "module_globals"], args, kwargs, false);
+            return bound.Length is 1 or 2
+                ? GetLines((string)bound[0]!, bound.Length == 2 ? bound[1] : null)
+                : throw PyClosure.ArgCountError("getlines", 1, 2, bound.Length);
+        });
+
+        static List<string> GetLines(string filename, object? module_globals)
         {
             lock (_lock)
             {
@@ -240,6 +248,11 @@ namespace Typhon.Stdlib
             if (frames == null) return s;
             foreach (var f in frames.Reverse())
                 if (PyFrames.Of(f) is var (file, line, func)) s.Add(new FrameSummary(file, line, func));
+            return Limit(s, limit);
+        }
+
+        static StackSummary Limit(StackSummary s, object? limit)
+        {
             if (limit is long n)
             {
                 // limit >= 0: the first n (oldest) of a traceback; negative: the last |n|
@@ -249,12 +262,26 @@ namespace Typhon.Stdlib
             return s;
         }
 
+        static StackSummary PythonFrames(types.TracebackType tb, object? limit)
+        {
+            var result = new StackSummary();
+            foreach (var item in WalkTraceback(tb))
+                result.Add(new FrameSummary(item.tb_frame.f_code.co_filename, item.tb_lineno, item.tb_frame.f_code.co_name));
+            return Limit(result, limit);
+        }
+
+        static IEnumerable<types.TracebackType> WalkTraceback(types.TracebackType? tb)
+        {
+            for (; tb != null; tb = tb.tb_next) yield return tb;
+        }
+
         /// <summary>The frames an exception passed through (its traceback), or the current stack for a .NET StackTrace.</summary>
         static StackSummary TbFrames(object? tb, object? limit) => tb switch
         {
             null => new StackSummary(),
             Exception e => Frames(new StackTrace(e, true).GetFrames(), limit),
             StackTrace st => Frames(st.GetFrames(), limit),
+            types.TracebackType trace => PythonFrames(trace, limit),
             StackSummary ss => ss,
             _ => throw new InvalidCastException($"expected a traceback, not {Builtins.PyTypeName(tb.GetType())}"),
         };
@@ -297,7 +324,12 @@ namespace Typhon.Stdlib
         /// <summary>format_list(extracted_list): FrameSummary objects or (filename, lineno, name, line) tuples as text.</summary>
         public static List<string> format_list(IEnumerable extracted_list) => StackSummary.from_list(extracted_list).format();
 
-        public static IEnumerable<(object?, long)> walk_tb(object? tb) => TbFrames(tb, null).Select(f => ((object?)f, f.lineno));
+        public static IEnumerable<(object?, long)> walk_tb(object? tb) => tb switch
+        {
+            types.TracebackType trace => WalkTraceback(trace).Select(item => ((object?)item.tb_frame, item.tb_lineno)),
+            Exception error => WalkTraceback(types.TracebackType.Of(error)).Select(item => ((object?)item.tb_frame, item.tb_lineno)),
+            _ => TbFrames(tb, null).Select(f => ((object?)f, f.lineno)),
+        };
         public static IEnumerable<(object?, long)> walk_stack(object? f = null) => Frames(new StackTrace(1, true).GetFrames(), null).AsEnumerable().Reverse().Select(x => ((object?)x, x.lineno));
         public static void clear_frames(object? tb) { }
 
