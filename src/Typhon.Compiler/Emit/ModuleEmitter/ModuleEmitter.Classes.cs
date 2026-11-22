@@ -31,7 +31,8 @@ namespace Typhon.Compiler.Emit
                 TyphonBases(c).Any(b => HasVirtualSubclasses(b, depth + 1)));
 
         bool MayHaveVirtualSubclasses(string meta, ClassDef c) =>
-            c != null ? HasVirtualSubclasses(c) : meta?.StartsWith("Typhon.Stdlib.numbers+", StringComparison.Ordinal) == true;
+            c != null ? HasVirtualSubclasses(c) :
+                meta == "Typhon.Stdlib.os_+PathLike" || meta?.StartsWith("Typhon.Stdlib.numbers+", StringComparison.Ordinal) == true;
 
         void EmitClass(ClassDef c)
         {

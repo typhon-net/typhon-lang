@@ -1,0 +1,13 @@
+from typing import Any
+
+dict_factory: Any = frozendict
+mapping = dict_factory({"a": 2}, b=3)
+print(mapping["a"], mapping["b"])
+print(type(mapping) is frozendict, type(frozendict({1: 5})) is frozendict)
+dispatch = {frozendict: "mapping"}
+print(dispatch[type(mapping)])
+
+set_factory: Any = frozenset
+items = set_factory([3, 1])
+print(sorted(items), type(items) is frozenset)
+print(type(frozenset(["x"])) is frozenset)

@@ -110,7 +110,7 @@ namespace Typhon.Compiler.Emit
         static readonly Dictionary<string, string[]> CatchMap = new Dictionary<string, string[]>
         {
             // ArgumentOutOfRangeException derives from ArgumentException but is Python's IndexError
-            ["ValueError"] = new[] { "(global::System.ArgumentException and not global::System.ArgumentOutOfRangeException)", "global::System.FormatException" },
+            ["ValueError"] = new[] { "(global::System.ArgumentException and not global::System.ArgumentOutOfRangeException)", "global::System.FormatException", "global::Typhon.Stdlib.io.UnsupportedOperation" },
             ["IndexError"] = new[] { "global::System.ArgumentOutOfRangeException", "global::System.IndexOutOfRangeException" },
             ["TypeError"] = new[] { "global::System.InvalidCastException", "global::Microsoft.CSharp.RuntimeBinder.RuntimeBinderException" },
             ["ArithmeticError"] = new[] { "global::System.ArithmeticException" },
@@ -337,6 +337,7 @@ namespace Typhon.Compiler.Emit
             ["tuple"] = "global::System.Runtime.CompilerServices.ITuple", ["frozenset"] = "IReadOnlySet<dynamic>",
             ["Callable"] = "Delegate", ["Iterator"] = "IEnumerable<dynamic>", ["Iterable"] = "IEnumerable<dynamic>",
             ["range"] = "global::Typhon.Runtime.PyRange",
+            ["slice"] = "global::Typhon.Runtime.PySlice",
         };
 
         static readonly HashSet<string> GenericAliases = new HashSet<string>

@@ -1,0 +1,6 @@
+from types import NoneType
+
+value = None
+print(type(value) is NoneType, None.__class__ is NoneType)
+print(type(int) is type, int.__class__ is type)
+print(type(range(2)) is range, range.__name__)

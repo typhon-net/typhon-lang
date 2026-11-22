@@ -11,9 +11,11 @@
 namespace Typhon.Runtime
 {
     using System;
+    using System.Collections.Concurrent;
     using System.Collections.Generic;
     using System.Linq;
     using System.Reflection;
+    using System.Runtime.CompilerServices;
 
     internal static partial class Builtins
     {
@@ -34,7 +36,9 @@ namespace Typhon.Runtime
         static bool TryGetAttr(object? o, string name, out object? value, bool allowFallback = true)
         {
             value = null;
+            if (o == null && name == "__class__") { value = __type_of(o); return true; }
             if (o == null || name.StartsWith("<")) return false;
+            if (o is Typhon.Stdlib.builtins.super proxy && proxy.TryResolve(name, out value)) return true;
             if (o is PyModule module)
             {
                 if (name == "__dict__") { value = module.__dict__; return true; }
@@ -57,6 +61,7 @@ namespace Typhon.Runtime
                 if (TryGetClassData(t, name, out value)) return true;
                 if (t.GetMethods(StaticMembers | InstanceMembers).Any(m => m.Name == name)) { value = new PyBoundMethod(t, name); return true; }
                 if (FindNestedType(t, name) is Type nested) { value = nested; return true; }
+                if (TryBuiltinClassMethod(t, name, out value)) return true;
                 // CLR reflection consumers may also read members of the Type object itself.
             }
             if (o is PyFunction pf)
@@ -90,12 +95,28 @@ namespace Typhon.Runtime
                 catch (MissingMemberException) when (lateAttribute) { return false; }
             }
             if (type.GetField(name, InstanceMembers) is FieldInfo f) { value = f.GetValue(o); return true; }
-            if (type.GetMethods(BindingFlags.Instance | BindingFlags.Public).Any(m => m.Name == name)) { value = new PyBoundMethod(o, name); return true; }
             if (PyAttrDict.TryGetExtra(o, name, out value)) return true;
+            if (type.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Any(m => m.Name == name && (m.IsPublic || m.IsDefined(typeof(PySourceAttribute), false))))
+            {
+                value = new PyBoundMethod(o, name, includeNonPublic: true);
+                return true;
+            }
             if (PyClassDescriptors.TryGetAttribute(type, name, out value, instance: true)) return true;
+            if (o is System.Collections.IDictionary dictionary && name == "get")
+            {
+                value = new PyClosure(name, (args, keywords) =>
+                {
+                    if (args.Length is < 1 or > 2 || keywords?.Count > 0)
+                        throw PyClosure.ArgCountError(name, 1, 2, args.Length);
+                    object? key = KeyFor(dictionary, args[0]);
+                    return dictionary.Contains(key!) ? dictionary[key!] : args.Length == 2 ? args[1] : null;
+                });
+                return true;
+            }
             switch (name)
             {
-                case "__class__": value = type; return true;
+                case "__class__": value = __type_of(o); return true;
                 case "__dict__": value = new PyAttrDict(o); return true;
             }
             // Python's methods of built-in values ("abc".upper, xs.count): Builtins' extension methods for this value
@@ -138,6 +159,35 @@ namespace Typhon.Runtime
             }
             value = null;
             return false;
+        }
+
+        static readonly ConditionalWeakTable<Type, ConcurrentDictionary<string, PyClosure>> BuiltinClassMethods = new();
+        static readonly ILookup<string, MethodInfo> BuiltinExtensions = typeof(Builtins)
+            .GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .Where(method => method.IsDefined(typeof(ExtensionAttribute), false)).ToLookup(method => method.Name);
+
+        static bool TryBuiltinClassMethod(Type type, string name, out object? value)
+        {
+            bool applies = BuiltinExtensions[name].Any(method =>
+            {
+                Type receiver = method.GetParameters()[0].ParameterType;
+                if (receiver.IsGenericParameter || receiver.IsByRef) return false;
+                if (receiver.IsGenericType && receiver.ContainsGenericParameters) receiver = receiver.GetGenericTypeDefinition();
+                return IsSubclass(type, receiver);
+            });
+            if (!applies) { value = null; return false; }
+            var methods = BuiltinClassMethods.GetValue(type, _ => new ConcurrentDictionary<string, PyClosure>());
+            value = methods.GetOrAdd(name, method =>
+            {
+                var implementation = new PyBoundMethod(typeof(Builtins), method);
+                return new PyClosure(method, (args, keywords) =>
+                {
+                    if (args.Length == 0 || args[0] == null || !IsSubclass(args[0]!.GetType(), type))
+                        throw new InvalidCastException($"descriptor '{method}' requires a '{PyTypeName(type)}' object");
+                    return __invoke_kw(implementation, args, keywords);
+                });
+            });
+            return true;
         }
 
         static readonly System.Collections.Concurrent.ConcurrentDictionary<string, PyBoundMethod> ObjectMethods = new();

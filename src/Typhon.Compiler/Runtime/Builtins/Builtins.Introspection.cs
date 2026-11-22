@@ -36,6 +36,33 @@ namespace Typhon.Runtime
         /// <summary>Ellipsis, the value of ... .</summary>
         public static readonly Typhon.Stdlib.types.EllipsisType Ellipsis = new Typhon.Stdlib.types.EllipsisType();
 
+        public static Type __type_of(object? value)
+        {
+            if (value == null) return typeof(Typhon.Stdlib.types.NoneType);
+            if (value is Type) return typeof(Type);
+            if (value is PyFunction) return typeof(Typhon.Stdlib.types.FunctionType);
+            Type actual = value.GetType();
+            if (actual == typeof(ValueTuple)) return typeof(ITuple);
+            if (!actual.IsGenericType) return actual;
+            Type definition = actual.GetGenericTypeDefinition();
+            if (definition == typeof(List<>)) return typeof(List<object>);
+            if (definition == typeof(HashSet<>)) return typeof(HashSet<object>);
+            if (definition == typeof(OrderedDictionary<,>) || definition == typeof(Dictionary<,>))
+                return typeof(OrderedDictionary<object, object>);
+            if (definition == typeof(PyTuple<>) || actual.FullName?.StartsWith("System.ValueTuple") == true) return typeof(ITuple);
+            if (definition == typeof(frozendict<,>)) return typeof(frozendict<object, object>);
+            if (definition == typeof(frozenset<>)) return typeof(frozenset<object>);
+            return actual;
+        }
+
+        static frozendict<object, object?> ConstructFrozenDict(object?[] args, IDictionary<string, object?>? keywords, string name = "frozendict")
+        {
+            if (args.Length > 1) throw new InvalidCastException($"{name} expected at most 1 argument, got {args.Length}");
+            if (args.Length == 1 && args[0] == null) throw new InvalidCastException("'NoneType' object is not iterable");
+            return args.Length == 0 && keywords == null ? frozendict() :
+                frozendict(args.FirstOrDefault(), keywords ?? new Dictionary<string, object?>());
+        }
+
         /// <summary>sentinel(name, *, repr=None) (CPython 3.15): a unique object that prints as its name.</summary>
         public static PySingleton sentinel(string name, string? repr = null) => new PySingleton(name, repr);
 
@@ -109,6 +136,8 @@ namespace Typhon.Runtime
         {
             if (of == typeof(object)) return true;
             if (cls == of) return true;
+            if (of == typeof(Typhon.Stdlib.os_.PathLike) && cls.GetMethods().Any(m => m.Name == "__fspath__" && !m.IsStatic)) return true;
+            if (of == typeof(ArgumentException) && typeof(Typhon.Stdlib.io.UnsupportedOperation).IsAssignableFrom(cls)) return true;
             // the numbers ABCs: int is an Integral, float a Real, ...
             if (of.DeclaringType == typeof(Typhon.Stdlib.numbers) && Typhon.Stdlib.numbers.IsNumberType(cls, of)) return true;
             // Python's numeric tower among the builtins: bool is an int; ints are not floats

@@ -17,6 +17,8 @@
     <PlaygroundFrameworkReference Include="System.Text.Encoding.Extensions;System.Text.Encoding.CodePages;System.Security.Cryptography;System.Diagnostics.StackTrace" />
     <PlaygroundFrameworkReference Include="System.IO.FileSystem.DriveInfo;System.Net.NetworkInformation;System.Numerics.Vectors;System.ObjectModel" />
     <PlaygroundFrameworkReference Include="System.Diagnostics.Process;Microsoft.Win32.Primitives" />
+    <PlaygroundFrameworkReference Include="System.Net.Sockets;System.Net.Primitives;System.Net.NameResolution" />
+    <PlaygroundFrameworkReference Include="System.Reflection.Emit.Lightweight;System.Reflection.Emit.ILGeneration;System.Reflection.Primitives;System.IO.Compression" />
 
     <!-- built first; its assembly is shipped as a reference file, not referenced by the project -->
     <ProjectReference Include="$(MSBuildThisFileDirectory)../../src/Typhon.Runtime/Typhon.Runtime.csproj" ReferenceOutputAssembly="false" Private="false" />

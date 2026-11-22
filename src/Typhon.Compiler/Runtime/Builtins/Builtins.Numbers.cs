@@ -41,10 +41,22 @@ namespace Typhon.Runtime
             float f => f != 0,
             decimal m => m != 0,
             IPyBool pb => pb.__bool__(),
+            IPyLen pl => pl.__len__() != 0,
+            ITuple tuple => tuple.Length != 0,
             ICollection c => c.Count > 0,
-            IEnumerable e => e.GetEnumerator().MoveNext(),
+            IEnumerable e => EnumerableIsTruthy(e),
             _ => true,
         };
+
+        static bool EnumerableIsTruthy(IEnumerable value)
+        {
+            // Iteration is not a truth test in Python. A collection can answer from its length,
+            // while an iterator or a file remains true without consuming anything.
+            var collection = value.GetType().GetInterfaces()
+                .FirstOrDefault(t => t.IsGenericType && (t.GetGenericTypeDefinition() == typeof(ICollection<>) ||
+                                                       t.GetGenericTypeDefinition() == typeof(IReadOnlyCollection<>)));
+            return collection?.GetProperty("Count")?.GetValue(value) is not int count || count != 0;
+        }
 
         public static long @int(string s)
         {

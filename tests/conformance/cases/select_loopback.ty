@@ -1,0 +1,50 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import select
+import socket
+
+class Descriptor:
+    def __init__(self, fd: int) -> None:
+        self.fd: int = fd
+
+    def fileno(self) -> int:
+        return self.fd
+
+with socket.socket() as listener:
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    address: tuple[str, int] = listener.getsockname()
+    with socket.create_connection(address, timeout=2.0) as client:
+        ready, writable, exceptional = select.select([listener], [], [], 1)
+        print(ready == [listener], writable == [], exceptional == [])
+        peer, _ = listener.accept()
+        with peer:
+            ready, writable, exceptional = select.select([peer], [client], [peer], 0)
+            print(ready == [], writable == [client], exceptional == [])
+
+            client.sendall(b"ready")
+            descriptor = Descriptor(peer.fileno())
+            ready, writable, exceptional = select.select(
+                (peer, descriptor, peer.fileno(), peer), [], [], 1.0)
+            print(ready == [peer, descriptor, peer.fileno(), peer], writable == [], exceptional == [])
+            print(peer.recv(5))
+
+            ready, writable, exceptional = select.select([peer], [], [], 0.01)
+            print(ready == [], writable == [], exceptional == [])
+            client.shutdown(socket.SHUT_WR)
+            ready, _, _ = select.select([peer], [], [], 1)
+            print(ready == [peer], peer.recv(1) == b"")
+
+try:
+    select.select([-1], [], [], 0)
+except ValueError as error:
+    print(str(error))
+try:
+    select.select([1.5], [], [], 0)
+except TypeError as error:
+    print(str(error))
+try:
+    select.select([], [], [], -0.01)
+except ValueError as error:
+    print(str(error))

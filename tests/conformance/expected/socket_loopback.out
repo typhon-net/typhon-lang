@@ -1,0 +1,18 @@
+True True
+127.0.0.1 True 2.0 True
+127.0.0.1 True True 2.0
+True True
+False 0.0
+would block
+timed out
+b'a' b'a\x00bc'
+b'reply'
+True
+True
+True
+True
+1 ('127.0.0.1', 4321)
+127.0.0.1
+1025
+True
+closed socket

@@ -47,6 +47,21 @@ namespace Typhon.Runtime
                     if (!d.Contains(k!)) throw new KeyNotFoundException(repr(key));
                     return d[k!];
                 }
+                case PyBytes bytes when key is PySlice byteSlice:
+                {
+                    var (start, stop, step) = byteSlice.Bounds();
+                    return slice(bytes, start, stop, step);
+                }
+                case PyByteArray bytearray when key is PySlice arraySlice:
+                {
+                    var (start, stop, step) = arraySlice.Bounds();
+                    return slice(bytearray, start, stop, step);
+                }
+                case string or PyRange or IList or ITuple when key is PySlice sequenceSlice:
+                {
+                    var (start, stop, step) = sequenceSlice.Bounds();
+                    return slice(o, start, stop, step);
+                }
                 case string s when IsIndex(key): return str_at(s, __pos(key is bool kb ? (kb ? 1L : 0L) : key!, s.Length));
                 case IList list when IsIndex(key): return list[__pos(key is bool lb ? (lb ? 1L : 0L) : key!, list.Count)];
                 case ITuple t when IsIndex(key): return t[__pos(key is bool tb ? (tb ? 1L : 0L) : key!, t.Length)];
@@ -92,6 +107,12 @@ namespace Typhon.Runtime
             switch (o)
             {
                 case IDictionary d: d[KeyFor(d, key)!] = value; return;
+                case IList or PyByteArray when key is PySlice selection:
+                {
+                    var (start, stop, step) = selection.Bounds();
+                    setslice(o, start, stop, step, __iter_dyn(value!));
+                    return;
+                }
                 case IList list when IsIndex(key): list[__pos(key is bool lb ? (lb ? 1L : 0L) : key!, list.Count)] = value; return;
                 case null: throw new NullReferenceException("'NoneType' object does not support item assignment");
             }

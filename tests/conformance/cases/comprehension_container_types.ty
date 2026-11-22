@@ -1,0 +1,30 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import random
+
+class Square:
+    def __init__(self):
+        self.values = [random.randrange(1) for i in range(3)]
+
+def nested(board, pieces):
+    slots = [[[] for p in range(len(pieces))] for c in range(len(board))]
+    for c in board:
+        for p in pieces:
+            slots[c][p].append(c + p)
+    return slots
+
+print(Square().values)
+print(nested([0, 1], [0, 1]))
+
+class Node:
+    def __init__(self):
+        self.children = [None for _ in range(2)]
+
+    def set_child(self, child: Node) -> None:
+        self.children[0] = child
+
+root = Node()
+leaf = Node()
+root.set_child(leaf)
+print(root.children[0] is leaf, root.children[1] is None)

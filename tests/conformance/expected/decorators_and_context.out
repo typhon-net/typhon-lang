@@ -46,3 +46,7 @@ True True False False True True
 (1, 2, 3) (2, 3) 3 1
 (1, 2, 3) tuple
 (1, 'a') {'k': 2}
+body
+exit True
+exit False
+propagates

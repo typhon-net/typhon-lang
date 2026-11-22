@@ -95,6 +95,7 @@ namespace Typhon.Runtime
                 "utf-32" or "utf32" => new UTF32Encoding(false, true, true),
                 "utf-32-le" or "utf-32le" => new UTF32Encoding(false, false, true),
                 "utf-32-be" or "utf-32be" => new UTF32Encoding(true, false, true),
+                "locale" => CodePagesEncodingProvider.Instance.GetEncoding(0) ?? new UTF8Encoding(false, true),
                 _ => Encoding.GetEncoding(encoding),
             };
             if (errors == "strict") return enc;

@@ -283,6 +283,19 @@ namespace Typhon.Runtime
         /// </summary>
         static object Construct(Type t, object?[] args)
         {
+            if (t == typeof(frozendict<object, object>)) return ConstructFrozenDict(args, null);
+            if (t == typeof(OrderedDictionary<object, object>)) return dict(ConstructFrozenDict(args, null, "dict"));
+            if (t == typeof(List<object>) || t == typeof(HashSet<object>) || t == typeof(frozenset<object>) || t == typeof(ITuple))
+            {
+                if (args.Length > 1) throw new InvalidCastException($"{PyTypeName(t)} expected at most 1 argument, got {args.Length}");
+                var items = args.Length == 0 ? Array.Empty<object?>() : __iter_dyn(args[0]!);
+                if (t == typeof(List<object>)) return items.ToList();
+                if (t == typeof(ITuple)) return new PyTuple<object?>(items);
+                if (t == typeof(frozenset<object>)) return frozenset(items);
+                var set = __newset<object?>();
+                set.UnionWith(items);
+                return set;
+            }
             System.Reflection.ConstructorInfo? best = null; int bestScore = -1;
             foreach (var c in t.GetConstructors())
             {
@@ -361,6 +374,11 @@ namespace Typhon.Runtime
         /// <summary>A type's Python name: int for long, str for string, list for List&lt;T&gt;, a Typhon class's own name.</summary>
         public static string PyTypeName(Type t)
         {
+            if (t == typeof(Type)) return "type";
+            if (t == typeof(PyRange)) return "range";
+            if (t == typeof(PySlice)) return "slice";
+            if (t == typeof(ITuple)) return "tuple";
+            if (t == typeof(Typhon.Stdlib.types.FunctionType)) return "function";
             if (t == typeof(long) || t == typeof(int) || t == typeof(short) || t == typeof(byte) || t == typeof(System.Numerics.BigInteger)) return "int";
             if (t == typeof(double) || t == typeof(float)) return "float";
             if (t == typeof(Complex)) return "complex";
@@ -406,6 +424,9 @@ namespace Typhon.Runtime
             }
             if (f is Type t)
             {
+                if (t == typeof(frozendict<object, object>)) return ConstructFrozenDict(args, kw);
+                if (t == typeof(OrderedDictionary<object, object>)) return dict(ConstructFrozenDict(args, kw, "dict"));
+                if (t == typeof(frozenset<object>)) throw new InvalidCastException("frozenset() takes no keyword arguments");
                 var ctor = PyArgs.Best(t.GetConstructors(), args, kw, out var call) ?? throw PyArgs.NoFit(t.Name, kw, t.GetConstructors());
                 try { return ctor.Invoke(call); }
                 catch (System.Reflection.TargetInvocationException tie) when (tie.InnerException != null)

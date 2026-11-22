@@ -1,0 +1,4 @@
+True 'first\n' 'second' True
+True
+True 1 True 2 True
+True False False False False

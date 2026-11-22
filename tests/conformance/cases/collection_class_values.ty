@@ -1,0 +1,16 @@
+from types import FunctionType
+
+print(type([1]) is list, type(["x"]) is list, type([1]) is type(["x"]))
+print(type({1: "x"}) is dict, type(set([1])) is set, type((1,)) is tuple)
+print(type(tuple([1, 2])) is tuple, type(()) is tuple)
+
+def label():
+    return "value"
+
+print(type(label) is FunctionType)
+make_list = type([1])
+make_set = type(set([1]))
+make_dict = type({"a": 1})
+make_tuple = type((1,))
+print(make_list("abc"), sorted(make_set([2, 1, 2])), make_tuple("xy"))
+print(make_dict([("a", 1)], b=2))

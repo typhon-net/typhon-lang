@@ -141,6 +141,8 @@ namespace Typhon.Compiler.Emit
                 !HasDecorator(definition.Decorators, "property") && !IsCachedProperty(definition) &&
                 TryTypeExpr(a.Target, out var classType))
                 return $"{Rt("getattr")}(typeof({classType}), {CsString(a.Name)})";
+            if (InstanceMethodMayBeShadowed(a)) return EmitAttribute(a);
+            if (ProjectFunctionAttributeValue(a) is string projectFunction) return projectFunction;
             if (DotNetStaticMeta(a.Target) is string meta)
             {
                 var members = _r.GetMembers(meta, a.Name);
@@ -249,7 +251,7 @@ namespace Typhon.Compiler.Emit
                         {
                             _w.Line($"var {Esc(name)} = {rawValue ?? EmitValue(value)};");
                             // (a call dispatched dynamically whose result Typhon does not know: dynamic, as C# sees it)
-                            SetType(n.Id, inferred ?? (rawValue == null && IsDynamicallyDispatched(value) ? "dynamic" : null));
+                            SetType(n.Id, inferred ?? (rawValue == null && MaybeLateBound(value) ? "dynamic" : null));
                         }
                     }
                     else
@@ -404,6 +406,13 @@ namespace Typhon.Compiler.Emit
                         _w.Line($"{Rt("setattr")}((object?){Paren(EmitExpr(at.Target))}, {CsString(at.Name)}, {temporary});");
                         return;
                     }
+                    if (InstanceMethodOwner(at, out var shadowClass) != null)
+                    {
+                        if (Obs != null && shadowClass != null)
+                            Obs.AddExternal(shadowClass + "|" + at.Name, "dynamic");
+                        _w.Line($"{Rt("setattr")}((object?){Paren(EmitExpr(at.Target))}, {CsString(at.Name)}, (object?){Paren(rawValue ?? EmitLooseValue(value))});");
+                        return;
+                    }
                     if (Obs != null && rawValue == null) RecordExternalAttribute(at, value);
                     string ft = null;
                     if (at.Target is NameExpr tn && tn.Id == "self" && _cls != null) ft = InferType(at);
@@ -411,6 +420,9 @@ namespace Typhon.Compiler.Emit
                         value is CallExpr deque && deque.Args.All(a => a.Name == "maxlen" && !a.Star && !a.DoubleStar) &&
                         StdlibModuleOf(deque, out string factory) == "Typhon.Stdlib.collections" && factory == "deque")
                         rawValue = EmitEmptyContainer(value, ft, 'q');
+                    if (rawValue == null && value is ComprehensionExpr comp && ft != null && ft != "dynamic"
+                        && !TypeInference.IsNonePlaceholder(comp))
+                        rawValue = EmitComprehension(comp, ft);
                     string code = rawValue ?? (IsUnknownType(ft) ? BoundMethodValue(value) : null) ??
                         (TypeInference.IsNonePlaceholder(value) && ft != null && ft.StartsWith("List<")
                         ? EmitNonePlaceholder(value, ft) : EmitExpr(value, targetTyped: ft != null && ft != "dynamic"));
@@ -438,7 +450,8 @@ namespace Typhon.Compiler.Emit
                     if (rawValue == null && value is ListExpr sle && sle.Elts.Count > 0 && !sle.Elts.Any(x => x is StarredExpr) && et != null &&
                         et.StartsWith("List<") && !et.Contains("dynamic") && !et.Contains(TypeInference.Pending) && InferType(value) != et)
                         rawValue = $"new {et} {{ {string.Join(", ", sle.Elts.Select(x => EmitElementAs(x, GenericArg(et))))} }}";
-                    if ((InferType(sub.Target) == "dynamic" || InferType(sub.Target) == null && InferType(sub.Index) == "dynamic") &&
+                    if (InferType(sub.Index) == "global::Typhon.Runtime.PySlice" ||
+                        (InferType(sub.Target) == "dynamic" || InferType(sub.Target) == null && InferType(sub.Index) == "dynamic") &&
                         (!(sub.Index is TupleExpr) || InferType(sub.Target) == "dynamic" && sub.Index is TupleExpr stk && !stk.Elts.Any(x => x is SliceExpr)))
                     {
                         // (a[x, y] = v: the key is the tuple (x, y))

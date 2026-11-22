@@ -1,0 +1,26 @@
+import io
+import os
+import tempfile
+from pathlib import Path
+
+def read_line(path: str, mode: str):
+    with open(path, mode, encoding=None if 'b' in mode else 'locale') as file:
+        return file.readline()
+
+with tempfile.TemporaryDirectory() as folder:
+    path = os.path.join(folder, 'lines.txt')
+    with open(path, 'wb') as file:
+        file.write(b'first\r\nsecond')
+    print(repr(read_line(path, 'r')), repr(read_line(path, 'rb')))
+
+class LocalPath:
+    def __fspath__(self) -> str:
+        return 'source.txt'
+
+p = Path('source.txt')
+p2 = LocalPath()
+print(isinstance(p, os.PathLike), isinstance(p2, os.PathLike), os.fspath(p), os.fspath(p2))
+try:
+    io.StringIO().fileno()
+except ValueError:
+    print('no file descriptor')

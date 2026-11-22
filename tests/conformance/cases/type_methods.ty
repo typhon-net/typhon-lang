@@ -1,0 +1,21 @@
+values: list[int] = [1, 2]
+sequence_type = type(values)
+duplicate = sequence_type.copy(values)
+duplicate.append(3)
+print(values, duplicate)
+
+mapping = {"a": 1}
+make_copy = type(mapping).copy
+print(make_copy(mapping), hasattr(sequence_type, "upper"))
+try:
+    sequence_type.copy(mapping)
+except TypeError:
+    print("wrong receiver")
+
+class Marker:
+    @staticmethod
+    def label() -> str:
+        return "marker"
+
+instance_type = type(Marker())
+print(instance_type.label())

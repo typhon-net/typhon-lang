@@ -215,3 +215,18 @@ def star_g(*args, **kw):
 r = star_f(1, 2, 3)
 print(r, type(r).__name__)
 star_g(1, "a", k=2)
+
+class NonSuppressing:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        print('exit', exc is None)
+
+with NonSuppressing():
+    print('body')
+try:
+    with NonSuppressing():
+        raise ValueError('propagates')
+except ValueError as error:
+    print(str(error))

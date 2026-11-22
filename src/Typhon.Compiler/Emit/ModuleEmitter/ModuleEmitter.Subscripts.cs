@@ -39,6 +39,8 @@ namespace Typhon.Compiler.Emit
                 string step = sl.Step != null ? ", " + SliceBound(sl.Step) : "";
                 return $"{Rt("slice")}({target}, {(sl.Lower != null ? SliceBound(sl.Lower) : "null")}, {(sl.Upper != null ? SliceBound(sl.Upper) : "null")}{step})";
             }
+            if (InferType(s.Index) == "global::Typhon.Runtime.PySlice")
+                return $"{Rt("__getitem")}((object?){target}, (object?){Paren(EmitExpr(s.Index))})";
             string targetType = InferType(s.Target);
             // a class deriving from list: positions like a list's (a Python int, maybe negative)
             if (BuiltinBaseType(targetType) is string subBase && subBase.StartsWith("List<")) targetType = subBase;

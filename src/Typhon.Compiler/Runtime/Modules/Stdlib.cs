@@ -235,6 +235,7 @@ namespace Typhon.Runtime
         // like CPython's WindowsPath, a path on Windows uses backslashes (Path("/tmp") / "x" is \tmp\x there)
         public Path(string p) { _p = p.Length == 0 ? "." : OperatingSystem.IsWindows() ? p.Replace('/', '\\') : p; }
         public static implicit operator string(Path p) => p._p;
+        public string __fspath__() => _p;
         public static Path operator /(Path a, string b) => new Path(System.IO.Path.Combine(a._p, b));
         public static Path operator /(Path a, Path b) => new Path(System.IO.Path.Combine(a._p, b._p));
         public string name => System.IO.Path.GetFileName(_p.TrimEnd('/', '\\'));

@@ -1,0 +1,14 @@
+from typing import Any
+
+mapping: Any = {1: "one"}
+which: Any = 1.0
+print(mapping.get(1), mapping.get(which), mapping.get(3), mapping.get(3, 42))
+getter = getattr(mapping, "get")
+print(getter(1), getter(2, "fallback"))
+
+class Other:
+    def get(self, key: str, default: str = "empty") -> str:
+        return key + ":" + default
+
+receiver: Any = Other()
+print(receiver.get("data"), receiver.get("data", "value"))

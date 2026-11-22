@@ -99,6 +99,29 @@ namespace Typhon.Compiler.Emit
                    TyphonBases(c).Select(b => MethodInHierarchy(b, name, depth + 1)).FirstOrDefault(f => f != null);
         }
 
+        ClassDef InstanceMethodOwner(AttributeExpr member, out string classKey)
+        {
+            string receiver = InferType(member.Target);
+            classKey = ClassKeyOfType(receiver, out _);
+            ClassDef cls = member.Target is NameExpr { Id: "self" } && HasSelfInScope() ? _cls?.Def :
+                classKey != null ? ClassDefOfKey(classKey) : null;
+            if (cls == null || MethodInHierarchy(cls, member.Name) is not FunctionDef method ||
+                HasDecorator(method.Decorators, "property") || IsCachedProperty(method)) return null;
+            return cls;
+        }
+
+        bool InstanceMethodMayBeShadowed(AttributeExpr member)
+        {
+            ClassDef cls = InstanceMethodOwner(member, out var classKey);
+            if (cls == null) return false;
+            if (classKey != null && Ti?.ExternalFields.ContainsKey(classKey + "|" + member.Name) == true) return true;
+            return AssignedInHierarchy(cls, 0);
+
+            bool AssignedInHierarchy(ClassDef c, int depth) => depth <= 20 &&
+                (CollectImplicitFields(c).ContainsKey(member.Name) ||
+                 TyphonBases(c).Any(parent => AssignedInHierarchy(parent, depth + 1)));
+        }
+
         string ExternalType(string key) =>
             Ti != null && Ti.ExternalFields.TryGetValue(key, out var t) ? t : _dry ? TypeInference.Pending : null;
 

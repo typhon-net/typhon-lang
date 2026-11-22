@@ -362,7 +362,8 @@ namespace Typhon.Compiler.Emit
                         continue;
                     }
                     string ot = da.Target is NameExpr dsn && dsn.Id == "self" && _cls != null && HasSelfInScope() ? _cls.CsSelfType : InferType(da.Target);
-                    if (ClassKeyOfType(ot, out _) is string descriptorClass && ClassDefOfKey(descriptorClass) is ClassDef cachedOwner &&
+                    if (InstanceMethodOwner(da, out _) != null ||
+                        ClassKeyOfType(ot, out _) is string descriptorClass && ClassDefOfKey(descriptorClass) is ClassDef cachedOwner &&
                         MethodInHierarchy(cachedOwner, da.Name) is FunctionDef cached && IsCachedProperty(cached))
                     {
                         _w.Line($"{Rt("delattr")}((object?){Paren(EmitExpr(da.Target))}, {CsString(da.Name)});");
@@ -405,20 +406,29 @@ namespace Typhon.Compiler.Emit
                 if (h.Type == null) _w.Line(name == null ? "catch" : $"catch (Exception {Esc(csName)})");
                 else
                 {
-                    var types = CatchTypes(h.Type, h);
+                    var specs = h.Type is TupleExpr ht ? ht.Elts : new List<Expr> { h.Type };
+                    // Exception aliases may be Type-valued fields, e.g. socket.timeout.
+                    var aliases = specs.Where(x => (InferType(x) is "System.Type" or "global::System.Type") &&
+                        !TryTypeExpr(x, out _)).ToList();
+                    var types = specs.Except(aliases).SelectMany(x => CatchTypes(x, h)).Distinct().ToList();
+                    IEnumerable<string> AliasTests(string caught) => aliases.Select(x =>
+                        $"global::Typhon.Stdlib.builtins.isinstance({caught}, (object?){Paren(EmitValue(x))})");
                     // except Exception: not SystemExit, KeyboardInterrupt or GeneratorExit (they derive from BaseException only)
-                    bool exceptException = (h.Type is TupleExpr ht ? ht.Elts : new List<Expr> { h.Type }).Any(x => x is NameExpr xn && xn.Id == "Exception" && !IsShadowed("Exception"));
+                    bool exceptException = specs.Any(x => x is NameExpr xn && xn.Id == "Exception" && !IsShadowed("Exception"));
                     if (exceptException)
                     {
                         string v = csName ?? NewTmp("e");
-                        var others = types.Where(x => x != "Exception" && x != "global::System.Exception" && x != "System.Exception").Select(x => $"{Esc(v)} is {x}");
+                        var others = types.Where(x => x != "Exception" && x != "global::System.Exception" && x != "System.Exception")
+                            .Select(x => $"{Esc(v)} is {x}").Concat(AliasTests(Esc(v)));
                         _w.Line($"catch (Exception {Esc(v)}) when ({Esc(v)} is not global::Typhon.Runtime.IPyBaseException{string.Concat(others.Select(o => " || " + o))})");
                     }
-                    else if (types.Count == 1 && !types[0].StartsWith("(")) _w.Line(name == null ? $"catch ({types[0]})" : $"catch ({types[0]} {Esc(csName)})");
+                    else if (aliases.Count == 0 && types.Count == 1 && !types[0].StartsWith("("))
+                        _w.Line(name == null ? $"catch ({types[0]})" : $"catch ({types[0]} {Esc(csName)})");
                     else
                     {
                         string v = csName ?? NewTmp("e");
-                        _w.Line($"catch (Exception {Esc(v)}) when ({string.Join(" || ", types.Select(x => $"{Esc(v)} is {x}"))})");
+                        var tests = types.Select(x => $"{Esc(v)} is {x}").Concat(AliasTests(Esc(v)));
+                        _w.Line($"catch (Exception {Esc(v)}) when ({string.Join(" || ", tests)})");
                     }
                 }
                 string saved = null;
@@ -541,8 +551,11 @@ namespace Typhon.Compiler.Emit
             else Unsupported(item.Var, "this 'with ... as' target");
             string exitNone = isAsync ? (typed ? $"await {cm}.__aexit__(null, null, null)" : $"await {Rt("__aexit")}((object?){cm}, null)")
                                       : typed ? $"{cm}.__exit__(null, null, null)" : $"{Rt("__exit")}((object?){cm}, null)";
+            string syncExitType = !isAsync && typed ? MemberType(t, "__exit__", method: true) ??
+                (DotNetMeta(t) is string exitMeta ? _r.GetMembers(exitMeta, "__exit__").FirstOrDefault(x => x.IsMethod && x.Parameters.Count == 3)?.Type : null) : null;
+            // A Python __exit__ may return None, represented by a CLR void method.
             string exitExc = isAsync ? (typed ? $"(await {cm}.__aexit__((object){e}.GetType(), {e}, null))" : $"(await {Rt("__aexit")}((object?){cm}, {e}))")
-                                     : typed ? $"{cm}.__exit__((object){e}.GetType(), {e}, null)" : $"{Rt("__exit")}((object?){cm}, {e})";
+                                     : syncExitType is not (null or "void") ? $"{cm}.__exit__((object){e}.GetType(), {e}, null)" : $"{Rt("__exit")}((object?){cm}, {e})";
             _w.Line($"bool {raised} = false;");
             _w.Line("try");
             _w.Open();

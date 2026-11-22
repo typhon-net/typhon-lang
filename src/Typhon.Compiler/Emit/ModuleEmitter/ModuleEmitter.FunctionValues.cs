@@ -105,6 +105,16 @@ namespace Typhon.Compiler.Emit
             return FunctionValueType(owner, def.Name) + ".Instance";
         }
 
+        string ProjectFunctionAttributeValue(AttributeExpr attribute)
+        {
+            if (DottedName(attribute.Target) is not string dotted || IsLocal(dotted.Split('.')[0]) ||
+                ModuleRef(dotted) is not ModuleInfo module || !module.Functions.Contains(attribute.Name) ||
+                ProjectModuleValue(attribute.Target) is not string value) return null;
+            if (Obs != null && TargetOf(module, null, attribute.Name) is InferenceTarget target && target.InferParams)
+                Obs.Calls.Add(new Observations.Call { Callee = target.Key, Types = null, Context = _ctxFallbackKey });
+            return $"{Rt("getattr")}({value}, {CsString(attribute.Name)})";
+        }
+
         /// <summary>The nested functions emitted so far: their definitions and C# signatures (for their values).</summary>
         readonly Dictionary<string, (FunctionDef Def, Signature Sig)> _localFunctionSigs = new Dictionary<string, (FunctionDef, Signature)>();
 

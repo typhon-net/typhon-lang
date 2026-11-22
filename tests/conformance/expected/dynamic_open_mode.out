@@ -1,0 +1,3 @@
+'first\n' b'first\r\n'
+True True source.txt source.txt
+no file descriptor

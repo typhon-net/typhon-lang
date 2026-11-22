@@ -1,0 +1,67 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import _socket
+import socket
+
+def receiven(sock, count: int) -> bytes:
+    data = b""
+    while len(data) < count:
+        chunk = sock.recv(count - len(data))
+        if not chunk:
+            raise EOFError("early EOF from loopback peer")
+        data += chunk
+    return data
+
+print(_socket.AF_INET == socket.AF_INET, _socket.SOCK_STREAM == socket.SOCK_STREAM)
+socket.setdefaulttimeout(2.0)
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    address = listener.getsockname()
+    print(address[0], address[1] > 0, listener.gettimeout(),
+          bool(listener.getsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR)))
+
+    with socket.create_connection(address, timeout=1.0, source_address=("127.0.0.1", 0)) as client:
+        peer, remote = listener.accept()
+        with peer:
+            print(remote[0], remote[1] == client.getsockname()[1],
+                  client.getpeername()[1] == address[1], peer.gettimeout())
+            print(client.family == socket.AF_INET, client.type == socket.SOCK_STREAM)
+            peer.setblocking(False)
+            print(peer.getblocking(), peer.gettimeout())
+            try:
+                peer.recv(1)
+            except BlockingIOError:
+                print("would block")
+            peer.settimeout(0.01)
+            try:
+                peer.recv(1)
+            except socket.timeout:
+                print("timed out")
+            peer.settimeout(2.0)
+            client.sendall(b"a\x00bc")
+            print(peer.recv(1, socket.MSG_PEEK), receiven(peer, 4))
+            peer.sendall(b"reply")
+            print(receiven(client, 5))
+            client.shutdown(socket.SHUT_WR)
+            print(peer.recv(1) == b"")
+        print(peer.fileno() == -1)
+    print(client.fileno() == -1)
+print(listener.fileno() == -1)
+socket.setdefaulttimeout(None)
+info = socket.getaddrinfo("127.0.0.1", 4321, socket.AF_INET, socket.SOCK_STREAM)
+print(len(info), info[0][4])
+print(socket.inet_ntoa(socket.inet_aton("127.0.0.1")))
+print(socket.ntohs(socket.htons(1025)))
+
+try:
+    with socket.socket() as closed:
+        raise ValueError("close on exception")
+except ValueError:
+    print(closed.fileno() == -1)
+try:
+    closed.recv(1)
+except (socket.error, OSError):
+    print("closed socket")

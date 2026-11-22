@@ -36,7 +36,28 @@ namespace Typhon.Runtime
             if ((ulong)i >= (ulong)xs.Count) throw new ArgumentOutOfRangeException(nameof(i), "list assignment index out of range");
             xs.RemoveAt((int)i);
         }
-        public static void delitem(object container, object? key) => ((dynamic)container).__delitem__((dynamic?)key);
+        public static void delitem(object container, object? key)
+        {
+            if (key is PySlice selection)
+            {
+                if (container is IDictionary mapping)
+                {
+                    if (!mapping.Contains(selection)) throw new KeyNotFoundException(repr(selection));
+                    mapping.Remove(selection);
+                    return;
+                }
+                IList? list = container is PyByteArray bytes ? bytes.Buffer : container as IList;
+                if (list != null)
+                {
+                    var (start, stop, step) = selection.Bounds();
+                    var positions = SliceIndices(list.Count, start, stop, step);
+                    positions.Sort();
+                    for (int i = positions.Count - 1; i >= 0; i--) list.RemoveAt(positions[i]);
+                    return;
+                }
+            }
+            ((dynamic)container).__delitem__((dynamic?)key);
+        }
         public static long len(object o)
         {
             if (o is IPyLen pl) return pl.__len__();

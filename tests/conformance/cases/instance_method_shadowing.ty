@@ -1,0 +1,26 @@
+from io import StringIO
+
+class Reader:
+    def _read(self):
+        return 'original'
+
+    def attach(self, stream):
+        self._read = stream.readline
+
+    def release(self):
+        del self._read
+
+    def through_self(self):
+        return self._read()
+
+reader = Reader()
+other = Reader()
+print(reader._read(), reader.through_self())
+reader.attach(StringIO('attached'))
+print(reader.through_self(), getattr(reader, '_read')(), other._read())
+reader.release()
+print(reader._read(), reader.through_self())
+try:
+    reader.release()
+except AttributeError:
+    print('already restored')

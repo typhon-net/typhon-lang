@@ -111,7 +111,7 @@ namespace Typhon.Stdlib
                 default: throw new InvalidCastException("isinstance() arg 2 must be a type, a tuple of types, or a union");
             }
         }
-        public static Type type(object? o) => o?.GetType() ?? typeof(Typhon.Stdlib.types.NoneType);
+        public static Type type(object? o) => Builtins.__type_of(o);
 
         public static dynamic @int(object? x = null) => x == null ? 0L : Builtins.@int((dynamic)x);
         public static dynamic @int(object x, long @base) => Builtins.@int((dynamic)x, @base);

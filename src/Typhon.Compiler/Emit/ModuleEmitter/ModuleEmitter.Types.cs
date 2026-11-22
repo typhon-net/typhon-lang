@@ -104,9 +104,12 @@ namespace Typhon.Compiler.Emit
                     if (!IsLocal(n.Id) && _moduleFieldTypes.TryGetValue(n.Id, out var mt)) return mt;
                     return null;
                 }
+                case AttributeExpr reflected when TypeObjectMember(reflected):
+                    return "dynamic";
                 case AttributeExpr tupleField when TupleFieldOwner(tupleField) != null:
                     return "global::Typhon.Runtime.PyTupleGetter";
                 case AttributeExpr shadowed when IsInstanceClassDefault(shadowed): return "dynamic";
+                case AttributeExpr sm when InstanceMethodMayBeShadowed(sm): return "dynamic";
                 case AttributeExpr at when at.Target is NameExpr self && self.Id == "self" && _cls != null:
                     return _cls.FieldTypes.TryGetValue(at.Name, out var ft) ? ft : InheritedFieldType(_cls.Def, at.Name) ??
                            (_m.IsGdScript ? GdSelfMemberType(at.Name) : null) ??
@@ -136,6 +139,7 @@ namespace Typhon.Compiler.Emit
                 }
                 case SubscriptExpr ix when !(ix.Index is SliceExpr):
                 {
+                    if (InferType(ix.Index) == "global::Typhon.Runtime.PySlice") return "dynamic";
                     var t = InferType(ix.Target);
                     if (IsBytesType(t)) return "long"; // b[i] is an int
                     if (NamedTupleOf(t) is ClassDef ntd && ConstIntValue(ix.Index) is long ntk && ntk >= -ntd.NamedTupleFields.Count && ntk < ntd.NamedTupleFields.Count)
@@ -173,6 +177,7 @@ namespace Typhon.Compiler.Emit
                     if (t != null && t.StartsWith(PyTuplePrefix)) return t;
                     return t != null && (t == "string" || t.StartsWith("List<") || t.EndsWith("[]") || t == "dynamic") ? t : null;
                 }
+                case CallExpr { Func: AttributeExpr sm } when InstanceMethodMayBeShadowed(sm): return "dynamic";
                 case CallExpr call: return CallType(call);
                 case BinOpExpr pf when pf.Op == "%" && (pf.Left is ConstExpr pfc && pfc.Kind == ConstKind.Str || InferType(pf.Left) == "string"): return "string";
                 case BinOpExpr lc when lc.Op == "+" && ListConcatMismatch(lc): return "List<dynamic>";
@@ -330,7 +335,7 @@ namespace Typhon.Compiler.Emit
                 if (MathCall(mc) is string mathType) return mathType;
                 var ot = InferType(mc.Target);
                 if (ot == TypeInference.Pending) return TypeInference.Pending;
-                if (ot == "dynamic") return "dynamic"; // a method of a late-bound value returns a late-bound value
+                if (ot == "dynamic" || TypeObjectMember(mc)) return "dynamic";
                 if (ot != null && MemberType(ot, mc.Name, method: true) is string objRet) return objRet;
                 if (DotNetResultType(mc.Target, mc.Name, call) is string netRet) return netRet;
                 if (PythonMethodType(ot, mc.Name, call) is string pyRet) return pyRet;
@@ -353,15 +358,23 @@ namespace Typhon.Compiler.Emit
                     case "complex": return "global::System.Numerics.Complex";
                     case "getattr": case "vars": return "dynamic";
                     case "dir": return "List<string>";
+                    case "super": return call.Args.Count == 0 && Receivers.Contains(call) && _scope?.HasSelf == true ? null : "dynamic";
                     case "dict" when HasDictKeywords(call): return KeywordDictType(call);
                     case "bool": case "isinstance": case "any": case "all": return "bool";
                     case "cast": return call.Args.Count == 2 ? MapType(call.Args[0].Value, call) : null;   // typing.cast(T, x) is a C# cast to T
                     case "round": return call.Args.Count == 1 ? "long" : "double";
                     case "abs": return call.Args.Count == 1 ? (_big && IsIntegral(InferType(call.Args[0].Value)) ? IntT : InferType(call.Args[0].Value)) : null;
                     case "range": return "global::Typhon.Runtime.PyRange";
-                    case "open": return OpenMode(call)?.Contains('b') == true ? "global::Typhon.Runtime.PyBinaryFile" : "global::Typhon.Runtime.PyFile";
+                    case "open": return OpenMode(call) switch
+                    {
+                        null => "dynamic",
+                        string mode when mode.Contains('b') => "global::Typhon.Runtime.PyBinaryFile",
+                        _ => "global::Typhon.Runtime.PyFile",
+                    };
                     case "bytes": return PyBytesType;
                     case "bytearray": return PyByteArrayType;
+                    case "type" when call.Args.Count == 1: return "global::System.Type";
+                    case "slice": return "global::Typhon.Runtime.PySlice";
                     case "iter":
                     {
                         if (call.Args.Count != 1) return null;

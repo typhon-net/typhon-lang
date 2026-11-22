@@ -406,10 +406,15 @@ namespace Typhon.Compiler.Emit
             try
             {
                 foreach (var g in comp.Generators) BindTargetTypes(inner, g.Target, IterElementType(InferType(g.Iter)));
-                string elt = InferType(comp.Elt);
+                string elt = InferType(comp.Elt) ?? (comp.Elt switch
+                {
+                    ListExpr { Elts.Count: 0 } => "List<dynamic>",
+                    DictExpr { Keys.Count: 0 } => "OrderedDictionary<dynamic, dynamic>",
+                    _ => null,
+                });
                 if (elt == TypeInference.Pending) return elt;
                 // late-bound items: what the LINQ query builds ([f(x) for x in d] is a List<dynamic> to C#)
-                if (elt == "dynamic" && (comp.Kind == ComprehensionKind.List || comp.Kind == ComprehensionKind.Generator))
+                if ((elt == null || elt == "dynamic") && (comp.Kind == ComprehensionKind.List || comp.Kind == ComprehensionKind.Generator))
                     return comp.Kind == ComprehensionKind.List ? "List<dynamic>" : "IEnumerable<dynamic>";
                 if (elt == null || elt == "dynamic") return null;
                 switch (comp.Kind)

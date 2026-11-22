@@ -1,0 +1,61 @@
+class Root:
+    label = "root label"
+
+    def greet(self, text: str = "hi") -> str:
+        return "root " + text
+
+    @property
+    def rating(self) -> int:
+        return 11
+
+    @classmethod
+    def owner(cls) -> str:
+        return cls.__name__
+
+    @staticmethod
+    def total(a: int, b: int = 6) -> int:
+        return a + b
+
+class Middle(Root):
+    label = "middle label"
+
+    def greet(self, text: str = "hi") -> str:
+        return "middle " + text
+
+    @property
+    def rating(self) -> int:
+        return 22
+
+    def direct(self) -> str:
+        return super().greet()
+
+    def first_class(self):
+        return super()
+
+class Leaf(Middle):
+    def greet(self, text: str = "hi") -> str:
+        return "leaf " + text
+
+value = Leaf()
+s = super(Middle, value)
+print(super.__name__, type(s).__name__, isinstance(s, super))
+print(s.__thisclass__.__name__, s.__self__ is value, s.__self_class__.__name__)
+print(s.greet(), s.greet(text="yes"), s.rating, s.label)
+print(s.owner(), s.total(4))
+fn = s.greet
+print(fn("late"), getattr(s, "greet")("reflect"))
+print(super(Leaf, value).greet())
+print(value.direct(), value.first_class().greet())
+print(super(Middle, Leaf).greet(value))
+print(super(Middle).__get__(value).greet())
+try:
+    super(Leaf, Middle())
+except TypeError:
+    print("wrong receiver")
+try:
+    s.unknown()
+except AttributeError:
+    print("missing")
+
+super_type = super
+print(super_type(Middle, value).greet("alias"))

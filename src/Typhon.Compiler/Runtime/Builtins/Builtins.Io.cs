@@ -58,5 +58,15 @@ namespace Typhon.Runtime
             new PyFile(path, mode, encoding, errors, newline);
         /// <summary>open(path, "rb"/"wb"/...): a binary file (the compiler picks it for a literal mode with 'b').</summary>
         public static PyBinaryFile open_binary(string path, string mode = "rb") => new PyBinaryFile(path, mode);
+
+        public static dynamic open_dynamic(object path, string mode = "r", long buffering = -1,
+            string? encoding = null, string? errors = null, string? newline = null)
+        {
+            string name = Typhon.Stdlib.os_.__path(path);
+            if (!mode.Contains('b')) return open(name, mode, buffering, encoding, errors, newline);
+            if (encoding != null || errors != null || newline != null)
+                throw new ArgumentException("binary mode doesn't take an encoding, errors, or newline argument");
+            return open_binary(name, mode);
+        }
     }
 }

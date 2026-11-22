@@ -1,0 +1,21 @@
+key = slice(1, -1, 2)
+print(key, type(key) is slice, key.start, key.stop, key.step)
+print(key.indices(7), slice(None, None, -1).indices(4))
+print(slice(-99, 99, 2).indices(3), slice(2).indices(0))
+values: list[int] = [0, 1, 2, 3, 4, 5]
+print(values[key], "abcdef"[key], b"abcdef"[key])
+print((0, 1, 2, 3)[slice(None, None, -1)])
+values[slice(1, 5, 2)] = [8, 9]
+del values[slice(None, None, 2)]
+print(values)
+print({slice(1, 2): "value"}[slice(1, 2)])
+
+class Index:
+    def __index__(self) -> int:
+        return -2
+
+print(slice(Index(), None).indices(5))
+try:
+    slice(1, 2, 0).indices(5)
+except ValueError:
+    print("zero step")

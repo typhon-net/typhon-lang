@@ -164,7 +164,9 @@ namespace Typhon.Compiler.Emit
             string t = InferType(e);
             if (t == "dynamic" || IsDynamicallyDispatched(e)) return true;
             // a call of a Typhon function whose result type is not known yet may bind to its dynamic version
-            return e is CallExpr ce && CallTarget(ce, out bool ctor) is InferenceTarget it && !ctor && IsUnknownType(InferredCallType(it, ce.Args));
+            return e is CallExpr ce && CallTarget(ce, out bool ctor) is InferenceTarget it && !ctor && !it.Def.IsAsync &&
+                (it.Def.Returns == null || TypeInference.IsBareContainer(it.Def.Returns)) &&
+                IsUnknownType(InferredCallType(it, ce.Args));
         }
 
         static bool IsPythonContainer(string t) => t != null && (t == "string" || t.StartsWith("List<") || IsSetType(t) || IsDictType(t));
@@ -342,6 +344,7 @@ namespace Typhon.Compiler.Emit
         string EmitElementAs(Expr elt, string targetElem)
         {
             if (targetElem == null) return EmitValue(elt);
+            if (targetElem == "dynamic") return $"(dynamic){Paren(EmitValue(elt))}";
             if (elt is ComprehensionExpr inner) return EmitComprehension(inner, targetElem);
             if (targetElem == "double" && IsIntegral(InferType(elt)) && InferType(elt) != TypeInference.BigInt) return $"(double){Paren(EmitValue(elt))}";
             // [0] for a list[float] element: a list of the declared type (a collection expression has no type in a lambda)

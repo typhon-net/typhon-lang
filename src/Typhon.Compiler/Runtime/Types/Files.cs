@@ -44,7 +44,7 @@ namespace Typhon.Runtime
     }
 
     /// <summary>A file opened in binary mode ('rb', 'wb', 'ab', 'r+b', ...): reads and writes bytes (an io.BufferedReader/Writer/Random in CPython).</summary>
-    internal sealed class PyBinaryFile : io.BufferedIOBase
+    internal class PyBinaryFile : io.BufferedIOBase
     {
         readonly System.IO.Stream _s;
         public readonly string name, mode;
@@ -118,20 +118,40 @@ namespace Typhon.Runtime
         public override bool closed => _closed;
         public override long write(string s) { if (_which == 2) throw io.Unsupported("not writable"); Out.Write(s); return s.Length; }
         public override void flush() { if (_which != 2) Out.Flush(); }
-        public override string readline(long size = -1)
+        public override string readline(long size = -1) => ReadInput(size, line: true);
+        public override string read(long size = -1) => ReadInput(size, line: false);
+
+        string ReadInput(long size, bool line)
         {
             if (_which != 2) throw io.Unsupported("not readable");
-            var l = Console.In.ReadLine();
-            string line = l == null ? "" : l + "\n";
-            return size >= 0 && line.Length > size ? line.Substring(0, (int)size) : line;
-        }
-        public override string read(long size = -1)
-        {
-            if (_which != 2) throw io.Unsupported("not readable");
-            if (size < 0) return Console.In.ReadToEnd();
-            var buf = new char[size];
-            int n = Console.In.ReadBlock(buf, 0, (int)size);
-            return new string(buf, 0, n);
+            _checkClosed();
+            var input = Console.In;
+            bool translate = OperatingSystem.IsWindows();
+            if (!line && size < 0)
+            {
+                string rest = input.ReadToEnd();
+                return translate ? rest.Replace("\r\n", "\n").Replace('\r', '\n') : rest;
+            }
+            var result = new StringBuilder();
+            for (long count = 0; size < 0 || count < size; count++)
+            {
+                int next = input.Read();
+                if (next < 0) break;
+                char c = (char)next;
+                if (translate && c == '\r')
+                {
+                    if (input.Peek() == '\n') input.Read();
+                    c = '\n';
+                }
+                result.Append(c);
+                if (char.IsHighSurrogate(c))
+                {
+                    int tail = input.Peek();
+                    if (tail >= 0 && char.IsLowSurrogate((char)tail)) result.Append((char)input.Read());
+                }
+                if (line && c == '\n') break;
+            }
+            return result.ToString();
         }
         public override long fileno() => _which == 0 ? 1 : _which == 1 ? 2 : 0;
         public override bool isatty() => _which == 2 ? !Console.IsInputRedirected : _which == 1 ? !Console.IsErrorRedirected : !Console.IsOutputRedirected;

@@ -83,9 +83,8 @@ namespace Typhon.Compiler.Emit
                 // one of the runtime's classes imported by name, as a value (type(t) is Template): its type object
                 case NameExpr rc when !Receivers.Contains(rc) && RuntimeClassValue(rc) is string rcValue: return rcValue;
                 // a builtin type as a value (frozenset({int, float}), issubclass(t, type), d.get(k, object)): its type object
-                case NameExpr bt when !Receivers.Contains(bt) && BuiltinTypeValues.TryGetValue(bt.Id, out var btType) && !IsShadowed(bt.Id) && !IsLocal(bt.Id) &&
-                                      !_moduleFieldTypes.ContainsKey(bt.Id) && !_renames.ContainsKey(bt.Id):
-                    return $"typeof({btType})";
+                case NameExpr bt when !Receivers.Contains(bt) && BuiltinTypeValue(bt) is string builtinValue:
+                    return builtinValue;
                 case NameExpr pm when !Receivers.Contains(pm) && ProjectModuleValue(pm) is string moduleValue: return moduleValue;
                 case NameExpr n: return EmitName(n);
                 case FStringExpr f: return EmitFString(f);
@@ -431,10 +430,23 @@ namespace Typhon.Compiler.Emit
             ["bytes"] = "global::Typhon.Runtime.PyBytes", ["bytearray"] = "global::Typhon.Runtime.PyByteArray",
             ["property"] = "global::Typhon.Stdlib.builtins.property", ["staticmethod"] = "global::Typhon.Stdlib.builtins.staticmethod",
             ["classmethod"] = "global::Typhon.Stdlib.builtins.classmethod",
+            ["super"] = "global::Typhon.Stdlib.builtins.super",
             ["complex"] = "global::System.Numerics.Complex", ["tuple"] = "global::System.Runtime.CompilerServices.ITuple",
             ["list"] = "global::System.Collections.Generic.List<object>", ["set"] = "global::System.Collections.Generic.HashSet<object>",
             ["dict"] = "global::System.Collections.Generic.OrderedDictionary<object, object>",
+            ["range"] = "global::Typhon.Runtime.PyRange",
+            ["frozendict"] = "global::Typhon.Runtime.frozendict<object, object>",
+            ["frozenset"] = "global::Typhon.Runtime.frozenset<object>",
+            ["slice"] = "global::Typhon.Runtime.PySlice",
         };
+
+        string BuiltinTypeValue(NameExpr name) =>
+            BuiltinTypeValues.TryGetValue(name.Id, out var type) && !IsShadowed(name.Id) && !IsLocal(name.Id) &&
+            !_moduleFieldTypes.ContainsKey(name.Id) && !_renames.ContainsKey(name.Id) ? $"typeof({type})" : null;
+
+        bool TypeObjectMember(AttributeExpr member) =>
+            InferType(member.Target) is ("global::System.Type" or "System.Type") &&
+            !_r.HasMember("System.Type", member.Name);
 
         /// <summary>Does the class (or a Typhon base) set args itself (args = ... in its body, self.args = ... in a method)?</summary>
         bool AssignsArgs(ClassDef c, int depth = 0)
@@ -600,6 +612,10 @@ namespace Typhon.Compiler.Emit
                 string nestedOwner = TryTypeExpr(a.Target, out var className) ? $"typeof({className})" : EmitExpr(a.Target);
                 return $"{Rt("getattr")}((object){Paren(nestedOwner)}, {CsString(a.Name)})";
             }
+            if (InstanceMethodMayBeShadowed(a))
+                return $"{Rt("getattr")}((object?){Paren(EmitExpr(a.Target))}, {CsString(a.Name)})";
+            if (!allowMethodGroup && !Receivers.Contains(a) && ProjectFunctionAttributeValue(a) is string projectFunction)
+                return projectFunction;
             if (a.Name == "__traceback__" && IsExceptionType(InferType(a.Target)))
                 return $"global::Typhon.Stdlib.types.TracebackType.Of({EmitExpr(a.Target)})";
             if (DottedName(a.Target) is string prefix && ModuleRef(prefix) is ModuleInfo projectModule &&
@@ -634,7 +650,11 @@ namespace Typhon.Compiler.Emit
             if (a.Target is NameExpr fa && (LocalFunctionObject(fa.Id) ?? FunctionValue(fa, typed: false)) is string fav)
                 return a.Name is "__name__" or "__doc__" or "__wrapped__" or "__module__" or "__qualname__" ? $"{fav}.{a.Name}" : $"((dynamic){fav}).{Esc(a.Name)}";
             // type(x).__name__, x.__class__, SomeClass.__name__
-            if (a.Name == "__class__") return Paren(EmitExpr(a.Target)) + ".GetType()";
+            if (a.Name == "__class__")
+            {
+                string receiver = a.Target is NameExpr cls ? BuiltinTypeValue(cls) ?? EmitValue(cls) : EmitValue(a.Target);
+                return $"{Rt("__type_of")}((object?){Paren(receiver)})";
+            }
             // type(x).__module__ / self.__class__.__module__: the module the class is defined in ('builtins' for the runtime's)
             if (a.Name == "__module__" && (a.Target is CallExpr mtc && mtc.Func is NameExpr mtn && mtn.Id == "type" && !IsShadowed("type") ||
                                            a.Target is AttributeExpr mca && mca.Name == "__class__" || InferType(a.Target) is "global::System.Type" or "System.Type"))
@@ -664,7 +684,7 @@ namespace Typhon.Compiler.Emit
                 return $"{Rt("getattr")}((object?){Paren(EmitName(classArgument))}, {CsString(a.Name)})";
             if (TupleFieldOwner(a) is string tupleType)
                 return $"((global::Typhon.Runtime.PyTupleGetter){Rt("getattr")}(typeof({tupleType}), {CsString(a.Name)}))";
-            if (!IsAttributeStore(a) && IsInstanceClassDefault(a))
+            if (!IsAttributeStore(a) && (IsInstanceClassDefault(a) || TypeObjectMember(a)))
                 return $"{Rt("getattr")}((object?){Paren(EmitExpr(a.Target))}, {CsString(a.Name)})";
             if (!_m.IsGdScript && !IsAttributeStore(a) && DottedName(a.Target) is string descriptorOwner &&
                 TryResolveType(descriptorOwner, 0, out _, out var ownerClass) && ownerClass != null &&

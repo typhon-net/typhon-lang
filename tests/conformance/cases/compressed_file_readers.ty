@@ -1,0 +1,19 @@
+import bz2
+import gzip
+import base64
+import os
+import tempfile
+
+with tempfile.TemporaryDirectory() as folder:
+    compressed_gzip = os.path.join(folder, 'first.gz')
+    compressed_bzip = os.path.join(folder, 'second.bz2')
+    with open(compressed_gzip, 'wb') as stream:
+        stream.write(base64.b64decode('H4sIAAAAAAAA/0tOTDu8kperODU5Py8FAE73/FQNAAAA'))
+    with open(compressed_bzip, 'wb') as stream:
+        stream.write(base64.b64decode('QlpoOTFBWSZTWRPK/Y0AAADBgAAQASAcACAAIYAMAycu4u5IpwoSAnlfsaBCWmg5MUFZJlNZOWNjfwAAAcGUABIvAYgAACAIACAAIgA00EDQNBjNWCDe93i7kinChIHLGxv4'))
+    with gzip.open(compressed_gzip, 'rt', encoding='utf-8') as text:
+        print(repr(text.readline()), repr(text.read()))
+    with gzip.open(compressed_gzip, 'rb') as binary:
+        print(repr(binary.read()))
+    with bz2.BZ2File(compressed_bzip) as binary:
+        print(repr(binary.readline()), repr(binary.read(4)), repr(binary.read()))

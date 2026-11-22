@@ -315,7 +315,7 @@ namespace Typhon.Compiler.Emit
             ["_collections"] = "collections", ["_contextvars"] = "contextvars", ["_hashlib"] = "hashlib", ["_sha2"] = "hashlib",
             ["_md5"] = "hashlib", ["_sha1"] = "hashlib", ["_sha3"] = "hashlib", ["_blake2"] = "hashlib", ["_pydecimal"] = "decimal",
             ["_decimal"] = "decimal", ["_pickle"] = "pickle", ["_bz2"] = "bz2", ["_lzma"] = "lzma", ["_locale"] = "locale",
-            ["_stat"] = "stat", ["_warnings"] = "warnings", ["_py_warnings"] = "warnings", ["_abc"] = "abc", ["_typing"] = "typing", ["_queue"] = "queue",
+            ["_stat"] = "stat", ["_warnings"] = "warnings", ["_py_warnings"] = "warnings", ["_abc"] = "abc", ["_typing"] = "typing", ["_queue"] = "queue", ["_socket"] = "socket",
         };
 
         static string PublicModule(string dotted)

@@ -1,0 +1,9 @@
+True True True
+True True True
+True True True
+b'ready'
+True True True
+True True
+file descriptor cannot be a negative integer (-1)
+argument must be an int, or have a fileno() method.
+timeout must be non-negative

@@ -1,0 +1,9 @@
+import io
+
+stream = io.StringIO('first\nsecond')
+print(bool(stream), repr(stream.readline()), repr(stream.readline()), bool(stream))
+print(bool(io.StringIO()))
+
+items = iter([1, 2])
+print(bool(items), next(items), bool(items), next(items), bool(items))
+print(bool(iter([])), bool(range(0)), bool(set()), bool(frozenset()), bool(tuple()))

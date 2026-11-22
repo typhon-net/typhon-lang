@@ -443,6 +443,100 @@ public sealed class ConformanceTests(ITestOutputHelper output)
         finally { Directory.Delete(dir, recursive: true); }
     }
 
+    /// <summary>Run shallow and deep copies through the unmodified CPython copy module.</summary>
+    [Fact]
+    public void CopyFromPythonSource()
+    {
+        string? python = Suite.FindPython(out string why);
+        if (python == null) { Console.WriteLine($"CopyFromPythonSource skipped: {why}"); return; }
+        var library = Suite.Run(python,
+            ["-c", "import sys, sysconfig; print(sysconfig.get_path('stdlib') if sys.version_info >= (3, 15) else '')"],
+            TimeSpan.FromSeconds(30));
+        Assert.True(library.ExitCode == 0, library.StdErr);
+        string lib = library.StdOut.Trim();
+        if (lib.Length == 0) { Console.WriteLine("CopyFromPythonSource requires CPython 3.15"); return; }
+
+        string dir = Directory.CreateTempSubdirectory("typhon-copy-").FullName;
+        try
+        {
+            File.Copy(Path.Combine(lib, "copy.py"), Path.Combine(dir, "copy.ty"));
+            string script = Path.Combine(dir, "uses_copy.ty");
+            File.WriteAllText(script, """
+                import copy
+
+                print(copy.copy(None), copy.copy(3), copy.copy(slice(1, 4, 2)))
+                original = [[1], [2]]
+                shallow = copy.copy(original)
+                deep = copy.deepcopy(original)
+                shallow[0].append(9)
+                print(original, shallow, deep)
+                print(original is shallow, original[0] is shallow[0], original[0] is deep[0])
+                mapping = {"a": [1, 2]}
+                replica = copy.deepcopy(mapping)
+                print(mapping == replica, mapping["a"] is replica["a"])
+                print(copy.deepcopy((["x"], 2)))
+                print(copy.deepcopy(frozendict({"a": [1, 2]})))
+                """);
+            var expected = Suite.Run(python, [script], TimeSpan.FromMinutes(1));
+            Assert.True(expected.ExitCode == 0, expected.StdErr);
+            var actual = Suite.Run("dotnet", [Suite.Cli, "run", script], TimeSpan.FromMinutes(3));
+            Assert.True(actual.ExitCode == 0, actual.StdErr);
+            Assert.Equal(Suite.Normalize(expected.StdOut), Suite.Normalize(actual.StdOut));
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    [Fact]
+    public void PyLibFileInput()
+    {
+        string? python = Suite.FindPython(out string why);
+        if (python == null) { Console.WriteLine($"PyLibFileInput skipped: {why}"); return; }
+        var oracle = Suite.Run(python,
+            ["-c", "import sys, sysconfig; print(sysconfig.get_path('stdlib') if sys.version_info[:2] == (3, 15) else '')"],
+            TimeSpan.FromSeconds(30));
+        Assert.True(oracle.ExitCode == 0, oracle.StdErr);
+        string lib = oracle.StdOut.Trim();
+        if (lib.Length == 0) { Console.WriteLine("PyLibFileInput requires the CPython 3.15 library"); return; }
+        string dir = Directory.CreateTempSubdirectory("typhon-fileinput-").FullName;
+        try
+        {
+            string script = Path.Combine(dir, "uses_fileinput.ty");
+            File.WriteAllText(script, $"#:pylib {lib}\n" + """
+                import fileinput
+                import os
+                from pathlib import Path
+                import tempfile
+
+                with tempfile.TemporaryDirectory() as folder:
+                    path = Path(folder) / 'first.txt'
+                    with open(path, 'w', encoding='utf-8') as stream:
+                        stream.write('first\nsecond')
+                    with fileinput.FileInput(path, encoding='utf-8') as reader:
+                        for line in reader:
+                            print(repr(line), reader.lineno(), reader.filelineno(), reader.isfirstline())
+
+                here = os.path.dirname(__file__)
+                archives = [os.path.join(here, 'first.gz'), os.path.join(here, 'second.bz2')]
+                with fileinput.FileInput(archives, openhook=fileinput.hook_compressed, encoding='utf-8') as reader:
+                    for line in reader:
+                        print(repr(line), os.path.basename(reader.filename()), reader.lineno(), reader.filelineno())
+
+                with fileinput.FileInput(archives, mode='rb', openhook=fileinput.hook_compressed) as reader:
+                    print(list(reader))
+                """);
+            File.WriteAllBytes(Path.Combine(dir, "first.gz"),
+                Convert.FromBase64String("H4sIAAAAAAAA/0tOTDu8kperODU5Py8FAE73/FQNAAAA"));
+            File.WriteAllBytes(Path.Combine(dir, "second.bz2"),
+                Convert.FromBase64String("QlpoOTFBWSZTWRPK/Y0AAADBgAAQASAcACAAIYAMAycu4u5IpwoSAnlfsaBCWmg5MUFZJlNZOWNjfwAAAcGUABIvAYgAACAIACAAIgA00EDQNBjNWCDe93i7kinChIHLGxv4"));
+            var expected = Suite.Run(python, [script], TimeSpan.FromMinutes(1));
+            Assert.True(expected.ExitCode == 0, expected.StdErr);
+            var actual = Suite.Run("dotnet", [Suite.Cli, "run", script], TimeSpan.FromMinutes(3));
+            Assert.True(actual.ExitCode == 0, actual.StdErr);
+            Assert.Equal(Suite.Normalize(expected.StdOut), Suite.Normalize(actual.StdOut));
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
     /// <summary>Run the unmodified CPython codeop source with Typhon's interactive compiler and warning filters.</summary>
     [Fact]
     public void PyLibCodeop()
