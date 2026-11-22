@@ -14,7 +14,7 @@ namespace Typhon.Cli;
 /// </summary>
 internal static class PyLib
 {
-    static readonly Regex Directive = new(@"^#:pylib(?:[ \t]+(?<dir>[^\r\n]*?))?[ \t]*$", RegexOptions.Multiline);
+    static readonly Regex Directive = new(@"^#:pylib(?:[ \t]+(?<dir>[^\r\n]*?))?[ \t]*\r?$", RegexOptions.Multiline);
 
     /// <summary>The typing-only modules (Typhon's compiler handles their names itself): never compiled from Lib.</summary>
     static readonly HashSet<string> TypingOnly = new() { "typing", "abc", "enum", "__future__", "collections.abc", "typing_extensions" };

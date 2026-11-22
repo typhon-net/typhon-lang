@@ -262,7 +262,7 @@ public sealed class ConformanceTests(ITestOutputHelper output)
                 print(with_module_name.main(), hasattr(direct, "read"), direct is from_package)
                 print(direct.read(), pylib_example.nested.reader.read(), from_package.read())
                 print(os.path.basename("folder/file"))
-                """);
+                """.ReplaceLineEndings("\r\n"));
             var expected = Suite.Run(python, [script], TimeSpan.FromMinutes(1),
                 new Dictionary<string, string> { ["PYTHONPATH"] = lib });
             Assert.True(expected.ExitCode == 0, $"CPython exited with {expected.ExitCode}\n{expected.StdErr}");
