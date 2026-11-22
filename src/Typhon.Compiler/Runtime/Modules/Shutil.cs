@@ -214,9 +214,16 @@ namespace Typhon.Stdlib
         }
 
         /// <summary>rmtree: deletes a directory and everything below it (symbolic links are removed, not followed).</summary>
-        public static void rmtree(object path, bool ignore_errors = false)
+        public static void rmtree(object path, bool ignore_errors = false, object? onerror = null,
+            object? onexc = null, object? dir_fd = null, bool _onexc_kwargs = false)
         {
+            if (dir_fd != null) throw new NotImplementedException("dir_fd unavailable for rmtree");
             string p = P(path);
+            if (!ignore_errors && (onexc != null || onerror != null))
+            {
+                RemoveTreeWithHandler(p, onexc, onerror);
+                return;
+            }
             try
             {
                 if (IsLink(p)) throw new IOException("Cannot call rmtree on a symbolic link");
@@ -224,6 +231,42 @@ namespace Typhon.Stdlib
                 Directory.Delete(p, recursive: true);
             }
             catch (Exception) when (ignore_errors) { }
+        }
+
+        static void RemoveTreeWithHandler(string root, object? onexc, object? onerror)
+        {
+            bool TryOperation(Type module, string operation, string path, Action perform, bool ignoreMissing = false)
+            {
+                try { perform(); return true; }
+                catch (System.IO.FileNotFoundException) when (ignoreMissing) { return false; }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+                {
+                    using var handling = Builtins.__handling_exception(error);
+                    object? method = Builtins.getattr(PyModule.Of(module, module == typeof(os_.path) ? "os.path" : "os"), operation);
+                    if (onexc != null) Builtins.__invoke(onexc, [method, path, error]);
+                    else Builtins.__invoke(onerror, [method, path, sys_.exc_info()]);
+                    return false;
+                }
+            }
+
+            void RemoveDirectory(string directory)
+            {
+                string[] contents = Array.Empty<string>();
+                TryOperation(typeof(os_), "scandir", directory, () => contents = Directory.GetFileSystemEntries(directory), ignoreMissing: true);
+                foreach (string child in contents)
+                {
+                    if (!IsLink(child) && Directory.Exists(child)) RemoveDirectory(child);
+                    else TryOperation(typeof(os_), "unlink", child, () => os_.unlink(child), ignoreMissing: true);
+                }
+                TryOperation(typeof(os_), "rmdir", directory, () => os_.rmdir(directory), ignoreMissing: true);
+            }
+
+            if (!TryOperation(typeof(os_), "lstat", root, () => os_.lstat(root))) return;
+            if (!TryOperation(typeof(os_.path), "islink", root, () =>
+            {
+                if (IsLink(root)) throw new IOException("Cannot call rmtree on a symbolic link");
+            })) return;
+            RemoveDirectory(root);
         }
 
         /// <summary>move: renames when it can, else copies and deletes; into a directory under the source's name.</summary>

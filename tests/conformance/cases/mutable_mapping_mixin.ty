@@ -1,0 +1,33 @@
+from collections.abc import Mapping, MutableMapping
+from types import MappingProxyType
+
+class Settings(MutableMapping):
+    def __init__(self):
+        self._data: dict[str, int] = {}
+
+    def __getitem__(self, key: str) -> int:
+        return self._data[key]
+
+    def __setitem__(self, key: str, value: int) -> None:
+        self._data[key] = value
+
+    def __delitem__(self, key: str) -> None:
+        del self._data[key]
+
+    def __iter__(self):
+        return iter(self._data)
+
+    def __len__(self) -> int:
+        return len(self._data)
+
+settings = Settings()
+settings.update({'first': 3})
+settings.update([('second', 4), ('first', 5)])
+print(list(settings), list(settings.values()), list(settings.items()))
+print(settings.get('first'), settings.get('missing', 'default'))
+print(settings.setdefault('first', 6), settings.setdefault('third', 7))
+print(settings.pop('missing', 9), settings.pop('second'))
+print(settings.popitem())
+settings.clear()
+print(len(settings), isinstance(settings, Mapping), isinstance(settings, MutableMapping))
+print(isinstance({}, MutableMapping), isinstance(MappingProxyType({}), MutableMapping))

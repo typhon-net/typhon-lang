@@ -1,0 +1,44 @@
+from typing import Any
+
+
+class Wrapper:
+    def __init__(self):
+        self.lookups = 0
+
+    def existing(self, value: int) -> int:
+        return value + 1
+
+    def __getattr__(self, name: str) -> Any:
+        self.lookups += 1
+        if name == "offset":
+            return 4
+        if name == "compute":
+            def calculate(value, *, extra=3):
+                return value + extra
+            self.compute = calculate
+            return calculate
+        raise AttributeError(name)
+
+
+class Child(Wrapper):
+    pass
+
+
+def call_through_dynamic(wrapper: Any):
+    print(wrapper.existing(2), wrapper.offset)
+    print(wrapper.compute(5, extra=8), wrapper.compute(7))
+    try:
+        wrapper.missing()
+    except AttributeError:
+        print("missing")
+    print(wrapper.lookups)
+
+
+call_through_dynamic(Child())
+
+
+def call_through_typed(wrapper: Child):
+    print(wrapper.offset, wrapper.compute(5))
+
+
+call_through_typed(Child())

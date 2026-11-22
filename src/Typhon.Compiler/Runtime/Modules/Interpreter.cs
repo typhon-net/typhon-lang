@@ -11,6 +11,17 @@
 #nullable enable
 #pragma warning disable
 
+namespace Typhon.Runtime
+{
+    internal static partial class Builtins
+    {
+        public static dynamic? exit(params object?[] args) =>
+            __invoke((object?)PyModule.ReadLateGlobal(Typhon.Stdlib.builtins.exit, "exit"), args);
+        public static dynamic? quit(params object?[] args) =>
+            __invoke((object?)PyModule.ReadLateGlobal(Typhon.Stdlib.builtins.quit, "quit"), args);
+    }
+}
+
 namespace Typhon.Stdlib
 {
     using System;
@@ -102,6 +113,7 @@ namespace Typhon.Stdlib
             switch (classinfo)
             {
                 case Type t:
+                    if (t == typeof(types.MethodType) && obj is PyBoundMethod method) return inspect.ismethod(method);
                     Type actual = obj is Type cls ? PyMetaclasses.Of(cls) : obj?.GetType() ?? typeof(types.NoneType);
                     if (actual == t) return true;
                     if (PyMetaclasses.TryBindMember(t, "__instancecheck__", out var check))
@@ -154,8 +166,17 @@ namespace Typhon.Stdlib
         public static void breakpoint() => Builtins.breakpoint();
 
         /// <summary>exit(code=None) / quit(): raise SystemExit, like the site module's helpers.</summary>
-        public static void exit(object? code = null) => throw new SystemExit(code);
-        public static void quit(object? code = null) => throw new SystemExit(code);
+        [PyOptionalModuleMember]
+        public static dynamic exit = ExitFunction("exit"), quit = ExitFunction("quit");
+
+        static PyClosure ExitFunction(string name) => new PyClosure(name, (args, keywords) =>
+        {
+            object? code = args.Length == 0 ? null : args[0];
+            if (args.Length > 1 || keywords is { Count: > 0 } &&
+                (args.Length != 0 || keywords.Count != 1 || !keywords.TryGetValue("code", out code)))
+                throw new InvalidCastException($"{name}() expects one optional code");
+            throw new SystemExit(code);
+        });
     }
 
     /// <summary>

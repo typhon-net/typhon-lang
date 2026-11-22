@@ -1,0 +1,7 @@
+from typing import Any
+
+data: dict[str, Any] = {"kept": 9}
+setter = data.setdefault
+print(setter("kept", "ignored"), setter("added", None))
+print(data)
+print(list(getattr(data, "items")()))

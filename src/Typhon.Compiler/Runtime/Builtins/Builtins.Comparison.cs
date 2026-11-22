@@ -45,6 +45,8 @@ namespace Typhon.Runtime
             if (a is null || b is null) return false;
             if (IntLike(a, out var x) && IntLike(b, out var y)) return x == y;
             if (IsNumber(a) && IsNumber(b)) return Convert.ToDouble(a, Inv) == Convert.ToDouble(b, Inv);
+            if (a is PyString leftText) a = leftText.Text;
+            if (b is PyString rightText) b = rightText.Text;
             if (a is PyStrEnum leftEnum) a = leftEnum.value;
             if (b is PyStrEnum rightEnum) b = rightEnum.value;
             if (a is string sa) return b is string sb && sa == sb;
@@ -64,6 +66,8 @@ namespace Typhon.Runtime
                 foreach (DictionaryEntry e in da) if (!db.Contains(e.Key) || !eq(e.Value, db[e.Key])) return false;
                 return true;
             }
+            if (IsDictSetView(a) || IsDictSetView(b))
+                return IsSetLike(a) && IsSetLike(b) && SetLe(a, b) && SetLe(b, a);
             if (IsSet(a))
             {
                 if (!IsSet(b)) return false;
@@ -169,10 +173,31 @@ namespace Typhon.Runtime
         public static bool le(string a, string b) => string.CompareOrdinal(a, b) <= 0;
         public static bool gt(string a, string b) => string.CompareOrdinal(a, b) > 0;
         public static bool ge(string a, string b) => string.CompareOrdinal(a, b) >= 0;
-        public static dynamic lt(object? a, object? b) => MixedNumbers(a, b, out int __c) ? __c < 0 : PyOrdered(a) || PyOrdered(b) ? (IsSet(a!) ? SetLe(a, b) && !eq(a, b) : compare(a, b) < 0) : (dynamic)a! < (dynamic)b!;
-        public static dynamic le(object? a, object? b) => MixedNumbers(a, b, out int __cle) ? __cle <= 0 : PyOrdered(a) || PyOrdered(b) ? (IsSet(a!) ? SetLe(a, b) : compare(a, b) <= 0) : (dynamic)a! <= (dynamic)b!;
-        public static dynamic gt(object? a, object? b) => MixedNumbers(a, b, out int __c) ? __c > 0 : PyOrdered(a) || PyOrdered(b) ? (IsSet(a!) ? SetLe(b, a) && !eq(a, b) : compare(a, b) > 0) : (dynamic)a! > (dynamic)b!;
-        public static dynamic ge(object? a, object? b) => MixedNumbers(a, b, out int __cge) ? __cge >= 0 : PyOrdered(a) || PyOrdered(b) ? (IsSet(a!) ? SetLe(b, a) : compare(a, b) >= 0) : (dynamic)a! >= (dynamic)b!;
+        public static dynamic lt(object? a, object? b) => CompareDictSetViews(a, b, "<") is bool view ? view :
+            MixedNumbers(a, b, out int __c) ? __c < 0 : PyOrdered(a) || PyOrdered(b) ?
+                (IsSet(a!) ? SetLe(a, b) && !eq(a, b) : compare(a, b) < 0) : (dynamic)a! < (dynamic)b!;
+        public static dynamic le(object? a, object? b) => CompareDictSetViews(a, b, "<=") is bool view ? view :
+            MixedNumbers(a, b, out int __c) ? __c <= 0 : PyOrdered(a) || PyOrdered(b) ?
+                (IsSet(a!) ? SetLe(a, b) : compare(a, b) <= 0) : (dynamic)a! <= (dynamic)b!;
+        public static dynamic gt(object? a, object? b) => CompareDictSetViews(a, b, ">") is bool view ? view :
+            MixedNumbers(a, b, out int __c) ? __c > 0 : PyOrdered(a) || PyOrdered(b) ?
+                (IsSet(a!) ? SetLe(b, a) && !eq(a, b) : compare(a, b) > 0) : (dynamic)a! > (dynamic)b!;
+        public static dynamic ge(object? a, object? b) => CompareDictSetViews(a, b, ">=") is bool view ? view :
+            MixedNumbers(a, b, out int __c) ? __c >= 0 : PyOrdered(a) || PyOrdered(b) ?
+                (IsSet(a!) ? SetLe(b, a) : compare(a, b) >= 0) : (dynamic)a! >= (dynamic)b!;
+
+        static bool IsDictSetView(object? value) => value is IEnumerable && PyDictViews.Name(value.GetType()) is "dict_keys" or "dict_items";
+        static bool IsSetLike(object? value) => value != null && (IsDictSetView(value) || IsSet(value));
+
+        static bool? CompareDictSetViews(object? a, object? b, string operation)
+        {
+            if (!IsDictSetView(a) && !IsDictSetView(b)) return null;
+            if (!IsSetLike(a) || !IsSetLike(b))
+                throw new InvalidCastException($"'{operation}' not supported between instances of '{PyTypeName(__type_of(a))}' and '{PyTypeName(__type_of(b))}'");
+            if (operation[0] == '>') (a, b) = (b, a);
+            return SetLe(a, b) && (operation.Length == 2 || !SetLe(b, a));
+        }
+
         static bool SetLe(object? a, object? b) => ((IEnumerable)a!).Cast<object?>().All(x => SetHas(b!, x));
         static bool SetHas(object set, object? x) => ((IEnumerable)set).Cast<object?>().Any(y => eq(x, y));
 

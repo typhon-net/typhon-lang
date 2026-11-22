@@ -129,8 +129,8 @@ namespace Typhon.Runtime
         public void CopyTo(KeyValuePair<string, object?>[] array, int arrayIndex) { foreach (var kv in this) array[arrayIndex++] = kv; }
         public IEnumerator<KeyValuePair<string, object?>> GetEnumerator() { foreach (var k in Keys) yield return new KeyValuePair<string, object?>(k, this[k]); }
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
-        public bool Remove(string key) => Extras.Remove(key);
-        public bool Remove(KeyValuePair<string, object?> item) => Extras.Remove(item.Key);
+        public bool Remove(string key) => Extras.Remove(key) || _module?.TryDeleteNamespaceMember(key) == true;
+        public bool Remove(KeyValuePair<string, object?> item) => Remove(item.Key);
         public bool TryGetValue(string key, out object? value)
         {
             if (Prop(key) is { } property) { value = property.GetValue(_o); return true; }

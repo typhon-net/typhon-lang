@@ -107,13 +107,13 @@ namespace Typhon.Compiler.Emit
         /// The .NET or runtime base method a method overrides (as many parameters, not generic, all of them typed), or null:
         /// none, or a Typhon class in between defines the method (its own signature applies then).
         /// </summary>
-        Semantics.MemberSig DotNetBaseMethod(ClassDef c, FunctionDef f, int depth = 0)
+        internal Semantics.MemberSig DotNetBaseMethod(ClassDef c, FunctionDef f, int depth = 0)
         {
             if (depth > 20 || f.Params.Any(x => x.Kind != ParamKind.Normal)) return null;
             int n = f.Params.Count - 1;
             foreach (var b in c.Bases)
             {
-                if (!ResolveBase(b, out var py, out var meta)) continue;
+                if (!ClassDeclarationResolver(c).ResolveBase(b, out var py, out var meta)) continue;
                 if (py != null)
                 {
                     if (py == c) return null;
@@ -170,7 +170,7 @@ namespace Typhon.Compiler.Emit
             if (_big && FoldInt(e) != null) return false;
             switch (e)
             {
-                case ConstExpr c: return c.Kind != ConstKind.Ellipsis && c.Kind != ConstKind.Bytes &&
+                case ConstExpr c: return c.Kind is not (ConstKind.Ellipsis or ConstKind.Bytes or ConstKind.Imaginary) &&
                     !(c.Kind == ConstKind.Int && !long.TryParse(c.Raw.Replace("_", ""), out _));
                 case UnaryExpr u when (u.Op == "-" || u.Op == "+") && u.Operand is ConstExpr uc && (uc.Kind == ConstKind.Int || uc.Kind == ConstKind.Float): return true;
                 default: return FoldInt(e) is System.Numerics.BigInteger v && v >= long.MinValue && v <= long.MaxValue;
@@ -241,7 +241,7 @@ namespace Typhon.Compiler.Emit
         /// Does the generator yield where a C# iterator cannot: in a try block that has except clauses, in an except or finally
         /// block, or inside a larger expression (print((yield)), y = f((yield x)))? Then its body takes the async form.
         /// </summary>
-        static bool GeneratorNeedsAsyncForm(List<Stmt> body)
+        static bool GeneratorNeedsAsyncForm(List<Stmt> body, bool tracksFinally)
         {
             bool found = false;
             void InExpr(Expr e) { if (e != null && !found) AstWalker.VisitAll(e, n => { if (n is YieldExpr) found = true; }); }
@@ -252,9 +252,10 @@ namespace Typhon.Compiler.Emit
                 {
                     case FunctionDef _: case ClassDef _: return;
                     case TryStmt t:
-                        Stmts(t.Body, restricted || t.Handlers.Count > 0);
+                        bool catches = restricted || t.Handlers.Count > 0 || tracksFinally && t.FinalBody.Count > 0;
+                        Stmts(t.Body, catches);
                         foreach (var h in t.Handlers) { InExpr(h.Type); Stmts(h.Body, true); }
-                        Stmts(t.OrElse, restricted || t.Handlers.Count > 0);
+                        Stmts(t.OrElse, catches);
                         Stmts(t.FinalBody, true);
                         return;
                     case WithStmt w:
@@ -306,18 +307,27 @@ namespace Typhon.Compiler.Emit
         static string WithOptionalDefault(string parameter, string value) =>
             $"[global::System.Runtime.InteropServices.Optional, global::System.Runtime.InteropServices.DefaultParameterValue({value})] {parameter}";
 
-        Signature BuildSignature(FunctionDef f, bool dropFirst, string selfName = null, string[] paramTypes = null, string retKey = null)
+        // Overrides must agree on their CLR return type. A method that only raises may supply
+        // an abstract-by-convention declaration whose return type is not known yet.
+        bool ImplicitMethodResultIsDynamic(FunctionDef method) => _cls != null &&
+            (FamilyReturnsValue(_cls.Def, method.Name) ||
+             method.Body.Count > 0 && !CanFallThrough(method.Body) &&
+             !AstWalker.ContainsOutsideNestedScopes(method.Body, node => node is ReturnStmt) &&
+             !FamilyDefinesElsewhere(_cls.Def, method.Name));
+
+        Signature BuildSignature(FunctionDef f, bool dropFirst, string selfName = null, string[] paramTypes = null,
+            string retKey = null, bool keepSpecializedDefaults = true)
         {
             var sig = new Signature();
             var locals = LocalsAnalyzer.Analyze(f.Body, f.Params.Select(p => p.Name), null);
             sig.Locals = locals;
             sig.IsGenerator = locals.HasYield;
             sig.IsAsync = f.IsAsync;
-            sig.AsyncForm = sig.IsGenerator && (f.IsAsync || GeneratorNeedsAsyncForm(f.Body));
+            sig.AsyncForm = sig.IsGenerator && (f.IsAsync || GeneratorNeedsAsyncForm(f.Body, tracksFinally: !_m.IsGdScript));
             sig.ReceivesValues = sig.IsGenerator && !f.IsAsync && (sig.AsyncForm || GeneratorReceivesValues(f.Body));
             var scope = new Scope { Locals = locals, IsGenerator = sig.IsGenerator, IsAsync = f.IsAsync, Parent = _scope, ReceivesValues = sig.ReceivesValues, AsyncForm = sig.AsyncForm };
             string qualifier = _scope?.FunctionQualName is string enclosing ? enclosing + ".<locals>." :
-                _cls != null ? _cls.Name + "." : "";
+                _cls != null ? (_cls.Def.PyName ?? _cls.Name) + "." : "";
             scope.FunctionQualName = qualifier + (f.PyName ?? f.Name);
             scope.ProfileName = f.PyName ?? f.Name;
             scope.ProfileLine = f.Line;
@@ -340,6 +350,8 @@ namespace Typhon.Compiler.Emit
             // an override of a .NET or runtime class's method: unannotated parameters take the base method's types
             var baseMethod = dropFirst && _cls != null && !_cls.IsInterface && _cls.Def.Body.Contains(f) ? DotNetBaseMethod(_cls.Def, f) : null;
             string[] baseTypes = baseMethod?.Parameters.Select(x => x.GenericType).ToArray();
+            bool inferredMethod = dropFirst && f.Name != "__init__" && _cls?.Def.Body.Contains(f) == true &&
+                (paramTypes != null || _ctxFallbackKey != null);
             for (int i = 0; i < f.Params.Count; i++)
             {
                 var p = f.Params[i];
@@ -356,7 +368,8 @@ namespace Typhon.Compiler.Emit
                     continue;
                 }
                 string inferred = paramTypes != null && pi < paramTypes.Length ? paramTypes[pi] : null;
-                if (inferred == null && p.Annotation == null && baseTypes != null && pi < baseTypes.Length) inferred = baseTypes[pi];
+                if (inferred == null && p.Annotation == null && baseTypes != null && pi < baseTypes.Length)
+                    inferred = baseTypes[pi] is "object" or "object?" or "global::System.Object" ? "dynamic" : baseTypes[pi];
                 pi++;
                 // def f(..., bisect=bisect) that callers never pass: the name stands for the function (calls go to it directly)
                 if (IsParamAlias(f, p))
@@ -391,10 +404,11 @@ namespace Typhon.Compiler.Emit
                     continue;
                 }
                 string decl = $"{type} {Esc(p.Name)}";
-                // An inferred overload keeps only defaults of its parameter type. For a None default
-                // on an unannotated parameter, the late-bound overload is the only one omitting it.
-                bool keepDefault = p.Default != null && (!_quietDynamic || p.Annotation == null && IsNone(p.Default)) &&
-                    (paramTypes == null || p.Annotation != null || InferType(p.Default) == type);
+                // The fallback method keeps the complete Python signature. Specializations are
+                // available when all arguments are supplied and cannot compete on omitted arguments.
+                bool keepDefault = p.Default != null && (inferredMethod ? paramTypes == null :
+                    (!_quietDynamic || p.Annotation == null && IsNone(p.Default)) &&
+                    (paramTypes == null || keepSpecializedDefaults && (p.Annotation != null || InferType(p.Default) == type)));
                 string defaultCode = null;
                 // a parameter the body rebinds to values of another type (in a nested block): the body uses a wider local
                 string wider = p.Kind == ParamKind.Normal ? ConflictType(p.Name) : null;
@@ -455,6 +469,12 @@ namespace Typhon.Compiler.Emit
                     else sig.ReturnType = "IEnumerable<" + elem + ">";
                 }
             }
+            else if (sig.IsGenerator && !f.IsAsync && baseMethod?.Type is string inheritedIterator &&
+                (inheritedIterator.StartsWith("IEnumerable<") || inheritedIterator.StartsWith("global::System.Collections.Generic.IEnumerable<")))
+            {
+                sig.ReturnType = inheritedIterator;
+                elem = GenericArg(inheritedIterator);
+            }
             else if (sig.IsGenerator) elem = ImplicitDynamic(f, $"the values yielded by '{f.PyName ?? f.Name}'");
             // (an override of a .NET or runtime method: the base method's return type)
             else if (!f.IsAsync && baseMethod?.ReturnsDynamic == true) elem = "dynamic";
@@ -462,13 +482,7 @@ namespace Typhon.Compiler.Emit
             else if (locals.HasValueReturn)
                 elem = retKey != null && Ti != null && Ti.Returns.TryGetValue(retKey, out var inferredReturn) && inferredReturn != "dynamic" ? inferredReturn
                      : ImplicitDynamic(f, $"the return type of '{f.PyName ?? f.Name}'");
-            // a method whose overrides (or the method it overrides) return values: C# needs one return type for all of them
-            // (def fn(self): raise NotImplementedError in the base, values in the subclasses)
-            else if (dropFirst && _cls != null && FamilyReturnsValue(_cls.Def, f.Name)) elem = "dynamic";
-            // a method that only raises (def key(self): raise NotImplementedError, an abstract method without the decorator):
-            // what the classes that define it return, which C# cannot know here
-            else if (dropFirst && _cls != null && f.Body.Count > 0 && !CanFallThrough(f.Body) && !AstWalker.ContainsOutsideNestedScopes(f.Body, n => n is ReturnStmt) &&
-                     !FamilyDefinesElsewhere(_cls.Def, f.Name)) elem = "dynamic"; // (with overrides, their return type decides: above)
+            else if (dropFirst && ImplicitMethodResultIsDynamic(f)) elem = "dynamic";
             else elem = "void";
 
             sig.ElementType = elem;
@@ -561,9 +575,12 @@ namespace Typhon.Compiler.Emit
             _retKey = retKey; _ctxFallbackKey = fallbackKey;
             if (Obs != null) Obs.InFallbackBody = fallbackKey != null;
             var savedScopeKey = _scopeKey;
-            _scopeKey = TypeInference.FuncKey(_m, null, f.Name) + "#" + TypeInference.SigKey(paramTypes);
+            string functionKey = TypeInference.FuncKey(_m, null, f.Name);
+            _scopeKey = functionKey + "#" + TypeInference.SigKey(paramTypes);
             foreach (var tp in f.TypeParams) _currentFuncTypeParams.Add(tp.Name);
-            var sig = BuildSignature(f, dropFirst: false, paramTypes: paramTypes, retKey: retKey);
+            // When the original signature is emitted as well, it alone supplies omitted arguments.
+            var sig = BuildSignature(f, dropFirst: false, paramTypes: paramTypes, retKey: retKey,
+                keepSpecializedDefaults: Ti?.Fallback.Contains(functionKey) != true);
             EmitDocComment(f.Body);
             LineDirective(f);
             if (!_m.IsGdScript)
@@ -628,6 +645,8 @@ namespace Typhon.Compiler.Emit
             _lambdaLocals.Clear();
             scope.Parent = saved;
             scope.Locals = locals ?? LocalsAnalyzer.Analyze(body, scope.Params, excluded);
+            if (_scopeKey == RuntimeCodeScopeKey && saved == null)
+                scope.Locals.LocalFunctions.ExceptWith(_m.RuntimeBindings);
             if (scope.Locals.LocalFunctions.Count > 0)
             {
                 var callees = new HashSet<Expr>();
@@ -684,7 +703,8 @@ namespace Typhon.Compiler.Emit
                         values.Select(v => PyType(InferType(v))).Where(t => t != null && t != TypeInference.Pending).Any(t => Incompatible(type, t)))
                         type = null;
                     // a capture bound from a value of unknown type (case [x, y] on an object) is not known to agree with the others
-                    if (type != null && scope.Locals.HoistedCaptures.TryGetValue(h.Key, out var captures) && captures.Any(v => v == null || InferType(v) == null))
+                    if (type != null && scope.Locals.HoistedCaptures.TryGetValue(h.Key, out var captures) &&
+                        captures.Any(value => value == null || IsUnknownType(InferType(value))))
                         type = null;
                     type = type ?? ImplicitDynamic(body.FirstOrDefault(), $"local variable '{h.Key}' (assigned in a nested block)");
                 }
@@ -750,8 +770,9 @@ namespace Typhon.Compiler.Emit
             sig.Scope.HasSelf = false;
             bool shadowsParameter = _scope != null && _scope.Params.Contains(f.Name) && IsUnknownType(KnownTypeCore(f.Name));
             bool bindsLocal = shadowsParameter || _scope?.Locals?.AllLocals.Contains(f.Name) == true;
-            string name = bindsLocal ? NewTmp("fn") : Esc(f.Name);
-            if (!bindsLocal)
+            bool exports = AtRuntimeModuleScope;
+            string name = bindsLocal || exports ? NewTmp("fn") : Esc(f.Name);
+            if (!bindsLocal && !exports)
             {
                 if (!f.IsAsync && !sig.IsGenerator) _funcReturnTypes[f.Name] = sig.ReturnType;
                 _localFunctionSigs[f.Name] = (f, sig);
@@ -765,7 +786,10 @@ namespace Typhon.Compiler.Emit
             string asyncKw = f.IsAsync && !sig.IsGenerator ? "async " : "";
             _w.Line($"{asyncKw}{sig.ReturnType} {name}{TypeParamList(f.TypeParams)}({sig.Params}){TypeParamConstraints(f.TypeParams, f)}");
             EmitSignatureBody(f.Body, sig);
-            if (bindsLocal) _w.Line($"{EmitName(new NameExpr { Id = f.Name })} = {ClosureCode(f, sig, name, null)};");
+            if (exports)
+                _w.Line($"__typhon_execution.Export({CsString(f.Name)}, {ClosureCode(f, sig, name, null)});");
+            else if (bindsLocal)
+                _w.Line($"{EmitName(new NameExpr { Id = f.Name })} = {ClosureCode(f, sig, name, null)};");
             foreach (var tp in f.TypeParams) _currentFuncTypeParams.Remove(tp.Name);
             _retKey = savedRet;
         }

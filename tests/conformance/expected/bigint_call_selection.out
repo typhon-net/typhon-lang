@@ -1,0 +1,8 @@
+int
+float
+int
+42.0
+|   12.50|
+|12      |
+format argument 1: * requires int, not float
+format argument 1: too big for precision

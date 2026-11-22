@@ -1,0 +1,29 @@
+show_count = True
+
+
+class Window:
+    def __init__(self, value: int):
+        self._value = value
+
+    if show_count:
+        @property
+        def count(self) -> int:
+            return self._value + 1
+
+    if not show_count:
+        @property
+        def hidden(self) -> int:
+            return 0
+
+
+class Derived(Window):
+    pass
+
+
+cl = Derived(3)
+print(cl.count, isinstance(Window.count, property), Window.count.fget(cl))
+print(hasattr(cl, 'hidden'), hasattr(Window, 'hidden'))
+try:
+    setattr(cl, 'count', 10)
+except AttributeError:
+    print('readonly', cl.count)

@@ -1,0 +1,28 @@
+class Slotted:
+    __slots__ = ('value', 'second')
+
+    def __new__(cls, value):
+        instance = object.__new__(cls)
+        instance.value = value
+        return instance
+
+def read(obj: Slotted):
+    return obj.value
+
+def initialize(obj: Slotted):
+    obj.second = None
+    return obj.second is None
+
+def unpack(value):
+    if value is None:
+        return 'none'
+    elif isinstance(value, Slotted):
+        return value.value
+    else:
+        return value[0]
+
+first = Slotted('first')
+second = Slotted('second')
+print(read(first), read(second), hasattr(first, 'second'))
+print(initialize(first), hasattr(second, 'second'))
+print(unpack(first), unpack(('tuple', 2)), unpack(None))

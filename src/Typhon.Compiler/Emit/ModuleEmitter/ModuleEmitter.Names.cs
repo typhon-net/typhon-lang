@@ -214,6 +214,8 @@ namespace Typhon.Compiler.Emit
             return clash;
         }
 
+        bool AtRuntimeModuleScope => _scopeKey == RuntimeCodeScopeKey && _scope?.Parent == null;
+
         string EmitName(NameExpr n)
         {
             string id = n.Id;
@@ -223,13 +225,13 @@ namespace Typhon.Compiler.Emit
             if (_baseInitializerArguments != null && _baseInitializerArguments.TryGetValue(id, out var argument)) return argument;
             if (IsLocal(id)) return Esc(id);
             if (_m.RuntimeCodeMode != null && _m.RuntimeBindings.Contains(id))
-                return $"__typhon_execution.{(_scopeKey == RuntimeCodeScopeKey ? "Local" : "Global")}[{CsString(id)}]";
+                return $"__typhon_execution.{(AtRuntimeModuleScope ? "Local" : "Global")}[{CsString(id)}]";
             if (ImportAlias(n) is Expr imported) return EmitExpr(imported);
             if (id == "self" && HasSelfInScope()) return "this";
             if (id == "__debug__") return "true";
-            if (id == "__doc__" && !_m.IsGdScript && _m.RuntimeCodeMode == null && !IsShadowed(id))
-                return ModuleObject(_m) + ".__doc__";
-            if (id == "__name__") return CsString(_m.Name);
+            if (id is "__name__" or "__doc__" && !_m.IsGdScript && _m.RuntimeCodeMode == null && !IsShadowed(id))
+                return ModuleObject(_m) + "." + id;
+            if (id == "__name__" && !IsShadowed(id)) return CsString(_m.Name);
             if (id == "__package__" && !IsShadowed(id)) return _m.PackageName.Length == 0 ? "null" : CsString(_m.PackageName);
             if (id == "__file__" && !IsShadowed(id)) return CsString(System.IO.Path.GetFullPath(_path));
             if (id == "globals" && !IsShadowed(id))
@@ -239,7 +241,7 @@ namespace Typhon.Compiler.Emit
                     $"({args}.Length == 0 && ({kw} == null || {kw}.Count == 0)) ? __typhon_globals() : " +
                     "throw new global::System.InvalidCastException(\"globals() takes no arguments\"))";
             }
-            if (PackageImportedMember(id) is string packageMember) return packageMember;
+            if (QualifiedProjectImport(id) is string projectImport) return projectImport;
             if (_runtimeProjectBindings.TryGetValue(id, out var runtimeBinding)) return runtimeBinding.Storage;
             // A CLR class member can shadow a using alias. In Python, a method resolves an
             // imported name from the module scope, outside the surrounding class namespace.
@@ -247,10 +249,20 @@ namespace Typhon.Compiler.Emit
                 _dotnetAliases.TryGetValue(id, out var importedAlias))
                 return CsTypeName(importedAlias);
             if (ExceptionMap.TryGetValue(id, out var ex) && !IsShadowed(id)) return ex;
+            // A method's free names are looked up in its module and builtins.
+            bool hidesGlobal = !_m.IsGdScript && _scope != null && _cls != null && !_classFieldInitializer &&
+                (_cls.Members.Contains(id) || _cls.FieldTypes.ContainsKey(id) || MethodInHierarchy(_cls.Def, id) != null);
+            if (hidesGlobal)
+            {
+                if (_moduleFieldNames.Contains(id) || _m.Functions.Contains(id)) return ModuleClassName(_m) + "." + Esc(id);
+                if (_importedFromModules.TryGetValue(id, out var importedMember))
+                    return ModuleClassName(importedMember.Key) + "." + Esc(importedMember.Value);
+            }
             if (!IsShadowed(id))
             {
                 if (StdlibOwner(id) is string owner && _r.GetMembers(owner, id).Count > 0) return CsTypeName(owner) + "." + Esc(id);
-                if (BuiltinClashes(id)) return "global::Typhon.Runtime.Builtins." + Esc(id);
+                if (BuiltinClashes(id) || hidesGlobal && _r.GetMembers("Typhon.Runtime.Builtins", id).Count != 0)
+                    return "global::Typhon.Runtime.Builtins." + Esc(id);
                 // An optional module that failed to import left its global name unbound.
                 if (_m.Ast.FailedModuleImports.Contains(id) && !_moduleFieldNames.Contains(id) && !_moduleAliases.ContainsKey(id) &&
                     !_dotnetAliases.ContainsKey(id) && !_typingOnlyNames.Contains(id))
@@ -469,7 +481,7 @@ namespace Typhon.Compiler.Emit
                     if (ExceptionMap.TryGetValue(n.Id, out var ex) && !IsShadowed(n.Id)) return ex;
                     if (IsLateBoundDotNetType(n.Id)) return "dynamic";
                     if (TryResolveType(n.Id, 0, out var stdMeta, out var stdPy) && StdlibTypeCode(stdMeta, stdPy) is string stdName) return stdName;
-                    return PackageImportedMember(n.Id) ?? Esc(n.Id);
+                    return QualifiedProjectImport(n.Id) ?? Esc(n.Id);
                 }
                 case AttributeExpr a:
                 {
@@ -583,7 +595,7 @@ namespace Typhon.Compiler.Emit
                     if (BuiltinConversionNames.Contains(n.Id) && !IsShadowed(n.Id) || ConditionalClassReference(n) ||
                         !IsLocal(n.Id) && _runtimeProjectBindings.ContainsKey(n.Id)) return false;
                     if (!TryResolveType(n.Id, 0, out var nameMeta, out var namePy)) return false;
-                    code = ExceptionMap.TryGetValue(n.Id, out var ex) && !IsShadowed(n.Id) ? ex : (_cls != null && _cls.Name == n.Id ? _cls.CsSelfType : PackageImportedMember(n.Id) ?? StdlibTypeCode(nameMeta, namePy) ?? StdlibNestedType(n.Id) ?? Esc(n.Id));
+                    code = ExceptionMap.TryGetValue(n.Id, out var ex) && !IsShadowed(n.Id) ? ex : (_cls != null && _cls.Name == n.Id ? _cls.CsSelfType : QualifiedProjectImport(n.Id) ?? StdlibTypeCode(nameMeta, namePy) ?? StdlibNestedType(n.Id) ?? Esc(n.Id));
                     return true;
                 case AttributeExpr a:
                 {

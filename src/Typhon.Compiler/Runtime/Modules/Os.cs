@@ -560,6 +560,7 @@ namespace Typhon.Stdlib
             }
             catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { throw OsErrors.From(e, path); }
         }
+        public static void mkdir(PyBytes path, long mode = 0x1ff, object? dir_fd = null) => mkdir(fsdecode(path), mode, dir_fd);
 
         public static void makedirs(string name, long mode = 0x1ff, bool exist_ok = false)
         {
@@ -580,6 +581,7 @@ namespace Typhon.Stdlib
             try { Directory.Delete(path); }
             catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { throw OsErrors.From(e, path); }
         }
+        public static void rmdir(PyBytes path, object? dir_fd = null) => rmdir(fsdecode(path), dir_fd);
 
         /// <summary>removedirs(name): removes the directory, then each empty parent.</summary>
         public static void removedirs(string name)
@@ -602,10 +604,13 @@ namespace Typhon.Stdlib
             try { if (link && Directory.Exists(path) && Win) Directory.Delete(path); else File.Delete(path); }
             catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { throw OsErrors.From(e, path); }
         }
+        public static void remove(PyBytes path, object? dir_fd = null) => remove(fsdecode(path), dir_fd);
         public static void unlink(string path, object? dir_fd = null) => remove(path);
+        public static void unlink(PyBytes path, object? dir_fd = null) => unlink(fsdecode(path), dir_fd);
 
         /// <summary>rename(src, dst): on POSIX an existing file dst is replaced; on Windows that is FileExistsError.</summary>
         public static void rename(string src, string dst) => Move(src, dst, replace: !Win);
+        public static void rename(PyBytes src, PyBytes dst) => rename(fsdecode(src), fsdecode(dst));
         /// <summary>replace(src, dst): rename that replaces an existing file dst on every platform.</summary>
         public static void replace(string src, string dst) => Move(src, dst, replace: true);
         public static void renames(string old, string @new)
@@ -653,6 +658,26 @@ namespace Typhon.Stdlib
                 else File.SetUnixFileMode(path, (UnixFileMode)(mode & 0xfff));
             }
             catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { throw OsErrors.From(e, path); }
+        }
+        public static void chmod(PyBytes path, long mode, object? dir_fd = null, bool follow_symlinks = true) =>
+            chmod(fsdecode(path), mode, dir_fd, follow_symlinks);
+
+        public static void chmod(long fd, long mode)
+        {
+            var entry = Fd(fd);
+            if (entry.Stream is not FileStream file || file.SafeFileHandle.IsClosed) throw OsErrors.BadFd();
+            try
+            {
+                var handle = file.SafeFileHandle;
+                if (Win)
+                {
+                    var attrs = File.GetAttributes(handle);
+                    File.SetAttributes(handle, (mode & 0x80) != 0 ? attrs & ~FileAttributes.ReadOnly : attrs | FileAttributes.ReadOnly);
+                }
+                else File.SetUnixFileMode(handle, (UnixFileMode)(mode & 0xfff));
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            { throw OsErrors.From(error, entry.Path ?? fd.ToString()); }
         }
         public static void lchmod(string path, long mode) => chmod(path, mode, follow_symlinks: false);
 
@@ -990,6 +1015,7 @@ namespace Typhon.Stdlib
             try { return Allocate(new FdEntry { Stream = stream, Path = path, Append = append }); }
             catch { stream.Dispose(); throw; }
         }
+        public static long open(PyBytes path, long flags, long mode = 0x1ff, object? dir_fd = null) => open(fsdecode(path), flags, mode, dir_fd);
 
         static FileStream Create(string path, FileMode fm, FileAccess access, long mode, bool deleteOnClose)
         {
@@ -1155,10 +1181,7 @@ namespace Typhon.Stdlib
 
         /// <summary>fdopen(fd, mode='r', ...): a file object over the descriptor (text, or binary for a mode with 'b').</summary>
         public static dynamic fdopen(long fd, string mode = "r", long buffering = -1, string? encoding = null, string? errors = null, string? newline = null, bool closefd = true)
-        {
-            var e = Fd(fd);
-            return mode.Contains('b') ? new PyBinaryFile(e.Stream, fd.ToString(), mode, closefd) : new PyFile(e.Stream, fd.ToString(), mode, encoding, errors, newline, closefd);
-        }
+            => io.open(fd, mode, buffering, encoding, errors, newline, closefd);
 
         // ── directory listings ──
 

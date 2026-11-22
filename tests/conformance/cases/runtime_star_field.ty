@@ -1,0 +1,7 @@
+import sys
+
+sys.displayhook(*("expanded",))
+try:
+    raise ValueError("probe")
+except ValueError:
+    print(sys.excepthook(*sys.exc_info()) is None)

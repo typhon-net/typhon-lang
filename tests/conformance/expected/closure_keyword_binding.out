@@ -1,0 +1,4 @@
+(4, 'value', (), 9, None, {})
+(8, 'other', (1, 2), 6, 'end', {'value': 11, 'label': 'test'})
+required keyword
+duplicate argument

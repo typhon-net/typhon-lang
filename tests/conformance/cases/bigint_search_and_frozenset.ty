@@ -1,0 +1,21 @@
+# typhon: int=bigint
+
+class Bound:
+    def __index__(self) -> int:
+        return 2
+
+def search(text: str, start: int, end: int):
+    print(text.find('ab', start, end), text.rfind('ab', start, end))
+
+search('abab', 1, 4)
+wide = 10**40
+search('abab', -wide, wide)
+text: str = 'abab'
+print(text.find('', wide), text.rfind('', 3, 2), text.find('', 4), text.rfind('a', 4))
+print(text.index('ab', Bound(), None), text.rindex('', None, None))
+try:
+    text.index('no', wide)
+except ValueError as error:
+    print(type(error).__name__)
+letters = frozenset(b'baaba')
+print(bytes(sorted(letters)), len(letters), type(letters).__name__)

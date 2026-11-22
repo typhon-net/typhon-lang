@@ -1,0 +1,3 @@
+(b'folder', b'/', b'item')
+(bytearray(b'folder'), bytearray(b'/'), bytearray(b'item'))
+b'name value'

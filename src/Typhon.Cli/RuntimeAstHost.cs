@@ -222,6 +222,7 @@ internal sealed class RuntimeAstHost
         ConstKind.Ellipsis => DBNull.Value,
         ConstKind.Int => Integer(node.Raw.Replace("_", "")),
         ConstKind.Float => double.Parse(node.Raw.Replace("_", ""), CultureInfo.InvariantCulture),
+        ConstKind.Imaginary => new Complex(0.0, double.Parse(node.Raw.Replace("_", ""), CultureInfo.InvariantCulture)),
         _ => throw new NotSupportedException(node.Kind.ToString()),
     };
 

@@ -1,0 +1,28 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+
+class Failure(Exception):
+    pass
+
+
+original = Failure
+Failure = (Failure, ValueError)
+print(Failure[0] is original, Failure[0].__name__, issubclass(Failure[0], Exception))
+print(Failure[1].__name__)
+
+
+class Factory:
+    def value(self) -> int:
+        return 1
+
+
+previous = Factory()
+
+
+class Factory:
+    def value(self) -> int:
+        return 2
+
+
+print(previous.value(), Factory().value(), type(previous).__name__, Factory.__name__)

@@ -1,0 +1,3 @@
+frozendict({'left': 1, 'right': 2})
+frozendict({'old': 3, 'keep': 2, 'new': 4})
+{'entry': 5}

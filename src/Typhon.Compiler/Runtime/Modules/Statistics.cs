@@ -342,6 +342,9 @@ namespace Typhon.Stdlib
         public static double fmean(IEnumerable<double> data, IEnumerable? weights = null) =>
             weights == null ? FMean(data) : WeightedFMean(data.Cast<object?>().ToList(), weights);
 
+        public static double fmean(IEnumerable data, IEnumerable? weights = null) =>
+            weights == null ? FMean(data.Cast<object>().Select(Builtins.@float)) : WeightedFMean(data.Cast<object?>().ToList(), weights);
+
         static double FMean(IEnumerable<double> data)
         {
             long n = 0;
@@ -627,6 +630,24 @@ namespace Typhon.Stdlib
         public static double stdev(IEnumerable<long> data, object? xbar = null) => Root(SumOfSquares(Big(data), xbar), false);
         public static double stdev(IEnumerable<BigInteger> data, object? xbar = null) => Root(SumOfSquares(data, xbar), false);
         public static double stdev(IEnumerable<double> data, double? xbar = null) => Root(SumOfSquares(data, xbar), false);
+        public static double stdev(IEnumerable data, object? xbar = null)
+        {
+            if (xbar != null) return stdev(data.Cast<object>().Select(Builtins.@float), Builtins.@float(xbar));
+            var values = new ExactSum();
+            var squares = new ExactSum();
+            foreach (object? item in data)
+            {
+                if (ExactMath.IsInt(item, out var integer)) { values.Add(integer); squares.AddSquare(integer); }
+                else
+                {
+                    double number = Builtins.@float(item!);
+                    values.Add(number);
+                    squares.AddSquare(number);
+                }
+            }
+            return Root(values.HasSpecial ? (default, true, values.Count, values.Special) :
+                (Deviations(values, squares), true, values.Count, null), false);
+        }
         public static double pstdev(IEnumerable<long> data, object? mu = null) => Root(SumOfSquares(Big(data), mu), true);
         public static double pstdev(IEnumerable<BigInteger> data, object? mu = null) => Root(SumOfSquares(data, mu), true);
         public static double pstdev(IEnumerable<double> data, double? mu = null) => Root(SumOfSquares(data, mu), true);

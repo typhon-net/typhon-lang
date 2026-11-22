@@ -39,14 +39,37 @@ namespace Typhon.Stdlib
 
         internal sealed class Theme
         {
+            public global::Typhon.Stdlib.argparse.Theme argparse { get; }
+            public PickletoolsTheme pickletools { get; }
             public TimeitTheme timeit { get; }
             public TracebackTheme traceback { get; }
 
             internal Theme(bool color)
             {
+                argparse = color ? global::Typhon.Stdlib.argparse.Theme.Color : global::Typhon.Stdlib.argparse.Theme.Plain;
+                pickletools = new PickletoolsTheme(color);
                 timeit = new TimeitTheme(color);
                 traceback = new TracebackTheme(color);
             }
+        }
+
+        internal sealed class PickletoolsTheme
+        {
+            readonly bool _color;
+            internal PickletoolsTheme(bool color) { _color = color; }
+            public string annotation => _color ? ANSIColors.GREY : "";
+            public string arg_number => _color ? ANSIColors.YELLOW : "";
+            public string arg_string => _color ? ANSIColors.GREEN : "";
+            public string mark => _color ? ANSIColors.GREY : "";
+            public string op_call => _color ? ANSIColors.GREEN : "";
+            public string op_container => _color ? ANSIColors.INTENSE_BLUE : "";
+            public string op_memo => _color ? ANSIColors.MAGENTA : "";
+            public string op_meta => _color ? ANSIColors.GREY : "";
+            public string op_stack => _color ? ANSIColors.BOLD_RED : "";
+            public string opcode_code => _color ? ANSIColors.CYAN : "";
+            public string position => _color ? ANSIColors.GREY : "";
+            public string proto => _color ? ANSIColors.YELLOW : "";
+            public string reset => _color ? ANSIColors.RESET : "";
         }
 
         internal sealed class TracebackTheme

@@ -1,0 +1,32 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+
+def attach(error: Exception, traceback):
+    if isinstance(error, SyntaxError):
+        error.filename = "rewritten.py"
+        print(error.filename, error.lineno, error.text.strip())
+    replace = error.with_traceback
+    return replace(traceback)
+
+
+try:
+    raise ValueError("source")
+except ValueError as caught:
+    trace = caught.__traceback__
+
+error = SyntaxError("problem", ("original.py", 1, 2, "example\n"))
+print(attach(error, trace) is error, error.__traceback__ is trace)
+print(attach(error, None) is error, error.__traceback__ is None)
+try:
+    attach(error, 2)
+except TypeError:
+    print("traceback type checked")
+
+
+class CustomError(Exception):
+    def with_traceback(self, traceback):
+        return "custom"
+
+
+print(attach(CustomError(), None))

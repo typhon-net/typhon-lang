@@ -517,6 +517,8 @@ namespace Typhon.Compiler.Emit
             foreach (var f in c.Body.OfType<FunctionDef>())
             {
                 if (f.Params.Count == 0 || f.Params[0].Kind != ParamKind.Normal) continue;
+                if (f.Name == "__init_subclass__" && f.Decorators.Count == 0)
+                    f.Decorators.Add(new NameExpr { Id = "classmethod", Line = f.Line, Col = f.Col });
                 bool isStatic = f.Decorators.Any(d => d is NameExpr dn && dn.Id == "staticmethod");
                 bool isClass = f.Decorators.Any(d => d is NameExpr dn && dn.Id == "classmethod") || f.Name is "__new__" or "__init_subclass__" or "__class_getitem__";
                 if (isStatic) continue;
@@ -541,8 +543,9 @@ namespace Typhon.Compiler.Emit
             foreach (var nested in c.Body.OfType<ClassDef>()) NormalizeSelfNames(nested);
         }
 
-        internal static bool CanBindClassBodyFunction(FunctionDef definition) =>
-            definition.Decorators.Count == 0 && definition.TypeParams.Count == 0 && definition.Params.Count > 0 &&
+        internal static bool CanBindClassBodyFunction(FunctionDef definition, bool allowProperty = false) =>
+            (definition.Decorators.Count == 0 || allowProperty && definition.Decorators.Count == 1 &&
+                definition.Decorators[0] is NameExpr { Id: "property" }) && definition.TypeParams.Count == 0 && definition.Params.Count > 0 &&
             definition.Params.All(parameter => parameter.Default == null || parameter.Default is ConstExpr) &&
             definition.Name is not ("__init__" or "__new__");
 
@@ -601,6 +604,16 @@ namespace Typhon.Compiler.Emit
                                                                      s is AssignStmt a && a.Targets.Any(t => t is NameExpr tn && tn.Id == name) ||
                                                                      s is AnnAssignStmt aa && aa.Target is NameExpr an && an.Id == name);
 
+            var resolvers = new Dictionary<ModuleInfo, ModuleEmitter>();
+            bool RuntimeDefines(ClassDef c, string name)
+            {
+                if (c.Bases.Count == 0) return false;
+                var module = owner[c];
+                if (!resolvers.TryGetValue(module, out var resolver))
+                    resolvers[module] = resolver = ModuleEmitter.CreateClassDeclarationResolver(module, p);
+                return resolver.HasRuntimeBaseMember(c, name);
+            }
+
             // (topmost base, method) → its definitions in subclasses
             var wanted = new Dictionary<(ClassDef Root, string Name), List<FunctionDef>>();
             foreach (var d in owner.Keys)
@@ -615,7 +628,7 @@ namespace Typhon.Compiler.Emit
                 {
                     if (f.Name.StartsWith("__") && f.Name.EndsWith("__") || f.Decorators.Count > 0 || f.Params.Count == 0) continue;
                     if (MultipleInheritance.IsGenerated(f.Name)) continue; // (multiple inheritance's own hooks and copies)
-                    if (ancestors.Any(a => Defines(a, f.Name))) continue;
+                    if (ancestors.Any(a => Defines(a, f.Name)) || RuntimeDefines(root, f.Name)) continue;
                     if (!wanted.TryGetValue((root, f.Name), out var list)) wanted[(root, f.Name)] = list = new List<FunctionDef>();
                     list.Add(f);
                 }
@@ -630,7 +643,8 @@ namespace Typhon.Compiler.Emit
                                           f.TypeParams.Count == 0);
                 if (!same) continue;
                 var root = kv.Key.Root;
-                var stub = new FunctionDef { Name = kv.Key.Name, Line = root.Line, Col = root.Col, IsAsync = first.IsAsync };
+                var stub = new FunctionDef { Name = kv.Key.Name, Line = root.Line, Col = root.Col,
+                    IsAsync = first.IsAsync, IsMissingMethodStub = true };
                 foreach (var prm in first.Params) stub.Params.Add(new Param { Name = prm.Name, Default = prm.Default, Kind = ParamKind.Normal, Line = root.Line, Col = root.Col });
                 stub.Body.Add(new RaiseStmt
                 {

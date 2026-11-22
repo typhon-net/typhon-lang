@@ -1,0 +1,16 @@
+# typhon: int=bigint
+from typing import Any
+
+def repeat(value: Any, count: int):
+    return value * count, count * value
+
+print(repeat('xy', 3))
+print(repeat([7], 3))
+print(repeat('xy', -2))
+print('xy' * 3, 3 * 'xy')
+print([7] * 3, 3 * [7])
+for too_large in (10**40, -(10**40)):
+    try:
+        repeat('xy', too_large)
+    except OverflowError:
+        print('repeat count out of range')

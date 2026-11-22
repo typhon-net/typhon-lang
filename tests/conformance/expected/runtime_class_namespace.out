@@ -1,0 +1,4 @@
+3 3 3
+True ('child', 7) ('parent', 7)
+False ('parent', 8)
+False False

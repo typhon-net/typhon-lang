@@ -1,0 +1,20 @@
+from typing import Any
+
+
+def make_callback(initial: int) -> Any:
+    def callback(value=initial, /, prefix="value", *args, required, tail=None, **extra):
+        return value, prefix, args, required, tail, extra
+    return callback
+
+
+callback = make_callback(4)
+print(callback(required=9))
+print(callback(8, "other", 1, 2, required=6, tail="end", value=11, label="test"))
+try:
+    callback(prefix="skipped")
+except TypeError:
+    print("required keyword")
+try:
+    callback(7, "first", required=6, prefix="duplicate")
+except TypeError:
+    print("duplicate argument")

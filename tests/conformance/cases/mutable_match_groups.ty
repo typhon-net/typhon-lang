@@ -1,0 +1,15 @@
+import re
+
+match = re.match(r'(?P<take>a)(?P<skip>b)?', 'a')
+if match:
+    names = match.groupdict()
+    names['take'] = 2
+    names['skip'] = ['missing']
+    print(names)
+    sentinel = object()
+    print(match.groupdict(default=sentinel)['skip'] is sentinel)
+
+binary = re.match(rb'(?P<take>a)(?P<skip>b)?', b'a')
+if binary:
+    print(binary.groupdict(default=7))
+    print(binary.groupdict())

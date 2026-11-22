@@ -1,0 +1,47 @@
+from statistics import fmean, stdev
+from operator import index
+from typing import Any
+
+chars: list[Any] = ["💡", b"A", bytearray(b"B")]
+print(list(map(ord, chars)))
+samples: list[Any] = [2, 4.0, 6]
+print(fmean(samples), stdev(samples), fmean(samples, [1, 1, 2]))
+
+class Index:
+    def __index__(self):
+        return 7
+
+print(index(True), index(Index()))
+try:
+    index(1.5)
+except TypeError as error:
+    print(str(error))
+
+class Parent:
+    def configure(self, a=None, version=2):
+        print("parent", a, version)
+
+class Child(Parent):
+    def configure(self, *args, **kwargs):
+        return None
+
+def show(value: Parent):
+    print(value.configure())
+    print(value.configure("requested", version=3))
+
+show(Child())
+
+def boxed_state() -> object:
+    return ("state", (7, 8, 9), "last")
+
+state = boxed_state()
+print(state[0], state[1][-1], state[-1])
+
+class Arity:
+    def apply(self, x, extra=None, scale=1):
+        return x if extra is None else (x + extra) * scale
+
+class InheritedArity(Arity):
+    pass
+
+print(Arity().apply(2, 3, 4), InheritedArity().apply(7))

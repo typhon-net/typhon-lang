@@ -1,0 +1,22 @@
+events: list[str] = []
+
+class Base:
+    def __init_subclass__(child, /, *, label="default"):
+        events.append(child.__name__ + " " + label)
+        super().__init_subclass__()
+
+class Middle(Base):
+    pass
+
+class Child(Middle, label="selected"):
+    pass
+
+print(events)
+Child.__init_subclass__(label="manual")
+print(events[-1])
+
+try:
+    class Plain(ignored=True):
+        pass
+except TypeError as error:
+    print(str(error))

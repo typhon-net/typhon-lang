@@ -19,14 +19,20 @@ namespace Typhon.Runtime
         internal PyCallableKind Kind { get; }
         internal string? DocString { get; }
         internal int Line { get; }
+        internal string? PythonName { get; }
 
-        public PySourceAttribute(string filename, string module, PyCallableKind kind = PyCallableKind.Ordinary, string? doc = null, int line = 0)
+        public PySourceAttribute(string filename, string module, PyCallableKind kind = PyCallableKind.Ordinary,
+            string? doc = null, int line = 0) : this(filename, module, kind, doc, line, null) { }
+
+        public PySourceAttribute(string filename, string module, PyCallableKind kind, string? doc, int line,
+            string? pythonName)
         {
             Filename = filename;
             Module = module;
             Kind = kind;
             DocString = doc;
             Line = line;
+            PythonName = pythonName;
         }
     }
 }

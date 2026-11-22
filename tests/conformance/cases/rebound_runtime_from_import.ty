@@ -1,0 +1,20 @@
+try:
+    from math import sqrt as chosen
+except ImportError:
+    def chosen(number):
+        return 0.0
+
+
+def patch(replacement):
+    global chosen
+    chosen = replacement
+
+
+def transform(number):
+    return number + 1
+
+
+first = chosen
+print(chosen(25.0), first is chosen)
+patch(transform)
+print(chosen(7), first(81.0), first is chosen)

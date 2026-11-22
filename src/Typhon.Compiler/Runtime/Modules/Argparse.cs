@@ -1564,13 +1564,16 @@ namespace Typhon.Stdlib
         internal sealed class Theme
         {
             public string usage = "", prog = "", prog_extra = "", heading = "", summary_long_option = "", summary_short_option = "",
-                          summary_label = "", summary_action = "", long_option = "", short_option = "", label = "", action = "", reset = "";
+                          summary_label = "", summary_action = "", long_option = "", short_option = "", label = "", action = "", reset = "",
+                          @default = "", interpolated_value = "", error = "", warning = "", message = "";
             public static readonly Theme Plain = new Theme();
             public static readonly Theme Color = new Theme
             {
                 usage = "\x1b[1;34m", prog = "\x1b[1;35m", prog_extra = "\x1b[35m", heading = "\x1b[1;34m", summary_long_option = "\x1b[36m",
                 summary_short_option = "\x1b[32m", summary_label = "\x1b[33m", summary_action = "\x1b[32m", long_option = "\x1b[1;36m",
                 short_option = "\x1b[1;32m", label = "\x1b[1;33m", action = "\x1b[1;32m", reset = "\x1b[0m",
+                @default = _colorize.ANSIColors.GREY, interpolated_value = _colorize.ANSIColors.YELLOW,
+                error = _colorize.ANSIColors.BOLD_MAGENTA, warning = _colorize.ANSIColors.BOLD_YELLOW, message = _colorize.ANSIColors.MAGENTA,
             };
         }
 

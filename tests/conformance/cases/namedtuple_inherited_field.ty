@@ -1,0 +1,35 @@
+from collections import namedtuple
+
+Storage = namedtuple('Storage', 'address')
+
+class TextAddress:
+    @property
+    def address_parts(self):
+        value = self.address
+        if value is None:
+            return None, None
+        user, _, host = value.rpartition('@')
+        return user, host.lower()
+
+    @property
+    def hostname(self):
+        return self.address_parts[1]
+
+class BytesAddress:
+    @property
+    def hostname(self):
+        value = self.address
+        if value is None:
+            return None
+        _, _, host = value.rpartition(b'@')
+        return host.lower()
+
+class Text(Storage, TextAddress):
+    pass
+
+class Binary(Storage, BytesAddress):
+    pass
+
+print(Text('USER@EXAMPLE.COM').hostname)
+print(Binary(b'USER@EXAMPLE.COM').hostname)
+print(Text(None).hostname)

@@ -1,0 +1,42 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+# typhon: int=bigint
+
+from typing import Any
+
+
+def tuple_values(value):
+    if not isinstance(value, tuple):
+        value = (value,)
+    value = tuple([value[0], value[-1]])
+    return value
+
+
+def split_from_any(value: Any, count: int):
+    return value.split(',', count)
+
+
+class Index:
+    def __index__(self):
+        return 1
+
+
+print(tuple_values(1), tuple_values((2, 3)))
+text: str = 'a,b,c'
+count: int = 1
+print(text.split(',', count))
+print(text.rsplit(sep=',', maxsplit=count))
+print(split_from_any(text, count))
+print('a b c'.split(maxsplit=count), 'a b c'.rsplit(maxsplit=count))
+print(text.split(',', 0), text.rsplit(',', -1))
+print(text.split(',', 2 ** 63 - 1))
+print(text.split(',', Index()))
+print('+12'.zfill(count + 5), '-12'.zfill(-2 ** 63))
+try:
+    text.rsplit(',', 2 ** 80)
+except OverflowError:
+    print('split count overflow')
+try:
+    text.split(',', None)
+except TypeError:
+    print('None is not a split count')

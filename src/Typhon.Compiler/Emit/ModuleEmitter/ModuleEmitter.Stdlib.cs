@@ -29,6 +29,17 @@ namespace Typhon.Compiler.Emit
             return null;
         }
 
+        string ChainElementType(IEnumerable<Expr> iterables)
+        {
+            var itemTypes = iterables.Select(value =>
+            {
+                string type = IterableType(value);
+                return TupleElementTypes(type) != null ? HomogeneousTupleItem(type) : ElementTypeOf(type);
+            }).Distinct().ToList();
+            return itemTypes.Count == 1 && !IsUnknownType(itemTypes[0]) && itemTypes[0] != "object?"
+                ? itemTypes[0] : "dynamic";
+        }
+
         /// <summary>
         /// Result types of standard-library functions whose C# signatures are generic (the element type follows the argument):
         /// permutations(xs) → tuples of xs's elements, product(a, b) → (A, B) pairs, Counter(xs) → a Counter of xs's elements, ...
@@ -58,7 +69,9 @@ namespace Typhon.Compiler.Emit
                     return es.Count >= 2 && es.All(e => e != null && e != TypeInference.Pending) ? $"IEnumerable<({string.Join(", ", es)})>" : es.Contains(TypeInference.Pending) ? TypeInference.Pending : null;
                 case "Typhon.Stdlib.itertools.count":
                     return pos.Any(p => InferType(p) == "double") ? "IEnumerable<double>" : $"IEnumerable<{IntT}>";
-                case "Typhon.Stdlib.itertools.cycle": case "Typhon.Stdlib.itertools.islice": case "Typhon.Stdlib.itertools.chain": case "Typhon.Stdlib.itertools.accumulate":
+                case "Typhon.Stdlib.itertools.chain":
+                    return $"IEnumerable<{(pos.Count == call.Args.Count ? ChainElementType(pos) : "dynamic")}>";
+                case "Typhon.Stdlib.itertools.cycle": case "Typhon.Stdlib.itertools.islice": case "Typhon.Stdlib.itertools.accumulate":
                     return Wrap(Elem(0), "IEnumerable<{0}>");
                 case "Typhon.Stdlib.itertools.takewhile": case "Typhon.Stdlib.itertools.dropwhile": case "Typhon.Stdlib.itertools.filterfalse":
                     return Wrap(Elem(1), "IEnumerable<{0}>");

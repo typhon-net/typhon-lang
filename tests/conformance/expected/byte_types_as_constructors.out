@@ -1,0 +1,4 @@
+b'' b'\x00\x00' b'AB'
+b'h\xc3\xa9' b'C'
+bytearray(b'') bytearray(b'\x00\x00') bytearray(b'AB')
+bytearray(b'h\xc3\xa9') bytearray(b'C')

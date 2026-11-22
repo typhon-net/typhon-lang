@@ -1,0 +1,13 @@
+0 False
+thread not started
+True True
+True True False
+True
+thread already started
+True False
+True
+_thread._ExceptHookArgs(exc_type=None, exc_value=None, exc_traceback=None, thread=None) 4 (None, None, None, None)
+True ['finished']
+False
+True
+True

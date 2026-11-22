@@ -165,6 +165,67 @@ namespace Typhon.Runtime
             Array.Copy(mt, _mt, N); _index = index; _gaussNext = gauss;
         }
 
+        internal static bool IsCoreInteger(object? value) =>
+            value is BigInteger or bool or sbyte or byte or short or ushort or int or uint or long or ulong;
+
+        internal static BigInteger CoreInteger(object? value) => value switch
+        {
+            BigInteger integer => integer,
+            bool flag => flag ? BigInteger.One : BigInteger.Zero,
+            sbyte or byte or short or ushort or int or uint or long or ulong => new BigInteger(Convert.ToDecimal(value)),
+            _ => throw new InvalidCastException("an integer is required"),
+        };
+
+        internal void SeedCore(object? value)
+        {
+            if (value == null) { seed(); return; }
+            if (IsCoreInteger(value)) { SeedInt(CoreInteger(value)); return; }
+            long hash = value switch
+            {
+                double number when !double.IsNaN(number) => FloatSeedHash(number),
+                float number when !float.IsNaN(number) => FloatSeedHash(number),
+                IList or IDictionary or PyByteArray => throw new InvalidCastException($"unhashable type: '{Builtins.PyTypeName(value.GetType())}'"),
+                _ => Builtins.hash(value),
+            };
+            SeedInt(new BigInteger(unchecked((ulong)hash)));
+        }
+
+        static long FloatSeedHash(double number)
+        {
+            if (double.IsInfinity(number)) return number < 0 ? -314159 : 314159;
+            // A binary float's significand times a power of two, modulo 2**61 - 1.
+            const ulong modulus = (1UL << 61) - 1;
+            ulong bits = BitConverter.DoubleToUInt64Bits(number);
+            int encodedExponent = (int)((bits >> 52) & 0x7ff);
+            ulong significand = bits & ((1UL << 52) - 1);
+            if (encodedExponent != 0) significand |= 1UL << 52;
+            int exponent = encodedExponent == 0 ? -1074 : encodedExponent - 1075;
+            int rotation = (exponent % 61 + 61) % 61;
+            ulong reduced = ((significand << rotation) & modulus) | (significand >> (61 - rotation));
+            long hash = number < 0 ? -(long)reduced : (long)reduced;
+            return hash == -1 ? -2 : hash;
+        }
+
+        internal PyTuple<long> CoreState()
+        {
+            var values = new long[N + 1];
+            for (int i = 0; i < N; i++) values[i] = _mt[i];
+            values[N] = _index;
+            return new PyTuple<long>(values);
+        }
+
+        internal void RestoreCoreState(object? state)
+        {
+            if (state is not ITuple values) throw new InvalidCastException("state vector must be a tuple");
+            if (values.Length != N + 1) throw new ArgumentException("state vector is the wrong size");
+            var words = new uint[N];
+            for (int i = 0; i < N; i++) words[i] = (uint)CoreInteger(values[i]);
+            var index = CoreInteger(values[N]);
+            if (index < 0 || index > N) throw new ArgumentException("invalid state");
+            Array.Copy(words, _mt, N);
+            _index = (int)index;
+        }
+
         // ── integers ──
 
         /// <summary>random(): a float in [0, 1) with 53 random bits.</summary>
@@ -483,6 +544,32 @@ namespace Typhon.Stdlib
     using System.Collections.Generic;
     using System.Numerics;
     using Typhon.Runtime;
+
+    internal static class _random
+    {
+        internal class Random
+        {
+            readonly PyRandom _engine = new PyRandom();
+
+            public Random(object? seed = null)
+            {
+                if (seed != null) _engine.SeedCore(seed);
+            }
+
+            public void seed(object? n = null) => _engine.SeedCore(n);
+            public virtual double random() => _engine.random();
+            public virtual dynamic getstate() => _engine.CoreState();
+            public virtual void setstate(dynamic? state) => _engine.RestoreCoreState((object?)state);
+
+            public virtual dynamic getrandbits(dynamic? k)
+            {
+                object bits = Builtins.__index_value((object?)k);
+                BigInteger count = PyRandom.CoreInteger(bits);
+                if (count.Sign < 0) throw new ArgumentException("Cannot convert negative int");
+                return count <= 63 ? (object)_engine.getrandbits((long)count) : _engine.getrandbits(count);
+            }
+        }
+    }
 
     /// <summary>The random module: functions of one shared generator, and random.Random(seed) for others.</summary>
     internal static class random_

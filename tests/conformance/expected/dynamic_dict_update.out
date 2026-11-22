@@ -1,0 +1,4 @@
+{'letter': 'b', 'number': 1, 'extra': 2}
+{'letter': 'b', 'number': 4, 'extra': 2, 'tuple': 3}
+{'letter': 'b', 'number': 4, 'extra': 2, 'tuple': 7, 'final': 5}
+[1, 2, 3]

@@ -1,0 +1,20 @@
+class Parent:
+    def transform(self, value):
+        return ("parent", value)
+
+    def alternate(self, value):
+        return ("child", value)
+
+class Child(Parent):
+    pass
+
+namespace = vars(Child)
+setattr(Child, "factor", 3)
+setattr(Child, "transform", Parent.alternate)
+child = Child()
+print(namespace["factor"], getattr(Child, "factor"), getattr(child, "factor"))
+print("transform" in namespace, getattr(child, "transform")(7), getattr(Parent(), "transform")(7))
+delattr(Child, "transform")
+print("transform" in namespace, getattr(child, "transform")(8))
+delattr(Child, "factor")
+print("factor" in namespace, hasattr(child, "factor"))

@@ -1,0 +1,14 @@
+import _colorize
+
+accented = _colorize.get_theme(force_color=True).pickletools
+plain = _colorize.get_theme(force_no_color=True).pickletools
+
+print([repr(getattr(accented, name)) for name in (
+    "annotation", "arg_number", "arg_string", "mark", "op_call", "op_container", "op_memo", "op_meta",
+    "op_stack", "opcode_code", "position", "proto", "reset"
+)])
+print([getattr(plain, name) for name in (
+    "annotation", "arg_number", "arg_string", "mark", "op_call", "op_container", "op_memo", "op_meta",
+    "op_stack", "opcode_code", "position", "proto", "reset"
+)])
+print(_colorize.get_theme(force_color=True, force_no_color=True).pickletools.opcode_code == accented.opcode_code)

@@ -1,0 +1,24 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import pickle
+
+
+# CPython 3.15 protocol 5, including its FRAME opcode.
+stock_pickle = bytes.fromhex("8005952c000000000000007d948c0576616c756594288c0368c3a994430362696e948a05fffffffffe47400c0000000000004e7494732e")
+print(pickle.loads(stock_pickle))
+
+# Shared references and a mutable cycle survive round trips.
+items = ["first", 42, False]
+value = {"one": items, "two": items}
+items.append(value)
+for protocol in (4, 5):
+    restored = pickle.loads(pickle.dumps(value, protocol=protocol))
+    print(restored["one"] is restored["two"], restored["one"][-1] is restored)
+    print(restored["two"][:3])
+
+print(pickle.loads(pickle.dumps(bytearray(b"mutable"))))
+try:
+    pickle.loads(stock_pickle[:-2])
+except pickle.UnpicklingError:
+    print("truncated")

@@ -1,0 +1,31 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import collections.abc
+from typing import Iterator
+
+
+class Store(collections.abc.MutableMapping[str, int]):
+    def __init__(self):
+        self._data: dict[str, int] = {}
+
+    def __getitem__(self, key: str) -> int:
+        return self._data[key]
+
+    def __setitem__(self, key: str, value: int) -> None:
+        self._data[key] = value
+
+    def __delitem__(self, key: str) -> None:
+        del self._data[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._data)
+
+    def __len__(self) -> int:
+        return len(self._data)
+
+
+table = Store()
+table.update({"direct": 4})
+print(isinstance(table, collections.abc.MutableMapping), list(table.keys()), table["direct"])
+print(table.pop("direct"), len(table))

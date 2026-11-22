@@ -1,0 +1,19 @@
+class Step:
+    def __init__(self, value: int):
+        self.value = value
+
+    def _double(self, amount: int) -> int:
+        return self.value * 2 + amount
+
+    actions = dict(run=_double)
+    indexed = {'run': _double}
+
+    def apply(self, amount: int):
+        if amount < 0:
+            self = Step(6)
+        keyword = self.actions['run']
+        indexed = self.indexed['run']
+        return keyword(self, amount), indexed(self, amount)
+
+print(Step(3).apply(5), Step(3).apply(-5))
+print(Step.actions['run'](Step(4), 2))

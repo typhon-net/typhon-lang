@@ -1,0 +1,7 @@
+{'value': ('hé', b'bin', -4294967297, 3.5, None)}
+True True
+['first', 42, False]
+True True
+['first', 42, False]
+bytearray(b'mutable')
+truncated

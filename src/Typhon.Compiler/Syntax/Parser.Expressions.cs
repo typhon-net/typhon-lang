@@ -322,7 +322,10 @@ namespace Typhon.Compiler.Syntax
             {
                 case TokenKind.Number:
                     _i++;
-                    bool isFloat = !tok.Text.StartsWith("0x") && !tok.Text.StartsWith("0X") &&
+                    bool basedInteger = tok.Text.Length > 1 && tok.Text[0] == '0' && "xXoObB".IndexOf(tok.Text[1]) >= 0;
+                    if (!basedInteger && tok.Text[tok.Text.Length - 1] is 'j' or 'J')
+                        return At(new ConstExpr { Kind = ConstKind.Imaginary, Raw = tok.Text.Substring(0, tok.Text.Length - 1) }, tok);
+                    bool isFloat = !basedInteger &&
                                    (tok.Text.Contains(".") || tok.Text.Contains("e") || tok.Text.Contains("E"));
                     return At(new ConstExpr { Kind = isFloat ? ConstKind.Float : ConstKind.Int, Raw = tok.Text }, tok);
                 case TokenKind.String:

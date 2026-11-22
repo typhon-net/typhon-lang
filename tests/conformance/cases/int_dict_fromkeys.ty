@@ -1,0 +1,7 @@
+# typhon: int=bigint
+from typing import Any
+
+flags: Any = dict.fromkeys(['name'], 0)
+print(flags)
+flags['name'] = 10**40
+print(flags)

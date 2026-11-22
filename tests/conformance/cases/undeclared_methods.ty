@@ -1,0 +1,12 @@
+class Base:
+    pass
+
+class Child(Base):
+    def introduced(self):
+        return "child"
+
+base = Base()
+child = Child()
+print(hasattr(base, "introduced"), hasattr(Base, "introduced"), "introduced" in vars(Base), "introduced" in dir(base))
+print(hasattr(child, "introduced"), hasattr(Child, "introduced"), child.introduced())
+print(hasattr(super(Child, child), "introduced"))

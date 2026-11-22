@@ -1,0 +1,19 @@
+import sys
+
+module = sys.modules[__name__]
+print(__name__, module.__name__)
+__name__ = 'renamed'
+print(__name__, module.__name__, globals()['__name__'])
+if __name__ == '__main__':
+    print('initial')
+else:
+    print('renamed branch')
+
+class Tagged:
+    def __hash__(self) -> int:
+        return 73
+
+value = Tagged()
+base_hash = object.__hash__
+print(isinstance(object.__hash__(value), int), object.__hash__(value) == base_hash(value), hash(value))
+print(getattr(object, '__hash__')(value) == base_hash(value))

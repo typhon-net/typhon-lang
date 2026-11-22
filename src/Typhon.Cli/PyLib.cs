@@ -76,11 +76,15 @@ internal static class PyLib
 
     static Type? RuntimeModule(string module)
     {
+        if (module == "_collections_abc") module = "collections.abc";
         string[] parts = module.Split('.');
-        string suffix = parts.Length > 1 ? "+" + string.Join("+", parts.Skip(1)) : "";
         string name = "Typhon.Stdlib." + parts[0];
         var assembly = Runtime.Value;
-        return assembly?.GetType(name + suffix) ?? assembly?.GetType(name + "_" + suffix);
+        Type? type = assembly?.GetType(name) ?? assembly?.GetType(name + "_");
+        const BindingFlags nested = BindingFlags.Public | BindingFlags.NonPublic;
+        for (int i = 1; i < parts.Length && type != null; i++)
+            type = type.GetNestedType(parts[i], nested) ?? type.GetNestedType(parts[i] + "_", nested);
+        return type;
     }
 
     /// <summary>Runtime package attributes take precedence over a same-named source submodule.</summary>

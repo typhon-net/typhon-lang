@@ -1,0 +1,15 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import ast
+
+
+print(ast.literal_eval(" \t('clé', [b'raw', -5, True, None], {'offset': 7})"))
+print(ast.literal_eval(ast.parse("3 - 4j", mode="eval")))
+print(sorted(ast.literal_eval("{3, 2, 3}")), len(ast.literal_eval("set()")))
+
+for invalid in ["1 + 2", "unknown()", "{**{}}", "[1, name]"]:
+    try:
+        ast.literal_eval(invalid)
+    except ValueError as error:
+        print(str(error).startswith("malformed node or string"))

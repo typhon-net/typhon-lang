@@ -1,0 +1,42 @@
+import re
+from typing import Any
+
+def decorate(match):
+    return "<" + match.group(0) + ">"
+
+callback: Any = decorate
+print(re.sub(r"a+", callback, "aa-ba"), re.sub(r"a+", lambda match: None, "aa-ba"))
+options: dict[str, Any] = {"initial": 1, "replace": 0}
+result = dict(options, replace=3, entries=[])
+print(result, options)
+print(dict(options, **{"added": 4}))
+options = dict(options, replace=5)
+print(options["replace"])
+
+class Option:
+    def __init__(self, value: Any):
+        self.value = value
+
+key = Option("needed")
+found: dict[Any, str] = {"needed": "value"}
+print(found.get(key.value))
+conflicts: dict[Any, Any] = {}
+bucket = conflicts.setdefault(key.value, [])
+bucket.append("record")
+print(conflicts.get(key.value, []), conflicts.get("missing", []))
+
+mixed = {1: "number", "needed": "text"}
+print(mixed.get(key.value))
+
+
+def help_flag(prefix_chars: Any):
+    prefix = "-" if "-" in prefix_chars else prefix_chars[0]
+    return prefix * 2 + "help"
+
+print(help_flag("-"), help_flag("+"))
+
+
+def metavars(value: Any, count: Any):
+    return (value,) * count
+
+print((None,), metavars(None, 0), metavars(None, 2), metavars("ITEM", 1))

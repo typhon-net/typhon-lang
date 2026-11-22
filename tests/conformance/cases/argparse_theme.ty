@@ -1,0 +1,6 @@
+from _colorize import get_theme
+
+plain = get_theme(force_no_color=True).argparse
+color = get_theme(force_color=True).argparse
+print(plain.usage == plain.reset == plain.interpolated_value == "")
+print(repr(color.usage), repr(color.reset), repr(color.interpolated_value), repr(color.error))

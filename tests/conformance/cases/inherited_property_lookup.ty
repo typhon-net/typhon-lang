@@ -1,0 +1,8 @@
+from io import IOBase
+
+class Probe(IOBase):
+    @property
+    def closed(self):
+        return str(1)
+
+print(getattr(Probe(), 'closed'))

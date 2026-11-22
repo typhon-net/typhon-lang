@@ -34,6 +34,13 @@ namespace Typhon.Compiler.Semantics
 
         public bool TypeExists(string metadataName) => Find(metadataName) != null;
 
+        internal bool HasTypedEnumerable(string metadataName)
+        {
+            var type = Find(metadataName);
+            return type != null && (type.OriginalDefinition.SpecialType == SpecialType.System_Collections_Generic_IEnumerable_T ||
+                type.AllInterfaces.Any(i => i.OriginalDefinition.SpecialType == SpecialType.System_Collections_Generic_IEnumerable_T));
+        }
+
         internal IEnumerable<string> StaticFieldNames(string metadataName) =>
             Find(metadataName)?.GetMembers().OfType<IFieldSymbol>()
                 .Where(field => field.IsStatic && field.DeclaredAccessibility == Accessibility.Public)
@@ -61,23 +68,25 @@ namespace Typhon.Compiler.Semantics
             return false;
         }
 
-        public bool IsOverridable(string metadataName, string memberName)
+        public bool IsOverridable(string metadataName, string memberName, int? parameterCount = null)
         {
             var start = Find(metadataName);
             if (start == null || start.TypeKind == TypeKind.Interface) return false;
             for (ITypeSymbol t = start; t != null; t = t.BaseType)
                 foreach (var m in t.GetMembers(memberName))
-                    if ((m.IsVirtual || m.IsAbstract || m.IsOverride) && !m.IsSealed) return true;
+                    if ((m.IsVirtual || m.IsAbstract || m.IsOverride) && !m.IsSealed &&
+                        (parameterCount == null || m is IMethodSymbol method && method.Parameters.Length == parameterCount)) return true;
             return false;
         }
 
-        public string OverrideAccessibility(string metadataName, string memberName)
+        public string OverrideAccessibility(string metadataName, string memberName, int? parameterCount = null)
         {
             var start = Find(metadataName);
             if (start == null || start.TypeKind == TypeKind.Interface) return null;
             for (ITypeSymbol t = start; t != null; t = t.BaseType)
                 foreach (var m in t.GetMembers(memberName))
-                    if ((m.IsVirtual || m.IsAbstract || m.IsOverride) && !m.IsSealed)
+                    if ((m.IsVirtual || m.IsAbstract || m.IsOverride) && !m.IsSealed &&
+                        (parameterCount == null || m is IMethodSymbol method && method.Parameters.Length == parameterCount))
                         switch (m.DeclaredAccessibility)
                         {
                             case Accessibility.Public: return "public";
@@ -99,6 +108,10 @@ namespace Typhon.Compiler.Semantics
             {
                 IsMethod = true,
                 IsStatic = m.IsStatic,
+                IsOverridable = (m.IsVirtual || m.IsAbstract || m.IsOverride) && !m.IsSealed,
+                RequiresClrArguments = m.ReturnsByRef || m.ReturnsByRefReadonly || m.ReturnType.IsRefLikeType ||
+                    m.Parameters.Any(p => p.RefKind != RefKind.None || p.Type.IsRefLikeType ||
+                        p.Type.TypeKind is TypeKind.Pointer or TypeKind.FunctionPointer),
                 Type = Display(m.ReturnType),
                 ReturnsDynamic = m.ReturnType.TypeKind == TypeKind.Dynamic,
                 ReturnsVoid = m.ReturnsVoid,
@@ -127,6 +140,8 @@ namespace Typhon.Compiler.Semantics
                                      elem.SpecialType == SpecialType.System_Delegate || elem.SpecialType == SpecialType.System_MulticastDelegate ||
                                      elem is INamedTypeSymbol en && en.Name == "Expression" && en.IsGenericType;
                 sig.Parameters.Add(new ParamSig { Name = p.Name, Fit = fit, NarrowTo = narrowTo, IsParams = p.IsParams, IsOptional = p.IsOptional,
+                                                  IsPackedArguments = p.GetAttributes().Any(a =>
+                                                      a.AttributeClass?.ToDisplayString() == "Typhon.Runtime.PyPackedArgumentsAttribute"),
                                                   IsDelegateBase = elem.SpecialType == SpecialType.System_Delegate || elem.SpecialType == SpecialType.System_MulticastDelegate,
                                                               IsArray = !p.IsParams && p.Type is IArrayTypeSymbol,
                                                   BigAccepts = bigAccepts, BigNarrowTo = bigNarrow, IsBigInteger = isBig, TakesFunction = takesFunction,
@@ -194,11 +209,23 @@ namespace Typhon.Compiler.Semantics
                             break;
                         case IPropertySymbol prop when !prop.IsIndexer:
                             BigFit(prop.Type, out var pbn, out _);
-                            result.Add(new MemberSig { IsStatic = prop.IsStatic, Type = Display(prop.Type), ReturnsDynamic = prop.Type.TypeKind == TypeKind.Dynamic, ValueFit = Fit(prop.Type, out var pn), ValueNarrowTo = pn, ValueBigNarrowTo = pbn });
+                            result.Add(new MemberSig
+                            {
+                                IsStatic = prop.IsStatic, IsProperty = true,
+                                IsOverridable = (prop.IsVirtual || prop.IsAbstract || prop.IsOverride) && !prop.IsSealed,
+                                Type = Display(prop.Type), ReturnsDynamic = prop.Type.TypeKind == TypeKind.Dynamic,
+                                ValueFit = Fit(prop.Type, out var pn), ValueNarrowTo = pn, ValueBigNarrowTo = pbn,
+                            });
                             break;
                         case IFieldSymbol field:
                             BigFit(field.Type, out var fbn, out _);
-                            result.Add(new MemberSig { IsStatic = field.IsStatic, Type = Display(field.Type), ReturnsDynamic = field.Type.TypeKind == TypeKind.Dynamic, ValueFit = Fit(field.Type, out var fn), ValueNarrowTo = fn, ValueBigNarrowTo = fbn });
+                            result.Add(new MemberSig
+                            {
+                                IsStatic = field.IsStatic, Type = Display(field.Type), ReturnsDynamic = field.Type.TypeKind == TypeKind.Dynamic,
+                                IsOptionalModuleMember = field.GetAttributes().Any(a =>
+                                    a.AttributeClass?.ToDisplayString() == "Typhon.Runtime.PyOptionalModuleMemberAttribute"),
+                                ValueFit = Fit(field.Type, out var fn), ValueNarrowTo = fn, ValueBigNarrowTo = fbn,
+                            });
                             break;
                     }
                 }

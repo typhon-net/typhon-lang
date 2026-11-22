@@ -188,7 +188,14 @@ namespace Typhon.Compiler.Emit
                         if (BinaryDunders.TryGetValue(f.Name, out var op))
                         {
                             definedOps.Add(op);
-                            _w.Line($"public static {RetType(f)} operator {op}({self} self, {ParamType(f, 1)} other) => self.{f.Name}(other);");
+                            string operand = ParamType(f, 1);
+                            _w.Line($"public static {RetType(f)} operator {op}({self} self, {operand} other) => self.{f.Name}(other);");
+                            // When both operands have this type, Python calls the forward method.
+                            // Give C# an exact overload when both bridges would otherwise match.
+                            if (!_m.IsGdScript && operand is "dynamic" or "object" && methods.Any(reflected =>
+                                ReflectedDunders.TryGetValue(reflected.Name, out var reflectedOperator) && reflectedOperator == op &&
+                                ParamType(reflected, 1) is "dynamic" or "object"))
+                                _w.Line($"public static {RetType(f)} operator {op}({self} self, {self} other) => self.{f.Name}(other);");
                         }
                         else if (ReflectedDunders.TryGetValue(f.Name, out var rop))
                             _w.Line($"public static {RetType(f)} operator {rop}({ParamType(f, 1)} other, {self} self) => self.{f.Name}(other);");

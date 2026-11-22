@@ -1,0 +1,16 @@
+from typing import Any
+
+typed: dict[Any, str] = {None: "empty", "name": "value"}
+print(typed, typed[None], typed.get(None), None in typed)
+key: Any = None
+typed[key] = "direct"
+print(next(iter(typed)) is None, list(typed.keys()), list(typed.items()))
+late: Any = typed
+late[None] = "late"
+print(typed.setdefault(None, "unused"), late[None], dict(typed))
+del typed[None]
+print(None in typed, typed.get(None, "missing"))
+typed[None] = "last"
+popped_key, value = typed.popitem()
+print(popped_key is None, value)
+print(dict([(None, "again"), ("name", "value")]).pop(None))

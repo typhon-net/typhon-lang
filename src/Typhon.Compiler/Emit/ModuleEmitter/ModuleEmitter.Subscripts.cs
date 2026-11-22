@@ -23,7 +23,15 @@ namespace Typhon.Compiler.Emit
             return ModuleOrClassValue(e) ?? EmitExpr(e);
         }
 
-        string EmitSubscript(SubscriptExpr s)
+        bool UsesDictMissingLookup(string type)
+        {
+            if (_m.IsGdScript || !IsDictType(BuiltinBaseType(type))) return false;
+            ClassDef owner = _cls != null && type == _cls.CsSelfType ? _cls.Def
+                : ClassKeyOfType(type, out var _) is string key ? ClassDefOfKey(key) : null;
+            return owner != null && (DefinesInHierarchy(owner, "__missing__") || ClassVariableOwner(owner, "__missing__") != null);
+        }
+
+        string EmitSubscript(SubscriptExpr s, bool store = false)
         {
             if (IsUnionFactory(s.Target))
                 return $"{Rt("__getitem")}(typeof({RuntimeUnionType}), {EmitUnionArguments(s.Index)})";
@@ -46,6 +54,8 @@ namespace Typhon.Compiler.Emit
             if (InferType(s.Index) == "global::Typhon.Runtime.PySlice")
                 return $"{Rt("__getitem")}((object?){target}, (object?){Paren(EmitExpr(s.Index))})";
             string targetType = InferType(s.Target);
+            if (!store && UsesDictMissingLookup(targetType))
+                return $"{Rt("__getitem")}((object?){Paren(target)}, (object?){Paren(EmitValue(s.Index))})";
             // a class deriving from list: positions like a list's (a Python int, maybe negative)
             if (BuiltinBaseType(targetType) is string subBase && subBase.StartsWith("List<")) targetType = subBase;
             // move[0] of a namedtuple: its first field (typed)
@@ -57,11 +67,12 @@ namespace Typhon.Compiler.Emit
                 _lambdaParams.Any(scope => scope.ContainsKey(parameter.Id));
             bool lateResult = IsDynamicallyDispatched(s.Target) ||
                 targetType == null && s.Target is CallExpr && MaybeLateBound(s.Target);
-            if ((targetType == "dynamic" || lateResult || untypedLambdaParameter ||
+            bool lateContainer = targetType is "dynamic" or "object" or "object?";
+            if ((lateContainer || lateResult || untypedLambdaParameter ||
                 targetType == null && InferType(s.Index) == "dynamic") && !(s.Index is TupleExpr))
                 return $"{Rt("__getitem")}((object?){target}, (object?){Paren(ModuleOrClassValue(s.Index) ?? EmitExpr(s.Index))})";
             // a[x, y] on a late-bound a: the key is the tuple (x, y) (a Typhon class's __getitem__ takes one key)
-            if (targetType == "dynamic" && s.Index is TupleExpr dtk && !dtk.Parenthesized && !dtk.Elts.Any(x => x is SliceExpr))
+            if (lateContainer && s.Index is TupleExpr dtk && !dtk.Parenthesized && !dtk.Elts.Any(x => x is SliceExpr))
                 return $"{Rt("__getitem")}((object?){target}, (object?){EmitExpr(new TupleExpr { Elts = dtk.Elts, Parenthesized = true, Line = dtk.Line, Col = dtk.Col })})";
             // s[i] is a one-character str
             if (targetType == "string" && !(s.Index is TupleExpr)) return $"{Rt("str_at")}({target}, {EmitPosition(s.Index, targetType)})";
@@ -78,6 +89,8 @@ namespace Typhon.Compiler.Emit
                 return $"{Rt("tuple_at")}<{common}>({target}, {index})";
             }
             if (s.Index is TupleExpr dt && IsDictType(targetType)) return $"{target}[{EmitExpr(dt)}]"; // d[a, b]: the key is the tuple (a, b)
+            if (DictTypes(targetType) is List<string> objectKeys && objectKeys[0] is "dynamic" or "object" or "object?")
+                return $"{target}[{Rt("__key")}<object>((object?){Paren(ModuleOrClassValue(s.Index) ?? EmitExpr(s.Index))})]";
             // d[k] with a late-bound k on a typed dict: the key converted, so the lookup (and its result) stays static
             // (also a number of another type: d[3.0] finds the key 3, as in Python)
             if (IsDictType(targetType) && DictTypes(targetType) is List<string> skv && skv[0] != "dynamic" && !skv[0].Contains(TypeInference.Pending) &&

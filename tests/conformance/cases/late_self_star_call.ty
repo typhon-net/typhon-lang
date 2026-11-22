@@ -1,0 +1,13 @@
+from collections import namedtuple
+
+Record = namedtuple('Record', 'name age')
+
+class Factory:
+    def create(self):
+        return self.target(*(item if item is not None else '' for item in self))
+
+class Concrete(Record, Factory):
+    pass
+
+Concrete.target = Record
+print(Concrete('item', 3).create())

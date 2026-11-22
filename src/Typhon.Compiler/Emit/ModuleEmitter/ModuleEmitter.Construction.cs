@@ -54,6 +54,15 @@ namespace Typhon.Compiler.Emit
                                 var p = it.Params[i];
                                 string pt = types[i] == TypeInference.Declared ? MapType(p.Annotation, init) : types[i];
                                 if (p.Default == null) continue;
+                                if (!ClassDeclarationResolver(py).IsConstantDefault(p.Default))
+                                {
+                                    if (p.Annotation != null || InferType(p.Default) == pt)
+                                    {
+                                        tps[i] = $"{NullableOf(pt)} {Esc(p.Name)}";
+                                        defaults[i] = "null";
+                                    }
+                                    continue;
+                                }
                                 if (pt == "dynamic" || pt == "object")
                                 {
                                     if (!IsConstantDefault(p.Default)) continue;
@@ -82,7 +91,13 @@ namespace Typhon.Compiler.Emit
                         string type = p.Annotation != null ? MapType(p.Annotation, init) : "dynamic";
                         // (a late-bound parameter with a number/bool/str default: C# allows only null as a dynamic parameter's
                         // default, but honours [Optional, DefaultParameterValue(...)])
-                        if (p.Default != null && (type == "dynamic" || type == "object") && IsConstantDefault(p.Default) && !IsNone(p.Default))
+                        if (p.Default != null && !ClassDeclarationResolver(py).IsConstantDefault(p.Default))
+                        {
+                            // The base constructor already reads its captured definition-time default when omitted.
+                            ps.Add($"{NullableOf(type)} {Esc(p.Name)}");
+                            baseDefaults.Add("null");
+                        }
+                        else if (p.Default != null && (type == "dynamic" || type == "object") && !IsNone(p.Default))
                         {
                             ps.Add(WithOptionalDefault($"{type} {Esc(p.Name)}", EmitValue(p.Default)));
                             baseDefaults.Add("");
@@ -207,14 +222,35 @@ namespace Typhon.Compiler.Emit
             var owner = _p.DeclaringModule(cls);
             if (owner == null || owner == _m && _scope == null) return this;
             if (_classDeclarationResolvers.TryGetValue(owner, out var resolver)) return resolver;
-            resolver = new ModuleEmitter(owner, _p, new List<TyDiagnostic>(), dryRun: true);
+            resolver = CreateClassDeclarationResolver(owner, _p);
+            _classDeclarationResolvers[owner] = resolver;
+            return resolver;
+        }
+
+        internal static ModuleEmitter CreateClassDeclarationResolver(ModuleInfo owner, ProjectContext project)
+        {
+            var resolver = new ModuleEmitter(owner, project, new List<TyDiagnostic>(), dryRun: true);
             foreach (var import in TyphonCompiler.Imports(owner))
             {
                 if (import is ImportStmt plain) resolver.ProcessImport(plain);
                 else if (import is ImportFromStmt from) resolver.ProcessImportFrom(from);
             }
-            _classDeclarationResolvers[owner] = resolver;
             return resolver;
+        }
+
+        internal bool HasRuntimeBaseMember(ClassDef definition, string name, bool instanceMethod = false, int depth = 0)
+        {
+            if (depth > 20) return false;
+            foreach (var basis in definition.Bases)
+            {
+                if (!ResolveBase(basis, out var python, out var runtime)) continue;
+                if (python != null && ClassDeclarationResolver(python).HasRuntimeBaseMember(python, name, instanceMethod, depth + 1))
+                    return true;
+                if (runtime != null && (instanceMethod
+                    ? _r.GetMembers(runtime, name).Any(member => member.IsMethod && !member.IsStatic)
+                    : _r.HasMember(runtime, name))) return true;
+            }
+            return false;
         }
 
         /// <summary>The nearest Typhon ancestor (along first bases) that defines __init__; null if none (or a .NET base comes first).</summary>
@@ -307,11 +343,13 @@ namespace Typhon.Compiler.Emit
                 var baseInit = NearestInitAncestor(ctx.Def)?.Body.OfType<FunctionDef>().FirstOrDefault(fd => fd.Name == "__init__");
                 string kwBase = superArgs.Any(x => x.Name != null || x.DoubleStar) ? KwargsCallArgs(baseInit, 1, superArgs, constructorInitializer: true) : null;
                 // CLR constructor initializers require static binding even when a Python argument is dynamic.
-                bool lateBound = superArgs.Any(x => InferType(x.Value) == "dynamic") && superArgs.All(x => !x.Star && !x.DoubleStar);
+                bool NeedsStaticBinding(Arg arg) => IsDynamicallyDispatched(arg.Value) ||
+                    arg.Value is CallExpr && IsUnknownType(InferType(arg.Value)) || InferType(arg.Value) == "dynamic";
+                bool lateBound = superArgs.Any(NeedsStaticBinding) && superArgs.All(x => !x.Star && !x.DoubleStar);
                 string BaseArgument(Arg arg, int index)
                 {
                     string value = EmitValue(arg.Value);
-                    if (InferType(arg.Value) == "dynamic")
+                    if (NeedsStaticBinding(arg))
                     {
                         var parameter = arg.Name == null ? baseInit?.Params.Skip(1).ElementAtOrDefault(index) :
                             baseInit?.Params.Skip(1).FirstOrDefault(p => p.Name == arg.Name);

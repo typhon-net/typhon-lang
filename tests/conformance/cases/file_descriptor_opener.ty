@@ -1,0 +1,34 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import io
+import os
+import tempfile
+
+
+with tempfile.TemporaryDirectory() as directory:
+    filename = os.path.join(directory, "example")
+    opened: list[bool] = []
+
+    def opener(name, flags):
+        opened.append(name == filename and bool(flags & os.O_CREAT))
+        return os.open(name, flags, 0o600)
+
+    with io.open(filename, "w+b", opener=opener) as stream:
+        descriptor = stream.fileno()
+        print(opened, stream.write(b"abc"))
+        stream.raw.name = "display"
+        stream.seek(0)
+        print(stream.name, stream.read(), stream.fileno() == descriptor)
+    try:
+        os.fstat(descriptor)
+    except OSError:
+        print("owned descriptor closed")
+
+    descriptor = os.open(filename, os.O_RDONLY | getattr(os, "O_BINARY", 0))
+    try:
+        with io.open(descriptor, "rb", buffering=0, closefd=False) as stream:
+            print(stream.name == descriptor, stream.read(1))
+        print(os.read(descriptor, 2))
+    finally:
+        os.close(descriptor)

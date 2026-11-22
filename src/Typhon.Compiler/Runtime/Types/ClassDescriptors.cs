@@ -94,6 +94,36 @@ namespace Typhon.Runtime
         internal static bool TryGetDeclaredDescriptor(Type type, string name, out object? value) =>
             Namespace(type).Descriptors.TryGetValue(name, out value);
 
+        internal static bool SetAddedAttribute(Type type, string name, object? value) =>
+            !type.IsValueType && type.IsDefined(typeof(PySourceAttribute), false) && Namespace(type).SetAdded(name, value);
+
+        internal static bool DeleteAddedAttribute(Type type, string name) =>
+            Namespaces.TryGetValue(type, out var members) && members.RemoveAdded(name);
+
+        internal static bool TryGetDeclaredAddedAttribute(Type type, string name, out object? value)
+        {
+            value = null;
+            return Namespaces.TryGetValue(type, out var members) && members.TryReadAdded(name, out value);
+        }
+
+        internal static bool TryGetAddedInstanceAttribute(object instance, string name, out object? value)
+        {
+            Type type = instance.GetType();
+            for (Type? declaration = type; declaration != null; declaration = declaration.BaseType)
+            {
+                if (!declaration.IsDefined(typeof(PySourceAttribute), false)) continue;
+                var members = Namespace(declaration);
+                if (members.TryReadAdded(name, out value))
+                {
+                    value = PyMetaclasses.Bind(value, instance, type);
+                    return true;
+                }
+                if (members.TryRead(name, out _)) break;
+            }
+            value = null;
+            return false;
+        }
+
         internal static bool TryGetAttribute(Type type, string name, out object? value, bool instance = false)
         {
             for (Type? declaration = type; declaration != null; declaration = declaration.BaseType)
@@ -113,7 +143,7 @@ namespace Typhon.Runtime
                     return true;
                 }
                 if (instance) break;
-                value = binding;
+                value = PyMetaclasses.Bind(binding, null, type);
                 return true;
             }
             value = null;
@@ -183,6 +213,7 @@ namespace Typhon.Runtime
         sealed class ClassNamespace : IDictionary
         {
             readonly Dictionary<string, Func<object?>> _bindings = new(StringComparer.Ordinal);
+            readonly OrderedDictionary<string, object?> _added = new(StringComparer.Ordinal);
             internal readonly Dictionary<string, object?> Descriptors = new(StringComparer.Ordinal);
 
             internal ClassNamespace(Type type)
@@ -249,8 +280,26 @@ namespace Typhon.Runtime
             static Func<object?> Bind(object value) => () => value;
             void AddDescriptor(string name, object value) { Descriptors[name] = value; _bindings[name] = Bind(value); }
 
+            internal bool SetAdded(string name, object? value)
+            {
+                if (_bindings.ContainsKey(name)) return false;
+                lock (_added) _added[name] = value;
+                return true;
+            }
+
+            internal bool RemoveAdded(string name)
+            {
+                lock (_added) return _added.Remove(name);
+            }
+
+            internal bool TryReadAdded(string name, out object? value)
+            {
+                lock (_added) return _added.TryGetValue(name, out value);
+            }
+
             internal bool TryRead(string name, out object? value)
             {
+                if (TryReadAdded(name, out value)) return true;
                 if (_bindings.TryGetValue(name, out var binding))
                 {
                     value = binding();
@@ -266,7 +315,15 @@ namespace Typhon.Runtime
                 set => throw new NotSupportedException();
             }
 
-            public ICollection Keys => _bindings.Keys.Where(name => TryRead(name, out _)).ToArray();
+            public ICollection Keys
+            {
+                get
+                {
+                    string[] added;
+                    lock (_added) added = _added.Keys.ToArray();
+                    return _bindings.Keys.Where(name => TryRead(name, out _)).Concat(added).ToArray();
+                }
+            }
             public ICollection Values => Snapshot().Values;
             public int Count => Keys.Count;
             public bool IsReadOnly => true;
@@ -281,7 +338,7 @@ namespace Typhon.Runtime
             IDictionary Snapshot()
             {
                 var result = new OrderedDictionary<string, object?>();
-                foreach (var name in _bindings.Keys)
+                foreach (string name in Keys)
                     if (TryRead(name, out var value)) result[name] = value;
                 return result;
             }

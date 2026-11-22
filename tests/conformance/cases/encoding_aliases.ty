@@ -1,0 +1,20 @@
+import encodings
+import encodings.aliases
+from encodings.aliases import aliases
+
+print(encodings.normalize_encoding("  --UTF--8  "))
+print(encodings.normalize_encoding(b"Latin-1"))
+print(encodings.normalize_encoding("foo.bar + baz"))
+print(encodings.normalize_encoding("Æfoo-éz"))
+print(repr(encodings.normalize_encoding("-__#-")))
+print(len(aliases), encodings.aliases.aliases is aliases)
+print([aliases[name] for name in ("utf", "latin1", "u16", "eucjp", "sjis_2004", "cp936")])
+try:
+    encodings.normalize_encoding(b"\xff")
+except UnicodeDecodeError as error:
+    print(error.encoding, error.start, error.end, str(error))
+
+print(list(aliases)[:4])
+previous = aliases.pop("646")
+aliases["646"] = previous
+print(len(aliases), list(aliases)[-1], aliases["646"])

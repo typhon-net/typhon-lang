@@ -1,0 +1,25 @@
+class Parent:
+    def run(self, label: str, *args) -> str:
+        return label + ' parent ' + str(args)
+
+class Required(Parent):
+    def run(self, label: str, number: int, *args) -> str:
+        return label + ' required ' + str(number) + ' ' + str(args)
+
+class Optional(Parent):
+    def run(self, label: str, name: str = 'default', *args) -> str:
+        return label + ' optional ' + name + ' ' + str(args)
+
+def from_base(target: Parent, *args) -> str:
+    return target.run('call', *args)
+
+print(Required().run('direct', 2, 'tail'))
+print(from_base(Parent(), 1, 2))
+print(from_base(Required(), 2, 'tail'))
+print(from_base(Optional()))
+print(from_base(Optional(), 'named', 'tail'))
+print(getattr(Required(), 'run')('reflective', 3, 'tail'))
+try:
+    from_base(Required())
+except TypeError:
+    print('missing required')

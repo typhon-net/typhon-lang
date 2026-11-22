@@ -1,0 +1,15 @@
+from collections import deque
+from itertools import count, count as aliased_count
+
+numbers = count(4, 2)
+advance = numbers.__next__
+print(numbers.__iter__() is numbers, advance(), next(numbers), advance())
+aliased_advance = aliased_count(7, -2).__next__
+print(aliased_advance(), aliased_advance())
+floats = count(0.5, 0.25)
+steps = [floats.__next__]
+print(steps[0](), next(floats))
+window = deque(maxlen=2)
+print(len(window), window.maxlen)
+window.extend([1, 'second', 3])
+print(list(window), window.popleft())

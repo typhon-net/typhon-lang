@@ -715,7 +715,7 @@ namespace Typhon.Stdlib
                 PyTextStream ts when ReferenceEquals(ts, sys_.stdout) => "<stdout>",
                 PyTextStream ts when ReferenceEquals(ts, sys_.stderr) => "<stderr>",
                 PyTextStream => "<stdin>",
-                PyFile f => f.name,
+                PyFile f => Builtins.str((object?)f.name),
                 _ => "",
             };
 

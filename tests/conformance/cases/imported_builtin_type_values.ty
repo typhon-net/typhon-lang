@@ -1,0 +1,12 @@
+import builtins as namespace
+from builtins import str as text_type
+
+print(isinstance('abc', text_type), isinstance(123, text_type))
+print(text_type is str, namespace.str is text_type)
+print(repr(text_type), text_type(3))
+print(isinstance(6, namespace.int), namespace.int is int)
+
+def inspect_shadow(text_type):
+    return text_type('value')
+
+print(inspect_shadow(repr))

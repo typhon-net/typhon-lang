@@ -48,6 +48,8 @@ namespace Typhon.Runtime
                     var k = KeyFor(d, key);
                     if (d.Contains(k!)) return d[k!];
                     if (o is IPyMissingKey mapping) return mapping.GetMissingKey(k!);
+                    var missing = LookupSourceSpecialMethod(d, "__missing__");
+                    if (missing.Owner != null) return __invoke(missing.Value, [key]);
                     throw new KeyNotFoundException(repr(key));
                 }
                 case PyBytes bytes when key is PySlice byteSlice:
@@ -111,6 +113,7 @@ namespace Typhon.Runtime
             switch (o)
             {
                 case IDictionary d: d[KeyFor(d, key)!] = value; return;
+                case Typhon.Stdlib.collections.abc.MutableMapping mapping: mapping.Put(key, value); return;
                 case IList or PyByteArray when key is PySlice selection:
                 {
                     var (start, stop, step) = selection.Bounds();
@@ -483,10 +486,16 @@ namespace Typhon.Runtime
         public static void extend<T>(this List<T> l, IEnumerable<T> xs) => l.AddRange(xs);
         /// <summary>A list of late-bound (or wider) items extended with typed ones: List&lt;dynamic&gt; += List&lt;long&gt;.</summary>
         public static void __extend_cast<T, U>(List<T> l, IEnumerable<U> xs) { foreach (var x in xs) l.Add((T)(dynamic)x!); }
-        /// <summary>Is a late-bound value one of Python's built-in values (str, list, dict, set, tuple, number), whose methods are the runtime's static ones?</summary>
-        public static bool __is_pyvalue(object? o) => o is string || o is System.Collections.IList ||
-            o is System.Collections.IDictionary and not (Typhon.Stdlib.types.MappingProxyType or PyAttrDict) || o is IConvertible ||
-            o is BigInteger || o is ITuple || o != null && o.GetType().IsGenericType && o.GetType().GetGenericTypeDefinition() == typeof(HashSet<>);
+        /// <summary>Does a late-bound method use the runtime implementation for its builtin receiver?</summary>
+        public static bool __uses_builtin_method(object? o, string name)
+        {
+            if (o is string or IConvertible or BigInteger) return true;
+            if (o == null) return false;
+            Type type = o.GetType();
+            bool builtinShape = o is ITuple or IList || o is IDictionary and not (Typhon.Stdlib.types.MappingProxyType or PyAttrDict) ||
+                type.IsGenericType && type.GetGenericTypeDefinition() == typeof(HashSet<>);
+            return builtinShape && !HasSourceMember(type, name);
+        }
 
         /// <summary>a += b on late-bound values: a list extends in place (Python's list.__iadd__), anything else adds.</summary>
         public static dynamic __iadd(dynamic a, dynamic b)

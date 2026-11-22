@@ -1,0 +1,69 @@
+import _thread
+from threading import Event
+
+ready = Event()
+release = Event()
+worker_ids: list[int] = []
+
+
+def worker():
+    worker_ids.append(_thread.get_ident())
+    ready.set()
+    release.wait()
+
+
+handle = _thread._ThreadHandle()
+print(handle.ident, handle.is_done())
+try:
+    handle.join()
+except RuntimeError as exc:
+    print(str(exc))
+print(_thread._get_main_thread_ident() == _thread.get_ident(), _thread._is_main_interpreter())
+returned = _thread.start_joinable_thread(worker, handle=handle, daemon=True)
+assert ready.wait(5)
+handle.join(0)
+print(handle is returned, handle.ident == worker_ids[0], handle.is_done())
+release.set()
+handle.join(5)
+print(handle.is_done())
+try:
+    _thread.start_joinable_thread(worker, handle=handle)
+except RuntimeError as exc:
+    print(str(exc))
+
+current = _thread._make_thread_handle(_thread.get_ident())
+print(current.ident == _thread.get_ident(), current.is_done())
+current._set_done()
+print(current.is_done())
+args = _thread._ExceptHookArgs([None, None, None, None])
+print(repr(args), len(args), tuple(args))
+
+joined: list[str] = []
+
+
+def non_daemon():
+    joined.append('finished')
+
+
+last = _thread.start_joinable_thread(non_daemon, daemon=False)
+_thread._shutdown()
+print(last.is_done(), joined)
+
+attached = _thread._make_thread_handle(_thread.get_ident())
+waiting = Event()
+awoken = Event()
+
+
+def wait_for_attached():
+    waiting.set()
+    attached.join()
+    awoken.set()
+
+
+waiter = _thread.start_joinable_thread(wait_for_attached, daemon=True)
+assert waiting.wait(5)
+print(awoken.is_set())
+attached._set_done()
+print(awoken.wait(5))
+waiter.join(5)
+print(waiter.is_done())

@@ -1,0 +1,21 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import io
+import pickle
+
+
+for protocol in (0, 3, 4):
+    writer = pickle._Pickler(io.BytesIO(), protocol)
+    print(writer.put(3).hex(), writer.get(3).hex(), writer.put(300).hex(), writer.get(300).hex())
+
+print(pickle.decode_long(b"\x02\x00\x80"), pickle.decode_long(b""))
+
+sink = io.BytesIO()
+writer = pickle._Pickler(sink, 4)
+sink.write(b"\x80\x04")
+writer.framer.start_framing()
+writer.write(b"K\x01K\x02\x86.")
+writer.framer.end_framing()
+result = sink.getvalue()
+print(result.hex(), pickle.loads(result))

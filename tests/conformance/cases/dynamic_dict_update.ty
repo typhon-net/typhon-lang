@@ -1,0 +1,17 @@
+def update(target, source):
+    target.update(source)
+
+def update_with_keyword(target, source):
+    target.update(source, final=5)
+
+d = {'letter': 'a', 'number': 1}
+update(d, {'letter': 'b', 'extra': 2})
+print(d)
+update(d, [('tuple', 3), ('number', 4)])
+print(d)
+update(d, d)
+update_with_keyword(d, [('tuple', 7)])
+print(d)
+s = {1}
+update(s, [2, 3])
+print(sorted(s))

@@ -1,0 +1,37 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import builtins
+import sys
+
+print(hasattr(sys, "ps1"))
+sys.ps1 = "custom"
+print(sys.ps1, sys.__dict__["ps1"])
+del sys.ps1
+print(hasattr(sys, "ps1"), "ps1" in sys.__dict__)
+try:
+    print(sys.ps1)
+except AttributeError:
+    print("missing prompt")
+sys.ps1 = "again"
+del sys.__dict__["ps1"]
+print(hasattr(sys, "ps1"))
+
+
+def replacement(value):
+    return value + 1
+
+
+old_quit = builtins.quit
+try:
+    builtins.quit = replacement
+    print(builtins.quit(6), quit(8))
+    del builtins.quit
+    print(hasattr(builtins, "quit"))
+    try:
+        quit()
+    except NameError:
+        print("missing builtin")
+finally:
+    builtins.quit = old_quit
+print(builtins.quit is old_quit)

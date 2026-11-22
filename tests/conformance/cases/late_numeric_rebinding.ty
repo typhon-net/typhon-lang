@@ -1,0 +1,15 @@
+from typing import Any
+
+class Working:
+    def __init__(self, value: Any):
+        self.coefficient = value
+        self.exponent = 2
+
+def run(value: Any, modulo: int):
+    base = Working(value)
+    base = (base.coefficient % modulo * pow(10, base.exponent, modulo)) % modulo
+    for _ in range(1):
+        base = pow(base, 10, modulo)
+    return pow(base, 3, modulo)
+
+print(run(13, 7), run(81, 11))

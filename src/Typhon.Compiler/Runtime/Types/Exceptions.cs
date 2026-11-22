@@ -599,6 +599,22 @@ namespace Typhon.Runtime
         public string __repr__() => PyExc.Repr(this, args);
     }
 
+    internal static partial class Builtins
+    {
+        public static System.IO.FileNotFoundException __file_not_found_error(object?[] args)
+        {
+            var details = new PyOSError(args);
+            var error = new System.IO.FileNotFoundException(details.Message, details.filename as string);
+            error.Data["__args__"] = details.args.ToArray();
+            error.Data["errno"] = details.errno;
+            error.Data["strerror"] = details.strerror;
+            error.Data["filename"] = details.filename;
+            error.Data["filename2"] = details.filename2;
+            if (OperatingSystem.IsWindows() && details.winerror != null) error.Data["winerror"] = details.winerror;
+            return error;
+        }
+    }
+
     internal class BlockingIOError : PyOSError
     {
         public long characters_written { get; set; }

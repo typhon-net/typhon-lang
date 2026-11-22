@@ -1,0 +1,27 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+# typhon: int=bigint
+
+
+def get_value(value):
+    return value
+
+
+def as_float(value: float):
+    return value + 0.0
+
+
+print(type(get_value(1234)).__name__)
+print(type(get_value(1.25)).__name__)
+print(type(get_value(value=-7)).__name__)
+print(as_float(42))
+print('|%*.*f|' % (8, 2, 12.5))
+print('|%*.*f|' % (-8, -1, 12.5))
+try:
+    print('%*d' % (1.0, 4))
+except TypeError as error:
+    print(error)
+try:
+    print('%.*f' % (2 ** 80, 4.0))
+except OverflowError as error:
+    print(error)

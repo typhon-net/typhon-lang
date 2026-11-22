@@ -1,0 +1,10 @@
+def text(digits: tuple[int, ...]):
+    return ''.join(map(str, digits or [0]))
+
+def select(values: tuple[int, ...]):
+    return list(filter(lambda value: value % 2 != 0, values or [1, 2]))
+
+nonempty = tuple([1, 2, 3])
+empty = tuple(range(0))
+print(text(nonempty), text(empty))
+print(select(nonempty), select(empty))

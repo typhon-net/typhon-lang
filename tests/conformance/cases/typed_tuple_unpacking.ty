@@ -1,0 +1,16 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+from typing import Any
+
+
+def produce() -> tuple[Any, Any, str]:
+    return b"changed", 10, "additional"
+
+
+def unpack(first: bytes, second: int):
+    first, second, third = produce()
+    print(first, second, third)
+
+
+unpack(b"initial", 0)

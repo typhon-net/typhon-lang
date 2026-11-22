@@ -1,0 +1,21 @@
+def to_bytes(value: str | bytes | bytearray) -> bytes | bytearray:
+    if not value:
+        value.split
+        return b''
+    if isinstance(value, str):
+        value = value.encode('utf-8')
+    split = value.split
+    return split(*(b'%',))[0]
+
+def decode(value: str | bytes | bytearray):
+    return to_bytes(value).decode(encoding='utf-8')
+
+class Record:
+    def __init__(self):
+        self.entry = 'open'
+
+def read(record: object):
+    return record.entry
+
+print(decode('snow%2B'), decode(b'ice%20'), decode(bytearray(b'water%20')))
+print(repr(to_bytes('')), read(Record()))

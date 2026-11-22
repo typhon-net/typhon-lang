@@ -18,6 +18,7 @@ namespace Typhon.Runtime
     using System.Linq;
     using System.Numerics;
     using System.Runtime.CompilerServices;
+    using System.Runtime.InteropServices;
     using System.Text;
     using System.Threading.Tasks;
 
@@ -376,6 +377,21 @@ namespace Typhon.Runtime
                 if (next >= items.Length) throw new ArgumentException("not enough arguments for format string");
                 return items[next++];
             }
+            int ReadSize(string field)
+            {
+                object? value = Next();
+                BigInteger size = value switch
+                {
+                    BigInteger wide => wide,
+                    bool flag => flag ? 1 : 0,
+                    ulong integer => integer,
+                    _ when AsInt(value, out long integer) => integer,
+                    _ => throw new InvalidCastException($"format argument {next}: * requires int, not {(value == null ? "NoneType" : PyTypeName(value.GetType()))}")
+                };
+                if (size < int.MinValue || size > int.MaxValue)
+                    throw new OverflowException($"format argument {next}: too big for {field}");
+                return (int)size;
+            }
             for (int i = 0; i < fmt.Length; i++)
             {
                 char c = fmt[i];
@@ -394,12 +410,17 @@ namespace Typhon.Runtime
                 for (; i < fmt.Length && "-0+ #".IndexOf(fmt[i]) >= 0; i++)
                     switch (fmt[i]) { case '-': left = true; break; case '0': zero = true; break; case '+': plus = true; break; case ' ': space = true; break; default: alt = true; break; }
                 int width = 0, precision = -1;
-                if (i < fmt.Length && fmt[i] == '*') { width = (int)Convert.ToInt64(Next(), Inv); if (width < 0) { left = true; width = -width; } i++; }
+                if (i < fmt.Length && fmt[i] == '*')
+                {
+                    width = ReadSize("width");
+                    if (width < 0) { left = true; width = checked(-width); }
+                    i++;
+                }
                 else while (i < fmt.Length && char.IsDigit(fmt[i])) width = width * 10 + (fmt[i++] - '0');
                 if (i < fmt.Length && fmt[i] == '.')
                 {
                     i++; precision = 0;
-                    if (i < fmt.Length && fmt[i] == '*') { precision = (int)Convert.ToInt64(Next(), Inv); i++; }
+                    if (i < fmt.Length && fmt[i] == '*') { precision = Math.Max(0, ReadSize("precision")); i++; }
                     else while (i < fmt.Length && char.IsDigit(fmt[i])) precision = precision * 10 + (fmt[i++] - '0');
                 }
                 while (i < fmt.Length && "hlL".IndexOf(fmt[i]) >= 0) i++;
@@ -736,7 +757,7 @@ namespace Typhon.Runtime
         {
             string s => new StrChars(s),
             PyAttrDict attrs => attrs.Keys,
-            IDictionary d => d.Keys.Cast<object>(),
+            IDictionary d => d.Keys.Cast<object>().Select(PyNoneDictKey.Read),
             ITuple t => Enumerable.Range(0, t.Length).Select(i => t[i]!),
             IEnumerable e => e.Cast<object>(),
             _ => throw new InvalidCastException($"'{o?.GetType().Name}' object is not iterable"),
@@ -762,9 +783,19 @@ namespace Typhon.Runtime
         public static PyByteArray strip(this PyByteArray value, PyBytes? chars = null) => value.strip(chars);
         public static PyByteArray lstrip(this PyByteArray value, PyBytes? chars = null) => value.lstrip(chars);
         public static PyByteArray rstrip(this PyByteArray value, PyBytes? chars = null) => value.rstrip(chars);
-        public static List<string> split(this string s, string? sep = null, long maxsplit = -1)
+        public static List<PyBytes> split(PyBytes value, PyBytes? sep = null, long maxsplit = -1) => value.split(sep, maxsplit);
+        public static List<PyByteArray> split(PyByteArray value, PyBytes? sep = null, long maxsplit = -1) => value.split(sep, maxsplit);
+        static long StringSize(object? value)
         {
-            int parts1 = maxsplit < 0 ? -1 : (int)Math.Min(maxsplit + 1, int.MaxValue);
+            if (value is long size) return size;
+            object index = __index_value(value);
+            return index is BigInteger wide ? checked((long)wide) : (long)index;
+        }
+
+        public static List<string> split(this string s, [Optional, DefaultParameterValue(null)] string? sep, [Optional] object? maxsplit)
+        {
+            long limit = ReferenceEquals(maxsplit, Type.Missing) ? -1 : StringSize(maxsplit);
+            int parts1 = limit < 0 ? -1 : (int)Math.Min(limit, int.MaxValue - 1L) + 1;
             if (sep == null)
             {
                 var parts = s.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
@@ -803,18 +834,37 @@ namespace Typhon.Runtime
             return sb.ToString();
         }
         public static long find(this string s, string sub) => s.IndexOf(sub, StringComparison.Ordinal);
-        public static long find(this string s, string sub, long start, long? end = null) { var (a, b) = SliceBounds(s.Length, start, end); int i = s.IndexOf(sub, a, b - a, StringComparison.Ordinal); return i; }
+        static (int Start, int End) StringSearchBounds(int length, long start, long? end)
+        {
+            long adjustedStart = start < 0 ? start + length : start;
+            if (adjustedStart > length) return (1, 0);
+            long stop = end ?? length;
+            return ((int)Math.Max(adjustedStart, 0), (int)Math.Clamp(stop < 0 ? stop + length : stop, 0, length));
+        }
+
+        public static long find(this string s, string sub, long start, long? end = null)
+        {
+            var (a, b) = StringSearchBounds(s.Length, start, end);
+            return b < a ? -1 : s.IndexOf(sub, a, b - a, StringComparison.Ordinal);
+        }
+        public static long find(this string s, string sub, object? start, object? end = null)
+        {
+            var (first, last, _) = new PySlice(start, end).Bounds();
+            return s.find(sub, first ?? 0, last);
+        }
         public static long rindex(this string s, string sub) { int i = s.LastIndexOf(sub, StringComparison.Ordinal); return i >= 0 ? i : throw new ArgumentException("substring not found"); }
         public static long index(this string s, string sub, long start, long? end = null) { long i = s.find(sub, start, end); return i >= 0 ? i : throw new ArgumentException("substring not found"); }
+        public static long index(this string s, string sub, object? start, object? end = null) { long i = s.find(sub, start, end); return i >= 0 ? i : throw new ArgumentException("substring not found"); }
         public static long count(this string s, string sub, long start, long? end = null) => slice(s, start, end).count(sub);
         public static (string, string, string) partition(this string s, string sep) { int i = s.IndexOf(sep, StringComparison.Ordinal); return i < 0 ? (s, "", "") : (s.Substring(0, i), sep, s.Substring(i + sep.Length)); }
         public static (string, string, string) rpartition(this string s, string sep) { int i = s.LastIndexOf(sep, StringComparison.Ordinal); return i < 0 ? ("", "", s) : (s.Substring(0, i), sep, s.Substring(i + sep.Length)); }
-        public static List<string> rsplit(this string s, string? sep = null, long maxsplit = -1)
+        public static List<string> rsplit(this string s, [Optional, DefaultParameterValue(null)] string? sep, [Optional] object? maxsplit)
         {
-            if (maxsplit < 0) return s.split(sep);
+            long limit = ReferenceEquals(maxsplit, Type.Missing) ? -1 : StringSize(maxsplit);
+            if (limit < 0) return s.split(sep);
             var parts = new List<string>();
             string rest = sep == null ? s.TrimEnd() : s;
-            while (parts.Count < maxsplit)
+            while (parts.Count < limit)
             {
                 int i = sep == null ? rest.LastIndexOfAny(new[] { ' ', '\t', '\n', '\r', '\f', '\v' }) : rest.LastIndexOf(sep, StringComparison.Ordinal);
                 if (i < 0) break;
@@ -932,13 +982,20 @@ namespace Typhon.Runtime
         /// <summary>s.rfind(sub, start[, end]) / s.rindex over s[start:end] (an empty sub is found at the end).</summary>
         public static long rfind(this string s, string sub, long start, long? end = null)
         {
-            var (a, b) = SliceBounds(s.Length, start, end);
+            var (a, b) = StringSearchBounds(s.Length, start, end);
             if (b < a) return -1;
             if (sub.Length == 0) return b;
+            if (b - a < sub.Length) return -1;
             int i = s.LastIndexOf(sub, b - 1, b - a, StringComparison.Ordinal);
             return i >= 0 && i + sub.Length <= b ? i : -1;
         }
+        public static long rfind(this string s, string sub, object? start, object? end = null)
+        {
+            var (first, last, _) = new PySlice(start, end).Bounds();
+            return s.rfind(sub, first ?? 0, last);
+        }
         public static long rindex(this string s, string sub, long start, long? end = null) { long i = s.rfind(sub, start, end); return i >= 0 ? i : throw new ArgumentException("substring not found"); }
+        public static long rindex(this string s, string sub, object? start, object? end = null) { long i = s.rfind(sub, start, end); return i >= 0 ? i : throw new ArgumentException("substring not found"); }
         public static long index(this string s, string sub) { int i = s.IndexOf(sub, StringComparison.Ordinal); return i >= 0 ? i : throw new ArgumentException("substring not found"); }
         public static long count(this string s, string sub) { long n = 0; int i = 0; while (sub.Length > 0 && (i = s.IndexOf(sub, i, StringComparison.Ordinal)) >= 0) { n++; i += sub.Length; } return n; }
         public static bool isdigit(this string s) => s.Length > 0 && s.All(char.IsDigit);
@@ -949,7 +1006,14 @@ namespace Typhon.Runtime
         public static bool islower(this string s) => s.Any(char.IsLetter) && !s.Any(char.IsUpper);
         public static string title(this string s) => CultureInfo.InvariantCulture.TextInfo.ToTitleCase(s.ToLowerInvariant());
         public static string capitalize(this string s) => s.Length == 0 ? s : char.ToUpperInvariant(s[0]) + s.Substring(1).ToLowerInvariant();
-        public static string zfill(this string s, long width) => s.StartsWith("-") ? "-" + s.Substring(1).PadLeft(Width(width - 1), '0') : s.PadLeft(Width(width), '0');
+        public static string zfill(this string s, object? width)
+        {
+            long size = StringSize(width);
+            if (size <= s.Length) return s;
+            return s.Length > 0 && s[0] is '+' or '-'
+                ? s[0] + s.Substring(1).PadLeft(Width(size - 1), '0')
+                : s.PadLeft(Width(size), '0');
+        }
         public static string center(this string s, long width, string fill = " ") => format(s, fill + "^" + Width(width));
         public static PyBytes ljust(this PyBytes value, long width, PyBytes? fillbyte = null) => value.ljust(width, fillbyte);
         public static PyByteArray ljust(this PyByteArray value, long width, PyBytes? fillbyte = null) => value.ljust(width, fillbyte);

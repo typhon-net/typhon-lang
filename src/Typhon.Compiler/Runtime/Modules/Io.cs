@@ -34,8 +34,20 @@ namespace Typhon.Stdlib
         public static PyBinaryFile open_code(string path) => new PyBinaryFile(path, "rb");
 
         /// <summary>io.open is builtins.open: a text file, or a binary file when the mode has 'b' (known only at run time here).</summary>
-        public static dynamic open(string file, string mode = "r", long buffering = -1, string? encoding = null, string? errors = null, string? newline = null, bool closefd = true, object? opener = null)
-            => mode.Contains('b') ? new PyBinaryFile(file, mode) : new PyFile(file, mode, encoding, errors, newline);
+        public static dynamic open(object file, string mode = "r", long buffering = -1, string? encoding = null, string? errors = null, string? newline = null, bool closefd = true, object? opener = null)
+        {
+            bool binary = mode.Contains('b');
+            if (binary && (encoding != null || errors != null || newline != null))
+                throw new ArgumentException("binary mode doesn't take an encoding, errors, or newline argument");
+            if (!binary && buffering == 0) throw new ArgumentException("can't have unbuffered text I/O");
+            var raw = new FileIO(file, mode, closefd, opener);
+            try
+            {
+                if (!binary) return new PyFile(raw, mode, encoding, errors, newline);
+                return buffering == 0 ? raw : new PyBinaryFile(raw, mode);
+            }
+            catch { raw.close(); throw; }
+        }
 
         /// <summary>io.UnsupportedOperation: an OSError (CPython's also derives from ValueError, which a .NET exception cannot).</summary>
         internal class UnsupportedOperation : System.IO.IOException
@@ -78,6 +90,12 @@ namespace Typhon.Stdlib
             public void _checkReadable(string? msg = null) { if (!readable()) throw Unsupported(msg ?? "File or stream is not readable."); }
             public void _checkWritable(string? msg = null) { if (!writable()) throw Unsupported(msg ?? "File or stream is not writable."); }
             public void _checkSeekable(string? msg = null) { if (!seekable()) throw Unsupported(msg ?? "File or stream is not seekable."); }
+            public dynamic __enter__() { _checkClosed(); return this; }
+            public object? __exit__(object? type, object? error, object? traceback)
+            {
+                close();
+                return null;
+            }
             public void Dispose() => close();
             /// <summary>The .NET stream behind this object, if any (lets TextIOWrapper and the Buffered* classes use it directly).</summary>
             internal virtual System.IO.Stream? __stream => null;
@@ -219,14 +237,32 @@ namespace Typhon.Stdlib
         {
             readonly System.IO.Stream _s;
             readonly bool _closefd;
-            public readonly object name;
+            readonly long? _streamDescriptor;
+            long? _descriptor;
+            public object name { get; set; }
             public readonly string mode;
             public FileIO(object file, string mode = "r", bool closefd = true, object? opener = null)
             {
                 _closefd = closefd;
                 this.mode = StreamOps.RawMode(mode);
-                if (file is long fd) { _s = os_.__fdstream(fd); name = fd; }
-                else { string p = os_.__path(file); _s = StreamOps.OpenFile(p, mode); name = p; }
+                if (file is long or int)
+                {
+                    _descriptor = Convert.ToInt64(file);
+                    _s = os_.__fdstream(_descriptor.Value);
+                    name = file;
+                    return;
+                }
+                if (!closefd) throw new ArgumentException("Cannot use closefd=False with file name");
+                name = (object)os_.fspath(file);
+                if (opener == null) _s = StreamOps.OpenFile(os_.__path(name), mode);
+                else
+                {
+                    object? result = Builtins.__invoke(opener, [name, StreamOps.OpenFlags(mode)]);
+                    if (result is not (long or int)) throw new InvalidCastException("expected integer from opener");
+                    _descriptor = Convert.ToInt64(result);
+                    if (_descriptor < 0) throw new ArgumentException("opener returned a negative file descriptor");
+                    _s = os_.__fdstream(_descriptor.Value);
+                }
             }
             /// <summary>The raw file below an open() file object.</summary>
             internal FileIO(System.IO.Stream stream, object name, string mode, bool closefd)
@@ -235,6 +271,8 @@ namespace Typhon.Stdlib
                 this.name = name;
                 this.mode = mode;
                 _closefd = closefd;
+                // A supplied stream manages its own handle, such as a socket's native descriptor.
+                if (name is long fd) _streamDescriptor = fd;
             }
             internal override System.IO.Stream? __stream => _s;
             System.IO.Stream S { get { _checkClosed(); return _s; } }
@@ -248,9 +286,25 @@ namespace Typhon.Stdlib
             public override bool readable() { _checkClosed(); return _s.CanRead; }
             public override bool writable() { _checkClosed(); return _s.CanWrite; }
             public override bool seekable() { _checkClosed(); return _s.CanSeek; }
-            public override long fileno() => name is long fd ? fd : os_.__register(_s);
-            public override bool isatty() => name is long fd && os_.isatty(fd);
-            public override void close() { if (closed) return; base.close(); if (_closefd) _s.Dispose(); }
+            public override long fileno()
+            {
+                _checkClosed();
+                return _streamDescriptor ?? (_descriptor ??= os_.__register(_s));
+            }
+            public override bool isatty() { _checkClosed(); return _descriptor is long fd && os_.isatty(fd); }
+            public override void close()
+            {
+                if (closed) return;
+                try { base.close(); }
+                finally
+                {
+                    if (_closefd)
+                    {
+                        if (_descriptor is long fd) os_.close(fd);
+                        else _s.Dispose();
+                    }
+                }
+            }
             public bool closefd => _closefd;
             public override string ToString() => $"<_io.FileIO name={Builtins.repr(name)} mode='{mode}' closefd={(_closefd ? "True" : "False")}>";
         }
@@ -352,8 +406,20 @@ namespace Typhon.Stdlib
             readonly bool _lineBuffering, _writeThrough;
             /// <summary>The binary stream this text is read from and written to.</summary>
             public dynamic? buffer;
-            public string name = "";
-            public string mode = "";
+            object? _name;
+            string? _mode;
+            [PyLateAttribute]
+            public dynamic? name
+            {
+                get => _name ?? Builtins.getattr((object?)buffer, "name");
+                set => _name = value;
+            }
+            [PyLateAttribute]
+            public string mode
+            {
+                get => _mode ?? throw new MissingMemberException("text stream has no attribute 'mode'");
+                set => _mode = value;
+            }
 
             /// <summary>For subclasses that override every operation themselves (the console streams).</summary>
             protected TextIOWrapper() { }
@@ -364,8 +430,6 @@ namespace Typhon.Stdlib
                 _lineBuffering = line_buffering;
                 _writeThrough = write_through;
                 Init(StreamOps.StreamOf(buffer), encoding, errors, newline);
-                if (buffer is IOBase) { if (buffer is BufferedBase bb && bb.name is string n) name = n; else if (buffer is FileIO f && f.name is string fn) name = fn; }
-                else if (Builtins.getattr(buffer, "name", null) is string bn) name = bn;
             }
 
             protected void Init(System.IO.Stream stream, string? encoding, string? errors, string? newline)
@@ -593,7 +657,13 @@ namespace Typhon.Stdlib
             }
 
             public override bool closed => _s == null ? base.closed : buffer is IOBase b ? b.closed : base.closed;
-            public override string ToString() => name.Length > 0 ? $"<_io.TextIOWrapper name={Builtins.repr(name)}{(mode.Length > 0 ? $" mode='{mode}'" : "")} encoding='{_encoding}'>" : $"<_io.TextIOWrapper encoding='{_encoding}'>";
+            public override string ToString()
+            {
+                object? displayName = _name ?? Builtins.getattr((object?)buffer, "name", null);
+                string named = displayName != null ? $" name={Builtins.repr(displayName)}" : "";
+                string modeText = _mode != null ? $" mode='{_mode}'" : "";
+                return $"<_io.TextIOWrapper{named}{modeText} encoding='{_encoding}'>";
+            }
         }
 
         /// <summary>io.StringIO: an in-memory text stream (the implementation is Typhon.Runtime.StringIO).</summary>
@@ -699,6 +769,14 @@ namespace Typhon.Runtime
             bool plus = mode.Contains('+');
             char kind = mode.Contains('w') ? 'w' : mode.Contains('a') ? 'a' : mode.Contains('x') ? 'x' : 'r';
             return kind == 'r' ? (plus ? "rb+" : "rb") : kind == 'a' ? (plus ? "ab+" : "ab") : kind + (plus ? "b+" : "b");
+        }
+
+        internal static long OpenFlags(string mode)
+        {
+            long access = mode.Contains('+') ? os_.O_RDWR : mode.Contains('r') ? os_.O_RDONLY : os_.O_WRONLY;
+            long flags = mode.Contains('w') ? os_.O_CREAT | os_.O_TRUNC :
+                mode.Contains('x') ? os_.O_CREAT | os_.O_EXCL : mode.Contains('a') ? os_.O_CREAT | os_.O_APPEND : 0;
+            return access | flags | os_.O_BINARY;
         }
 
         /// <summary>Opens a file with Python's mode letters (r, w, a, x, +), raising CPython's errors.</summary>

@@ -86,7 +86,7 @@ namespace Typhon.Compiler.Emit
                 'd' => "OrderedDictionary<dynamic, dynamic>",
                 's' => "HashSet<dynamic>",
                 _ => null,
-            } : NeedsExplicitType(a.Value) ? null : InferType(a.Value);
+            } : IsNone(a.Value) ? "dynamic" : NeedsExplicitType(a.Value) ? null : InferType(a.Value);
             if (vt != null && vt != TypeInference.Pending) SetType(tmp, vt); else vt = null;
             foreach (var t in a.Targets) EmitAssignTo(t, new NameExpr { Id = tmp, Line = a.Line, Col = a.Col }, a, rawValue: vt == null ? tmp : null);
         }
@@ -149,8 +149,12 @@ namespace Typhon.Compiler.Emit
 
         string BoundMethodValue(Expr value)
         {
-            if (value is NameExpr nameAlias && AliasTarget(nameAlias) is AttributeExpr aliased) value = aliased;
-            if (!(value is AttributeExpr a)) return null;
+            if (value is NameExpr importedName)
+            {
+                if ((AliasTarget(importedName) ?? ImportAlias(importedName)) is AttributeExpr aliased) value = aliased;
+                else return NativeImportedMethodValue(importedName);
+            }
+            if (value is not AttributeExpr a || ImportedBuiltinTypeValue(a) != null) return null;
             if (DottedName(a.Target) is string dotted && !IsLocal(dotted.Split('.')[0]) &&
                 TryResolveType(dotted, 0, out _, out var owner) && owner != null &&
                 MethodInHierarchy(owner, a.Name) is FunctionDef definition &&
@@ -159,6 +163,7 @@ namespace Typhon.Compiler.Emit
                 return $"{Rt("getattr")}(typeof({classType}), {CsString(a.Name)})";
             if (InstanceMethodMayBeShadowed(a)) return EmitAttribute(a);
             if (ProjectFunctionAttributeValue(a) is string projectFunction) return projectFunction;
+            if (NativeModuleMethodValue(a) is string nativeFunction) return nativeFunction;
             if (DotNetStaticMeta(a.Target) is string meta)
             {
                 var members = _r.GetMembers(meta, a.Name);
@@ -175,10 +180,39 @@ namespace Typhon.Compiler.Emit
             if (a.Target is NameExpr name && !IsLocal(name.Id) && TryResolveType(name.Id, 0, out _, out _)) return null;
             var cls = a.Target is NameExpr self && self.Id == "self" && HasSelfInScope() ? _cls?.Def :
                 ClassKeyOfType(InferType(a.Target), out _) is string key ? ClassDefOfKey(key) : null;
-            if (cls == null || MethodInHierarchy(cls, a.Name) is not FunctionDef method ||
-                HasDecorator(method.Decorators, "staticmethod") || HasDecorator(method.Decorators, "classmethod") ||
+            if (cls == null) return null;
+            var method = MethodInHierarchy(cls, a.Name);
+            if (method == null)
+                return ClassDeclarationResolver(cls).HasRuntimeBaseMember(cls, a.Name, instanceMethod: true) ? EmitBoundMethod(a) : null;
+            if (HasDecorator(method.Decorators, "staticmethod") || HasDecorator(method.Decorators, "classmethod") ||
                 HasDecorator(method.Decorators, "property") || IsCachedProperty(method)) return null;
             return $"new global::Typhon.Runtime.PyBoundMethod((object){Paren(EmitExpr(a.Target))}, {CsString(a.Name)}, includeNonPublic: true)";
+        }
+
+        string NativeModuleMethodValue(AttributeExpr attribute)
+        {
+            if (DotNetStaticMeta(attribute.Target) is not string metadata ||
+                !metadata.StartsWith("Typhon.Stdlib.") || ModuleOrClassValue(attribute.Target) is not string receiver)
+                return null;
+            return NativeModuleMethodValue(metadata, receiver, attribute.Name);
+        }
+
+        string NativeImportedMethodValue(NameExpr name)
+        {
+            if (_m.IsGdScript || IsShadowed(name.Id)) return null;
+            if (ImportAlias(name) is AttributeExpr attribute) return NativeModuleMethodValue(attribute);
+            if (StdlibOwner(name.Id) is not string owner || !owner.StartsWith("Typhon.Stdlib.")) return null;
+            string module = string.Join(".", owner.Substring("Typhon.Stdlib.".Length).Split('+').Select(part => part.TrimEnd('_')));
+            string receiver = $"global::Typhon.Runtime.PyModule.Of(typeof({CsTypeName(owner)}), {CsString(module)})";
+            return NativeModuleMethodValue(owner, receiver, name.Id);
+        }
+
+        string NativeModuleMethodValue(string metadata, string receiver, string name)
+        {
+            var members = _r.GetMembers(metadata, name);
+            return members.Count > 0 && members.All(member => member.IsMethod && member.IsStatic)
+                ? $"(object?){Rt("getattr")}({receiver}, {CsString(name)})"
+                : null;
         }
 
         /// <summary>A function name being assigned to a variable (its function type is kept).</summary>
@@ -310,8 +344,15 @@ namespace Typhon.Compiler.Emit
                             constructor.Id is "tuple" or "list" or "set" or "dict" && !IsShadowed(constructor.Id) &&
                             !ContainerMatches(constructor, known);
                         if (changesContainer) valueType = "dynamic";
+                        // A loop can replace an initial scalar with the result of an untyped call.
+                        bool unknownLoopResult = _breakFlags.Count > 0 && !sameBlock && IsLocal(n.Id) &&
+                            !_scope.Params.Contains(n.Id) && _scope.Locals?.Annotations.ContainsKey(n.Id) != true &&
+                            known != null && IsValueTypeName(known.TrimEnd('?')) && value is CallExpr &&
+                            (valueType == "dynamic" || IsUnknownType(valueType) && MaybeLateBound(value));
+                        if (unknownLoopResult) valueType = "dynamic";
                         if (Obs != null && valueType != null && known != null && !sameBlock &&
-                            (Incompatible(known, valueType) || incompatibleClass || differentFunction || extractsItem || convertsToString || changesContainer ||
+                            (Incompatible(known, valueType) || incompatibleClass || differentFunction || extractsItem || convertsToString ||
+                             changesContainer || unknownLoopResult ||
                              known == "double" && IsIntegral(valueType) && valueType != "bool" && IsIntConversion(value)))
                             Obs.AddConflict(_scopeKey + "|" + n.Id, IsIntegral(known) && valueType == "double" ? "double" : "dynamic");
                         // total = total + x with a late-bound x on a number variable: the sum may be a float, the variable is late-bound
@@ -320,8 +361,10 @@ namespace Typhon.Compiler.Emit
                             Obs.AddConflict(_scopeKey + "|" + n.Id, "dynamic");
                         // A class or bytes value can be rebound to a different type by a late-bound operation.
                         else if (Obs != null && known != null &&
-                            (valueType == "dynamic" && ClassKeyOfType(known, out _) != null ||
-                             IsBytesType(known) && (valueType == "dynamic" || valueType == null && MaybeLateBound(value))))
+                            (ClassKeyOfType(known, out _) != null && (valueType == "dynamic" ||
+                                 valueType == null && value is BinOpExpr arithmetic && ArithmeticOps.Contains(arithmetic.Op)) ||
+                             (IsBytesType(known) || known == "string" && _scope.Params.Contains(n.Id) && value is CallExpr) &&
+                                (valueType == "dynamic" || valueType == null && MaybeLateBound(value))))
                             Obs.AddConflict(_scopeKey + "|" + n.Id, "dynamic");
                         // (x = int(x) on a float: from here on x is an int, so it gets a new variable too)
                         bool narrows = known == "double" && IsIntegral(valueType) && valueType != "bool";
@@ -365,6 +408,11 @@ namespace Typhon.Compiler.Emit
                     // Python allows a target to be assigned twice in one unpacking; C# does not declare it twice.
                     if (unpackedType == null && elts.Count < 2 ||
                         elts.OfType<NameExpr>().GroupBy(n => n.Id).Any(group => group.Count() > 1))
+                        unpackedType = "dynamic";
+                    if (unpackedType != null && TupleElementTypes(unpackedType) is List<string> tupleParts &&
+                        tupleParts.Count == elts.Count && elts.Select((item, index) => (item, index)).Any(pair =>
+                            pair.item is NameExpr unpackName && !IsInline(stmt, unpackName.Id) &&
+                            !IsUnknownType(KnownType(unpackName.Id)) && IsUnknownType(tupleParts[pair.index])))
                         unpackedType = "dynamic";
                     if (unpackedType != null && (elts.Count < 2 || unpackedType == "dynamic" || unpackedType == "object" ||
                         HasLateNestedUnpack(elts, unpackedType) ||
@@ -494,7 +542,10 @@ namespace Typhon.Compiler.Emit
                     if (rawValue == null && value is ComprehensionExpr comp && ft != null && ft != "dynamic"
                         && !TypeInference.IsNonePlaceholder(comp))
                         rawValue = EmitComprehension(comp, ft);
-                    string code = rawValue ?? (IsUnknownType(ft) ? BoundMethodValue(value) : null) ??
+                    bool lateField = IsUnknownType(ft) || ft == "object?";
+                    string lambdaValue = lateField && _cls != null && at.Target is NameExpr { Id: "self" } && value is LambdaExpr lambda
+                        ? EmitRuntimeLambda(lambda) : null;
+                    string code = rawValue ?? lambdaValue ?? (lateField ? BoundMethodValue(value) : null) ??
                         (TypeInference.IsNonePlaceholder(value) && ft != null && ft.StartsWith("List<")
                         ? EmitNonePlaceholder(value, ft) : EmitExpr(value, targetTyped: ft != null && ft != "dynamic"));
                     if (rawValue == null && NarrowingForMember(at, value) is string narrowTo) code = $"checked(({narrowTo})({code}))";
@@ -543,7 +594,7 @@ namespace Typhon.Compiler.Emit
                         _w.Line($"{(et ?? "dynamic")} {temporary} = {assignedValue};");
                         assignedValue = temporary;
                     }
-                    _w.Line($"{EmitExpr(sub)} = {assignedValue};");
+                    _w.Line($"{EmitSubscript(sub, store: true)} = {assignedValue};");
                     return;
                 }
                 case StarredExpr _:
@@ -557,9 +608,10 @@ namespace Typhon.Compiler.Emit
 
         /// <summary>A call C# binds at run time (a late-bound argument or receiver): its C# type is dynamic.</summary>
         bool IsDynamicallyDispatched(Expr e) =>
-            e is CallExpr c && (c.Args.Any(a => InferType(a.Value) == "dynamic") ||
+            e is CallExpr c && (c.Args.Any(a => InferType(a.Value) == "dynamic" || IsDynamicallyDispatched(a.Value)) ||
                 InferType(c.Func) is "global::System.Type" or "System.Type" ||
-                c.Func is AttributeExpr fa && InferType(fa.Target) == "dynamic" || IsLateRuntimeMethodCall(c, out _));
+                c.Func is AttributeExpr fa && (InferType(fa.Target) == "dynamic" || IsDynamicallyDispatched(fa.Target)) ||
+                IsLateRuntimeMethodCall(c, out _));
 
         /// <summary>Whether a value of this C# type deconstructs into its items (C# tuple syntax); other iterables unpack by position.</summary>
         bool HasDeconstruct(string t) =>
@@ -625,7 +677,8 @@ namespace Typhon.Compiler.Emit
                 return;
             }
             // d[k] += v on a late-bound container: read, combine, write back (the container and key evaluated once)
-            if (a.Target is SubscriptExpr ds && !(ds.Index is SliceExpr) && !(ds.Index is TupleExpr) && InferType(ds.Target) == "dynamic")
+            if (a.Target is SubscriptExpr ds && !(ds.Index is SliceExpr) &&
+                (ds.Index is not TupleExpr && InferType(ds.Target) == "dynamic" || UsesDictMissingLookup(InferType(ds.Target))))
             {
                 string c = NewTmp("c"), k = NewTmp("k");
                 _w.Line($"object? {c} = {EmitExpr(ds.Target)}, {k} = {ModuleOrClassValue(ds.Index) ?? EmitExpr(ds.Index)};");

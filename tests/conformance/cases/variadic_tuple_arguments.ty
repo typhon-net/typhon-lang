@@ -1,0 +1,11 @@
+def describe(items: tuple[int, ...]):
+    return isinstance(items, tuple), len(items), sum(items)
+
+print(describe((7,)), describe((1, 2, 3)))
+print(describe(items=()))
+print(describe(tuple([4, 5])))
+
+def wrapped(items: tuple[int, ...], **kwargs):
+    return describe(items), kwargs['label']
+
+print(wrapped((5, 6), label='packed'))

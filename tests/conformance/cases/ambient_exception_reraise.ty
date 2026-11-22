@@ -1,0 +1,60 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import sys
+
+
+def reraise():
+    raise
+
+
+original = ValueError("pending")
+try:
+    try:
+        raise original
+    finally:
+        print(sys.exception() is original)
+        raise
+except ValueError as error:
+    print("finally", error is original)
+
+try:
+    try:
+        raise original
+    except ValueError:
+        reraise()
+except ValueError as error:
+    print("callback", error is original)
+
+try:
+    try:
+        print("body")
+    finally:
+        reraise()
+except RuntimeError as error:
+    print(str(error))
+
+try:
+    try:
+        raise original
+    finally:
+        raise TypeError("replacement")
+except TypeError as error:
+    print(error.__context__ is original)
+
+
+def pending_through_yield():
+    try:
+        yield "yielded"
+        raise KeyError("generator")
+    finally:
+        print("generator cleanup")
+        reraise()
+
+
+generated = pending_through_yield()
+print(next(generated))
+try:
+    next(generated)
+except KeyError as error:
+    print("generator", error)

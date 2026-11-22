@@ -1,0 +1,15 @@
+class Before:
+    pass
+
+__name__ = 'public.name'
+
+class Published:
+    pass
+
+if len([1]) == 1:
+    class Conditional:
+        pass
+
+__name__ = 'later.name'
+print(Before.__module__, Published.__module__, Conditional.__module__)
+print(vars(Published)['__module__'], type(Published()).__module__)

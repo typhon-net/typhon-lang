@@ -79,6 +79,21 @@ namespace Typhon.Stdlib
         public static IEnumerable<Match> finditer(Pattern pattern, string @string, long flags = 0) => pattern.finditer(@string);
         public static string sub(Pattern pattern, string repl, string @string, long count = 0, long flags = 0) => pattern.sub(repl, @string, count);
         public static string sub(Pattern pattern, Func<Match, string> repl, string @string, long count = 0, long flags = 0) => pattern.sub(repl, @string, count);
+
+        public static string sub(string pattern, object repl, string @string, long count = 0, long flags = 0) =>
+            sub(compile(pattern, flags), repl, @string, count);
+
+        public static string sub(Pattern pattern, object repl, string @string, long count = 0, long flags = 0)
+        {
+            if (repl is string replacement) return pattern.sub(replacement, @string, count);
+            return pattern.sub(match => (object?)Builtins.__invoke(repl, [match]) switch
+            {
+                null => "",
+                string text => text,
+                object value => throw new InvalidCastException($"expected str instance, {Builtins.PyTypeName(Builtins.__type_of(value))} found"),
+            }, @string, count);
+        }
+
         public static List<string?> split(Pattern pattern, string @string, long maxsplit = 0, long flags = 0) => pattern.split(@string, maxsplit);
         public static BytesMatch? search(PyBytes pattern, PyBytes @string, long flags = 0) => compile(pattern, flags).search(@string);
         public static BytesMatch? match(PyBytes pattern, PyBytes @string, long flags = 0) => compile(pattern, flags).match(@string);
@@ -306,6 +321,13 @@ namespace Typhon.Stdlib
         static string RegexText(PyBytes bytes) => Encoding.Latin1.GetString(bytes.Data);
         static PyBytes? RegexBytes(string? text) => text == null ? null : PyBytes.Latin1(text);
 
+        static OrderedDictionary<string, dynamic?> FromNamedGroups(IEnumerable<string> names, Func<string, object?> group, object? missing)
+        {
+            var result = new OrderedDictionary<string, dynamic?>();
+            foreach (string name in names) result[name] = group(name) ?? missing;
+            return result;
+        }
+
         internal sealed class BytesPattern : IPyRepr
         {
             readonly Pattern _pattern;
@@ -369,6 +391,8 @@ namespace Typhon.Stdlib
             internal BytesMatch(Match match, BytesPattern re, PyBytes text) { _match = match; this.re = re; @string = text; }
             public PyBytes group() => PyBytes.Latin1(_match.group());
             public PyBytes? group(object? index) => RegexBytes(_match.group(index));
+            public OrderedDictionary<string, dynamic?> groupdict(object? @default = null) =>
+                FromNamedGroups(re.groupindex.Keys, group, @default);
             public PyBytes? this[object? index] => group(index);
             public long start(object? index = null) => _match.start(index);
             public long end(object? index = null) => _match.end(index);
@@ -419,12 +443,8 @@ namespace Typhon.Stdlib
 
             public PyTuple<string?> groups(string? @default = null) =>
                 new PyTuple<string?>(Enumerable.Range(1, (int)re.groups).Select(i => _m.Groups[i].Success ? _m.Groups[i].Value : @default).ToArray());
-            public OrderedDictionary<string, string?> groupdict(string? @default = null)
-            {
-                var d = new OrderedDictionary<string, string?>();
-                foreach (var kv in re.groupindex) { var gr = _m.Groups[(int)kv.Value]; d[kv.Key] = gr.Success ? gr.Value : @default; }
-                return d;
-            }
+            public OrderedDictionary<string, dynamic?> groupdict(object? @default = null) =>
+                FromNamedGroups(re.groupindex.Keys, name => group(name), @default);
 
             public long start(object? g = null) { var gr = G(g); return gr.Success ? _offsets.ToCodePoint(gr.Index) : -1; }
             public long end(object? g = null) { var gr = G(g); return gr.Success ? _offsets.ToCodePoint(gr.Index + gr.Length) : -1; }

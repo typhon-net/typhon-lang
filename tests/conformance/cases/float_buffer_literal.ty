@@ -1,0 +1,14 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import struct
+
+
+for value in (b"\t-1.25\n", bytearray(b"1_00.2_3"), memoryview(b".25e2"), b"+Infinity", b"-nan"):
+    print(float(value))
+print(struct.pack(">d", float(b"-nan")).hex()[:2], struct.pack(">d", float(b"+nan")).hex()[:2])
+for invalid in (b"1__0", b"\xff1", b"1e_2", b"1\0"):
+    try:
+        print(float(invalid))
+    except ValueError as error:
+        print(str(error))

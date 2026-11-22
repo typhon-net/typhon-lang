@@ -1,0 +1,41 @@
+from _random import Random
+from math import log
+
+first = Random(42)
+print(first.random(), first.getrandbits(65))
+state = first.getstate()
+print(len(state), state[-1])
+value = first.getrandbits(32)
+first.setstate(state)
+print(value == first.getrandbits(32))
+print(Random(-42).random(), Random(0.125).random())
+print(Random(-3.0).random(), Random(3.0).random())
+try:
+    first.setstate([])
+except TypeError as error:
+    print(str(error))
+try:
+    first.setstate((1, 2))
+except ValueError as error:
+    print(str(error))
+try:
+    first.getrandbits(-1)
+except ValueError as error:
+    print(str(error))
+
+class Inherited(Random):
+    pass
+
+class Fixed(Inherited):
+    def random(self):
+        return 0.125
+
+print(Inherited(42).random(), Fixed(42).random())
+
+
+class FewBits(Random):
+    def getrandbits(self, count):
+        return count
+
+print(FewBits(42).getrandbits(5))
+print(round(log(Random(42).getrandbits(65), 2), 5))

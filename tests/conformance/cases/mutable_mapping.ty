@@ -1,0 +1,54 @@
+from collections.abc import MutableMapping
+from typing import Any
+
+class Ledger(MutableMapping):
+    def __init__(self):
+        self.records: dict[str, int] = {}
+
+    def __getitem__(self, key: str) -> int:
+        return self.records[key]
+
+    def __setitem__(self, key: str, value: int):
+        self.records[key] = value
+
+    def __delitem__(self, key: str):
+        del self.records[key]
+
+    def __iter__(self):
+        return iter(self.records)
+
+    def __len__(self) -> int:
+        return len(self.records)
+
+ledger = Ledger()
+print(isinstance({}, MutableMapping), isinstance(ledger, MutableMapping))
+ledger.update([("alpha", 2)], beta=3)
+print(list(ledger.items()), ledger.get("missing", -1))
+print(ledger.setdefault("alpha", 1), ledger.setdefault("gamma", 4))
+print(ledger.pop("beta"), ledger.pop("missing", -1), ledger.popitem())
+ledger.clear()
+print(len(ledger))
+
+ledger.update(last=42)
+print(ledger["last"])
+try:
+    ledger.update(None)
+except TypeError as error:
+    print(str(error))
+
+
+def mutate_dynamic(mapping: Any):
+    mapping["late"] = 8
+    del mapping["last"]
+    print(mapping["late"], len(mapping))
+
+
+def mutate_base(mapping: MutableMapping):
+    mapping["base"] = 9
+    print(mapping["base"])
+    del mapping["late"]
+
+
+mutate_dynamic(ledger)
+mutate_base(ledger)
+print(list(ledger.items()))

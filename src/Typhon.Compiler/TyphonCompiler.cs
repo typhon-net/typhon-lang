@@ -51,9 +51,11 @@ namespace Typhon.Compiler
         public readonly HashSet<string> Globals = new HashSet<string>();
         internal readonly HashSet<string> ConditionalGlobals = new HashSet<string>();
         internal readonly HashSet<string> ReboundFunctions = new HashSet<string>();
+        internal readonly HashSet<string> ReboundClasses = new HashSet<string>();
         internal readonly List<FunctionDef> ReboundImplementations = new List<FunctionDef>();
         /// <summary>The source changes its module namespace through globals()[key].</summary>
         internal bool WritesModuleGlobals;
+        internal bool MayReplaceModule;
         /// <summary>Module-level type aliases: EdgeT = tuple[int, int], Matrix = list[list[float]], X: TypeAlias = ...</summary>
         public readonly Dictionary<string, Expr> TypeAliases = new Dictionary<string, Expr>();
         public readonly List<TyDiagnostic> ParseDiagnostics = new List<TyDiagnostic>();
@@ -302,6 +304,15 @@ namespace Typhon.Compiler
                 var locals = LocalsAnalyzer.Analyze(branches, Enumerable.Empty<string>(), null);
                 info.ConditionalGlobals.UnionWith(locals.AllLocals);
                 info.ConditionalGlobals.ExceptWith(locals.LocalFunctions);
+            }
+            if (!runtimeCode && !info.IsGdScript)
+                AstWalker.VisitAll(info.Ast.Body, node =>
+                {
+                    // A global can be created by a function, with no assignment in the module suite.
+                    if (node is GlobalStmt declaration) info.ConditionalGlobals.UnionWith(declaration.Names);
+                });
+            if (info.ConditionalGlobals.Count > 0)
+            {
                 info.ConditionalGlobals.ExceptWith(info.Globals);
                 info.ConditionalGlobals.ExceptWith(info.Functions);
                 info.ConditionalGlobals.ExceptWith(info.Classes.Keys);
@@ -324,7 +335,26 @@ namespace Typhon.Compiler
                     statement is DelStmt del && del.Targets.Any(WritesGlobals))
                     info.WritesModuleGlobals = true;
             });
+            info.MayReplaceModule = ReplacesModule(info.Ast.Body);
             return info;
+        }
+
+        static bool ReplacesModule(List<Stmt> body)
+        {
+            var system = new HashSet<string>();
+            var registries = new HashSet<string>();
+            AstWalker.VisitAll(body, node =>
+            {
+                if (node is ImportStmt direct)
+                    foreach (var alias in direct.Names.Where(name => name.Name == "sys")) system.Add(alias.AsName ?? alias.Name);
+                if (node is ImportFromStmt { Level: 0, Module: "sys" } from)
+                    foreach (var alias in from.Names.Where(name => name.Name == "modules")) registries.Add(alias.AsName ?? alias.Name);
+            });
+            bool IsReplacement(Expr target) => target is SubscriptExpr { Index: NameExpr { Id: "__name__" } } item &&
+                (item.Target is NameExpr name && registries.Contains(name.Id) ||
+                 item.Target is AttributeExpr { Name: "modules", Target: NameExpr owner } && system.Contains(owner.Id));
+            return AstWalker.ContainsOutsideNestedScopes(body, node => node is AssignStmt assignment && assignment.Targets.Any(IsReplacement) ||
+                node is AnnAssignStmt annotated && IsReplacement(annotated.Target));
         }
 
         static string RuntimeModuleContextError(Node node) => node switch

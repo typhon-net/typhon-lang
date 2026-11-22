@@ -1,0 +1,18 @@
+from typing import Any
+
+def render(kind, value, *, newline=True, uppercase=False):
+    word = str(value)
+    if uppercase:
+        word = word.upper()
+    return word, '!' if newline else ''
+
+def print_items(value: Any, options: dict[str, Any]):
+    color = options.get('uppercase', False)
+    first, suffix = render(None, value, uppercase=color)
+    yield first + suffix
+    first, suffix = render(None, value, newline=False, uppercase=color)
+    yield first + suffix
+    first, suffix = render(value, value, uppercase=color)
+    yield first + suffix
+
+print(list(print_items('word', {'uppercase': True})))

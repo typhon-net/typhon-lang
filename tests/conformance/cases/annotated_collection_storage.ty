@@ -1,0 +1,23 @@
+class Staging:
+    items: dict[str, str] | None = None
+    seen: set[str]
+
+    def __init__(self):
+        self.seen = set()
+
+
+def accumulate(state, options):
+    state.items = options
+    state.items['lines'] = ['first']
+    state.seen.add('section')
+    state.seen.add(('section', 'lines'))
+
+
+state = Staging()
+provided: dict[str, object] = {'existing': 'unchanged'}
+accumulate(state, provided)
+state.items['lines'].append('second')
+print(state.items is provided, state.items)
+state.items['lines'] = '\n'.join(state.items['lines'])
+print(provided['lines'])
+print(len(state.seen), 'section' in state.seen, ('section', 'lines') in state.seen)

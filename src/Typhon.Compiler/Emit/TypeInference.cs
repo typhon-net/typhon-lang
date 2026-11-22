@@ -163,6 +163,7 @@ namespace Typhon.Compiler.Emit
 
         public static string FuncKey(ModuleInfo m, ClassDef c, string name) => m.Name + "." + (c != null ? c.Name + "." : "") + name;
         public static string ClassKey(ModuleInfo m, string className) => m.Name + "." + className;
+        public static string ModuleFieldsKey(ModuleInfo m) => m.Name + ".<globals>";
         public static string SigKey(string[] types) => types == null ? "" : string.Join(",", types);
         public static string ReturnKey(string key, string sig) => key + "|" + sig;
         /// <summary>A type that still contains a part being inferred (a container's element type) gives no information yet.</summary>
@@ -175,7 +176,9 @@ namespace Typhon.Compiler.Emit
             var ti = new TypeInference();
             p.Inference = ti;
             ti.CollectTargets(p);
-            if (ti.Targets.Count == 0 && !p.Modules.Values.Any(m => HasEmptyContainers(m) || HasRebinding(m) || HasLambdaLocals(m) || HasExternalAttributes(m))) { ti.Converged = true; return; }
+            // Cross-module fields still need observation when all parameters and return types are declared.
+            if (p.Modules.Count <= 1 && ti.Targets.Count == 0 &&
+                !p.Modules.Values.Any(m => HasEmptyContainers(m) || HasRebinding(m) || HasLambdaLocals(m) || HasExternalAttributes(m))) { ti.Converged = true; return; }
             for (int pass = 0; pass < MaxPasses; pass++)
             {
                 ti.Passes = pass + 1;
@@ -389,6 +392,7 @@ namespace Typhon.Compiler.Emit
                 foreach (var f in m.Ast.Body.OfType<FunctionDef>())
                     // a function used as a value has a function type: calls through it are seen (and other uses keep its dynamic version)
                     Add(m, null, f, allowParams: (!usedAsValue.Contains(f.Name) || ModuleEmitter.IsFunctionValueCandidate(f)) && f.Decorators.All(IsCacheDecorator));
+                ModuleEmitter declarationResolver = null;
                 foreach (var c in m.Classes.Values)
                 {
                     if (IsSpecialClass(c)) continue;
@@ -399,6 +403,10 @@ namespace Typhon.Compiler.Emit
                         // the calls like a function's (an overload per signature, beside the late-bound version), except in a
                         // generic class and for methods a Protocol declares (return types only there)
                         if (f.Name.StartsWith("__") || f.Decorators.Count > 0 || m.Ast.MethodDecorators.ContainsKey(f) || IsOverridden(p, c, f.Name)) continue;
+                        // A CLR virtual slot has one signature, independent of the observed Python calls.
+                        if (c.Bases.Count > 0 &&
+                            (declarationResolver ??= ModuleEmitter.CreateClassDeclarationResolver(m, p)).DotNetBaseMethod(c, f) != null)
+                            continue;
                         Add(m, c, f, allowParams: c.TypeParams.Count == 0 && !protocolMethods.Contains(f.Name));
                     }
                 }
@@ -414,7 +422,7 @@ namespace Typhon.Compiler.Emit
             var locals = LocalsAnalyzer.Analyze(f.Body, f.Params.Select(x => x.Name), null);
             bool inferReturn = (f.Returns == null || IsBareContainer(f.Returns)) && locals.HasValueReturn && !locals.HasYield;
             bool inferParams = allowParams && unannotated;
-            string generatorReturn = locals.HasYield && !f.IsAsync && f.Returns == null ? ModuleEmitter.UnannotatedGeneratorReturnType(f) : null;
+            string generatorReturn = locals.HasYield && !f.IsAsync && f.Returns == null ? ModuleEmitter.UnannotatedGeneratorReturnType(f, tracksFinally: !m.IsGdScript) : null;
             if (!inferParams && !inferReturn && generatorReturn == null) return;
             var key = FuncKey(m, c, f.Name);
             Targets[key] = new InferenceTarget { Key = key, Module = m, Class = c, Def = f, FirstParam = first, InferParams = inferParams,

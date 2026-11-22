@@ -1,0 +1,9 @@
+b'\xe9\\u03bb\\U0001f4a1\\u0041'
+(b'\xe9\\u03bb\\U0001f4a1\\u0041', 9)
+'\xe9\u03bb\U0001f4a1'
+'\\\\u0041\\\\B\\'
+('prefix', 6)
+'X!'
+'\ufffdX\ufffd!'
+'\\x5c\\x75\\x32\\x66X\\x5c\\x55\\x30\\x30\\x31\\x31\\x30\\x30\\x30\\x30!'
+rawunicodeescape 0 10 \Uxxxxxxxx out of range

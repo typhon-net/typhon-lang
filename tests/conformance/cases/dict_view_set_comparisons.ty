@@ -1,0 +1,24 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+
+def ordered(left, right):
+    return left < right, left <= right, left > right, left >= right, left == right
+
+
+a = {None: 0, 'a': 1}
+b = {None: 0, 'a': 1, 'b': 2}
+print(ordered(a.keys(), b.keys()))
+print(ordered(a.keys(), {None, 'a'}))
+print(ordered({None, 'a', 'b'}, a.keys()))
+print(ordered(a.items(), b.items()))
+print(ordered({'a': [1]}.items(), {'a': [1]}.items()))
+print(ordered({'a': [1]}.items(), {'a': [2]}.items()))
+try:
+    ordered(a.keys(), list(a.keys()))
+except TypeError:
+    print('not comparable')
+
+small: dict[str, int] = {"x": 1}
+large: dict[str, int] = {"x": 2, "y": 3}
+print(small.keys() < large.keys(), large.keys() >= small.keys())

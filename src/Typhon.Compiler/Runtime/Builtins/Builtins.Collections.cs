@@ -40,7 +40,7 @@ namespace Typhon.Runtime
         public static long len<T>(T t) where T : struct, ITuple => t.Length;
 
         /// <summary>del d[key] / del xs[i]</summary>
-        public static void delitem<K, V>(IDictionary<K, V> d, K key) { if (!d.Remove(key)) throw new KeyNotFoundException(repr(key)); }
+        public static void delitem<K, V>(IDictionary<K, V> d, K key) { if (!d.Remove(PyNoneDictKey.Store(key))) throw new KeyNotFoundException(repr(key)); }
         public static void delitem<T>(List<T> xs, long i)
         {
             if (i < 0) i += xs.Count;
@@ -49,14 +49,15 @@ namespace Typhon.Runtime
         }
         public static void delitem(object container, object? key)
         {
+            if (container is IDictionary mapping)
+            {
+                var storedKey = KeyFor(mapping, key);
+                if (storedKey == null || !mapping.Contains(storedKey)) throw new KeyNotFoundException(repr(key));
+                mapping.Remove(storedKey);
+                return;
+            }
             if (key is PySlice selection)
             {
-                if (container is IDictionary mapping)
-                {
-                    if (!mapping.Contains(selection)) throw new KeyNotFoundException(repr(selection));
-                    mapping.Remove(selection);
-                    return;
-                }
                 IList? list = container is PyByteArray bytes ? bytes.Buffer : container as IList;
                 if (list != null)
                 {
@@ -67,6 +68,7 @@ namespace Typhon.Runtime
                     return;
                 }
             }
+            if (container is Typhon.Stdlib.collections.abc.MutableMapping mutable) { mutable.Delete(key); return; }
             ((dynamic)container).__delitem__((dynamic?)key);
         }
         public static long len(object o)
@@ -90,11 +92,11 @@ namespace Typhon.Runtime
         public static bool contains(PyByteArray b, long x) => b.__contains__(x);
         public static bool contains(PyByteArray b, PyBytes x) => b.__contains__(x);
         public static bool contains(string s, char c) => s.IndexOf(c) >= 0;
-        public static bool contains<K, V>(Dictionary<K, V> d, K key) where K : notnull => key != null && d.ContainsKey(key);
-        public static bool contains<K, V>(OrderedDictionary<K, V> d, K key) where K : notnull => key != null && d.ContainsKey(key);
+        public static bool contains<K, V>(Dictionary<K, V> d, K key) where K : notnull => PyNoneDictKey.Store(key) is K stored && d.ContainsKey(stored);
+        public static bool contains<K, V>(OrderedDictionary<K, V> d, K key) where K : notnull => PyNoneDictKey.Store(key) is K stored && d.ContainsKey(stored);
         public static bool contains<K, V>(IDictionary<K, V> d, K key)
         {
-            try { return d.ContainsKey(key); }
+            try { return d.ContainsKey(PyNoneDictKey.Store(key)); }
             catch (ArgumentNullException) when (key == null) { return false; }
         }
         public static bool contains<T>(HashSet<T> s, T x) => s.Contains(x);
@@ -131,14 +133,16 @@ namespace Typhon.Runtime
         /// </summary>
         internal static object? KeyFor(IDictionary d, object? key)
         {
-            if (key == null) return null;
             var keyType = DictKeyType(d.GetType());
+            if (key == null) return keyType == typeof(object) ? PyNoneDictKey.Value : null;
             if (keyType == null || keyType == typeof(object) || keyType.IsInstanceOfType(key)) return key;
             return ConvertKey(key, keyType) ?? key;
         }
 
         /// <summary>d[k] with a late-bound k on a dict typed K: k as a K (a tuple of late-bound items converts item by item).</summary>
-        public static K __key<K>(object? k) => k is K kk ? kk : k != null && ConvertKey(k, typeof(K)) is K converted ? converted : (K)(dynamic)k!;
+        public static K __key<K>(object? k) => k is K kk ? kk :
+            k == null && typeof(K) == typeof(object) ? (K)(object)PyNoneDictKey.Value :
+            k != null && ConvertKey(k, typeof(K)) is K converted ? converted : (K)(dynamic)k!;
 
         static Type? DictKeyType(Type t)
         {
@@ -218,13 +222,13 @@ namespace Typhon.Runtime
         public static List<T> iterable<T>(List<T> xs) => xs;
         public static T[] iterable<T>(T[] xs) => xs;
         public static HashSet<T> iterable<T>(HashSet<T> xs) => xs;
-        public static IEnumerable<T> iterable<T>(IEnumerable<T> xs) => xs is IDictionary d ? d.Keys.Cast<T>() : xs;
+        public static IEnumerable<T> iterable<T>(IEnumerable<T> xs) => xs is IDictionary d ? d.Keys.Cast<T>().Select(PyNoneDictKey.Read) : xs;
         public static StrChars iterable(string s) => new StrChars(s);
         public static IEnumerable iterable(IEnumerable xs) => xs is IDictionary d ? d.Keys : xs;
 
 
         public static PyIterator<T> iter<T>(IEnumerable<T> xs) => xs as PyIterator<T> ?? new PyIterator<T>(xs.GetEnumerator());
-        public static PyIterator<K> iter<K, V>(IDictionary<K, V> mapping) => new PyIterator<K>(mapping.Keys.GetEnumerator());
+        public static PyIterator<K> iter<K, V>(IDictionary<K, V> mapping) => new PyIterator<K>(keys(mapping).GetEnumerator());
         public static PyIterator<string> iter(string s) => new PyIterator<string>(new StrChars(s).GetEnumerator());
         public static PyIterator<object?> iter(IEnumerable xs) => new PyIterator<object?>(__iter_dyn(xs).GetEnumerator());
         public static PyIterator<object?> iter(object? xs) => new PyIterator<object?>(__iter_dyn(xs).GetEnumerator());
@@ -263,15 +267,16 @@ namespace Typhon.Runtime
         public static List<dynamic> __concat_any(IEnumerable a, IEnumerable b) => a.Cast<object?>().Concat(b.Cast<object?>()).ToList()!;
 
         public static PyBytes bytes() => PyBytes.Empty;
-        public static PyBytes bytes(long n) => n < 0 ? throw new ArgumentException("negative count") : new PyBytes(new byte[n]);
-        public static PyBytes bytes(string s, string encoding, string errors = "strict") => s.encode(encoding, errors);
+        public static PyBytes bytes(long source) => source < 0 ? throw new ArgumentException("negative count") : new PyBytes(new byte[source]);
+        public static PyBytes bytes(string source, string encoding, string errors = "strict") => source.encode(encoding, errors);
         public static PyBytes bytes(object? source) => source is PyBytes b ? b : new PyBytes(ByteOps.From(source));
         public static PyByteArray bytearray() => new PyByteArray();
-        public static PyByteArray bytearray(long n) => n < 0 ? throw new ArgumentException("negative count") : new PyByteArray(new byte[n]);
-        public static PyByteArray bytearray(string s, string encoding, string errors = "strict") => new PyByteArray(s.encode(encoding, errors).Data);
+        public static PyByteArray bytearray(long source) => source < 0 ? throw new ArgumentException("negative count") : new PyByteArray(new byte[source]);
+        public static PyByteArray bytearray(string source, string encoding, string errors = "strict") => new PyByteArray(source.encode(encoding, errors).Data);
         public static PyByteArray bytearray(object? source) => new PyByteArray(ByteOps.From(source));
         public static PyBytes encode(this string s, string encoding = "utf-8", string errors = "strict")
         {
+            if (Typhon.Stdlib.codecs.IsRawUnicodeEscape(encoding)) return Typhon.Stdlib.codecs.raw_unicode_escape_encode(s, errors).Item1;
             try { return new PyBytes(ByteOps.EncodingOf(encoding, errors).GetBytes(s)); }
             catch (EncoderFallbackException e) { throw new ArgumentException($"'{encoding}' codec can't encode character: {e.Message}"); }
         }
@@ -357,61 +362,100 @@ namespace Typhon.Runtime
         }
 
 
+        internal static IEnumerable<KeyValuePair<object, object?>> ReadDictItems(object source)
+        {
+            if (source is IDictionary dictionary)
+            {
+                foreach (DictionaryEntry item in dictionary) yield return new(PyNoneDictKey.Read(item.Key), item.Value);
+                yield break;
+            }
+            if (TryGetAttr(source, "keys", out var keys))
+            {
+                foreach (object key in __iter_dyn((object?)__invoke(keys, [])))
+                    yield return new(key, __getitem(source, key));
+                yield break;
+            }
+
+            IEnumerable<dynamic> pairs;
+            try { pairs = __iter_dyn(source); }
+            catch (InvalidCastException)
+            {
+                throw new InvalidCastException($"'{PyTypeName(__type_of(source))}' object is not iterable");
+            }
+            int index = 0;
+            foreach (object? pair in pairs)
+            {
+                IEnumerable<dynamic> values;
+                try { values = __iter_dyn(pair); }
+                catch (InvalidCastException) { throw new InvalidCastException("object is not iterable"); }
+                var items = values.ToArray();
+                if (items.Length != 2)
+                    throw new ArgumentException($"dictionary update sequence element #{index} has length {items.Length}; 2 is required");
+                yield return new(items[0]!, items[1]);
+                index++;
+            }
+        }
+
         public static IEnumerable<(K, V)> items<K, V>(this IDictionary<K, V> d) => new PyDictItems<K, V>(d, () => d.Count);
         // Mapping[K, V] (IReadOnlyDictionary): plain methods, since an extension overload would make dict.items() ambiguous
         public static IEnumerable<(K, V)> __ro_items<K, V>(IReadOnlyDictionary<K, V> d) => d.Select(kv => (kv.Key, kv.Value));
         public static IEnumerable<K> __ro_keys<K, V>(IReadOnlyDictionary<K, V> d) => d.Keys;
         public static IEnumerable<V> __ro_values<K, V>(IReadOnlyDictionary<K, V> d) => d.Values;
         public static V __ro_get<K, V>(IReadOnlyDictionary<K, V> d, K key, V dflt) => d.TryGetValue(key, out var v) ? v : dflt;
-        public static ICollection<K> keys<K, V>(this IDictionary<K, V> d) => d.Keys;
+        public static ICollection<K> keys<K, V>(this IDictionary<K, V> d) => typeof(K) == typeof(object) ? new PyDictKeys<K>(d.Keys) : d.Keys;
         public static ICollection<V> values<K, V>(this IDictionary<K, V> d) => d.Values;
-        public static V get<K, V>(this IDictionary<K, V> d, K key, V @default) => key != null && d.TryGetValue(key, out var v) ? v : @default;
-        public static V setdefault<K, V>(this IDictionary<K, V> d, K key, V @default = default!) { if (!d.TryGetValue(key, out var v)) d[key] = v = @default; return v; }
-        public static V pop<K, V>(this IDictionary<K, V> d, K key) { var v = d[key]; d.Remove(key); return v; }
-        public static V pop<K, V>(this IDictionary<K, V> d, K key, V @default) { if (!d.TryGetValue(key, out var v)) return @default; d.Remove(key); return v; }
+        public static V get<K, V>(this IDictionary<K, V> d, K key, V @default) => PyNoneDictKey.Store(key) is K stored && d.TryGetValue(stored, out var v) ? v : @default;
+        public static V setdefault<K, V>(this IDictionary<K, V> d, K key, V @default = default!) { var stored = PyNoneDictKey.Store(key); if (!d.TryGetValue(stored, out var v)) d[stored] = v = @default; return v; }
+        public static V pop<K, V>(this IDictionary<K, V> d, K key) { var stored = PyNoneDictKey.Store(key); var v = d[stored]; d.Remove(stored); return v; }
+        public static V pop<K, V>(this IDictionary<K, V> d, K key, V @default) { var stored = PyNoneDictKey.Store(key); if (stored == null || !d.TryGetValue(stored, out var v)) return @default; d.Remove(stored); return v; }
         public static (K, V) popitem<K, V>(this IDictionary<K, V> d)
         {
             if (d.Count == 0) throw new KeyNotFoundException("popitem(): dictionary is empty");
-            var last = d.Last(); d.Remove(last.Key); return (last.Key, last.Value);
+            var last = d.Last(); d.Remove(last.Key); return (PyNoneDictKey.Read(last.Key), last.Value);
         }
         public static object? __dict_update_keywords(object target, object?[] args, IDictionary<string, object?> keywords)
         {
             if (target is not IDictionary dictionary) return __invoke_kw(getattr(target, "update"), args, keywords);
             if (args.Length > 1) throw new InvalidCastException($"update expected at most 1 argument, got {args.Length}");
-            if (args.Length == 1)
-            {
-                if (args[0] is IDictionary source) update(dictionary, source);
-                else foreach (object? item in __iter_dyn(args[0]))
-                {
-                    var pair = __unpack_items(__iter_dyn(item), 2);
-                    dictionary[KeyFor(dictionary, pair[0])!] = pair[1];
-                }
-            }
+            if (args.Length == 1) update(dictionary, args[0]);
             foreach (var (name, value) in keywords) dictionary[KeyFor(dictionary, name)!] = value;
             return null;
         }
 
-        public static void update(IDictionary target, IDictionary source)
+        public static void update(IDictionary target, object? source)
         {
             if (ReferenceEquals(target, source)) return;
-            foreach (DictionaryEntry entry in source) target[KeyFor(target, entry.Key)!] = entry.Value;
+            if (source is IDictionary mapping)
+            {
+                foreach (DictionaryEntry entry in mapping) target[KeyFor(target, entry.Key)!] = entry.Value;
+                return;
+            }
+            foreach (object? item in __iter_dyn(source))
+            {
+                var pair = __unpack_items(__iter_dyn(item), 2);
+                target[KeyFor(target, pair[0])!] = pair[1];
+            }
         }
 
-        public static void update<K, V>(this IDictionary<K, V> d, IDictionary<K, V> other) { foreach (var kv in other) d[kv.Key] = kv.Value; }
-        public static void update<K, V>(this IDictionary<K, V> d, IEnumerable<(K, V)> pairs) { foreach (var (k, v) in pairs) d[k] = v; }
+        public static void update<K, V>(this IDictionary<K, V> d, IDictionary<K, V> other)
+        {
+            if (ReferenceEquals(d, other)) return;
+            foreach (var kv in other) d[kv.Key] = kv.Value;
+        }
+        public static void update<K, V>(this IDictionary<K, V> d, IEnumerable<(K, V)> pairs) { foreach (var (k, v) in pairs) d[PyNoneDictKey.Store(k)] = v; }
         public static void __dict_update<K, V, SourceKey, SourceValue>(
             IDictionary<K, V> target, IEnumerable<KeyValuePair<SourceKey, SourceValue>> source)
         {
             foreach (var item in source) target[__key<K>(item.Key)] = (V)(dynamic?)item.Value!;
         }
-        public static OrderedDictionary<K, V> fromkeys<K, V>(IEnumerable<K> keys, V value) where K : notnull { var d = new OrderedDictionary<K, V>(); foreach (var k in keys) d[k] = value; return d; }
+        public static OrderedDictionary<K, V> fromkeys<K, V>(IEnumerable<K> keys, V value) where K : notnull { var d = new OrderedDictionary<K, V>(); foreach (var k in keys) d[PyNoneDictKey.Store(k)] = value; return d; }
         public static OrderedDictionary<K, object?> fromkeys<K>(IEnumerable<K> keys) where K : notnull => fromkeys<K, object?>(keys, null);
         public static Dictionary<K, V> copy<K, V>(this Dictionary<K, V> d) where K : notnull => new Dictionary<K, V>(d);
         public static OrderedDictionary<K, V> copy<K, V>(this OrderedDictionary<K, V> d) where K : notnull => dict(d);
         public static (K, V) popitem<K, V>(this OrderedDictionary<K, V> d) where K : notnull
         {
             if (d.Count == 0) throw new KeyNotFoundException("popitem(): dictionary is empty");
-            var last = d.GetAt(d.Count - 1); d.RemoveAt(d.Count - 1); return (last.Key, last.Value);
+            var last = d.GetAt(d.Count - 1); d.RemoveAt(d.Count - 1); return (PyNoneDictKey.Read(last.Key), last.Value);
         }
         public static void add<T>(this HashSet<T> s, T x) => s.Add(x);
         public static void discard<T>(this HashSet<T> s, T x) => s.Remove(x);
@@ -445,13 +489,13 @@ namespace Typhon.Runtime
     // in two classes and C# drops the one whose constraint the value type does not satisfy.
     internal static class DictGetStruct
     {
-        public static V? get<K, V>(this IDictionary<K, V> d, K key) where V : struct => key != null && d.TryGetValue(key, out var v) ? v : null;
+        public static V? get<K, V>(this IDictionary<K, V> d, K key) where V : struct => PyNoneDictKey.Store(key) is K stored && d.TryGetValue(stored, out var v) ? v : null;
         /// <summary>d.pop(k, None) of a dict of value types: the value, or None (null).</summary>
-        public static V? pop<K, V>(this IDictionary<K, V> d, K key, V? none) where V : struct => d.Remove(key, out var v) ? v : none;
+        public static V? pop<K, V>(this IDictionary<K, V> d, K key, V? none) where V : struct => d.Remove(PyNoneDictKey.Store(key), out var v) ? v : none;
     }
 
     internal static class DictGetClass
     {
-        public static V? get<K, V>(this IDictionary<K, V> d, K key) where V : class => key != null && d.TryGetValue(key, out var v) ? v : null;
+        public static V? get<K, V>(this IDictionary<K, V> d, K key) where V : class => PyNoneDictKey.Store(key) is K stored && d.TryGetValue(stored, out var v) ? v : null;
     }
 }

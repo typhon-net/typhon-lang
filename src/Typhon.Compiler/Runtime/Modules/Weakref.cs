@@ -109,21 +109,38 @@ namespace Typhon.Stdlib
         /// </summary>
         internal class @ref : System.Dynamic.DynamicObject, IWeakCallback, IPyRepr
         {
-            readonly WeakReference<object> _target;
-            readonly object? _callback;
+            WeakReference<object>? _target;
+            object? _callback;
             int? _hash;
+
+            protected @ref() { }
 
             /// <summary>(a lambda callback: ref(obj, lambda r: ...))</summary>
             public @ref(object? obj, Action<dynamic> callback) : this(obj, (object?)callback) { }
 
-            public @ref(object? obj, object? callback = null)
+            public @ref(object? obj, object? callback = null) => Initialize(obj, callback);
+
+            void Initialize(object? obj, object? callback)
             {
-                _target = new WeakReference<object>(Referenceable(obj));
+                var target = Referenceable(obj);
+                _target = new WeakReference<object>(target);
                 _callback = callback;
-                Watch.Of(obj!).Add(this);
+                Watch.Of(target).Add(this);
             }
 
-            internal object? Target => _target.TryGetTarget(out var o) ? o : null;
+            public static dynamic __new__(Type cls, object? obj, object? callback = null)
+            {
+                if (!typeof(@ref).IsAssignableFrom(cls))
+                    throw new InvalidCastException("weakref.ReferenceType.__new__ requires a reference type");
+                var reference = (@ref)RuntimeHelpers.GetUninitializedObject(cls);
+                reference.Initialize(obj, callback);
+                return reference;
+            }
+
+            // The Python constructor installs its target at allocation, before calling __init__.
+            public void __init__(object? obj, object? callback = null) { }
+
+            internal object? Target => _target != null && _target.TryGetTarget(out var o) ? o : null;
             /// <summary>The referent, or None once it has been collected.</summary>
             public virtual dynamic? __call__() => Target;
             public dynamic? __callback__ => _callback;
@@ -145,13 +162,20 @@ namespace Typhon.Stdlib
             public override bool TryGetMember(System.Dynamic.GetMemberBinder binder, out object? result) =>
                 throw new MissingMemberException($"'{Builtins.PyTypeName(GetType())}' object has no attribute '{binder.Name}'");
 
-            public override bool Equals(object? other)
+            static bool ReferencesEqual(@ref first, @ref second)
             {
-                if (ReferenceEquals(this, other)) return true;
-                if (other is not @ref r) return false;
-                object? a = Target, b = r.Target;
+                if (ReferenceEquals(first, second)) return true;
+                object? a = first.Target, b = second.Target;
                 return a != null && b != null && PyKeyComparer.Instance.Equals(a, b);
             }
+
+            public override bool Equals(object? other) => other is @ref reference && ReferencesEqual(this, reference);
+
+            public static object __eq__(@ref self, object? other) =>
+                other is @ref reference ? ReferencesEqual(self, reference) : Builtins.NotImplemented;
+            public static object __ne__(@ref self, object? other) =>
+                other is @ref reference ? !ReferencesEqual(self, reference) : Builtins.NotImplemented;
+            public static long __hash__(@ref self) => self.GetHashCode();
 
             public override int GetHashCode()
             {
@@ -255,6 +279,19 @@ namespace Typhon.Stdlib
         /// <summary>The weak references and proxies to the object.</summary>
         public static List<object> getweakrefs(object? @object) => @object == null || Watch.Find(@object) is not Watch w ? new List<object>() : w.Alive();
 
+        public static void _remove_dead_weakref(object? mapping, object? key)
+        {
+            if (mapping is not IDictionary dictionary)
+                throw new InvalidCastException($"_remove_dead_weakref() argument 1 must be dict, not {Builtins.PyTypeName(Builtins.__type_of(mapping))}");
+            lock (dictionary)
+            {
+                key = Builtins.KeyFor(dictionary, key);
+                if (!dictionary.Contains(key!)) return;
+                if (dictionary[key!] is not @ref reference) throw new InvalidCastException("not a weakref");
+                if (reference.Target == null) dictionary.Remove(key!);
+            }
+        }
+
         /// <summary>
         /// weakref.finalize(obj, func, /, *args, **kwargs): calls func(*args, **kwargs) once, when obj is collected, when the
         /// finalizer is called, or at exit (while atexit is true) — whichever comes first.
@@ -271,10 +308,15 @@ namespace Typhon.Stdlib
             public bool atexit = true;
 
             public finalize(object? obj, object? func, params object?[] args)
+                : this(obj, func, args, null) { }
+
+            public finalize(object? obj, object? func, [PyPackedArguments] object?[] args,
+                [PyKeywordArguments] IDictionary<string, object?>? __kwargs = null)
             {
                 _target = new WeakReference<object>(Referenceable(obj));
                 _func = func;
                 _args = args;
+                _kwargs = __kwargs != null ? new OrderedDictionary<string, object?>(__kwargs) : null;
                 lock (Registry)
                 {
                     Registry[this] = _next++;

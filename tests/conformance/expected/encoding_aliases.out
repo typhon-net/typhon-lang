@@ -1,0 +1,10 @@
+UTF_8
+Latin_1
+foo.bar_baz
+foo_z
+''
+396 True
+['utf_8', 'latin_1', 'utf_16', 'euc_jp', 'shift_jis_2004', 'gbk']
+ascii 0 1 'ascii' codec can't decode byte 0xff in position 0: ordinal not in range(128)
+['646', 'ansi_x3.4_1968', 'ansi_x3_4_1968', 'ansi_x3.4_1986']
+396 646 ascii

@@ -1,0 +1,17 @@
+def walk(value):
+    return value.__iter__()
+
+print(list(walk(['one', 'two'])))
+print(list(walk({'a': 1, 'b': 2})))
+print(list(walk(('pair', 3))))
+characters: str = 'Äx'
+iterator = characters.__iter__()
+print(iterator.__iter__() is iterator, next(iterator), next(iterator))
+
+class Items:
+    def __iter__(self):
+        return iter([4, 5])
+
+print(list(walk(Items())))
+iterator_factory = ('left', 'right').__iter__
+print(list(iterator_factory()))

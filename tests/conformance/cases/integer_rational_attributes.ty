@@ -1,0 +1,11 @@
+# typhon: int=bigint
+from typing import Any
+
+def parts(n: Any):
+    return n.numerator, n.denominator, n.real, n.imag
+
+large: int = 10**40
+print(parts(large))
+print(parts(True))
+print(large.numerator, large.denominator, large.real, large.imag)
+print((42).numerator, (42).denominator)

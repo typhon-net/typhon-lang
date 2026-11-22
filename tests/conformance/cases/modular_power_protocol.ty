@@ -1,0 +1,14 @@
+class Base:
+    def __pow__(self, exponent, modulus=None):
+        if modulus is None:
+            return ('power', exponent)
+        return ('modular power', exponent, modulus)
+
+class Reflected:
+    def __rpow__(self, base, modulus=None):
+        return ('reflected power', base, modulus)
+
+print(pow(Base(), 7, 13))
+print(pow(Base(), 7, None))
+print(pow(2, Reflected(), 13))
+print(pow(3, -1, 11))

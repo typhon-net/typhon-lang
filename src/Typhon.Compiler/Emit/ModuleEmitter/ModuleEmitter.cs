@@ -173,7 +173,9 @@ namespace Typhon.Compiler.Emit
             if (runtimeCode)
             {
                 _m.RuntimeBindings.UnionWith(_m.Globals);
-                _m.RuntimeBindings.UnionWith(LocalsAnalyzer.Analyze(body, Enumerable.Empty<string>(), null).AllLocals);
+                var moduleLocals = LocalsAnalyzer.Analyze(body, Enumerable.Empty<string>(), null);
+                _m.RuntimeBindings.UnionWith(moduleLocals.AllLocals);
+                _m.RuntimeBindings.UnionWith(moduleLocals.LocalFunctions);
                 _m.RuntimeBindings.ExceptWith(_m.Functions);
                 _m.RuntimeBindings.ExceptWith(_m.Classes.Keys);
                 foreach (var name in _m.RuntimeBindings) _moduleFieldTypes[name] = "dynamic";
@@ -193,17 +195,24 @@ namespace Typhon.Compiler.Emit
                     else if (s is AnnAssignStmt gaa && gaa.Target is NameExpr gan) usedInDefs.Add(gan.Id);
 
             FindFunctionAliases(body);
+            var moduleAssignments = body.OfType<AssignStmt>()
+                .Where(statement => statement.Targets.Count == 1 && statement.Targets[0] is NameExpr)
+                .ToLookup(statement => ((NameExpr)statement.Targets[0]).Id);
             var fields = new Dictionary<string, string>();      // name → C# type
             var execStmts = new List<Stmt>();                     // static ctor (regular) / Main (main module)
             var mainBlocks = new List<Stmt>();
 
-            if (!runtimeCode && !_m.IsGdScript && _m.Globals.Contains("__doc__"))
+            if (!runtimeCode && !_m.IsGdScript)
             {
-                fields["__doc__"] = _moduleFieldTypes["__doc__"] = "dynamic";
-                _w.Line($"internal static dynamic? __doc__ = {ModuleDocLiteral(body)};");
+                foreach (var name in new[] { "__name__", "__doc__" }.Where(_m.Globals.Contains))
+                {
+                    fields[name] = _moduleFieldTypes[name] = "dynamic";
+                    string initial = name == "__name__" ? CsString(_m.Name) : ModuleDocLiteral(body);
+                    _w.Line($"internal static dynamic? {name} = {initial};");
+                }
             }
 
-            foreach (string name in _m.ReboundFunctions.OrderBy(name => name, StringComparer.Ordinal))
+            foreach (string name in _m.ReboundFunctions.Concat(_m.ReboundClasses).Distinct().OrderBy(name => name, StringComparer.Ordinal))
                 EmitLateModuleField(name, fields);
 
             foreach (var conditionalClass in body.OfType<ClassDef>().Where(c => c.ConditionalModuleDefinition))
@@ -216,14 +225,17 @@ namespace Typhon.Compiler.Emit
                 if (s is ClassDef cdef) foreach (var m in cdef.Body.OfType<FunctionDef>()) RegisterDefaultFields(m, cdef.Name, fields, execStmts);
                 if (s is ImportStmt || s is ImportFromStmt)
                 {
-                    if (ProjectImports(s).Any() || PlatformModules(s).Any() || s is ImportStmt import && import.Names.Any(alias =>
-                        _m.ConditionalGlobals.Contains(alias.AsName ?? alias.Name.Split('.')[0]))) execStmts.Add(s);
+                    bool HasLateBinding(string name) => _lateModuleFields.Contains(name) || _m.ConditionalGlobals.Contains(name);
+                    if (ProjectImports(s).Any() || PlatformModules(s).Any() ||
+                        s is ImportStmt import && import.Names.Any(alias => HasLateBinding(alias.AsName ?? alias.Name.Split('.')[0])) ||
+                        s is ImportFromStmt from && from.Names.Any(alias => HasLateBinding(alias.AsName ?? alias.Name)))
+                        execStmts.Add(s);
                     continue;
                 }
                 if (s is FunctionDef || s is ClassDef)
                 {
                     if (s is ClassDef definition && !definition.ConditionalModuleDefinition &&
-                        definition != GdScriptClass && RunsClassBodyAtDefinition(definition))
+                        definition != GdScriptClass && (RunsClassBodyAtDefinition(definition) || CapturesClassModuleName))
                         execStmts.Add(new ClassBodyInitialization { Definition = definition, Line = definition.Line, Col = definition.Col });
                     if (runtimeCode && s is not ClassDef { ConditionalModuleDefinition: true })
                     {
@@ -245,7 +257,8 @@ namespace Typhon.Compiler.Emit
                 if (s is AnnAssignStmt aliasAnn && aliasAnn.Target is NameExpr aliasAnnName && _m.TypeAliases.ContainsKey(aliasAnnName.Id)) continue;
                 if (_m.RuntimeCodeMode != "single" && s is ExprStmt es && es.Value is ConstExpr ce &&
                     (ce.Kind == ConstKind.Str || ce.Kind == ConstKind.Ellipsis)) continue;
-                if (!runtimeCode && IsMainGuard(s)) { mainBlocks.AddRange(((IfStmt)s).Body); continue; }
+                if (!runtimeCode && !_m.Globals.Contains("__name__") && IsMainGuard(s))
+                { mainBlocks.AddRange(((IfStmt)s).Body); continue; }
 
                 string fieldName = null; Expr ann = null, value = null;
                 if (s is AssignStmt a && a.Targets.Count == 1 && a.Targets[0] is NameExpr an) { fieldName = an.Id; value = a.Value; }
@@ -276,6 +289,9 @@ namespace Typhon.Compiler.Emit
                         if (emptyType != null && (emptyType.Contains("dynamic") || emptyType.Contains(TypeInference.Pending) && !_dry)) emptyType = null;
                     }
                     string type = ann != null ? MapType(ann, s) : emptyType ?? (PyType(InferType(value)) ?? ImplicitDynamic(s, $"module variable '{fieldName}'"));
+                    if (ann == null && type != "dynamic" && moduleAssignments[fieldName].Any(statement =>
+                        statement != s && ModuleAssignmentChangesType(statement.Value, type)))
+                        type = "dynamic";
                     fields[fieldName] = type;
                     _moduleFieldTypes[fieldName] = type;
                     string vis = SurfaceVisibility(fieldName.StartsWith("_") ? "internal" : "public", type);
@@ -323,6 +339,8 @@ namespace Typhon.Compiler.Emit
             }
             if (fields.Count > 0) _w.Line();
             _moduleFieldNames.UnionWith(fields.Keys);
+            if (Obs != null && !runtimeCode && !isMainModule && fields.Count > 0)
+                Obs.Fields[TypeInference.ModuleFieldsKey(_m)] = fields;
             foreach (var binding in _runtimeProjectBindings.Values)
                 _w.Line($"private static dynamic? {binding.Storage};");
             if (usesGlobals) _w.Line($"private static object __typhon_globals() => {EmitGlobals()};");
@@ -402,6 +420,14 @@ namespace Typhon.Compiler.Emit
 
         /// <summary>Module fields that start as an empty container (their element types come from what the module adds).</summary>
         readonly Dictionary<string, char> _emptyModuleFields = new Dictionary<string, char>();
+        bool ModuleAssignmentChangesType(Expr value, string initialType)
+        {
+            if (IsNone(value)) return IsValueTypeName(initialType) && !initialType.EndsWith("?");
+            if (IsEmptyLiteral(value)) return false;
+            string type = PyType(InferType(value));
+            return type != TypeInference.Pending && type != initialType;
+        }
+
         string ModuleFieldKey(string name) => _m.Name + "|module." + name;
 
         /// <summary>The module's static fields (module-level variables functions can see).</summary>
@@ -463,9 +489,11 @@ namespace Typhon.Compiler.Emit
             if (_m.RuntimeCodeMode != null) return "((dynamic)__typhon_execution.Globals)";
             if (_m.WritesModuleGlobals || _lateModuleFields.Count != 0)
                 return $"((dynamic)global::Typhon.Runtime.PyModule.Of(typeof({ModuleClassName(_m)}), {CsString(_m.Name)}).__dict__)";
-            var entries = new List<string> { $"[\"__name__\"] = {CsString(_m.Name)}" };
-            if (!_m.IsGdScript && !_moduleFieldNames.Contains("__doc__"))
-                entries.Add($"[\"__doc__\"] = {ModuleObject(_m)}.__doc__");
+            var entries = new List<string>();
+            if (_m.IsGdScript) entries.Add($"[\"__name__\"] = {CsString(_m.Name)}");
+            else
+                foreach (var name in new[] { "__name__", "__doc__" }.Where(name => !_moduleFieldNames.Contains(name)))
+                    entries.Add($"[{CsString(name)}] = {ModuleObject(_m)}.{name}");
             foreach (var f in _moduleFieldNames.OrderBy(x => x, StringComparer.Ordinal)) entries.Add($"[{CsString(f)}] = {Esc(f)}");
             foreach (var c in _m.Classes.Keys.OrderBy(x => x, StringComparer.Ordinal)) entries.Add($"[{CsString(c)}] = typeof({Esc(c)})");
             foreach (var fn in _m.Ast.Body.OfType<FunctionDef>())
@@ -517,6 +545,7 @@ namespace Typhon.Compiler.Emit
             if (s is FunctionDef f)
             {
                 var loc = LocalsAnalyzer.Analyze(f.Body, f.Params.Select(p => p.Name), null);
+                into.UnionWith(loc.Globals);
                 var bound = new HashSet<string>(loc.AllLocals);
                 bound.UnionWith(f.Params.Select(p => p.Name));
                 bound.UnionWith(loc.LocalFunctions);

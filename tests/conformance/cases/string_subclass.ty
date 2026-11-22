@@ -1,0 +1,19 @@
+import re
+
+class Name(str):
+    def __new__(cls, value, role):
+        return super().__new__(cls, value)
+
+    def __init__(self, value, role):
+        self.role = role
+
+class Tag(str):
+    pass
+
+name = Name('Ada', 'author')
+print(type(name) is Name, isinstance(name, str), issubclass(Tag, str), name.role)
+print(str(name), repr(name), len(name), name[0], name[1:], list(name))
+print(name == 'Ada', 'Ada' == name, hash(name) == hash('Ada'))
+print(getattr(name, 'upper')())
+print(re.compile('d').search(name).group())
+print(repr(Tag()), repr(Tag(None)), repr(Tag(b'hello', 'ascii')))

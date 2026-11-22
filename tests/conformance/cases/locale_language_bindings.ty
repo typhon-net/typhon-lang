@@ -1,0 +1,27 @@
+try:
+    typhon_missing_optional_setting
+except NameError as error:
+    print(error.name)
+globals()["dynamic_optional_setting"] = 7
+try:
+    dynamic_optional_setting
+except NameError:
+    print("unexpected")
+else:
+    print("bound")
+
+def pick_error():
+    return ValueError
+
+Caught = pick_error()
+try:
+    raise ValueError("under alias")
+except Caught as error:
+    print(str(error))
+
+def first(items):
+    if not isinstance(items, tuple):
+        items = (items,)
+    return items[0]
+
+print(first(3), first((4, 5)))

@@ -80,6 +80,15 @@ namespace Typhon.Compiler.Emit
             return false;
         }
 
+        bool IsRuntimeModuleAttribute(AttributeExpr member) =>
+            (member.Target is not NameExpr alias || RuntimeModuleValue(alias) == null) &&
+            InferType(member.Target) is "global::Typhon.Runtime.PyModule" or "Typhon.Runtime.PyModule" &&
+            !_r.HasMember("Typhon.Runtime.PyModule", member.Name);
+
+        bool IsRuntimeObjectAttribute(AttributeExpr member) =>
+            !_m.IsGdScript && InferType(member.Target) is "object" or "object?" &&
+            !_r.HasMember("System.Object", member.Name);
+
         string InferType(Expr e)
         {
             switch (e)
@@ -89,6 +98,7 @@ namespace Typhon.Compiler.Emit
                     {
                         case ConstKind.Int: { if (_big) return IntT; var code = EmitConst(c); return long.TryParse(code, out _) ? "long" : code.EndsWith("UL") ? "ulong" : null; }
                         case ConstKind.Float: return "double";
+                        case ConstKind.Imaginary: return ComplexType;
                         case ConstKind.Str: return "string";
                         case ConstKind.Bytes: return PyBytesType;
                         case ConstKind.Bool: return "bool";
@@ -104,6 +114,8 @@ namespace Typhon.Compiler.Emit
                 case NameExpr n when n.Id == "__file__" && !IsShadowed(n.Id): return "string";
                 case NameExpr late when LateClassSlot(late.Id) != null: return "dynamic";
                 case NameExpr ian when ImportAlias(ian) is Expr importTarget: return InferType(importTarget);
+                case NameExpr module when !Receivers.Contains(module) && RuntimeModuleValue(module) != null:
+                    return "global::Typhon.Runtime.PyModule";
                 case NameExpr n:
                 {
                     var t = KnownType(n.Id);
@@ -111,13 +123,19 @@ namespace Typhon.Compiler.Emit
                     // self as a value (node = self, [self], f(self)) in an instance method or a function nested in one
                     if (n.Id == "self" && _cls != null && SelfInScope()) return _cls.CsSelfType;
                     if (FunctionRef(n, out var fnOwner, out var fnDef)) return FunctionValueType(fnOwner, fnDef.Name);
+                    if (_classFieldInitializer && _cls?.FieldTypes.TryGetValue(n.Id, out string priorClassField) == true)
+                        return priorClassField;
                     if (!IsLocal(n.Id) && _moduleFieldTypes.TryGetValue(n.Id, out var mt)) return mt;
                     if (!IsLocal(n.Id) && _runtimeProjectBindings.TryGetValue(n.Id, out var imported))
                         return ConditionalModuleClass(imported.Owner, imported.Name) ? "global::System.Type" : "dynamic";
                     if (!IsLocal(n.Id) && ConditionalModuleClass(_m, n.Id)) return "global::System.Type";
                     return null;
                 }
+                case AttributeExpr component when UsesComplexComponent(component): return "double";
                 case AttributeExpr { Name: "__class__" }: return "global::System.Type";
+                case AttributeExpr moduleAttribute when IsRuntimeModuleAttribute(moduleAttribute): return "dynamic";
+                case AttributeExpr objectAttribute when IsRuntimeObjectAttribute(objectAttribute): return "dynamic";
+                case AttributeExpr builtin when ImportedBuiltinTypeValue(builtin) != null: return "global::System.Type";
                 case AttributeExpr trace when IsTypedExceptionTraceback(trace): return ExceptionTracebackType;
                 case AttributeExpr reflected when TypeObjectMember(reflected):
                     return "dynamic";
@@ -160,11 +178,13 @@ namespace Typhon.Compiler.Emit
                     if (BuiltinGenericOrigin(ix.Target) != null) return "dynamic";
                     if (InferType(ix.Index) == "global::Typhon.Runtime.PySlice") return "dynamic";
                     var t = InferType(ix.Target);
+                    if (UsesDictMissingLookup(t)) return "dynamic";
                     if (IsBytesType(t)) return "long"; // b[i] is an int
                     if (NamedTupleOf(t) is ClassDef ntd && ConstIntValue(ix.Index) is long ntk && ntk >= -ntd.NamedTupleFields.Count && ntk < ntd.NamedTupleFields.Count)
                         return MemberType(t, ntd.NamedTupleFields[(int)(ntk < 0 ? ntk + ntd.NamedTupleFields.Count : ntk)], method: false);
                     // (an unknown container with a late-bound key is read through __getitem: a late-bound value)
                     if (t == null && !(ix.Index is TupleExpr) && InferType(ix.Index) == "dynamic") return "dynamic";
+                    if (t is "object" or "object?") return "dynamic";
                     if (t == null || t == TypeInference.Pending || t == "dynamic") return t;
                     if (t == "string") return "string";
                     // a class deriving from list/dict: its items; a class with __getitem__: what that returns
@@ -198,7 +218,10 @@ namespace Typhon.Compiler.Emit
                     if (t != null && t.StartsWith(PyTuplePrefix)) return t;
                     return t != null && (t == "string" || t.StartsWith("List<") || t.EndsWith("[]") || t == "dynamic") ? t : null;
                 }
-                case CallExpr { Func: AttributeExpr sm } when InstanceMethodMayBeShadowed(sm): return "dynamic";
+                case CallExpr { Func: AttributeExpr sm } when InstanceMethodMayBeShadowed(sm) || IsInstanceClassDefault(sm): return "dynamic";
+                case CallExpr { Func: NameExpr { Id: "frozendict" } frozen } keywordCall when !_m.IsGdScript &&
+                    !IsShadowed(frozen.Id) && keywordCall.Args.Any(argument => argument.Name != null || argument.DoubleStar):
+                    return BuiltinTypeValues[frozen.Id];
                 case CallExpr call: return CallType(call);
                 case BinOpExpr pf when pf.Op == "%" && (pf.Left is ConstExpr pfc && pfc.Kind == ConstKind.Str || InferType(pf.Left) == "string"): return "string";
                 case BinOpExpr lc when lc.Op == "+" && ListConcatMismatch(lc): return "List<dynamic>";
@@ -241,6 +264,7 @@ namespace Typhon.Compiler.Emit
                     if (a == TypeInference.Pending) return o;
                     if (o == TypeInference.Pending) return a;
                     if (a != null && a == o) return a;
+                    if (a == "dynamic" || o == "dynamic") return "dynamic";
                     // None or a list: the list type (a reference can be None); an int or a float: a float
                     if (IsNone(i.Body) && o != null && !IsValueTypeName(o)) return o;
                     if (IsNone(i.OrElse) && a != null && !IsValueTypeName(a)) return a;
@@ -284,7 +308,7 @@ namespace Typhon.Compiler.Emit
                 case DictExpr d:
                 {
                     if (d.Keys.Count == 0 || d.Keys.Any(k => k == null)) return null;
-                    var ks = d.Keys.Select(InferType).Distinct().ToList();
+                    var ks = d.Keys.Select(key => IsNone(key) ? "dynamic" : InferType(key)).Distinct().ToList();
                     if (d.Values.Any(x => ClassBodyMethod(x) != null))
                         return $"OrderedDictionary<{(ks.Count == 1 ? PyType(ks[0]) ?? "dynamic" : "dynamic")}, dynamic>";
                     var vs = d.Values.Select(InferType).Distinct().ToList();
@@ -292,6 +316,13 @@ namespace Typhon.Compiler.Emit
                     if (ks.Count == 1 && ks[0] != null && d.Values.All(IsNone)) return $"OrderedDictionary<{PyType(ks[0])}, dynamic>";
                     if (ks.Count == 1 && ks[0] != null && TypeAmidEmpties(d.Values) is string vWithEmpties) return $"OrderedDictionary<{ks[0]}, {vWithEmpties}>";
                     if (ks.Count == 1 && ks[0] != null && TupleSequenceAmid(d.Values) is string vTupleSeq) return $"OrderedDictionary<{ks[0]}, {vTupleSeq}>";
+                    if (d.Keys.Count > 1 && (MixedTypes(d.Keys) || MixedTypes(d.Values)))
+                    {
+                        string key = MixedTypes(d.Keys) ? "dynamic" : PyType(ks[0]);
+                        string value = MixedTypes(d.Values) ? "dynamic" : PyType(vs[0]);
+                        if (key != null && value != null && key != TypeInference.Pending && value != TypeInference.Pending)
+                            return $"OrderedDictionary<{key}, {value}>";
+                    }
                     return null;
                 }
                 case TupleExpr t:
@@ -306,7 +337,12 @@ namespace Typhon.Compiler.Emit
                     string ItemType(Expr value) => InferType(value) ??
                         (value is NameExpr name && BuiltinTypeValue(name) != null ? "global::System.Type" :
                          BoundMethodValue(value) != null ? "dynamic" : null);
-                    if (t.Elts.Count == 1) { var one = PyType(ItemType(t.Elts[0])); return one == null || one == TypeInference.Pending ? one : $"ValueTuple<{one}>"; }
+                    if (t.Elts.Count == 1)
+                    {
+                        Expr element = t.Elts[0];
+                        string one = IsNone(element) ? "object?" : PyType(ItemType(element));
+                        return one == null || one == TypeInference.Pending ? one : $"ValueTuple<{one}>";
+                    }
                     // a long tuple of one item type is a data sequence (a table of numbers), not a record: PyTuple<T>
                     if (t.Elts.Count >= 8 && !t.Elts.Any(x => x is StarredExpr))
                     {
@@ -338,7 +374,7 @@ namespace Typhon.Compiler.Emit
             if (IsDataclassReplace(call)) { string rt0 = InferType(call.Args[0].Value); return rt0 == TypeInference.Pending ? rt0 : rt0 ?? "dynamic"; }
             if (call.Func is NameExpr gtn && gtn.Id == "globals" && call.Args.Count == 0 && !IsShadowed("globals"))
                 return _m.RuntimeCodeMode != null || _lateModuleFields.Count != 0 ? "dynamic" : "OrderedDictionary<string, object?>";
-            if (_m.RuntimeCodeMode != null && _scopeKey == RuntimeCodeScopeKey && call.Func is NameExpr { Id: "locals" } &&
+            if (_m.RuntimeCodeMode != null && AtRuntimeModuleScope && call.Func is NameExpr { Id: "locals" } &&
                 call.Args.Count == 0 && !IsShadowed("locals")) return "dynamic";
             if (call.Func is NameExpr dfn && IsLocal(dfn.Id) && KnownType(dfn.Id) is string dft && dft.StartsWith("global::System.Func<") && dft.EndsWith(">"))
             {
@@ -355,7 +391,8 @@ namespace Typhon.Compiler.Emit
             if (call.Func is NameExpr fzn && fzn.Id == "frozenset" && !IsShadowed("frozenset") && call.Args.Count <= 1)
             {
                 if (call.Args.Count == 0) return "HashSet<object>";
-                string fe = InferType(call.Args[0].Value) == "string" ? "string" : PyType(ElementTypeOf(InferType(call.Args[0].Value)));
+                // The runtime constructor preserves the iterable's actual CLR element type.
+                string fe = ElementTypeOf(InferType(call.Args[0].Value));
                 return fe == null || fe == TypeInference.Pending ? fe : $"HashSet<{fe}>";
             }
             if (InferredCallType(call) is string inferredCall) return inferredCall;
@@ -374,7 +411,7 @@ namespace Typhon.Compiler.Emit
                 if (MathCall(mc) is string mathType) return mathType;
                 var ot = InferType(mc.Target);
                 if (ot == TypeInference.Pending) return TypeInference.Pending;
-                if (ot == "dynamic" || TypeObjectMember(mc)) return "dynamic";
+                if (ot == "dynamic" || TypeObjectMember(mc) || IsRuntimeObjectAttribute(mc)) return "dynamic";
                 if (ot != null && MemberType(ot, mc.Name, method: true) is string objRet) return objRet;
                 if (DotNetResultType(mc.Target, mc.Name, call) is string netRet) return netRet;
                 if (PythonMethodType(ot, mc.Name, call) is string pyRet) return pyRet;
@@ -400,6 +437,8 @@ namespace Typhon.Compiler.Emit
                     case "dir": return "List<string>";
                     case "super": return call.Args.Count == 0 && Receivers.Contains(call) && _scope?.HasSelf == true ? null : "dynamic";
                     case "dict" when HasDictKeywords(call): return KeywordDictType(call);
+                    case "dict" when call.Args.Any(a => a.Name != null || a.DoubleStar):
+                        return DictKeywordSource(call, out _) is string keywordKey ? $"OrderedDictionary<{keywordKey}, dynamic>" : "dynamic";
                     case "bool": case "isinstance": case "any": case "all": return "bool";
                     case "cast": return call.Args.Count == 2 ? MapType(call.Args[0].Value, call) : null;   // typing.cast(T, x) is a C# cast to T
                     case "round": return call.Args.Count == 1 ? "long" : "double";
@@ -438,6 +477,7 @@ namespace Typhon.Compiler.Emit
                         var at = InferType(call.Args[0].Value);
                         if (at == TypeInference.Pending) return at;
                         string elem = fn.Id == "list" && at == "string" ? "string" : ElementTypeOf(at);
+                        if (elem == null && fn.Id == "set" && IsUnknownType(at)) return "HashSet<dynamic>";
                         if (elem == null || elem == TypeInference.Pending) return elem;
                         return (fn.Id == "set" ? "HashSet<" : "List<") + elem + ">";
                     }
@@ -512,6 +552,9 @@ namespace Typhon.Compiler.Emit
         }
 
         /// <summary>The type of a binary operation, with Python's rules (int / int is a float, list + list, str * n, ...).</summary>
+        static bool ComplexOperand(string type) =>
+            IsComplexType(type) || IsIntegral(type) || type is "float" or "double" or "bool";
+
         string BinOpType(BinOpExpr b)
         {
             string l = InferType(b.Left), r = InferType(b.Right);
@@ -524,6 +567,9 @@ namespace Typhon.Compiler.Emit
                 return l == TypeInference.Pending ? r : l;
             }
             if (_m.IsGdScript && GdBinOpType(b, l, r) is string gdType) return gdType;
+            if (!_m.IsGdScript && b.Op is ("+" or "-" or "*" or "/") &&
+                (IsComplexType(l) && ComplexOperand(r) || IsComplexType(r) && ComplexOperand(l)))
+                return ComplexType;
             // an operator of a Typhon class: what its __sub__ / __add__ / ... returns (not "T - T is T": Point - Point is a Vector)
             if (DunderOperatorType(b.Op, l, r) is string dunderType) return dunderType;
             // a .NET type's own operator for these operand types (date - date is a timedelta, date - timedelta a date)

@@ -1,0 +1,8 @@
+def encoded_keys(entries: dict[str, int]) -> list[bytes]:
+    output: list[bytes] = []
+    for key in sorted(entries):
+        output.append(key.encode("utf-8"))
+    return output
+
+print(encoded_keys({"z": 1, "a": 2}))
+print(list({None: 1, "last": 2}))

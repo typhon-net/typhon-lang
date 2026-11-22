@@ -1,0 +1,35 @@
+from itertools import chain
+
+names = ('a', 'b', 'c', 'd', 'e', 'f', 'g', 'h')
+unique: set[str] = set(names)
+print(sorted(unique))
+
+def generator():
+    received = yield 2
+    yield 3
+
+def prefix(enabled: bool):
+    items = generator()
+    if enabled:
+        items = chain((1,), items)
+    return list(items)
+
+print(prefix(True), prefix(False))
+
+def sections():
+    mappings = {'first': 1, 'second': 2}
+    defaults = ('default', 0)
+    for name, count in chain((defaults,), mappings.items()):
+        print(name, count)
+
+sections()
+print(list(chain('ab', 'c')), list(chain([1], ['two'])))
+def offsets(data: bytes):
+    counts = [0, 2]
+    positions = [-1] * len(data)
+    for i, symbol in enumerate(data):
+        positions[counts[symbol]] = i
+        counts[symbol] += 1
+    return positions, counts
+
+print(offsets(b'\0\1\0'))

@@ -1,0 +1,13 @@
+def percent(left, right):
+    return left % right
+
+def boolean_value(left):
+    return left % True
+
+print(percent('%s', 'text'))
+print(percent('%.2f %s %%', (12.75, 'test')))
+print(percent('%(n)d', {'n': 3}))
+print(percent('%s', None))
+print(boolean_value('%s'))
+print(percent(-13, 5), percent(13, -5), percent(13.5, -5.0))
+print(percent(True, 3), boolean_value(5))

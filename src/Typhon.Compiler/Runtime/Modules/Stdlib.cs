@@ -540,10 +540,20 @@ namespace Typhon.Stdlib
             return acc.Select(t => new PyTuple<T>(t));
         }
 
-        public static IEnumerable<long> count(long start = 0, long step = 1) { for (long i = start; ; i = checked(i + step)) yield return i; }
-        public static IEnumerable<double> count(double start, double step = 1) { for (double i = start; ; i += step) yield return i; }
-        public static IEnumerable<BigInteger> count(BigInteger start, BigInteger step) { for (var i = start; ; i += step) yield return i; }
-        public static IEnumerable<BigInteger> count(BigInteger start) { for (var i = start; ; i++) yield return i; }
+        public static PyIterator<long> count(long start = 0, long step = 1) => CountFrom(start, step);
+        public static PyIterator<double> count(double start, double step = 1) => CountFrom(start, step);
+        public static PyIterator<BigInteger> count(BigInteger start, BigInteger step) => CountFrom(start, step);
+        public static PyIterator<BigInteger> count(BigInteger start) => CountFrom(start, BigInteger.One);
+
+        static PyIterator<T> CountFrom<T>(T start, T step) where T : INumber<T>
+        {
+            static IEnumerable<T> Values(T start, T step)
+            {
+                for (T value = start; ; value = checked(value + step)) yield return value;
+            }
+            return new PyIterator<T>(Values(start, step).GetEnumerator());
+        }
+
         public static IEnumerable<T> cycle<T>(IEnumerable<T> iterable)
         {
             var saved = new List<T>();
@@ -641,6 +651,7 @@ namespace Typhon.Stdlib
         public static Typhon.Runtime.Counter<T> Counter<T>(IEnumerable<T> iterable) where T : notnull => new Typhon.Runtime.Counter<T>(iterable);
         public static Typhon.Runtime.Counter<string> Counter(string s) => new Typhon.Runtime.Counter<string>(new StrChars(s));
         public static Typhon.Runtime.Counter<T> Counter<T>(IDictionary<T, long> counts) where T : notnull { var c = new Typhon.Runtime.Counter<T>(); c.update(counts); return c; }
+        public static Typhon.Runtime.deque<dynamic> deque(long? maxlen = null) => new Typhon.Runtime.deque<dynamic>(maxlen);
         public static Typhon.Runtime.deque<T> deque<T>(IEnumerable<T> iterable, long? maxlen = null) => new Typhon.Runtime.deque<T>(iterable, maxlen);
         public static Typhon.Runtime.deque<string> deque(string s, long? maxlen = null) => new Typhon.Runtime.deque<string>(new StrChars(s), maxlen);
         public static PyOrderedDict<K, V> OrderedDict<K, V>(IDictionary<K, V> d) where K : notnull { var o = new PyOrderedDict<K, V>(); foreach (var kv in d) o[kv.Key] = kv.Value; return o; }
@@ -694,6 +705,8 @@ namespace Typhon.Stdlib
     /// <summary>operator: the operators as functions (for reduce, map, sorted keys).</summary>
     internal static class @operator
     {
+        public static dynamic index(object? value) => Builtins.__index_value(value);
+
         public static long add(long a, long b) => checked(a + b);
         public static double add(double a, double b) => a + b;
         public static string add(string a, string b) => a + b;

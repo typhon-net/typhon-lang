@@ -1,0 +1,5 @@
+(b'line\nnext\tAA\x00', 24)
+(b'\n', 2)
+(b'a?G1z', 6)
+(b'aGz', 6)
+invalid \x escape at position 1

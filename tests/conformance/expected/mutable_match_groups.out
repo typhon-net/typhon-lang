@@ -1,0 +1,4 @@
+{'take': 2, 'skip': ['missing']}
+True
+{'take': b'a', 'skip': 7}
+{'take': b'a', 'skip': None}

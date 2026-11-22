@@ -30,16 +30,17 @@ namespace Typhon.Runtime
     internal sealed class PyFile : io.TextIOWrapper
     {
         public PyFile(string path, string mode, string? encoding = null, string? errors = null, string? newline = null)
-            : this(StreamOps.OpenFile(path, mode), path, mode, encoding, errors, newline, true) { }
+            : this(new io.FileIO(path, mode), mode, encoding, errors, newline) { }
 
         /// <summary>A text file over an open stream (os.fdopen): name is the path, or the descriptor as text.</summary>
         internal PyFile(System.IO.Stream stream, string name, string mode, string? encoding, string? errors, string? newline, bool closefd)
+            : this(new io.FileIO(stream, name, StreamOps.RawMode(mode), closefd), mode, encoding, errors, newline) { }
+
+        internal PyFile(io.FileIO raw, string mode, string? encoding, string? errors, string? newline)
         {
-            this.name = name;
             this.mode = mode;
-            var raw = new io.FileIO(stream, name, StreamOps.RawMode(mode), closefd);
             buffer = mode.Contains('+') ? new io.BufferedRandom(raw) : mode.Contains('r') ? new io.BufferedReader(raw) : new io.BufferedWriter(raw);
-            Init(stream, encoding, errors, newline);
+            Init(raw.__stream!, encoding, errors, newline);
         }
     }
 
@@ -47,18 +48,21 @@ namespace Typhon.Runtime
     internal class PyBinaryFile : io.BufferedIOBase
     {
         readonly System.IO.Stream _s;
-        public readonly string name, mode;
+        public dynamic name => raw.name;
+        public readonly string mode;
         /// <summary>The raw file below (io.FileIO).</summary>
         public readonly io.FileIO raw;
 
-        public PyBinaryFile(string path, string mode) : this(StreamOps.OpenFile(path, mode), path, mode, true) { }
+        public PyBinaryFile(string path, string mode) : this(new io.FileIO(path, mode), mode) { }
 
         internal PyBinaryFile(System.IO.Stream stream, string name, string mode, bool closefd)
+            : this(new io.FileIO(stream, name, StreamOps.RawMode(mode), closefd), mode) { }
+
+        internal PyBinaryFile(io.FileIO raw, string mode)
         {
-            this.name = name;
             this.mode = mode;
-            _s = stream;
-            raw = new io.FileIO(stream, name, StreamOps.RawMode(mode), closefd);
+            _s = raw.__stream!;
+            this.raw = raw;
         }
 
         internal override System.IO.Stream? __stream => _s;

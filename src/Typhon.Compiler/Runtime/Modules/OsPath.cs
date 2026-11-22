@@ -546,6 +546,14 @@ namespace Typhon.Stdlib
             public static string join(string a, params string[] p) => Win ? NtPath.join(a, p) : PosixPath.join(a, p);
             public static PyBytes join(PyBytes a, params PyBytes[] p) =>
                 PyBytes.Latin1(join(a.decode("latin-1"), p.Select(part => part.decode("latin-1")).ToArray()));
+            public static dynamic join(object a, params object?[] p)
+            {
+                object first = os_.fspath(a);
+                var parts = p.Select(part => (object)os_.fspath(part)).ToArray();
+                if (first is string text && parts.All(part => part is string)) return join(text, parts.Cast<string>().ToArray());
+                if (first is PyBytes bytes && parts.All(part => part is PyBytes)) return join(bytes, parts.Cast<PyBytes>().ToArray());
+                throw new InvalidCastException("Can't mix strings and bytes in path components");
+            }
             public static string __join_paths(object? paths)
             {
                 var parts = Builtins.__iter_dyn(paths).Select(part => os_.__path((object?)part)).ToArray();
@@ -568,9 +576,18 @@ namespace Typhon.Stdlib
             }
             public static (string, string, string) splitroot(string p) => Win ? NtPath.splitroot(p) : PosixPath.splitroot(p);
             public static string basename(string p) => Win ? NtPath.basename(p) : PosixPath.basename(p);
+            public static PyBytes basename(PyBytes p) => split(p).Item2;
             public static string dirname(string p) => Win ? NtPath.dirname(p) : PosixPath.dirname(p);
             public static string normpath(string p) => Win ? NtPath.normpath(p) : PosixPath.normpath(p);
             public static string abspath(string p) => Win ? NtPath.abspath(p) : PosixPath.abspath(p);
+            public static PyBytes abspath(PyBytes p)
+            {
+                if (Win) return os_.fsencode(NtPath.abspath(os_.fsdecode(p)));
+                string path = p.decode("latin-1");
+                if (!PosixPath.isabs(path))
+                    path = PosixPath.join(os_.fsencode(Environment.CurrentDirectory).decode("latin-1"), path);
+                return PyBytes.Latin1(PosixPath.normpath(path));
+            }
             public static string realpath(string p, object? strict = null) => Win ? NtPath.realpath(p, Builtins.truthy(strict) && strict != ALLOW_MISSING) : PosixPath.realpath(p, Builtins.truthy(strict) && strict != ALLOW_MISSING);
             public static string realpath(string p, bool strict) => Win ? NtPath.realpath(p, strict) : PosixPath.realpath(p, strict);
             /// <summary>relpath(path, start=os.curdir): path relative to start, from their normalized absolute forms.</summary>

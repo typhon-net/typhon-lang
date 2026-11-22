@@ -40,6 +40,22 @@ namespace Typhon.Stdlib
         public static double exp(double x) => Math.Exp(x);
         public static double log(double x) => Math.Log(x);
         public static double log(double x, double @base) => Math.Log(x, @base);
+        public static double log(object x) => NumericLog(x);
+        public static double log(object x, object @base) => LogRatio(NumericLog(x), NumericLog(@base));
+
+        static double NumericLog(object value)
+        {
+            if (value is BigInteger integer) return integer.Sign > 0 ? BigInteger.Log(integer) : throw new ArgumentException("math domain error");
+            if (value is double or float or decimal or long or ulong or int or uint or short or ushort or sbyte or byte or bool ||
+                Builtins.hasattr(value, "__float__"))
+                return PositiveLog(Builtins.@float(value));
+            if (Builtins.hasattr(value, "__index__")) return NumericLog((object)Builtins.__index_value(value));
+            throw new InvalidCastException($"must be real number, not {Builtins.PyTypeName(Builtins.__type_of(value))}");
+        }
+
+        static double PositiveLog(double value) => value <= 0 ? throw new ArgumentException("math domain error") : Math.Log(value);
+        static double LogRatio(double value, double @base) => @base == 0
+            ? throw new DivideByZeroException("float division by zero") : value / @base;
         public static double log10(double x) => Math.Log10(x);
         public static double log2(double x) => Math.Log2(x);
         public static double pow(double x, double y) => Math.Pow(x, y);

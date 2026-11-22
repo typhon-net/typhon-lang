@@ -7,14 +7,15 @@ using Typhon.Compiler.Emit;
 
 namespace Typhon.Compiler.Syntax
 {
-    /// <summary>Keep the function's implementation separate when its module name is rebound.</summary>
+    /// <summary>Keep a definition separate when its module name is rebound.</summary>
     internal static class ReboundModuleFunctions
     {
         public static void Apply(ModuleInfo module)
         {
             var blocks = ModuleBlocks(module.Ast.Body).ToArray();
             var definitions = blocks.SelectMany(block => block.OfType<FunctionDef>()).GroupBy(f => f.Name).ToArray();
-            if (definitions.Length == 0) return;
+            var classes = module.Ast.Body.OfType<ClassDef>().GroupBy(type => type.Name).ToArray();
+            if (definitions.Length == 0 && classes.Length == 0) return;
 
             var writes = new HashSet<string>();
             foreach (var block in blocks)
@@ -32,6 +33,8 @@ namespace Typhon.Compiler.Syntax
                     }
                 }
             }
+            foreach (var group in classes)
+                if (group.Count() > 1 || writes.Contains(group.Key)) module.ReboundClasses.Add(group.Key);
             AstWalker.VisitAll(module.Ast.Body, node =>
             {
                 if (node is GlobalStmt { Nonlocal: false } global) writes.UnionWith(global.Names);
@@ -42,7 +45,7 @@ namespace Typhon.Compiler.Syntax
                     !group.Any(definition => definition.Decorators.Any(decorator => Decorators.Name(decorator) is "overload" or "typing.overload")))
                     module.ReboundFunctions.Add(group.Key);
             }
-            if (module.ReboundFunctions.Count == 0) return;
+            if (module.ReboundFunctions.Count == 0 && module.ReboundClasses.Count == 0) return;
 
             var used = new HashSet<string>();
             AstWalker.VisitAll(module.Ast.Body, node =>
@@ -56,21 +59,43 @@ namespace Typhon.Compiler.Syntax
             {
                 for (int i = 0; i < block.Count; i++)
                 {
-                    if (block[i] is not FunctionDef function || !module.ReboundFunctions.Contains(function.Name)) continue;
-                    string name = function.Name;
+                    string name, prefix;
+                    switch (block[i])
+                    {
+                        case FunctionDef method when module.ReboundFunctions.Contains(method.Name):
+                            name = method.Name;
+                            prefix = "__typhon_rebound_";
+                            break;
+                        case ClassDef type when block == module.Ast.Body && module.ReboundClasses.Contains(type.Name):
+                            name = type.Name;
+                            prefix = "__typhon_rebound_class_";
+                            break;
+                        default:
+                            continue;
+                    }
                     string implementation;
-                    do { implementation = "__typhon_rebound_" + ++suffix; } while (!used.Add(implementation));
-                    function.PyName ??= name;
-                    function.Name = implementation;
+                    do { implementation = prefix + ++suffix; } while (!used.Add(implementation));
+                    if (block[i] is FunctionDef function)
+                    {
+                        function.PyName ??= name;
+                        function.Name = implementation;
+                        module.Functions.Add(implementation);
+                        module.ReboundImplementations.Add(function);
+                    }
+                    else
+                    {
+                        var type = (ClassDef)block[i];
+                        type.PyName ??= name;
+                        type.Name = implementation;
+                    }
+                    var definition = block[i];
                     block.Insert(++i, new AssignStmt
                     {
-                        Line = function.Line, Col = function.Col,
-                        Targets = { new NameExpr { Id = name, Line = function.Line, Col = function.Col } },
-                        Value = new NameExpr { Id = implementation, Line = function.Line, Col = function.Col },
+                        Line = definition.Line, Col = definition.Col,
+                        Targets = { new NameExpr { Id = name, Line = definition.Line, Col = definition.Col } },
+                        Value = new NameExpr { Id = implementation, Line = definition.Line, Col = definition.Col },
                     });
-                    module.Functions.Add(implementation);
                     module.Globals.Add(name);
-                    module.ReboundImplementations.Add(function);
                 }
             }
 

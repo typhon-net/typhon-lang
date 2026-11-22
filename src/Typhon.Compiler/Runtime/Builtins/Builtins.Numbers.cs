@@ -88,9 +88,10 @@ namespace Typhon.Runtime
         {
             switch (s.Trim().ToLowerInvariant())
             {
-                case "inf": case "+inf": case "infinity": return double.PositiveInfinity;
+                case "inf": case "+inf": case "infinity": case "+infinity": return double.PositiveInfinity;
                 case "-inf": case "-infinity": return double.NegativeInfinity;
-                case "nan": return double.NaN;
+                case "nan": case "+nan": return Math.CopySign(double.NaN, 1.0);
+                case "-nan": return Math.CopySign(double.NaN, -1.0);
                 default: return double.TryParse(s.Trim().Replace("_", ""), NumberStyles.Float, Inv, out var v) ? v
                     : throw new ArgumentException($"could not convert string to float: {repr(s)}");
             }
@@ -98,6 +99,14 @@ namespace Typhon.Runtime
         public static double @float(double d) => d;
         public static double @float(object o)
         {
+            if (o is string text) return @float(text);
+            if (o is PyBytes or PyByteArray or global::memoryview)
+            {
+                string literal = Encoding.ASCII.GetString(ByteOps.Buffer(o)).Trim(' ', '\t', '\n', '\v', '\f', '\r');
+                if (!ComplexText.FloatLiteral.IsMatch(literal))
+                    throw new ArgumentException($"could not convert string to float: {repr(o)}");
+                return @float(literal);
+            }
             if (o is BigInteger b) return (double)b;
             if (TryGetAttr(o, "__float__", out var convert))
                 return (object?)__invoke(convert, []) is double result ? result
@@ -112,6 +121,9 @@ namespace Typhon.Runtime
             const string Digits = @"[0-9](?:_?[0-9])*";
             const string Component =
                 $@"(?:(?:{Digits}(?:\.(?:{Digits})?)?|\.{Digits})(?:[eE][+-]?{Digits})?|inf(?:inity)?|nan)";
+
+            internal static readonly Regex FloatLiteral = new($@"\A[+-]?{Component}\z",
+                RegexOptions.CultureInvariant | RegexOptions.IgnoreCase | RegexOptions.NonBacktracking);
 
             internal static readonly Regex Literal = new(
                 $@"\A(?:(?<real>[+-]?{Component})(?:(?<imag>[+-]{Component}?)j)?|(?<imag>[+-]?{Component}?)j)\z",
@@ -165,6 +177,15 @@ namespace Typhon.Runtime
         }
         public static long ord(PyBytes b) => b.Count == 1 ? b[0] : throw new InvalidCastException($"ord() expected a character, but string of length {b.Count} found");
         public static long ord(char c) => c;
+        public static long ord(object? value) => value switch
+        {
+            string text => ord(text),
+            char character => ord(character),
+            PyBytes bytes => ord(bytes),
+            PyByteArray bytes when bytes.Count == 1 => bytes[0],
+            PyByteArray bytes => throw new InvalidCastException($"ord() expected a character, but string of length {bytes.Count} found"),
+            _ => throw new InvalidCastException($"ord() expected string of length 1, but {(value == null ? "NoneType" : PyTypeName(value.GetType()))} found"),
+        };
         public static string chr(long i)
         {
             if (i is < 0 or > 0x10FFFF) throw new ArgumentException("chr() arg not in range(0x110000)");
@@ -237,8 +258,22 @@ namespace Typhon.Runtime
         static long Mod64(long a, long b) { if (b == -1) return 0; long r = a % b; return (r != 0 && (r ^ b) < 0) ? r + b : r; }
         public static double mod(double a, double b) { double r = a % b; return (r != 0 && ((r < 0) != (b < 0))) ? r + b : r; }
         public static T mod<T>(T a, T b) where T : IModulusOperators<T, T, T> => a % b;
-        public static dynamic mod(object a, object b) => a is string fmt ? __percent(fmt, b) : AsInt(a, out var x) && AsInt(b, out var y) ? mod(x, y)
-            : a is IConvertible && b is IConvertible && !(a is string) ? mod(Convert.ToDouble(a, Inv), Convert.ToDouble(b, Inv)) : (dynamic)a % (dynamic)b;
+        public static dynamic mod(object? a, object? b)
+        {
+            if (a is string format) return __percent(format, b);
+            if (a is bool left) a = left ? 1L : 0L;
+            if (b is bool right) b = right ? 1L : 0L;
+            if (AsInt(a, out long x) && AsInt(b, out long y)) return mod(x, y);
+            if (a is BigInteger || b is BigInteger)
+            {
+                if ((a is BigInteger || AsInt(a, out _)) && (b is BigInteger || AsInt(b, out _)))
+                    return mod(BigOf(a), BigOf(b));
+                if (a is BigInteger largeLeft && b is float or double) return mod((double)largeLeft, Convert.ToDouble(b, Inv));
+                if (b is BigInteger largeRight && a is float or double) return mod(Convert.ToDouble(a, Inv), (double)largeRight);
+            }
+            if (a is IConvertible && b is IConvertible) return mod(Convert.ToDouble(a, Inv), Convert.ToDouble(b, Inv));
+            return (dynamic)a! % (dynamic)b!;
+        }
 
         public static (int, int) divmod(int a, int b) => (floordiv(a, b), mod(a, b));
         public static (long, long) divmod(long a, long b) => (floordiv(a, b), mod(a, b));
@@ -284,7 +319,53 @@ namespace Typhon.Runtime
                 if (exponent.Sign >= 0) return pow(BigOf(a), exponent);
             }
             if (IsRealNumber(a) && IsRealNumber(b)) return pow(PowerFloat(a), PowerFloat(b));
-            return ((dynamic)a).__pow__((dynamic)b);
+            return PowerProtocol(a, b, null);
+        }
+
+        public static dynamic? pow(object? @base, object? exp, object? mod)
+        {
+            if (mod == null) return pow(@base!, exp!);
+            if (IntegralPowerArgument(@base, out var b) && IntegralPowerArgument(exp, out var e) &&
+                IntegralPowerArgument(mod, out var m))
+            {
+                if (@base is BigInteger || exp is BigInteger || mod is BigInteger) return pow(b, e, m);
+                return pow((long)b, (long)e, (long)m);
+            }
+            return PowerProtocol(@base, exp, mod);
+        }
+
+        static bool IntegralPowerArgument(object? value, out BigInteger result)
+        {
+            if (value is BigInteger integer) { result = integer; return true; }
+            if (value is bool flag) { result = flag ? BigInteger.One : BigInteger.Zero; return true; }
+            bool fits = AsInt(value, out long small);
+            result = small;
+            return fits;
+        }
+
+        static object? PowerProtocol(object? @base, object? exp, object? mod)
+        {
+            var baseType = @base?.GetType();
+            var expType = exp?.GetType();
+            bool distinct = baseType != expType;
+            bool reflectedFirst = distinct && baseType != null && expType?.IsSubclassOf(baseType) == true &&
+                expType.GetMethods(InstanceMembers).Any(method => method.Name == "__rpow__" &&
+                    method.DeclaringType != baseType && baseType.IsAssignableFrom(method.DeclaringType));
+            if (reflectedFirst && Invoke(exp, "__rpow__", @base, out var reflected)) return reflected;
+            if (Invoke(@base, "__pow__", exp, out var direct)) return direct;
+            if (distinct && !reflectedFirst && Invoke(exp, "__rpow__", @base, out reflected)) return reflected;
+            string Name(object? value) => value == null ? "NoneType" : PyTypeName(value.GetType());
+            string operands = $"'{Name(@base)}', '{Name(exp)}'";
+            if (mod != null) operands += $", '{Name(mod)}'";
+            throw new InvalidCastException($"unsupported operand type(s) for ** or pow(): {operands}");
+
+            bool Invoke(object? receiver, string method, object? operand, out object? result)
+            {
+                result = null;
+                if (!TryGetAttr(receiver, method, out var callable, allowFallback: false)) return false;
+                result = __invoke(callable, mod == null ? [operand] : [operand, mod]);
+                return !ReferenceEquals(result, NotImplemented);
+            }
         }
 
         static double PowerFloat(object value)
@@ -357,6 +438,20 @@ namespace Typhon.Runtime
             };
         }
 
+        internal static dynamic __index_value(object? value)
+        {
+            if (AsInt(value, out long integer)) return integer;
+            if (value is bool flag) return flag ? 1L : 0L;
+            if (value is BigInteger wide) return wide;
+            if (value is ulong unsigned) return unsigned <= long.MaxValue ? (object)(long)unsigned : new BigInteger(unsigned);
+            if (value != null && TryGetAttr(value, "__index__", out var index))
+            {
+                BigInteger result = IntProtocolResult(value, "__index__", (object?)__invoke(index, []));
+                return result >= long.MinValue && result <= long.MaxValue ? (object)(long)result : result;
+            }
+            throw new InvalidCastException($"'{(value == null ? "NoneType" : PyTypeName(value.GetType()))}' object cannot be interpreted as an integer");
+        }
+
         static BigInteger ParseByteInteger(object buffer)
         {
             string text = Encoding.ASCII.GetString(ByteOps.From(buffer)).Trim(' ', '\t', '\n', '\v', '\f', '\r');
@@ -403,8 +498,10 @@ namespace Typhon.Runtime
         public static string oct(BigInteger i) => (i.Sign < 0 ? "-0o" : "0o") + IntDigits(BigInteger.Abs(i), 'o', '\0');
         public static long bit_length(this BigInteger x) => (long)BigInteger.Abs(x).GetBitLength();
         public static long bit_count(this BigInteger x) { long n = 0; var a = BigInteger.Abs(x); while (!a.IsZero) { if (!a.IsEven) n++; a >>= 1; } return n; }
-        public static string __repeat(string s, BigInteger n) => __repeat(s, n.Sign <= 0 ? 0 : checked((long)n));
-        public static List<T> __repeat<T>(List<T> l, BigInteger n) => __repeat(l, n.Sign <= 0 ? 0 : checked((long)n));
+        public static string __repeat(string s, BigInteger n) => __repeat(s, checked((long)n));
+        public static string __repeat(BigInteger n, string s) => __repeat(s, n);
+        public static List<T> __repeat<T>(List<T> l, BigInteger n) => __repeat(l, checked((long)n));
+        public static List<T> __repeat<T>(BigInteger n, List<T> l) => __repeat(l, n);
 
 
         /// <summary>A boxed integer as a long (late-bound arithmetic keeps Python's integer semantics).</summary>
@@ -478,16 +575,28 @@ namespace Typhon.Runtime
             return r;
         }
         public static List<T> __repeat<T>(long n, List<T> l) => __repeat(l, n);
-        /// <summary>a * b with late-bound operands: sequence repetition when one side is a str or list.</summary>
+        /// <summary>a * b with late-bound operands: sequence repetition when one side is a str, list or tuple.</summary>
         public static dynamic mul(dynamic a, dynamic b)
         {
             object oa = a, ob = b;
-            if (oa is string s1 && AsInt(ob, out var n1)) return __repeat(s1, n1);
-            if (ob is string s2 && AsInt(oa, out var n2)) return __repeat(s2, n2);
-            if (oa is IList l1 && AsInt(ob, out var n3)) return RepeatList(l1, n3);
-            if (ob is IList l2 && AsInt(oa, out var n4)) return RepeatList(l2, n4);
+            if (oa is string s1 && TryRepeatCount(ob, out var n1)) return __repeat(s1, n1);
+            if (ob is string s2 && TryRepeatCount(oa, out var n2)) return __repeat(s2, n2);
+            if (oa is IList l1 && TryRepeatCount(ob, out var n3)) return RepeatList(l1, n3);
+            if (ob is IList l2 && TryRepeatCount(oa, out var n4)) return RepeatList(l2, n4);
+            if (oa is ITuple && TryRepeatCount(ob, out var tupleCount)) return __tuprep<object?>(oa, tupleCount);
+            if (ob is ITuple && TryRepeatCount(oa, out var swappedCount)) return __tuprep<object?>(ob, swappedCount);
             if (AsInt(oa, out var x) && AsInt(ob, out var y)) return checked(x * y);
             return checked(a * b);
+        }
+
+        static bool TryRepeatCount(object? value, out long count)
+        {
+            if (value is BigInteger integer)
+            {
+                count = checked((long)integer);
+                return true;
+            }
+            return AsInt(value, out count);
         }
 
         /// <summary>a + b with late-bound operands: list concatenation (str and numbers bind normally).</summary>

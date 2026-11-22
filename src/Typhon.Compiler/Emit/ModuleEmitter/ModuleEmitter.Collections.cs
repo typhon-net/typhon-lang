@@ -125,6 +125,12 @@ namespace Typhon.Compiler.Emit
             // a late-bound value: a typed sequence of dynamic items (LINQ lambdas cannot take part in dynamic dispatch); the
             // argument is passed as object so that the call itself is bound statically
             string t = InferType(e);
+            if (t == null && e is NameExpr imported && !IsLocal(imported.Id) &&
+                ImportedIterableType(imported.Id) is string importedType)
+            {
+                if (!IsPortableType(importedType)) return $"{Rt("iterable")}({code})";
+                t = importedType;
+            }
             if (t is "dynamic" or "object" or "object?")
                 return $"{Rt("__iter_dyn")}((object){Paren(code)})";
             if (e is CallExpr && IsDynamicallyDispatched(e))
@@ -139,18 +145,33 @@ namespace Typhon.Compiler.Emit
             if (e is CallExpr ce && ce.Func is NameExpr cn && !IsShadowed(cn.Id) && NonDictResults.Contains(cn.Id)) return code;
             if (e is CallExpr me && me.Func is AttributeExpr ma && (ma.Name == "items" || ma.Name == "keys" || ma.Name == "values" || ma.Name == "split" || ma.Name == "splitlines")) return code;
             if (t == "string") return $"{Rt("chars")}({code})";
-            // a late-bound value: a typed sequence of dynamic items (LINQ lambdas cannot take part in dynamic dispatch)
-            if (t == "dynamic") return $"{Rt("__iter_dyn")}({code})";
             var fixedTuple = TupleElementTypes(t);
             if (fixedTuple != null) return $"{Rt("tuple_items")}<{(fixedTuple.Distinct().Count() == 1 ? fixedTuple[0] : "object")}>({code})";
-            if (t == "global::Typhon.Runtime.PyRange") return code;
-            if (t != null && (t.EndsWith("[]") || t.StartsWith("List<") || t.StartsWith("HashSet<") || t.StartsWith("IEnumerable<") || t.StartsWith(PyGeneratorPrefix) ||
+            if (t == "global::Typhon.Runtime.PyRange" || IsBytesType(t)) return code;
+            if (IsDictType(t))
+            {
+                string keys = t.StartsWith("IReadOnlyDictionary<") ? "__ro_keys" : "keys";
+                return $"global::Typhon.Runtime.Builtins.{keys}({code})";
+            }
+            if (t != null && (t.EndsWith("[]") || t.StartsWith("List<") || t.StartsWith("HashSet<") || t.StartsWith("IEnumerable<") ||
+                              t.StartsWith(PyGeneratorPrefix) || t.StartsWith(PyTuplePrefix) || t.StartsWith("global::Typhon.Runtime.PyIterator<") ||
                               t.StartsWith("IReadOnlyList<") || t.StartsWith("IList<") || t.StartsWith("(") || t.StartsWith("ValueTuple<")))
                 return code;
-            // C# may see it as dynamic (a call with a late-bound argument): iterated by its run-time type
-            if (t == null && MaybeLateBound(e)) return $"{Rt("__iter_dyn")}((object){Paren(code)})";
-            return $"{Rt("iterable")}({code})";
+            if (_p.Resolver is RoslynTypeResolver resolver && DotNetMeta(t) is string metadata && resolver.HasTypedEnumerable(metadata) ||
+                t == null && HasTypedSourceIterableMember(e))
+                return $"{Rt("iterable")}({code})";
+            // An unknown iterable can be dynamic even when the C# expression looks statically callable.
+            // Keep the iterator itself statically typed so maps and comprehensions can pass delegates.
+            return $"{Rt("__iter_dyn")}((object?){Paren(code)})";
         }
+
+        // An imported class can expose a typed collection whose element name is local to its declaring module.
+        // Let the C# iterable overload retain the element type without spelling that name here.
+        bool HasTypedSourceIterableMember(Expr expression) =>
+            expression is AttributeExpr member && !IsDynamicallyDispatched(member.Target) &&
+            ClassKeyOfType(InferType(member.Target), out _) is string owner && Ti != null &&
+            Ti.Fields.TryGetValue(owner, out var fields) && fields.TryGetValue(member.Name, out string type) &&
+            type != TypeInference.Pending && ElementTypeOf(type) != null;
 
         /// <summary>An argument that may be late-bound to C#: not a literal, and of dynamic or unknown type.</summary>
         bool LateBoundArg(Expr e) =>
@@ -162,7 +183,8 @@ namespace Typhon.Compiler.Emit
         {
             if (e is ConstExpr || e is ListExpr || e is DictExpr || e is TupleExpr || e is SetExpr || e is LambdaExpr || e is ComprehensionExpr) return false;
             string t = InferType(e);
-            if (t == "dynamic" || IsDynamicallyDispatched(e)) return true;
+            // EmitExpr boxes a value-producing boolean operation when its operands have different types.
+            if (t == "dynamic" || t == null && e is BoolOpExpr || IsDynamicallyDispatched(e)) return true;
             // a call of a Typhon function whose result type is not known yet may bind to its dynamic version
             return e is CallExpr ce && CallTarget(ce, out bool ctor) is InferenceTarget it && !ctor && !it.Def.IsAsync &&
                 (it.Def.Returns == null || TypeInference.IsBareContainer(it.Def.Returns)) &&
@@ -241,6 +263,8 @@ namespace Typhon.Compiler.Emit
 
         string EmitDict(DictExpr d, bool targetTyped)
         {
+            string DictionaryKey(Expr key, bool targetTyped = false) => IsNone(key)
+                ? $"{Rt("__key")}<object>(null)" : targetTyped ? EmitExpr(key, targetTyped: true) : EmitValue(key);
             // {**a, 'k': v, **b}: merged left to right
             if (d.Keys.Any(k => k == null))
             {
@@ -279,12 +303,12 @@ namespace Typhon.Compiler.Emit
             if (boundMethods.Any(method => method != null))
             {
                 string key = DictTypes(InferType(d))?[0] ?? "dynamic";
-                return $"new OrderedDictionary<{key}, dynamic> {{ {string.Join(", ", d.Keys.Select((k, i) => $"[{EmitValue(k)}] = {boundMethods[i] ?? EmitLooseValue(d.Values[i])}"))} }}";
+                return $"new OrderedDictionary<{key}, dynamic> {{ {string.Join(", ", d.Keys.Select((k, i) => $"[{DictionaryKey(k)}] = {boundMethods[i] ?? EmitLooseValue(d.Values[i])}"))} }}";
             }
             if (targetTyped && d.Keys.Count > 0 && DictTypes(InferType(d)) is List<string> tdk && tdk[1].StartsWith(PyTuplePrefix))
-                return "new() { " + string.Join(", ", d.Keys.Select((k, i) => $"[{EmitExpr(k, targetTyped: true)}] = {EmitAsPyTuple(d.Values[i], tdk[1])}")) + " }";
+                return "new() { " + string.Join(", ", d.Keys.Select((k, i) => $"[{DictionaryKey(k, targetTyped: true)}] = {EmitAsPyTuple(d.Values[i], tdk[1])}")) + " }";
             if (targetTyped)
-                return d.Keys.Count == 0 ? "new()" : "new() { " + string.Join(", ", d.Keys.Select((k, i) => $"[{EmitExpr(k, targetTyped: true)}] = {EmitExpr(d.Values[i], targetTyped: true)}")) + " }";
+                return d.Keys.Count == 0 ? "new()" : "new() { " + string.Join(", ", d.Keys.Select((k, i) => $"[{DictionaryKey(k, targetTyped: true)}] = {EmitExpr(d.Values[i], targetTyped: true)}")) + " }";
             if (d.Keys.Count == 0)
             {
                 ImplicitDynamic(d, "the key/value types of an empty dict (annotate the variable, e.g. 'd: dict[str, int] = {}')");
@@ -293,13 +317,13 @@ namespace Typhon.Compiler.Emit
             if (d.Values.All(IsNone))
             {
                 string key = DictTypes(InferType(d))?[0] ?? "dynamic";
-                return $"{Rt("__dict")}<{key}, dynamic>({string.Join(", ", d.Keys.Select(k => $"({EmitValue(k)}, null)"))})";
+                return $"{Rt("__dict")}<{key}, dynamic>({string.Join(", ", d.Keys.Select(k => $"({DictionaryKey(k)}, null)"))})";
             }
             string typeArgs = "";
             if (!MixedTypes(d.Keys) && PyType(InferType(d.Keys[0])) is string tk && tk != TypeInference.Pending && TupleSequenceAmid(d.Values) is string tv)
-                return $"{Rt("__dict")}<{tk}, {tv}>(" + string.Join(", ", d.Keys.Select((k, i) => $"({EmitValue(k)}, {EmitAsPyTuple(d.Values[i], tv)})")) + ")";
+                return $"{Rt("__dict")}<{tk}, {tv}>(" + string.Join(", ", d.Keys.Select((k, i) => $"({DictionaryKey(k)}, {EmitAsPyTuple(d.Values[i], tv)})")) + ")";
             if (!MixedTypes(d.Keys) && PyType(InferType(d.Keys[0])) is string dk && dk != TypeInference.Pending && TypeAmidEmpties(d.Values) is string dv)
-                return $"{Rt("__dict")}<{dk}, {dv}>(" + string.Join(", ", d.Keys.Select((k, i) => $"({EmitValue(k)}, {EmitItemAs(d.Values[i], dv)})")) + ")";
+                return $"{Rt("__dict")}<{dk}, {dv}>(" + string.Join(", ", d.Keys.Select((k, i) => $"({DictionaryKey(k)}, {EmitItemAs(d.Values[i], dv)})")) + ")";
             if (d.Keys.Count > 1 && (MixedTypes(d.Keys) || MixedTypes(d.Values)))
             {
                 // {"name": "Ada", "age": 36}: no common C# type, the differing side is dynamic
@@ -307,7 +331,7 @@ namespace Typhon.Compiler.Emit
                 string vt = MixedTypes(d.Values) ? ImplicitDynamic(d, "the value type of a dict with values of different types") : PyType(InferType(d.Values[0]));
                 if (kt != null && vt != null && kt != TypeInference.Pending && vt != TypeInference.Pending) typeArgs = $"<{kt}, {vt}>";
             }
-            return Rt("__dict") + typeArgs + "(" + string.Join(", ", d.Keys.Select((k, i) => $"({EmitValue(k)}, {EmitValue(d.Values[i])})")) + ")";
+            return Rt("__dict") + typeArgs + "(" + string.Join(", ", d.Keys.Select((k, i) => $"({DictionaryKey(k)}, {EmitValue(d.Values[i])})")) + ")";
         }
 
         /// <summary>

@@ -1,0 +1,18 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import codecs
+
+
+text = "éλ💡\\u0041"
+print(text.encode("raw-unicode-escape"))
+print(codecs.raw_unicode_escape_encode(text))
+print(ascii(str(b"\xe9\\u03bb\\U0001f4a1", "Raw Unicode Escape")))
+print(ascii(b"\\\\u0041\\\\\\u0042\\".decode("raw_unicode_escape")))
+print(codecs.raw_unicode_escape_decode(b"prefix\\u2f", "strict", False))
+for errors in ("ignore", "replace", "backslashreplace"):
+    print(ascii(b"\\u2fX\\U00110000!".decode("raw-unicode-escape", errors)))
+try:
+    b"\\U00110000".decode("raw-unicode-escape")
+except UnicodeDecodeError as error:
+    print(error.encoding, error.start, error.end, error.reason)

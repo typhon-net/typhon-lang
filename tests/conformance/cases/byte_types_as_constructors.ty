@@ -1,0 +1,13 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+from typing import Any
+
+
+def values(constructor: Any):
+    print(constructor(), constructor(2), constructor([65, 66]))
+    print(constructor(source="hé", encoding="utf-8"), constructor(source=[67]))
+
+
+values(bytes)
+values(bytearray)

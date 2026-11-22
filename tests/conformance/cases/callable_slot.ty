@@ -1,0 +1,12 @@
+class Factory:
+    __slots__ = ("builder",)
+
+    def __new__(cls, exemplar):
+        self = object.__new__(cls)
+        self.builder = type(exemplar)
+        return self
+
+    def build(self, value):
+        return self.builder(value)
+
+print(Factory(0).build("42"))

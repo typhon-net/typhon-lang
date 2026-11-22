@@ -1,0 +1,12 @@
+digest = None
+
+def load():
+    global digest
+    try:
+        from missing_phase5_library import sha512 as digest
+    except ImportError:
+        from hashlib import sha512 as digest
+
+print(digest is None)
+load()
+print(digest(b"abc").hexdigest()[:18])

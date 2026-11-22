@@ -1,0 +1,19 @@
+from typing import Any
+
+class MappingLike:
+    def keys(self):
+        return ["via-key"]
+
+    def __getitem__(self, key: str) -> int:
+        return len(key)
+
+def clone(source: Any):
+    return dict(source)
+
+print(clone(()), clone(MappingLike()))
+print(clone([["left", 3], ["right", 4], ["left", 5]]))
+for source in (None, [1], [[1, 2, 3]]):
+    try:
+        print(clone(source))
+    except (ValueError, TypeError) as error:
+        print(str(error))

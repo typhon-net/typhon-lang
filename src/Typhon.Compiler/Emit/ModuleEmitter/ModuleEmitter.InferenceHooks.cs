@@ -256,11 +256,14 @@ namespace Typhon.Compiler.Emit
             return isCtor ? null : InferredCallType(t, call.Args);
         }
 
-        internal static string UnannotatedGeneratorReturnType(FunctionDef f)
+        internal static string UnannotatedGeneratorReturnType(FunctionDef f, bool tracksFinally)
         {
-            bool receives = GeneratorNeedsAsyncForm(f.Body) || GeneratorReceivesValues(f.Body);
+            bool receives = GeneratorNeedsAsyncForm(f.Body, tracksFinally) || GeneratorReceivesValues(f.Body);
             return receives ? $"{PyGeneratorPrefix}dynamic>" : "IEnumerable<dynamic>";
         }
+
+        bool UsesFallbackForOmittedArguments(InferenceTarget target, List<Arg> arguments) =>
+            target.Class == null && Ti.Fallback.Contains(target.Key) && arguments.Count < target.Params.Count;
 
         string InferredCallType(InferenceTarget t, List<Arg> args)
         {
@@ -269,6 +272,8 @@ namespace Typhon.Compiler.Emit
             string sig = "";
             if (t.InferParams)
             {
+                // Only the original signature accepts omitted arguments when it coexists with specializations.
+                if (UsesFallbackForOmittedArguments(t, args)) return null;
                 var types = ArgTypes(t, args);
                 // (a late-bound argument is part of the signature: its parameter is dynamic in the overload for this call)
                 if (types == null || types.Any(x => TypeInference.IsUnknown(x) && x != "dynamic") || types.All(x => x == "dynamic" || x == TypeInference.Declared)) return null;
@@ -346,9 +351,10 @@ namespace Typhon.Compiler.Emit
                 if (_p.TryFindClass(_m, b.Name, out var bc, out var owner) && bc == b)
                 {
                     string key = TypeInference.ClassKey(owner, bc.Name);
-                    // A widened slot can now receive a different Python type from a subclass.
+                    // An unannotated namedtuple field and a widened slot both have dynamic storage.
                     if (Ti.Fields.TryGetValue(key, out var fields) && fields.TryGetValue(name, out var type) &&
-                        type != "void" && (type != "dynamic" || Ti.ExternalFields.ContainsKey(key + "|" + name)))
+                        type != "void" && (type != "dynamic" || bc.NamedTupleFields?.Contains(name) == true ||
+                            Ti.ExternalFields.ContainsKey(key + "|" + name)))
                         return type;
                 }
                 if (InheritedFieldType(b, name, depth + 1) is string deeper) return deeper;

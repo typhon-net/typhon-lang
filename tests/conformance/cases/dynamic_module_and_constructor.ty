@@ -1,0 +1,49 @@
+import sys
+from typing import Any
+
+
+def module_reader():
+    module = sys
+
+    def read():
+        return module.version_info.major, callable(module.excepthook)
+
+    return read
+
+
+def make_values() -> Any:
+    return [3, 1]
+
+
+class Parent:
+    def __init__(self, name):
+        self.name = name
+
+
+class Child(Parent):
+    def __init__(self):
+        Parent.__init__(self, name=dynamic_name())
+
+
+def dynamic_name() -> Any:
+    return 'named'
+
+
+class Receiver:
+    def run(self, context: Any):
+        return context.run(self.next)
+
+    def next(self):
+        return 'called'
+
+
+class Context:
+    def run(self, callback):
+        return callback()
+
+
+print(module_reader()())
+values = set(make_values())
+values.update(make_values(), [4])
+print(sorted(values))
+print(Child().name, Receiver().run(Context()))

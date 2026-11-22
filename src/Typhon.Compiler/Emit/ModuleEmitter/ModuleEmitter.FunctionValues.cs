@@ -170,9 +170,17 @@ namespace Typhon.Compiler.Emit
                 string t = sig.Scope.Types.TryGetValue(p.Name, out var pt) ? pt : "dynamic";
                 return t == "dynamic" || t == "object" || t == "object?" ? x : $"({t})(dynamic?){x}";
             }
+            bool bindPythonArguments = !_m.IsGdScript &&
+                normal.Any(p => p.KeywordOnly || p.PositionalOnly || p.Default != null);
             string Call(int count)
             {
-                var args = normal.Take(count).Select((p, i) => Conv(p, $"__p[{i}]")).ToList();
+                var args = normal.Take(count).Select((p, i) =>
+                {
+                    string value = Conv(p, $"__p[{i}]");
+                    if (!bindPythonArguments || !p.KeywordOnly) return value;
+                    string name = IsParamAlias(f, p) ? "__alias_" + p.Name : Esc(p.Name);
+                    return $"{name}: {value}";
+                }).ToList();
                 if (varargs)
                 {
                     var vp = all.First(p => p.Kind == ParamKind.VarArgs);
@@ -182,12 +190,32 @@ namespace Typhon.Compiler.Emit
                         : $"global::System.Linq.Enumerable.ToArray(global::System.Linq.Enumerable.Select(__p[{normal.Count}..], __x => ({vt})(dynamic?)__x))";
                     args.Add($"{Esc(vp.Name)}: {rest}");
                 }
-                if (kwargs) args.Add($"{Esc(all.Single(p => p.Kind == ParamKind.KwArgs).Name)}: global::Typhon.Runtime.PyClosure.Kw(__kw, {names})");
+                if (kwargs)
+                {
+                    string accepted = bindPythonArguments ? "[]" : names;
+                    args.Add($"{Esc(all.Single(p => p.Kind == ParamKind.KwArgs).Name)}: " +
+                        $"global::Typhon.Runtime.PyClosure.Kw(__kw, {accepted})");
+                }
                 string call = $"{(selfType != null ? "__self." : "")}{callee}({string.Join(", ", args)})";
                 return sig.ReturnType == "void" ? $"{{ {call}; return null; }}" : $"return {call};";
             }
             var body = new StringBuilder();
             if (selfType != null) body.Append($"var __self = ({selfType})__a[0]!; __a = __a[1..]; ");
+            if (bindPythonArguments)
+            {
+                const string closure = "global::Typhon.Runtime.PyClosure";
+                string Default(Param p) => p.Default == null ? $"{closure}.RequiredArgument" :
+                    IsParamAlias(f, p) ? "null" :
+                    _defaultSources.TryGetValue(p, out string source) ? $"(object?){Paren(source)}" :
+                    $"(object?){Paren(EmitValue(p.Default))}";
+                string defaults = $"new object?[] {{ {string.Join(", ", normal.Select(Default))} }}";
+                int positional = normal.Count(p => !p.KeywordOnly), positionalOnly = normal.Count(p => p.PositionalOnly);
+                body.Append($"var __p = {closure}.BindArguments({name}, {names}, __defaults, " +
+                    $"{positional}, {positionalOnly}, __a, __kw, {(varargs ? "true" : "false")}, " +
+                    $"{(kwargs ? "true" : "false")}, out __kw); ");
+                body.Append(Call(normal.Count));
+                return NewClosure($"{defaults}, (__a, __kw, __defaults)");
+            }
             body.Append($"var __p = global::Typhon.Runtime.PyClosure.Args({name}, {names}, __a, __kw, {(kwargs ? "true" : "false")}); ");
             for (int k = required; k <= normal.Count; k++)
             {
@@ -195,10 +223,15 @@ namespace Typhon.Compiler.Emit
                 body.Append($"if (__p.Length {condition} {k}) {Call(k)} ");
             }
             body.Append($"throw global::Typhon.Runtime.PyClosure.ArgCountError({name}, {required}, {(varargs ? "int.MaxValue" : normal.Count.ToString())}, __p.Length);");
-            string doc = f.Body.FirstOrDefault() is ExprStmt { Value: ConstExpr { Kind: ConstKind.Str } text } ? CsString(text.Str) : "null";
-            string signature = _m.IsGdScript ? "" : $", _signature = () => {SignatureValue(f)}";
-            return $"new global::Typhon.Runtime.PyClosure({name}, (__a, __kw) => {{ {body} }}) " +
-                $"{{ __module__ = {CsString(PythonModuleName)}, __qualname__ = {CsString(sig.Scope.FunctionQualName)}, __doc__ = {doc}{signature} }}";
+            return NewClosure("(__a, __kw)");
+
+            string NewClosure(string arguments)
+            {
+                string doc = f.Body.FirstOrDefault() is ExprStmt { Value: ConstExpr { Kind: ConstKind.Str } text } ? CsString(text.Str) : "null";
+                string signature = _m.IsGdScript ? "" : $", _signature = () => {SignatureValue(f)}";
+                return $"new global::Typhon.Runtime.PyClosure({name}, {arguments} => {{ {body} }}) " +
+                    $"{{ __module__ = {CsString(PythonModuleName)}, __qualname__ = {CsString(sig.Scope.FunctionQualName)}, __doc__ = {doc}{signature} }}";
+            }
         }
 
         /// <summary>A value passed where its static type is lost (a late-bound call's argument): functions become callable objects.</summary>
@@ -242,7 +275,8 @@ namespace Typhon.Compiler.Emit
         /// a call with an argument of unknown type runs the dynamic version, which may call the function with anything.
         /// </summary>
         bool TypedCall(InferenceTarget t, List<Arg> args) =>
-            t.InferParams && ArgTypes(t, args) is string[] types && !types.Any(x => TypeInference.IsUnknown(x));
+            t.InferParams && !UsesFallbackForOmittedArguments(t, args) &&
+            ArgTypes(t, args) is string[] types && !types.Any(x => TypeInference.IsUnknown(x));
 
         /// <summary>The type of a call through a value of a function type (null if the callee is not one).</summary>
         string FunctionValueCallType(CallExpr c)
@@ -531,6 +565,17 @@ namespace Typhon.Compiler.Emit
             if (InferType(body) == "void") return true;
             if (body is not CallExpr call) return false;
             if (call.Func is NameExpr { Id: "print" } && !IsShadowed("print")) return true;
+            if (call.Func is AttributeExpr { Target: NameExpr { Id: "self" } } && HasSelfInScope() &&
+                TyphonCallee(call, out int implicitParams) is FunctionDef source && implicitParams != 0 &&
+                _cls?.Def.Body.Contains(source) == true && !source.IsAsync && !_m.Ast.MethodDecorators.ContainsKey(source))
+            {
+                var locals = LocalsAnalyzer.Analyze(source.Body, source.Params.Select(parameter => parameter.Name), null);
+                if (!locals.HasYield && (source.Returns != null
+                    ? MapType(source.Returns, source, isReturn: true) == "void"
+                    : !locals.HasValueReturn && !ImplicitMethodResultIsDynamic(source) &&
+                        DotNetBaseMethod(_cls.Def, source)?.ReturnsDynamic != true))
+                    return true;
+            }
             int positional = call.Args.Count(arg => arg.Name == null && !arg.Star && !arg.DoubleStar);
             var named = call.Args.Where(arg => arg.Name != null).Select(arg => arg.Name).ToList();
             var methods = DotNetOverloads(call)?.Where(method => Applicable(method, positional, named)).ToList();

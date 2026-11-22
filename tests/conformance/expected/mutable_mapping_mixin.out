@@ -1,0 +1,7 @@
+['first', 'second'] [5, 4] [('first', 5), ('second', 4)]
+5 default
+5 7
+9 4
+('first', 5)
+0 True True
+True False

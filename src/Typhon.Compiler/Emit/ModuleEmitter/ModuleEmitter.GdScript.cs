@@ -54,8 +54,8 @@ namespace Typhon.Compiler.Emit
             public bool TypeExists(string metadataName) => _r.TypeExists(metadataName);
             public bool NamespaceExists(string dottedNamespace) => _r.NamespaceExists(dottedNamespace);
             public bool HasMember(string metadataName, string memberName) => CsName(metadataName, memberName) != null || ColorConstant(metadataName, memberName) != null;
-            public bool IsOverridable(string metadataName, string memberName) => _r.IsOverridable(metadataName, Map(metadataName, memberName));
-            public string OverrideAccessibility(string metadataName, string memberName) => _r.OverrideAccessibility(metadataName, Map(metadataName, memberName));
+            public bool IsOverridable(string metadataName, string memberName, int? parameterCount = null) => _r.IsOverridable(metadataName, Map(metadataName, memberName), parameterCount);
+            public string OverrideAccessibility(string metadataName, string memberName, int? parameterCount = null) => _r.OverrideAccessibility(metadataName, Map(metadataName, memberName), parameterCount);
             public IReadOnlyList<CtorSignature> GetConstructors(string metadataName) => _r.GetConstructors(metadataName);
             public IReadOnlyList<MemberSig> GetExtensionMethods(string receiverMetadataName, string name, IReadOnlyList<string> namespaces) =>
                 _r.GetExtensionMethods(receiverMetadataName, name, namespaces);

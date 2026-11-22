@@ -181,7 +181,7 @@ namespace Typhon.Compiler.Emit
             }
             // bool is an int in Python: True + True == 2 (but "%s" % True formats the bool)
             bool bitwise = IsBitwiseOperator(b.Op);
-            if (ArithmeticOps.Contains(b.Op) && !(b.Op == "%" && lType == "string") ||
+            if (ArithmeticOps.Contains(b.Op) && !(b.Op == "%" && (lType == "string" || IsUnknownType(lType))) ||
                 bitwise && (lType == "bool" && IsIntegral(rType) || rType == "bool" && IsIntegral(lType)))
             {
                 if (lType == "bool") { l = $"({Paren(l)} ? 1L : 0L)"; lType = "long"; }
@@ -255,6 +255,8 @@ namespace Typhon.Compiler.Emit
                     if (b.Right is TupleExpr ft && !ft.Elts.Any(x => x is StarredExpr))
                         return $"{Rt("__percent_args")}({l}, new object?[] {{ {string.Join(", ", ft.Elts.Select(x => EmitValue(x)))} }})";
                     return $"{Rt("__percent")}({l}, (object?){Paren(r)})";
+                case "%" when IsUnknownType(lType) || IsUnknownType(rType):
+                    return $"{Rt("mod")}((object?){Paren(l)}, (object?){Paren(r)})";
                 case "%": return $"{Rt("mod")}({l}, {r})"; // Python modulo: result has the sign of the divisor
                 default: return $"({l} {b.Op} {r})";
             }
@@ -278,6 +280,9 @@ namespace Typhon.Compiler.Emit
 
         static bool PythonOrdered(string t) => t != null && (t == "string" || t.StartsWith("List<") || t.StartsWith("IList<") || t.StartsWith("IReadOnlyList<") ||
             IsSetType(t) || t.StartsWith("global::Typhon.Runtime.PyTuple<") || t.StartsWith("(") || t.StartsWith("ValueTuple<"));
+
+        // Dict views inferred through a call boundary can have only their collection interface as a static type.
+        static bool MayBeDictView(string t) => t != null && (t.StartsWith("IEnumerable<") || t.StartsWith("ICollection<"));
         static bool IsUnknownType(string t) => t == null || t == "dynamic" || t == "object" || t == TypeInference.Pending;
 
         static bool IsNumeric(string t) => t != null && t != "char" && t != "bool" && t != "string" && NumericOrText.Contains(t);
@@ -300,7 +305,8 @@ namespace Typhon.Compiler.Emit
         string EmitComparison(Expr left, string op, Expr right)
         {
             bool identity = op is "is" or "is not";
-            string l = identity ? EmitValue(left) : EmitExpr(left), r = identity ? EmitValue(right) : EmitExpr(right);
+            string l = identity || op is "in" or "not in" ? EmitValue(left) : EmitExpr(left);
+            string r = identity ? EmitValue(right) : EmitExpr(right);
             string lt = InferType(left), rt = InferType(right);
             // big-int mode: an int compared with a float compares as floats (C# does not convert BigInteger implicitly)
             if (lt == TypeInference.BigInt && (rt == "double" || rt == "float")) l = $"((double){Paren(l)})";
@@ -316,7 +322,7 @@ namespace Typhon.Compiler.Emit
                 if (lt == "string" && rt == "string") return $"(string.CompareOrdinal({l}, {r}) {op} 0)";
                 // Python's own containers order by Python's rules (sequences and tuples lexicographically, sets by inclusion);
                 // values of unknown type decide at run time; every other type keeps its own operators (classes, ndarray, decimal)
-                if (PythonOrdered(lt) || PythonOrdered(rt) || IsUnknownType(lt) || IsUnknownType(rt))
+                if (PythonOrdered(lt) || PythonOrdered(rt) || MayBeDictView(lt) || MayBeDictView(rt) || IsUnknownType(lt) || IsUnknownType(rt))
                 {
                     string helper = op == "<" ? "lt" : op == "<=" ? "le" : op == ">" ? "gt" : "ge";
                     return $"{Rt(helper)}({l}, {r})";

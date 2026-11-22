@@ -1,0 +1,28 @@
+scale = 8
+
+def convert(value: int) -> int:
+    return value * 2
+
+class Base:
+    def max(self, value, alternate=None):
+        return 'parent max'
+
+class Limits(Base):
+    scale = 300
+
+    def min(self, value, alternate=None):
+        return 'method min'
+
+    def convert(self, value: int) -> int:
+        return -value
+
+    def compute(self) -> tuple[int, int, int, int]:
+        return min(7, 2), max(7, 2), scale, convert(8)
+
+    @staticmethod
+    def static_compute():
+        return min(4, 9), max(4, 9), scale, convert(4)
+
+thing = Limits()
+print(thing.compute(), thing.static_compute())
+print(thing.min(8), thing.max(8), thing.scale, thing.convert(8))

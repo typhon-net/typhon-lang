@@ -1,0 +1,26 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import io
+from typing import Any
+
+
+class File(io.IOBase):
+    def __init__(self, flag: Any):
+        self.flag = flag
+
+    @property
+    def closed(self):
+        return self.flag
+
+    def seek(self, *args):
+        return len(args)
+
+
+def through_base(value: io.IOBase):
+    print(value.closed, value.seek(9, 2))
+
+
+file = File(False)
+print(file.closed, file.seek(5))
+through_base(file)

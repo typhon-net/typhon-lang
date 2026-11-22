@@ -1,0 +1,16 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import os
+from os import fsdecode as decode, fsencode
+
+
+class Codec:
+    def __init__(self):
+        self.encode = fsencode
+        self.decode = decode
+
+codec = Codec()
+encoded = codec.encode("pré")
+print(encoded, codec.decode(encoded))
+print(codec.encode is os.fsencode, decode is os.fsdecode)

@@ -1,0 +1,14 @@
+def initialize(value: int):
+    global published
+    published = {'first': value}
+
+def inspect():
+    return published
+
+try:
+    inspect()
+except NameError:
+    print('name not bound')
+initialize(3)
+print(published, inspect())
+print(globals()['published'] is published)

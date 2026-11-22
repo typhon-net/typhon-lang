@@ -1,0 +1,7 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+
+print(frozendict(left=1, right=2))
+print(frozendict({"old": 1, "keep": 2}, old=3, **{"new": 4}))
+print({key: value for key, value in frozendict(entry=5).items()})

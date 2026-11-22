@@ -1,0 +1,26 @@
+from typing import Any
+
+class Amount:
+    def __init__(self, value: int):
+        self.value = value
+
+    def __add__(self, other: Any):
+        value = other.value if isinstance(other, Amount) else other
+        return self.value * 10 + value
+
+    def __radd__(self, other: Any):
+        return other * 100 + self.value
+
+    def __sub__(self, other: Any):
+        return self.value - (other.value if isinstance(other, Amount) else other)
+
+    def __rsub__(self, other: Any):
+        return other - self.value
+
+def late(first: Any, second: Any):
+    return first + second, first - second
+
+first, second = Amount(3), Amount(4)
+print(first + second, first + 6, 6 + second)
+print(first - second, first - 6, 6 - second)
+print(late(first, second), late(6, second))

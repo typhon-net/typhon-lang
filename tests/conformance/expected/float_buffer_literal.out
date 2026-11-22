@@ -1,0 +1,10 @@
+-1.25
+100.23
+25.0
+inf
+nan
+ff 7f
+could not convert string to float: b'1__0'
+could not convert string to float: b'\xff1'
+could not convert string to float: b'1e_2'
+could not convert string to float: b'1\x00'

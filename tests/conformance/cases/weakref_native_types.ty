@@ -1,0 +1,35 @@
+from _weakref import ref, _remove_dead_weakref
+import gc
+
+class Item:
+    pass
+
+class Tagged(ref):
+    def __new__(cls, item, label):
+        reference = ref.__new__(cls, item)
+        reference.label = label
+        return reference
+
+    def __init__(self, item, label):
+        super().__init__(item)
+
+item = Item()
+plain = ref(item)
+tagged = Tagged(item, "blue")
+print(tagged() is item, tagged.label)
+print(ref.__hash__(plain) == hash(item), ref.__eq__(plain, tagged), ref.__ne__(plain, tagged))
+print(ref.__eq__(plain, object()) is NotImplemented)
+
+def dead_reference():
+    return ref(Item())
+
+data: dict[str, object] = {"alive": plain, "dead": dead_reference()}
+gc.collect()
+_remove_dead_weakref(data, "alive")
+_remove_dead_weakref(data, "dead")
+_remove_dead_weakref(data, "missing")
+print(list(data.keys()))
+try:
+    _remove_dead_weakref({"key": 3}, "key")
+except TypeError as error:
+    print(str(error))

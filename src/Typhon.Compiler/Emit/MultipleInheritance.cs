@@ -9,8 +9,8 @@ namespace Typhon.Compiler.Emit
 {
     /// <summary>
     /// Multiple inheritance on a single-inheritance runtime. A class with several bases keeps one of them as its C# base
-    /// class (the primary: the .NET class if there is one, else the base with the longest ancestry, then one with an
-    /// __init__, then the first), and the members of the other classes in its method resolution order (C3, as Python
+    /// class (the primary: the .NET class if there is one, else a named tuple base or the base with the longest
+    /// ancestry), and the members of the other classes in its method resolution order (C3, as Python
     /// computes it) are copied into it before inference: the winning definition of each name under its own name, and every
     /// method of those classes under a hidden name (__mro_Class_name) that super() and Class.method(self, ...) calls reach
     /// in MRO order. The class then behaves as in Python for the common shapes (mixins before or after the real base,
@@ -129,10 +129,13 @@ namespace Typhon.Compiler.Emit
             var bases = cx.RealBases[c];
             var opaque = bases.Where(b => !(b.Node is ClassDef)).ToList();
             if (opaque.Count > 1) return; // two .NET base classes: nothing to copy them from
-            // the primary base: the longest ancestry, then a real constructor (not one that only forwards *args/**kwargs),
-            // then a class not named like a mixin, then the first
+            // Keep the tuple layout when a fixed-field tuple also inherits mixin methods.
+            // Otherwise prefer the longest ancestry, a real constructor, a non-mixin name, and source order.
             var primary = opaque.Count == 1 ? opaque[0]
-                : bases.Select((b, i) => (b, i)).OrderByDescending(x => cx.Mro.TryGetValue((ClassDef)x.b.Node, out var pl) ? pl.Count : 0)
+                : bases.Select((b, i) => (b, i))
+                       .OrderByDescending(x => cx.Mro.TryGetValue((ClassDef)x.b.Node, out var ancestry) &&
+                            ancestry.OfType<ClassDef>().Any(basis => basis.NamedTupleFields != null))
+                       .ThenByDescending(x => cx.Mro.TryGetValue((ClassDef)x.b.Node, out var pl) ? pl.Count : 0)
                        .ThenByDescending(x => cx.Mro.TryGetValue((ClassDef)x.b.Node, out var pm) && pm.OfType<ClassDef>().Any(HasRealInit))
                        .ThenByDescending(x => !((ClassDef)x.b.Node).Name.EndsWith("Mixin"))
                        .ThenBy(x => x.i).First().b;
@@ -167,9 +170,11 @@ namespace Typhon.Compiler.Emit
             object Winner(string name) => mro.FirstOrDefault(k => Defines(k, name));
             foreach (var k in flattened)
             {
-                foreach (var name in k.Body.OfType<FunctionDef>().Select(f => f.Name).Distinct())
+                var methods = k.Body.OfType<FunctionDef>().Where(method => !IsGenerated(method.Name)).ToLookup(method => method.Name);
+                foreach (var group in methods)
                 {
-                    var defs = k.Body.OfType<FunctionDef>().Where(f => f.Name == name).ToList();
+                    string name = group.Key;
+                    var defs = group.ToList();
                     if (Equals(Winner(name), k) && !Defines(c, name) && name != "__init__")
                         foreach (var d in defs) added.Add(CopyMethod(d, d.Name, k, c));
                     // every plain method also under its hidden name: what super() / Class.method(self) calls reach

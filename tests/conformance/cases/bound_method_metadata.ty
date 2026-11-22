@@ -1,0 +1,11 @@
+from types import MethodType
+
+class Item:
+    def value(self) -> str:
+        return "value"
+
+item = Item()
+bound = item.value
+print(type(bound).__name__, isinstance(bound, MethodType), bound.__self__ is item)
+print(bound.__func__ is Item.value, type(bound)(bound.__func__, bound.__self__)())
+print(getattr(bound, "__func__") is bound.__func__)

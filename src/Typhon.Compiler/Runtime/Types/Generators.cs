@@ -360,13 +360,30 @@ namespace Typhon.Runtime
         public static dynamic vars(object o) => __dict__(o);
         public static frozenset<string> frozenset(string s) => new frozenset<string>(chars(s));
         public static frozenset<object> frozenset() => new frozenset<object>();
-        public static OrderedDictionary<K, V> dict<K, V>(IEnumerable<(K, V)> xs) where K : notnull { var d = new OrderedDictionary<K, V>(); foreach (var (k, v) in xs) d[k] = v; return d; }
+        public static OrderedDictionary<object, object?> dict(object? source)
+        {
+            if (source == null) throw new InvalidCastException("'NoneType' object is not iterable");
+            var result = __newdict<object, object?>();
+            foreach (var item in ReadDictItems(source)) result[PyNoneDictKey.Store(item.Key)] = item.Value;
+            return result;
+        }
+
+        public static OrderedDictionary<K, object?> __dict_with_keywords<K>(
+            IEnumerable<KeyValuePair<K, object?>> source, IDictionary<string, object?> keywords) where K : notnull
+        {
+            var result = __newdict<K, object?>();
+            foreach (var item in source) result[PyNoneDictKey.Store(item.Key)] = item.Value;
+            foreach (var item in keywords) result[__key<K>(item.Key)] = item.Value;
+            return result;
+        }
+
+        public static OrderedDictionary<K, V> dict<K, V>(IEnumerable<(K, V)> xs) where K : notnull { var d = new OrderedDictionary<K, V>(); foreach (var (k, v) in xs) d[PyNoneDictKey.Store(k)] = v; return d; }
         public static OrderedDictionary<K, V> dict<K, V>(IDictionary<K, V> src) where K : notnull { var d = new OrderedDictionary<K, V>(); foreach (var kv in src) d[kv.Key] = kv.Value; return d; }
-        public static OrderedDictionary<K, V> __to_dict<K, V>(IEnumerable<(K, V)> items) where K : notnull { var d = new OrderedDictionary<K, V>(); foreach (var (k, v) in items) d[k] = v; return d; }
+        public static OrderedDictionary<K, V> __to_dict<K, V>(IEnumerable<(K, V)> items) where K : notnull { var d = new OrderedDictionary<K, V>(); foreach (var (k, v) in items) d[PyNoneDictKey.Store(k)] = v; return d; }
 
         // literal helpers used by the compiler: [a, b] / {k: v} / {a, b} without a target type
         public static List<T> __list<T>(params T[] items) => new List<T>(items);
-        public static OrderedDictionary<K, V> __dict<K, V>(params (K, V)[] items) where K : notnull { var d = __newdict<K, V>(items.Length); foreach (var (k, v) in items) d[k] = v; return d; }
+        public static OrderedDictionary<K, V> __dict<K, V>(params (K, V)[] items) where K : notnull { var d = __newdict<K, V>(items.Length); foreach (var (k, v) in items) d[PyNoneDictKey.Store(k)] = v; return d; }
 
         /// <summary>A dict; with keys of any type (object), keys compare like Python's: (1, 2) whatever its items' static types, 1 == 1.0.</summary>
         public static OrderedDictionary<K, V> __newdict<K, V>(int capacity = 0) where K : notnull =>

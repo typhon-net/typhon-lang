@@ -1,0 +1,21 @@
+from collections import namedtuple
+
+Record = namedtuple('Record', 'x y')
+
+class Methods:
+    def total(self):
+        return self.x + self.y
+
+class Other:
+    pass
+
+class Mixin(Other, Methods):
+    pass
+
+class Combined(Record, Mixin):
+    pass
+
+value = Combined(1, 2)
+print(value.x, value.y, value.total())
+print(list(value))
+print(isinstance(value, Record), isinstance(value, Mixin))

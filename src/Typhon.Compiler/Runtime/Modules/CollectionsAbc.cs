@@ -100,6 +100,8 @@ namespace Typhon.Stdlib
             /// <summary>The read-only mapping mixin implemented by __getitem__, __iter__, and __len__.</summary>
             public abstract class Mapping : IEnumerable<object?>
             {
+                public Mapping() { }
+
                 internal object? Item(object? key) => Builtins.__invoke(Builtins.getattr(this, "__getitem__"), new[] { key });
 
                 IEnumerable<object?> Keys() =>
@@ -124,6 +126,67 @@ namespace Typhon.Stdlib
                 IEnumerator<object?> IEnumerable<object?>.GetEnumerator() => Keys().GetEnumerator();
                 IEnumerator IEnumerable.GetEnumerator() => Keys().GetEnumerator();
 
+            }
+
+            /// <summary>Mutable mapping operations supplied by the item's read, write and delete hooks.</summary>
+            public abstract class MutableMapping : Mapping
+            {
+                public MutableMapping() { }
+
+                public dynamic? this[object? key] { get => Item(key); set => Put(key, value); }
+
+                internal void Put(object? key, object? value) =>
+                    Builtins.__invoke((object?)Builtins.getattr(this, "__setitem__"), [key, value]);
+
+                internal void Delete(object? key) =>
+                    Builtins.__invoke((object?)Builtins.getattr(this, "__delitem__"), [key]);
+
+                public object? pop(object? key, params object?[] defaults)
+                {
+                    if (defaults.Length > 1) throw new InvalidCastException("pop expected at most 2 arguments");
+                    object? value;
+                    try { value = Item(key); }
+                    catch (KeyNotFoundException) when (defaults.Length == 1) { return defaults[0]; }
+                    Delete(key);
+                    return value;
+                }
+
+                public (object?, object?) popitem()
+                {
+                    using var keys = ((IEnumerable<object?>)this).GetEnumerator();
+                    if (!keys.MoveNext()) throw new KeyNotFoundException();
+                    object? key = keys.Current;
+                    object? value = Item(key);
+                    Delete(key);
+                    return (key, value);
+                }
+
+                public void clear()
+                {
+                    while (true)
+                    {
+                        try { popitem(); }
+                        catch (KeyNotFoundException) { return; }
+                    }
+                }
+
+                public object? setdefault(object? key, object? @default = null)
+                {
+                    try { return Item(key); }
+                    catch (KeyNotFoundException) { Put(key, @default); return @default; }
+                }
+
+                public void update([System.Runtime.InteropServices.Optional] object? other,
+                    [PyKeywordArguments] IDictionary<string, object?>? __kwargs = null)
+                {
+                    if (!ReferenceEquals(other, Type.Missing))
+                    {
+                        if (other == null) throw new InvalidCastException("'NoneType' object is not iterable");
+                        foreach (var item in Builtins.ReadDictItems(other)) Put(item.Key, item.Value);
+                    }
+                    if (__kwargs != null)
+                        foreach (var item in __kwargs) Put(item.Key, item.Value);
+                }
             }
 
             public class MappingView(object mapping) : IPyLen, IPyRepr

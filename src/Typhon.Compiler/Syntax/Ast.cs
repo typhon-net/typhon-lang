@@ -19,7 +19,7 @@ namespace Typhon.Compiler.Syntax
 
     public sealed class NameExpr : Expr { public string Id; }
 
-    public enum ConstKind { Int, Float, Str, Bool, None, Ellipsis, Bytes }
+    public enum ConstKind { Int, Float, Str, Bool, None, Ellipsis, Bytes, Imaginary }
 
     public sealed class ConstExpr : Expr
     {
@@ -237,6 +237,7 @@ namespace Typhon.Compiler.Syntax
         public bool IsAsync;
         public bool IsCachedProperty;
         internal bool UsedInClassBody;
+        internal bool IsMissingMethodStub;
         /// <summary>The name Python sees (its __name__) when Name was changed: a decorated function's undecorated body.</summary>
         public string PyName;
     }
@@ -246,6 +247,7 @@ namespace Typhon.Compiler.Syntax
     public sealed class ClassDef : Stmt
     {
         internal bool ConditionalModuleDefinition;
+        internal string PyName;
         public string Name;
         public List<TypeParam> TypeParams = new List<TypeParam>();
         public List<Expr> Bases = new List<Expr>();

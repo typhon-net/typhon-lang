@@ -45,6 +45,8 @@ namespace Typhon.Runtime
             if (value is PyFunction) return typeof(Typhon.Stdlib.types.FunctionType);
             if (value is PyBoundMethod { BuiltinOwner: not null })
                 return typeof(Typhon.Stdlib.types.BuiltinFunctionType);
+            if (value is PyBoundMethod method && Typhon.Stdlib.inspect.ismethod(method))
+                return typeof(Typhon.Stdlib.types.MethodType);
             Type actual = value.GetType();
             if (value is Typhon.Stdlib.sys_.code) return typeof(Typhon.Stdlib.sys_.code);
             if (value is System.Threading.Tasks.Task) return typeof(Typhon.Stdlib.types.CoroutineType);
@@ -170,6 +172,7 @@ namespace Typhon.Runtime
         {
             if (of == typeof(object)) return true;
             if (cls == of) return true;
+            if (of == typeof(string) && (typeof(PyString).IsAssignableFrom(cls) || typeof(PyStrEnum).IsAssignableFrom(cls))) return true;
             if (of == typeof(Type) && PyMetaclasses.IsMetaclass(cls)) return true;
             if (PyDictViews.Name(cls) is string view && (PyDictViews.Name(of) == view ||
                 of == typeof(Typhon.Stdlib.collections.abc.MappingView) ||
@@ -184,6 +187,10 @@ namespace Typhon.Runtime
             if (of == typeof(Typhon.Stdlib.types.AsyncGeneratorType) && Typhon.Stdlib.inspect.IsAsyncGeneratorType(cls)) return true;
             if (of == typeof(Typhon.Stdlib.collections.abc.Mapping) && (typeof(IDictionary).IsAssignableFrom(cls) ||
                 cls.GetInterfaces().Any(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IReadOnlyDictionary<,>)))) return true;
+            if (of == typeof(Typhon.Stdlib.collections.abc.MutableMapping) && typeof(IDictionary).IsAssignableFrom(cls) &&
+                cls != typeof(Typhon.Stdlib.types.MappingProxyType) &&
+                !(cls.IsGenericType && (cls.GetGenericTypeDefinition() == typeof(frozendict<,>) ||
+                    cls.GetGenericTypeDefinition() == typeof(System.Collections.ObjectModel.ReadOnlyDictionary<,>)))) return true;
             if (of == typeof(Typhon.Stdlib.collections.abc.Sequence) && !typeof(IDictionary).IsAssignableFrom(cls) &&
                 (cls == typeof(string) || cls == typeof(global::memoryview) ||
                 typeof(IList).IsAssignableFrom(cls) || typeof(ITuple).IsAssignableFrom(cls) ||
@@ -277,7 +284,7 @@ namespace Typhon.Runtime
             foreach (var m in t.GetMembers(flags))
             {
                 string n = m.Name;
-                if (m is MethodInfo mi && mi.IsSpecialName) continue;
+                if (m is MethodInfo mi && (mi.IsSpecialName || mi.IsDefined(typeof(PyMissingMethodAttribute), false))) continue;
                 if (m is ConstructorInfo || m is EventInfo) continue;
                 if (m is Type) continue;
                 if (n.Contains('<') || n.Contains('.') || n.StartsWith("__decorated_") || n.StartsWith("__py_") || objectMembers.Contains(n)) continue;
@@ -368,17 +375,9 @@ namespace Typhon.Runtime
         public static frozendict<object, object?> frozendict(IDictionary<string, object?> __kwargs) => frozendict(null, __kwargs);
         public static frozendict<object, object?> frozendict(object? mapping, IDictionary<string, object?> __kwargs)
         {
-            var items = new List<KeyValuePair<object, object?>>();
-            if (mapping is IDictionary d) { var en = d.GetEnumerator(); while (en.MoveNext()) items.Add(new KeyValuePair<object, object?>(en.Key, en.Value)); }
-            else if (mapping is IEnumerable pairs)
-                foreach (var p in pairs)
-                {
-                    if (p is ITuple t && t.Length == 2) items.Add(new KeyValuePair<object, object?>(t[0]!, t[1]));
-                    else throw new InvalidCastException("cannot convert dictionary update sequence element to a sequence of length 2");
-                }
-            else if (mapping != null) throw new InvalidCastException($"'{PyTypeName(mapping.GetType())}' object is not iterable");
-            foreach (var kv in __kwargs) items.Add(new KeyValuePair<object, object?>(kv.Key, kv.Value));
-            return new frozendict<object, object?>(items, PyKeyComparer.Instance!);
+            var items = mapping != null ? ReadDictItems(mapping) : Enumerable.Empty<KeyValuePair<object, object?>>();
+            var keywordItems = __kwargs.Select(item => new KeyValuePair<object, object?>(item.Key, item.Value));
+            return new frozendict<object, object?>(items.Concat(keywordItems), PyKeyComparer.Instance!);
         }
 
         static IEqualityComparer<K> FrozenComparer<K>() where K : notnull =>
@@ -395,7 +394,7 @@ namespace Typhon.Runtime
         int? _hash;
         public frozendict(IEnumerable<KeyValuePair<K, V>> items, IEqualityComparer<K> comparer) : base(comparer)
         {
-            foreach (var kv in items) base[kv.Key] = kv.Value;
+            foreach (var kv in items) base[PyNoneDictKey.Store(kv.Key)] = kv.Value;
         }
 
         static Exception ReadOnly() => new InvalidCastException("'frozendict' object does not support item assignment");

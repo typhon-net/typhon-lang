@@ -1,0 +1,37 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import errno
+import os
+import shutil
+import tempfile
+import weakref
+
+
+class Owner:
+    pass
+
+
+def cleanup(first, second, *, label):
+    return f"{label} {first} {second}"
+
+
+owner = Owner()
+finalizer = weakref.finalize(owner, cleanup, "one", "two", label="cleanup")
+print(finalizer.alive, finalizer(), finalizer.alive)
+
+error = FileNotFoundError(errno.ENOENT, "missing", "sample")
+print(getattr(error, "errno") == errno.ENOENT, getattr(error, "strerror"), getattr(error, "filename"))
+
+
+def missing(operation, path, error):
+    print(operation is os.lstat, os.path.basename(path), isinstance(error, FileNotFoundError))
+    raise
+
+
+with tempfile.TemporaryDirectory() as parent:
+    path = os.path.join(parent, "absent")
+    try:
+        shutil.rmtree(path, onexc=missing)
+    except FileNotFoundError:
+        print("reraised")

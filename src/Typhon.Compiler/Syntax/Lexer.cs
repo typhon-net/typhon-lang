@@ -195,7 +195,7 @@ namespace Typhon.Compiler.Syntax
                     if (_pos < _src.Length && char.IsDigit(_src[_pos])) { while (_pos < _src.Length && (char.IsDigit(_src[_pos]) || _src[_pos] == '_')) _pos++; }
                     else _pos = save;
                 }
-                if (_pos < _src.Length && (_src[_pos] == 'j' || _src[_pos] == 'J')) throw Error("complex numbers are not supported in Typhon");
+                if (_pos < _src.Length && (_src[_pos] == 'j' || _src[_pos] == 'J')) _pos++;
             }
             Add(TokenKind.Number, _src.Substring(start, _pos - start), start, _pos);
         }

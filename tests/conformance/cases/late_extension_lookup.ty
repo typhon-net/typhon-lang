@@ -1,0 +1,31 @@
+from collections import namedtuple
+from typing import Any
+
+Record = namedtuple('Record', 'value')
+
+class Result(Record):
+    def encode(self, encoding='ascii'):
+        return 'record', self.value, encoding
+
+def encode_record(value: Any):
+    return value.encode()
+
+def encode_text(value: object):
+    encode = value.encode
+    return encode(errors='ignore', encoding='ascii')
+
+print(encode_record(Result('sample')))
+print(encode_text('aé'))
+
+
+class Bucket(list):
+    pass
+
+def add_items(values: Any):
+    values.append('first')
+    add = values.append
+    add('second')
+
+bucket = Bucket()
+add_items(bucket)
+print(bucket)

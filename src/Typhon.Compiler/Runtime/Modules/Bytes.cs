@@ -170,6 +170,8 @@ namespace Typhon.Runtime
 
         public static string Decode(byte[] data, string encoding, string errors)
         {
+            if (Typhon.Stdlib.codecs.IsRawUnicodeEscape(encoding))
+                return Typhon.Stdlib.codecs.raw_unicode_escape_decode(new PyBytes(data), errors).Item1;
             try { return EncodingOf(encoding, errors).GetString(data); }
             catch (DecoderFallbackException ex) { throw new ArgumentException($"'{encoding}' codec can't decode byte: {ex.Message}"); }
         }

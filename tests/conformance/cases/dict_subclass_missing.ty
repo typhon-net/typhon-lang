@@ -1,0 +1,20 @@
+from typing import Any
+
+class Cache(dict):
+    def __missing__(self, key):
+        value = len(key)
+        self[key] = value
+        return value
+
+def fill(cache: Cache):
+    cache['five!'] += 2
+    return cache['five!']
+
+def fetch(cache: Any, key):
+    getter = cache.__getitem__
+    return getter(key)
+
+d = Cache()
+print(d.get('abc'), 'abc' in d)
+print(fetch(d, 'abc'), d['xy'], fill(d))
+print(d)

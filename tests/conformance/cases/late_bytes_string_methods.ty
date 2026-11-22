@@ -1,0 +1,11 @@
+from typing import Any
+
+def divide(value: Any, separator: bytes):
+    return value.rpartition(separator)
+
+def rewrite(value: Any, old: bytes, new: bytes):
+    return value.replace(old, new)
+
+print(divide(b'folder/item', b'/'))
+print(divide(bytearray(b'folder/item'), b'/'))
+print(rewrite(b'name+value', b'+', b' '))

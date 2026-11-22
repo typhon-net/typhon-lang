@@ -55,6 +55,8 @@ def drain_typed(items: list[int]) -> None:
     iterator = iter(items)
     stack.append(iterator.__next__)
     print(stack[0](), apply_next(iterator.__next__), stack[0]())
+    stack.append(iter(items).__next__)
+    print(stack[1](), apply_next(iter(items).__next__))
 
 
 drain_typed([5, 7, 9])

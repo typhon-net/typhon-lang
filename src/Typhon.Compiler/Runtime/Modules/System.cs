@@ -92,6 +92,7 @@ namespace Typhon.Stdlib
 
         public static void __init__(string[] args, Type? mainModule = null)
         {
+            _thread.SetMainThread();
             // Like CPython 3.15 (UTF-8 mode by default), Typhon programs write UTF-8 regardless of the console code page.
             try { Console.OutputEncoding = new UTF8Encoding(false); } catch (System.IO.IOException) { }
             // under `typhon run file.ty` the script (set by the CLI), like CPython's sys.argv[0]; else this executable
@@ -166,7 +167,8 @@ namespace Typhon.Stdlib
         public static readonly Action<object?> __displayhook__ = DefaultDisplayHook;
         public static Action<object?> displayhook = __displayhook__;
         /// <summary>The interactive prompts (CPython defines them only in interactive mode; code.InteractiveConsole sets them).</summary>
-        public static string ps1 = ">>> ", ps2 = "... ";
+        [PyOptionalModuleMember]
+        public static dynamic ps1 = PyModule.Unbound, ps2 = PyModule.Unbound;
 
         // ── modules ──
 
@@ -229,6 +231,7 @@ namespace Typhon.Stdlib
                 ignore_environment = 0, verbose = 0, bytes_warning = 0, quiet = 0, hash_randomization = 1, isolated = 0, utf8_mode = 1,
                 warn_default_encoding = 0, int_max_str_digits = 4300;
             public readonly bool dev_mode = false, safe_path = false;
+            public readonly long thread_inherit_context = 0;
             protected override string TypeName => "sys.flags";
             protected override string[] Fields => new[] { "debug", "inspect", "interactive", "optimize", "dont_write_bytecode", "no_user_site", "no_site", "ignore_environment",
                 "verbose", "bytes_warning", "quiet", "hash_randomization", "isolated", "dev_mode", "utf8_mode", "warn_default_encoding", "safe_path", "int_max_str_digits" };
@@ -363,24 +366,28 @@ namespace Typhon.Runtime
         public string Field { get; } = field;
     }
 
+    [AttributeUsage(AttributeTargets.Field)]
+    internal sealed class PyOptionalModuleMemberAttribute : Attribute { }
+
     /// <summary>
     /// A module object of sys.modules: a standard module of the runtime or the program's __main__. Its functions and
     /// values are its attributes (getattr(module, name), module.name on a late-bound value).
     /// </summary>
     internal sealed class PyModule : DynamicObject, IPyRepr
     {
-        public readonly string __name__;
+        readonly string _name;
         internal static readonly object Unbound = new object();
         internal static dynamic? ReadLateGlobal(object? value, string name) =>
             ReferenceEquals(value, Unbound) ? Builtins.__unbound_import(name) : value;
 
         readonly Type? _type;
         readonly PySourceAttribute? _source;
+        bool _registeredSource;
         readonly System.Collections.Concurrent.ConcurrentDictionary<string, PyBoundMethod> _methodValues = new();
         internal Type? SourceType => _type;
         public PyModule(string name, Type? type)
         {
-            __name__ = name;
+            _name = name;
             _type = type;
             _source = type?.GetCustomAttribute<PySourceAttribute>();
             __dict__ = new PyAttrDict(this);
@@ -395,7 +402,48 @@ namespace Typhon.Runtime
                 return _of.GetOrAdd(typeof(Typhon.Stdlib.os_.path), t => new PyModule(NativePathModule.Name, t));
             return _of.GetOrAdd(type, t => new PyModule(name, t));
         }
+        public static object? Import(Type type, string name)
+        {
+            var registry = Typhon.Stdlib.sys_.modules;
+            var original = Of(type, name);
+            lock (registry)
+            {
+                if (registry.TryGetValue(name, out object? registered) && !ReferenceEquals(registered, original))
+                {
+                    // An explicitly selected source module replaces the runtime's initial entry for that name.
+                    if (original._registeredSource || original._source == null || registered is not PyModule native ||
+                        native._source != null || native._name != name) return registered;
+                }
+                registry[name] = original;
+                original._registeredSource = true;
+            }
+            try { System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(type.TypeHandle); }
+            catch
+            {
+                lock (registry)
+                {
+                    registry.Remove(name);
+                    original._registeredSource = false;
+                }
+                throw;
+            }
+            lock (registry) return registry[name];
+        }
+
+        public static dynamic? ImportAttribute(Type type, string module, string name)
+        {
+            object? imported = Import(type, module);
+            if (imported is PyModule wrapper) return wrapper.ImportAttribute(name);
+            try { return Builtins.getattr(imported, name); }
+            catch (MissingMemberException) { throw new ImportError($"cannot import name '{name}' from '{module}'"); }
+        }
+
         public string? __file__ => _source?.Filename;
+        public dynamic? __name__
+        {
+            get => __dict__["__name__"];
+            set => __dict__["__name__"] = value;
+        }
         public dynamic? __doc__
         {
             get => __dict__["__doc__"];
@@ -417,17 +465,22 @@ namespace Typhon.Runtime
         {
             switch (name)
             {
-                case "__name__": result = __name__; return true;
-                case "__file__" when __file__ != null: result = __file__; return true;
+                case "__name__":
                 case "__doc__":
-                    result = _type?.GetField(name, Members) is FieldInfo doc ? doc.GetValue(null) : _source?.DocString;
+                    result = _type?.GetField(name, Members) is FieldInfo metadata ? metadata.GetValue(null) :
+                        name == "__name__" ? _name : _source?.DocString;
                     return true;
+                case "__file__" when __file__ != null: result = __file__; return true;
             }
             result = null;
             if (_type == null || !IsModuleName(name)) return false;
             if (_type == typeof(Typhon.Stdlib.os_) && name == "path") { result = Typhon.Stdlib.os_.__path_module__; return true; }
             if (_type == typeof(Typhon.Stdlib.builtins) && name == "print") { result = Builtins.__print_value(); return true; }
-            if (_type.GetField(name, Members) is FieldInfo f) { result = f.GetValue(null); return true; }
+            if (_type.GetField(name, Members) is FieldInfo f)
+            {
+                result = f.GetValue(null);
+                return !ReferenceEquals(result, Unbound);
+            }
             if (_type.GetProperty(name, Members) is PropertyInfo p && p.GetIndexParameters().Length == 0)
             {
                 try { result = p.GetValue(null); return true; }
@@ -460,6 +513,15 @@ namespace Typhon.Runtime
             return false;
         }
 
+        internal bool TryDeleteNamespaceMember(string name)
+        {
+            if (_type?.GetField(name, Members) is not FieldInfo field ||
+                !field.IsDefined(typeof(PyOptionalModuleMemberAttribute), false) || ReferenceEquals(field.GetValue(null), Unbound))
+                return false;
+            field.SetValue(null, Unbound);
+            return true;
+        }
+
         bool IsNamespaceMethod(MethodInfo method) => !method.IsSpecialName &&
             (_source == null || method.IsDefined(typeof(PySourceAttribute)));
 
@@ -471,6 +533,8 @@ namespace Typhon.Runtime
             if (_type == null) yield break;
             foreach (var member in _type.GetMembers(Members))
                 if (IsModuleName(member.Name) && (member is FieldInfo or PropertyInfo || member is MethodInfo method && IsNamespaceMethod(method)) &&
+                    (member is not FieldInfo field || !field.IsDefined(typeof(PyOptionalModuleMemberAttribute), false) ||
+                        !ReferenceEquals(field.GetValue(null), Unbound)) &&
                     (member is not PropertyInfo property || !property.IsDefined(typeof(PyLateAttributeAttribute)) || TryGetNamespaceMember(property.Name, out _)))
                     yield return member.Name;
             foreach (var nested in _type.GetNestedTypes(BindingFlags.Public | BindingFlags.NonPublic))
@@ -478,7 +542,8 @@ namespace Typhon.Runtime
         }
 
         public override IEnumerable<string> GetDynamicMemberNames() => __dict__.Keys;
-        public string __repr__() => __name__ == "__main__" ? "<module '__main__'>" : $"<module {Builtins.repr(__name__)} (built-in)>";
+        public string __repr__() => (object?)__name__ is not string name ? "<module '?'>" :
+            name == "__main__" ? "<module '__main__'>" : $"<module {Builtins.repr(name)} (built-in)>";
         public override string ToString() => __repr__();
 
         /// <summary>The standard modules of the runtime (Typhon.Stdlib's static classes, 'x_' named 'x') and __main__.</summary>

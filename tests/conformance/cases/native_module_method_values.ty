@@ -1,0 +1,14 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import os
+
+
+def apply(function, *args):
+    return function(*args)
+
+
+operations = {os.chmod, os.unlink, os.lstat}
+print(len(operations), os.chmod in operations)
+print(apply(os.path.join, "directory", "name").endswith("name"))
+print(os.unlink is os.unlink)

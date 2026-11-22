@@ -1,0 +1,10 @@
+True True
+[('alpha', 2), ('beta', 3)] -1
+2 4
+3 -1 ('alpha', 2)
+0
+42
+'NoneType' object is not iterable
+8 1
+9
+[('base', 9)]

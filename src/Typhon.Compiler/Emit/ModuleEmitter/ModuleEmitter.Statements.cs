@@ -61,7 +61,8 @@ namespace Typhon.Compiler.Emit
             if (t == null || v == null || t == v || t == "dynamic" || v == "dynamic" || t == "object" || t == TypeInference.Pending || v == TypeInference.Pending) return false;
             if (IsIntegral(t) && IsIntegral(v) || t == "double" && IsIntegral(v) || t == v + "?") return false;
             if (t.StartsWith("List<") && v.StartsWith("IEnumerable<")) return true;
-            bool Plain(string x) => PrimitiveCsTypes.Contains(x) || x.StartsWith("List<") || x.StartsWith("HashSet<") || IsDictType(x) || x.StartsWith("(") ||
+            if (t.StartsWith(PyGeneratorPrefix) && (v.StartsWith("IEnumerable<") || v.StartsWith("global::Typhon.Runtime.PyIterator<"))) return true;
+            bool Plain(string x) => IsIntegral(x) || PrimitiveCsTypes.Contains(x) || x.StartsWith("List<") || x.StartsWith("HashSet<") || IsDictType(x) || TupleElementTypes(x) != null ||
                                     x is "global::Typhon.Runtime.PyAttrDict" or "global::Typhon.Runtime.PyBytes" or "global::Typhon.Runtime.PyByteArray" ||
                                     x is "global::System.Type" or "System.Type" ||
                                     x is "global::Typhon.Stdlib.re.Match" or "global::Typhon.Stdlib.re.BytesMatch" ||
@@ -119,15 +120,18 @@ namespace Typhon.Compiler.Emit
                 case TryStmt t: EmitTry(t); break;
                 case WithStmt w: EmitWith(w); break;
                 case FunctionDef f when _classFieldInitializer && _cls.ClassBodyImplementations.TryGetValue(f, out string implementation):
-                    _w.Line($"{Esc(f.Name)} = global::Typhon.Runtime.PyClassDescriptors.ClassBodyFunction(" +
-                        $"typeof({_cls.CsSelfType}), {CsString(f.Name)}, {CsString(implementation)});");
+                    string classFunction = $"global::Typhon.Runtime.PyClassDescriptors.ClassBodyFunction(" +
+                        $"typeof({_cls.CsSelfType}), {CsString(f.Name)}, {CsString(implementation)})";
+                    if (f.Decorators.Count == 1)
+                        classFunction = $"{Rt("__invoke")}((object?){Paren(EmitValue(f.Decorators[0]))}, [{classFunction}])";
+                    _w.Line($"{Esc(f.Name)} = {classFunction};");
                     break;
                 case FunctionDef f: EmitLocalFunction(f); break;
                 case ClassBodyInitialization initialization:
                     EmitClassInitialization(initialization.Definition);
                     break;
                 case ConditionalClassBinding binding:
-                    if (RunsClassBodyAtDefinition(binding.Definition))
+                    if (RunsClassBodyAtDefinition(binding.Definition) || CapturesClassModuleName)
                         EmitClassInitialization(binding.Definition);
                     _w.Line($"{ClassActivation(binding.Definition)} = true;");
                     if (_m.RuntimeCodeMode != null)
@@ -156,11 +160,17 @@ namespace Typhon.Compiler.Emit
                 if (Obs != null) RecordCall(CallTarget(dc, out _), dc.Args);
                 string r = NewTmp("r");
                 string rest = EmitArgs(dc.Args, dynamicCall: true);
-                _w.Line($"{{ dynamic {r} = {EmitExpr(dm.Target)}; if ({Rt("__is_pyvalue")}({r})) global::Typhon.Runtime.Builtins.{Esc(dm.Name)}({r}{(rest.Length > 0 ? ", " : "")}{rest}); else {r}.{Esc(dm.Name)}({rest}); }}");
+                _w.Line($"{{ dynamic {r} = {EmitExpr(dm.Target)}; if ({Rt("__uses_builtin_method")}({r}, {CsString(dm.Name)})) global::Typhon.Runtime.Builtins.{Esc(dm.Name)}({r}{(rest.Length > 0 ? ", " : "")}{rest}); else {r}.{Esc(dm.Name)}({rest}); }}");
                 return;
             }
             switch (e.Value)
             {
+                case IfExpr conditional:
+                    _w.Line($"if ({Cond(conditional.Test)})");
+                    EmitBlock(new List<Stmt> { new ExprStmt { Value = conditional.Body, Line = conditional.Body.Line, Col = conditional.Body.Col } });
+                    _w.Line("else");
+                    EmitBlock(new List<Stmt> { new ExprStmt { Value = conditional.OrElse, Line = conditional.OrElse.Line, Col = conditional.OrElse.Col } });
+                    return;
                 case ConstExpr c when c.Kind == ConstKind.Str || c.Kind == ConstKind.Ellipsis: return; // docstring / ...
                 case YieldExpr y:
                     if (y.From && _scope?.AsyncForm == true) _w.Line(StripParens(EmitExpr(y)) + ";");
@@ -286,7 +296,11 @@ namespace Typhon.Compiler.Emit
 
         void EmitRaise(RaiseStmt r)
         {
-            if (r.Exc == null) { _w.Line("throw;"); return; }
+            if (r.Exc == null)
+            {
+                _w.Line(_m.IsGdScript ? "throw;" : $"throw {Rt("__reraise")}();");
+                return;
+            }
             if (!_m.IsGdScript)
             {
                 string error = (r.Exc is NameExpr || r.Exc is AttributeExpr) && TryTypeExpr(r.Exc, out var exceptionType)
@@ -338,13 +352,23 @@ namespace Typhon.Compiler.Emit
             if (test is not CallExpr { Func: NameExpr { Id: "isinstance" }, Args.Count: 2 } check ||
                 IsShadowed("isinstance") || check.Args.Any(argument => argument.Star || argument.DoubleStar || argument.Name != null) ||
                 check.Args[0].Value is not NameExpr receiver || !IsLocal(receiver.Id) ||
-                check.Args[1].Value is not NameExpr { Id: "str" or "bytes" or "bytearray" } tested || IsShadowed(tested.Id)) return null;
+                check.Args[1].Value is not NameExpr { Id: "str" or "bytes" or "bytearray" or "tuple" } tested ||
+                IsShadowed(tested.Id)) return null;
             string actual = KnownType(receiver.Id);
+            if (tested.Id == "tuple" && actual is ("System.Type" or "global::System.Type")) return false;
             return (actual == "string" || IsBytesType(actual)) && actual != MapType(tested, test) ? false : (bool?)null;
         }
 
         void EmitIf(IfStmt i, bool isElif)
         {
+            // A runtime class tuple can select a representation other than the inferred parameter type.
+            if (Obs != null && !_m.IsGdScript &&
+                i.Test is CallExpr { Func: NameExpr { Id: "isinstance" }, Args.Count: 2 } check &&
+                !IsShadowed("isinstance") && !IsTypeish(check.Args[1].Value) &&
+                check.Args.All(arg => arg.Name == null && !arg.Star && !arg.DoubleStar) &&
+                check.Args[0].Value is NameExpr parameter && _scope?.Params.Contains(parameter.Id) == true &&
+                !IsUnknownType(KnownType(parameter.Id)) && AssignsName(i.Body, parameter.Id))
+                Obs.AddConflict(_scopeKey + "|" + parameter.Id, "dynamic");
             // An exact text or bytes representation cannot match a disjoint sealed type or its literals.
             // Evaluate the original test before emitting the reachable suite.
             if (!_m.IsGdScript && _scope?.IsGenerator != true &&
@@ -383,7 +407,7 @@ namespace Typhon.Compiler.Emit
                 _w.Line($"{(isElif ? "else if" : "if")} ({Cond(i.Test)})");
                 EmitBlock(i.Body, narrowed: NarrowedBy(i.Test, whenTrue: true));
             }
-            if (i.OrElse.Count != 0 && EmitNonMatchingSealedInstanceBranch(i)) return;
+            if (i.OrElse.Count != 0 && EmitNonMatchingInstanceBranch(i)) return;
             if (i.OrElse.Count == 1 && i.OrElse[0] is IfStmt elif)
             {
                 LineDirective(elif);
@@ -396,15 +420,16 @@ namespace Typhon.Compiler.Emit
             }
         }
 
-        // The branch that rejects an exact sealed type cannot continue using that type for dispatch or specialization.
-        bool EmitNonMatchingSealedInstanceBranch(IfStmt statement)
+        // The branch that rejects the receiver's current type cannot use that type for dispatch or specialization.
+        bool EmitNonMatchingInstanceBranch(IfStmt statement)
         {
             if (_m.IsGdScript || statement.Test is not CallExpr { Func: NameExpr { Id: "isinstance" }, Args.Count: 2 } check ||
                 IsShadowed("isinstance") || check.Args.Any(argument => argument.Star || argument.DoubleStar || argument.Name != null) ||
                 check.Args[0].Value is not NameExpr receiver || !IsLocal(receiver.Id) ||
-                check.Args[1].Value is not NameExpr { Id: "str" or "bytes" or "bytearray" } tested ||
-                IsShadowed(tested.Id) || KnownType(receiver.Id) != MapType(tested, statement.Test) ||
-                AssignsName(statement.OrElse, receiver.Id)) return false;
+                check.Args[1].Value is not NameExpr tested || IsLocal(tested.Id) ||
+                KnownType(receiver.Id) != MapType(tested, statement.Test) || AssignsName(statement.OrElse, receiver.Id)) return false;
+            bool sealedBuiltin = tested.Id is "str" or "bytes" or "bytearray" && !IsShadowed(tested.Id);
+            if (!sealedBuiltin && (!TryResolveType(tested.Id, 0, out _, out var declared) || declared == null)) return false;
 
             string original = EmitName(receiver);
             string alias = NewTmp(receiver.Id);
@@ -476,7 +501,7 @@ namespace Typhon.Compiler.Emit
                 if (t is SubscriptExpr s && !(s.Index is SliceExpr)) _w.Line($"{Rt("delitem")}({EmitExpr(s.Target)}, {ModuleOrClassValue(s.Index) ?? EmitExpr(s.Index)});");
                 else if (t is SubscriptExpr ss && ss.Index is SliceExpr sl)
                     _w.Line($"{Rt("delslice")}({EmitExpr(ss.Target)}, {(sl.Lower != null ? SliceBound(sl.Lower) : "null")}, {(sl.Upper != null ? SliceBound(sl.Upper) : "null")}, {(sl.Step != null ? SliceBound(sl.Step) : "1")});");
-                else if (t is NameExpr name && _m.ReboundFunctions.Contains(name.Id) && !IsLocal(name.Id))
+                else if (t is NameExpr name && (_m.ReboundFunctions.Contains(name.Id) || _m.ReboundClasses.Contains(name.Id)) && !IsLocal(name.Id))
                 {
                     string binding = EmitName(name);
                     _w.Line($"_ = {binding};");
@@ -497,6 +522,11 @@ namespace Typhon.Compiler.Emit
                 // del obj.attr: an attribute the class declares goes back to its default value; one added at run time is removed
                 else if (t is AttributeExpr da)
                 {
+                    if (ModuleOrClassValue(da.Target) is string namespaceValue)
+                    {
+                        _w.Line($"{Rt("delattr")}({namespaceValue}, {CsString(da.Name)});");
+                        continue;
+                    }
                     if (IsInstanceClassDefault(da))
                     {
                         _w.Line($"{Rt("delattr")}((object?){Paren(EmitExpr(da.Target))}, {CsString(da.Name)});");
@@ -524,18 +554,49 @@ namespace Typhon.Compiler.Emit
             }
         }
 
+        bool TryEmitGuardedNameProbe(TryStmt statement)
+        {
+            bool CatchesNameError(Expr type) => type is NameExpr { Id: "NameError" } ||
+                type is TupleExpr tuple && tuple.Elts.Any(CatchesNameError);
+            if (_m.IsGdScript || _m.RuntimeCodeMode != null || statement.Body.Count != 1 ||
+                statement.Body[0] is not ExprStmt { Value: NameExpr name } || IsShadowed("NameError") ||
+                !statement.Handlers.Any(handler => CatchesNameError(handler.Type))) return false;
+
+            string id = name.Id;
+            if (id is "__debug__" or "__file__" or "__name__" or "__package__" or "globals" ||
+                IsShadowed(id) || ImportAlias(name) != null || ModuleRef(id) != null ||
+                _dotnetAliases.ContainsKey(id) || _typingOnlyNames.Contains(id) || _runtimeProjectBindings.ContainsKey(id) ||
+                BuiltinTypeValues.ContainsKey(id) || TryResolveType(id, 0, out _, out _) || StdlibOwner(id) != null ||
+                _r.GetMembers("Typhon.Runtime.Builtins", id).Count != 0 ||
+                _staticTypes.Any(type => _r.GetMembers(type, id).Count != 0)) return false;
+
+            // A guarded bare-name read can probe names supplied at runtime, including optional wildcard imports.
+            LineDirective(name);
+            string value = NewTmp("name");
+            string module = "global::Typhon.Runtime.PyModule";
+            string scope = $"{module}.Of(typeof({ModuleClassName(_m)}), {CsString(_m.Name)}).__dict__";
+            _w.Line($"{module}.ReadLateGlobal(((IDictionary<string, object?>){scope}).TryGetValue({CsString(id)}, out var {value}) ? " +
+                $"{value} : {module}.Unbound, {CsString(id)});");
+            return true;
+        }
+
         void EmitTry(TryStmt t)
         {
             bool hasElse = t.OrElse.Count > 0;
             bool hasFinally = t.FinalBody.Count > 0;
+            bool trackPending = hasFinally && !_m.IsGdScript;
+            bool outerTry = hasFinally && (hasElse || trackPending);
+            bool innerTry = t.Handlers.Count > 0 || !trackPending;
             // try: A except: B else: C finally: D  →  try { try { A } catch { B; goto after; } C; after: ; } finally { D }
             // (C runs only when A completed normally and is outside the handlers; C#'s flow analysis sees every path)
             string after = hasElse ? NewTmp("after") : null;
+            string pending = trackPending ? NewTmp("pending") : null;
             bool usedAfter = false;
-            if (hasElse && hasFinally) { _w.Line("try"); _w.Open(); }
-            _w.Line("try");
+            if (trackPending) _w.Line($"Exception? {pending} = null;");
+            if (outerTry) { _w.Line("try"); _w.Open(); }
+            if (innerTry) _w.Line("try");
             _w.Open();
-            EmitBlockStatements(t.Body);
+            if (!TryEmitGuardedNameProbe(t)) EmitBlockStatements(t.Body);
             _w.Close();
             foreach (var h in t.Handlers)
             {
@@ -550,7 +611,7 @@ namespace Typhon.Compiler.Emit
                     var specs = h.Type is TupleExpr ht ? ht.Elts : new List<Expr> { h.Type };
                     // Exception aliases may be Type-valued fields, e.g. socket.timeout.
                     var aliases = specs.Where(x => !TryTypeExpr(x, out _) &&
-                        (InferType(x) is "System.Type" or "global::System.Type" || x is NameExpr nameValue && IsLocal(nameValue.Id))).ToList();
+                        (InferType(x) is "System.Type" or "global::System.Type" || x is NameExpr nameValue && (IsLocal(nameValue.Id) || IsValueName(nameValue.Id)))).ToList();
                     var types = specs.Except(aliases).SelectMany(x => CatchTypes(x, h)).Distinct().ToList();
                     IEnumerable<string> AliasTests(string caught) => aliases.Select(x =>
                         $"global::Typhon.Stdlib.builtins.isinstance({caught}, (object?){Paren(EmitValue(x))})");
@@ -591,23 +652,23 @@ namespace Typhon.Compiler.Emit
             }
             if (hasElse)
             {
-                if (t.Handlers.Count == 0) { _w.Line("finally"); _w.Open(); _w.Close(); }
+                if (innerTry && t.Handlers.Count == 0) { _w.Line("finally"); _w.Open(); _w.Close(); }
                 EmitBlock(t.OrElse);
                 if (usedAfter) _w.Line($"{after}: ;");
-                if (hasFinally)
-                {
-                    _w.Close();
-                    _w.Line("finally");
-                    EmitBlock(t.FinalBody);
-                }
-                return;
             }
             if (hasFinally)
             {
+                if (outerTry) _w.Close();
+                if (trackPending)
+                {
+                    string failed = NewTmp("failed");
+                    _w.Line($"catch (Exception {failed}) {{ {pending} = {failed}; throw; }}");
+                }
                 _w.Line("finally");
-                EmitBlock(t.FinalBody);
+                EmitBlock(t.FinalBody, prologue: trackPending ?
+                    $"using var {NewTmp("handling")} = {pending} == null ? null : {Rt("__handling_exception")}({pending});" : null);
             }
-            if (t.Handlers.Count == 0 && !hasFinally) { _w.Line("finally"); _w.Open(); _w.Close(); }
+            if (t.Handlers.Count == 0 && !hasElse && !hasFinally) { _w.Line("finally"); _w.Open(); _w.Close(); }
         }
 
         void EmitWith(WithStmt w)

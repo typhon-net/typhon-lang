@@ -71,6 +71,17 @@ namespace Typhon.Stdlib
                 {
                     for (Type? owner = __thisclass__.BaseType; owner != null; owner = owner.BaseType)
                     {
+                        if (owner == typeof(object) && name == "__init_subclass__")
+                        {
+                            result = new PyClosure(name, (args, keywords) =>
+                            {
+                                string method = Builtins.PyTypeName(__self_class__) + ".__init_subclass__()";
+                                if (keywords?.Count > 0) throw new InvalidCastException(method + " takes no keyword arguments");
+                                if (args.Length > 0) throw new InvalidCastException($"{method} takes no arguments ({args.Length} given)");
+                                return null;
+                            });
+                            return true;
+                        }
                         if (owner == typeof(object) && name == "__new__" && PyMetaclasses.IsMetaclass(__thisclass__))
                         {
                             result = PyMetaclasses.New;
@@ -80,6 +91,11 @@ namespace Typhon.Stdlib
                         {
                             var method = Builtins.__object_method("__object_" + name[2..^2]);
                             result = receiver != null && name != "__new__" ? new types.MethodType(method, receiver) : method;
+                            return true;
+                        }
+                        if (PyClassDescriptors.TryGetDeclaredAddedAttribute(owner, name, out var added))
+                        {
+                            result = PyMetaclasses.Bind(added, receiver, __self_class__);
                             return true;
                         }
                         if (PyClassDescriptors.TryGetDeclaredDescriptor(owner, name, out var descriptor))
@@ -111,7 +127,8 @@ namespace Typhon.Stdlib
                             result = InvokeDirect(getter, receiver, []);
                             return true;
                         }
-                        MethodInfo[] methods = owner.GetMethods(Declared).Where(m => m.Name == name && !m.IsAbstract && !m.ContainsGenericParameters).ToArray();
+                        MethodInfo[] methods = owner.GetMethods(Declared).Where(m => m.Name == name && !m.IsAbstract &&
+                            !m.ContainsGenericParameters && !m.IsDefined(typeof(PyMissingMethodAttribute), false)).ToArray();
                         if (methods.Length > 0)
                         {
                             result = new PyClosure(name, (args, keywords) => CallMethods(name, methods, receiver, args, keywords));
@@ -180,6 +197,21 @@ namespace Typhon.Stdlib
                 (__self_class__ == null ? "NULL>" : $"<{Builtins.PyTypeName(__self_class__)} object>>");
 
             public override string ToString() => __repr__();
+        }
+    }
+}
+
+namespace Typhon.Runtime
+{
+    using System;
+    using System.Collections.Generic;
+
+    internal static partial class Builtins
+    {
+        public static void __initialize_subclass(Type type, IDictionary<string, object?>? keywords)
+        {
+            var inherited = new Typhon.Stdlib.builtins.super(type, type);
+            if (inherited.TryResolve("__init_subclass__", out var hook)) __invoke_kw(hook, [], keywords);
         }
     }
 }

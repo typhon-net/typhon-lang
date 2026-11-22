@@ -141,6 +141,14 @@ namespace Typhon.Runtime
 
         public static IDisposable __handling_exception(Exception error) => new PyExceptionState.Handler(error);
 
+        public static Exception __reraise()
+        {
+            if (PyExceptionState.Handling is not Exception error)
+                return new InvalidOperationException("No active exception to reraise");
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error).Throw();
+            throw new InvalidOperationException();
+        }
+
         public static Exception __prepare_exception(object? value, object? cause, bool explicitCause)
         {
             var error = ExceptionInstance(value);

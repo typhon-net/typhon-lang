@@ -1,0 +1,14 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import codecs
+
+
+print(codecs.escape_decode(br"line\nnext\t\x41\101\0" + b"\\\n"))
+print(codecs.escape_decode(bytearray(b"\\n")))
+print(codecs.escape_decode(br"a\xG1z", "replace"))
+print(codecs.escape_decode(br"a\x1Gz", "ignore"))
+try:
+    codecs.escape_decode(br"a\xz")
+except ValueError as error:
+    print(str(error))

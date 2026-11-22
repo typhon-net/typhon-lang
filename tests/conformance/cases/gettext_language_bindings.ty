@@ -1,0 +1,28 @@
+from typing import Any
+
+labels = (("first",), ("second", "third"))
+labels = frozendict({label: index for index, group in enumerate(labels, 1) for label in group})
+
+def ordinal(label):
+    return labels[label] + 1
+
+class Formatter:
+    def __init__(self):
+        self.translate = lambda n: n + 3
+
+def words(data: Any):
+    return data.split(b"|")
+
+def identity(value):
+    return value
+
+def pair(value):
+    return (value, 7)
+
+def unpack(x: Any):
+    value, count = pair(identity(x))
+    return value, count + 1
+
+print(ordinal("first"), ordinal("third"))
+print(Formatter().translate(4), words(b"first|last"))
+print(unpack("word"))

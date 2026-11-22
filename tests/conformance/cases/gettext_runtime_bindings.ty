@@ -1,0 +1,28 @@
+values = {'offset': 7, '__name__': 'test'}
+exec('''if True:
+    def translated(value=5):
+        return value + offset
+    if False:
+        def missing():
+            return 0
+''', values)
+print(values['translated'](), values['translated'](2), 'missing' in values)
+
+outer = {'offset': 9, '__name__': 'test'}
+inner = {'offset': 100, '__name__': 'different'}
+exec('''if True:
+    def translate(value):
+        return value + offset
+''', outer, inner)
+print(inner['translate'](2), 'translate' in outer)
+
+
+def parse_header(item):
+    key = value = None
+    if ':' in item:
+        key, value = item.split(':', 1)
+        key = key.strip().lower()
+        value = value.strip()
+    return key, value
+
+print(parse_header(' Content-Type: UTF-8 '))

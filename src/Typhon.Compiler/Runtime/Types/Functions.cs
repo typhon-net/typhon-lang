@@ -79,12 +79,14 @@ namespace Typhon.Runtime
                 var call = new object?[ps.Length];
                 try
                 {
-                    for (int i = 0; i < fixedCount; i++) call[i] = i < args.Length ? Convert(args[i], ps[i].ParameterType) : ps[i].DefaultValue;
+                    for (int i = 0; i < fixedCount; i++) call[i] = i < args.Length
+                        ? PyArgs.ConvertArgument(args[i], ps[i].ParameterType) : ps[i].DefaultValue;
                     if (hasParams)
                     {
                         var elem = ps[^1].ParameterType.GetElementType()!;
                         var rest = Array.CreateInstance(elem, Math.Max(0, args.Length - fixedCount));
-                        for (int i = fixedCount; i < args.Length; i++) rest.SetValue(Convert(args[i], elem), i - fixedCount);
+                        for (int i = fixedCount; i < args.Length; i++)
+                            rest.SetValue(PyArgs.ConvertArgument(args[i], elem), i - fixedCount);
                         call[^1] = rest;
                     }
                 }
@@ -94,9 +96,8 @@ namespace Typhon.Runtime
             throw new InvalidCastException($"{_name}() does not take {args.Length} arguments");
         }
         bool IsPythonMethod(System.Reflection.MethodInfo method) =>
-            method.Name == _name && !method.IsDefined(typeof(PyOverrideBridgeAttribute), false);
-
-        static object? Convert(object? v, Type t) => v == null || t.IsInstanceOfType(v) || t == typeof(object) ? v : System.Convert.ChangeType(v, Nullable.GetUnderlyingType(t) ?? t, CultureInfo.InvariantCulture);
+            method.Name == _name && !method.IsDefined(typeof(PyOverrideBridgeAttribute), false) &&
+            !method.IsDefined(typeof(PyMissingMethodAttribute), false);
 
         /// <summary>obj.m(x, **kwargs): the method whose parameters take these arguments, positional ones first, then by name.</summary>
         public dynamic? __call_kw__(object?[] args, IDictionary<string, object?>? kw)
@@ -180,6 +181,26 @@ namespace Typhon.Runtime
             result = __call_kw__(args[..positional], keywords);
             return true;
         }
+        internal bool TryGetPythonMember(string name, out object? result)
+        {
+            if (name == "__self__" && (BuiltinOwner != null || _target is not Type))
+            {
+                result = BuiltinOwner ?? _target;
+                return true;
+            }
+            if (name == "__func__" && _target is not Type &&
+                PyClassDescriptors.TryGetAttribute(_target.GetType(), _name, out var binding) && binding is PyFunction function)
+            {
+                result = function;
+                return true;
+            }
+            result = null;
+            return false;
+        }
+
+        public override bool TryGetMember(System.Dynamic.GetMemberBinder binder, out object? result) =>
+            TryGetPythonMember(binder.Name, out result);
+
         public override string ToString() => $"<bound method {_name} of {Builtins.repr(_target)}>";
     }
 
@@ -241,10 +262,9 @@ namespace Typhon.Runtime
                     call[i] = p.HasDefaultValue ? p.DefaultValue : Type.Missing;
                     continue;
                 }
-                int fit = Fit(v, p.ParameterType);
+                int fit = Fit(v, p.ParameterType, out call[i]);
                 if (fit < 0) return -1;
                 score += fit;
-                call[i] = To(v, p.ParameterType);
             }
             if (kw != null && byName != kw.Count && !hasKeywords) return -1; // a name no parameter has
             if (hasKeywords)
@@ -262,27 +282,69 @@ namespace Typhon.Runtime
                 var rest = Array.CreateInstance(elem, Math.Max(0, args.Length - restIndex));
                 for (int i = restIndex; i < args.Length; i++)
                 {
-                    if (Fit(args[i], elem) < 0) return -1;
-                    rest.SetValue(To(args[i], elem), i - restIndex);
+                    if (Fit(args[i], elem, out var converted) < 0) return -1;
+                    rest.SetValue(converted, i - restIndex);
                 }
                 call[restIndex] = rest;
             }
             return score;
         }
 
-        static int Fit(object? v, Type t)
+        static int Fit(object? v, Type t, out object? converted)
         {
+            converted = v;
             if (v == null) return !t.IsValueType || Nullable.GetUnderlyingType(t) != null ? 1 : -1;
             if (t == typeof(object)) return 0;
             if (t.IsInstanceOfType(v)) return 2;
+            if (t == typeof(string) && v is PyString text)
+            {
+                converted = text.Text;
+                return 1;
+            }
             var u = Nullable.GetUnderlyingType(t) ?? t;
             // an int where a float is expected, as Python allows
-            if (u == typeof(double) && (v is long || v is int || v is bool)) return 1;
+            if (u == typeof(double) && (v is long || v is int || v is bool))
+            {
+                converted = Convert.ToDouble(v, CultureInfo.InvariantCulture);
+                return 1;
+            }
+            if (v is BigInteger integer && TryIntegralArgument(integer, u, out converted)) return 1;
             return -1;
         }
 
-        static object? To(object? v, Type t) =>
-            v == null || t.IsInstanceOfType(v) || t == typeof(object) ? v : Convert.ChangeType(v, Nullable.GetUnderlyingType(t) ?? t, CultureInfo.InvariantCulture);
+        internal static object? ConvertArgument(object? value, Type target)
+        {
+            if (value == null || target.IsInstanceOfType(value)) return value;
+            if (target == typeof(string) && value is PyString text) return text.Text;
+            var underlying = Nullable.GetUnderlyingType(target) ?? target;
+            if (value is BigInteger integer && TryIntegralArgument(integer, underlying, out var converted))
+                return converted;
+            return Convert.ChangeType(value, underlying, CultureInfo.InvariantCulture);
+        }
+
+        static bool TryIntegralArgument(BigInteger value, Type target, out object? converted)
+        {
+            try
+            {
+                converted = target.IsEnum ? null : Type.GetTypeCode(target) switch
+                {
+                    TypeCode.SByte => (sbyte)value,
+                    TypeCode.Byte => (byte)value,
+                    TypeCode.Int16 => (short)value,
+                    TypeCode.UInt16 => (ushort)value,
+                    TypeCode.Int32 => (int)value,
+                    TypeCode.UInt32 => (uint)value,
+                    TypeCode.Int64 => (long)value,
+                    TypeCode.UInt64 => (ulong)value,
+                    _ => null,
+                };
+            }
+            catch (OverflowException)
+            {
+                converted = null;
+            }
+            return converted != null;
+        }
     }
 
     internal static partial class Builtins
@@ -367,7 +429,7 @@ namespace Typhon.Runtime
                 if (ok && score > bestScore) { best = c; bestScore = score; boundRest = null; }
             }
             if (best == null) throw new InvalidCastException($"{t.Name}() takes no constructor for {args.Length} arguments");
-            if (boundRest != null) return best.Invoke(boundRest);
+            if (boundRest != null) return Unwrapped(() => best.Invoke(boundRest));
             var bps = best.GetParameters();
             var call = new object?[bps.Length];
             for (int i = 0; i < bps.Length; i++)
@@ -377,7 +439,7 @@ namespace Typhon.Runtime
                 call[i] = args[i] == null || pt.IsInstanceOfType(args[i]) || pt == typeof(object) ? args[i]
                     : Convert.ChangeType(args[i], Nullable.GetUnderlyingType(pt) ?? pt, CultureInfo.InvariantCulture);
             }
-            return best.Invoke(call);
+            return Unwrapped(() => best.Invoke(call));
         }
 
         /// <summary>
@@ -407,11 +469,20 @@ namespace Typhon.Runtime
             _ => (string)((dynamic)o).__module__,
         };
 
+        static readonly ConditionalWeakTable<Type, string> ClassModuleNames = new();
+
+        public static void __remember_class_module(Type type, object? name)
+        {
+            if (name is string module) ClassModuleNames.AddOrUpdate(type, module);
+        }
+
         /// <summary>The module of a class: a Typhon class's is the module class it is nested in; the runtime's and .NET's are builtins.</summary>
         static string ModuleOfType(Type t)
         {
             if (t == typeof(Typhon.Stdlib.types.UnionType)) return "typing";
             if (t is PyLocalDataClass local) return local.PythonModule;
+            var definitionType = t.IsGenericType ? t.GetGenericTypeDefinition() : t;
+            if (ClassModuleNames.TryGetValue(definitionType, out var capturedName)) return capturedName;
             var outer = t;
             while (outer.DeclaringType != null) outer = outer.DeclaringType;
             if (outer.GetCustomAttributes(typeof(PySourceAttribute), inherit: false).FirstOrDefault() is PySourceAttribute source)
@@ -437,6 +508,9 @@ namespace Typhon.Runtime
         /// <summary>A type's Python name: int for long, str for string, list for List&lt;T&gt;, a Typhon class's own name.</summary>
         public static string PyTypeName(Type t)
         {
+            if (t.Name.StartsWith("__typhon_rebound_class_", StringComparison.Ordinal) &&
+                t.GetCustomAttributes(typeof(PySourceAttribute), false).OfType<PySourceAttribute>().FirstOrDefault()?.PythonName is string name)
+                return name;
             if (t == typeof(object)) return "object";
             if (PyExc.BuiltinTypeName(t) is string exceptionName) return exceptionName;
             if (t == typeof(Typhon.Stdlib.types.UnionType)) return "Union";
@@ -452,6 +526,7 @@ namespace Typhon.Runtime
             if (t == typeof(PySlice)) return "slice";
             if (t == typeof(ITuple)) return "tuple";
             if (t == typeof(Typhon.Stdlib.types.FunctionType)) return "function";
+            if (t == typeof(Typhon.Stdlib.types.MethodType)) return "method";
             if (t == typeof(long) || t == typeof(int) || t == typeof(short) || t == typeof(byte) || t == typeof(System.Numerics.BigInteger)) return "int";
             if (t == typeof(double) || t == typeof(float)) return "float";
             if (t == typeof(Complex)) return "complex";
@@ -500,6 +575,7 @@ namespace Typhon.Runtime
                 if (TryCustomAllocation(t, args, kw, out var allocated)) return allocated;
                 Typhon.Stdlib._abc.CheckAbstract(t);
                 if (t == typeof(MissingMemberException)) return __attribute_error(args, kw);
+                if (ByteSequenceFactory(t) is PyBoundMethod factory) return factory.__call_kw__(args, kw);
                 if (t == typeof(frozendict<object, object>)) return ConstructFrozenDict(args, kw);
                 if (t == typeof(OrderedDictionary<object, object>)) return dict(ConstructFrozenDict(args, kw, "dict"));
                 if (t == typeof(frozenset<object>)) throw new InvalidCastException("frozenset() takes no keyword arguments");
@@ -556,10 +632,19 @@ namespace Typhon.Runtime
             return d;
         }
 
-        /// <summary>Numeric and string conversions, type(x), and object() through the type object of the builtin.</summary>
+        static PyBoundMethod? ByteSequenceFactory(Type type) => type == typeof(PyBytes)
+            ? new PyBoundMethod(typeof(Builtins), nameof(bytes)) : type == typeof(PyByteArray)
+            ? new PyBoundMethod(typeof(Builtins), nameof(bytearray)) : null;
+
+        /// <summary>Builtin conversions, type(x), and object() through the type object of the builtin.</summary>
         static bool BuiltinTypeCall(Type t, object?[] args, out object? result)
         {
             result = null;
+            if (ByteSequenceFactory(t) is PyBoundMethod factory)
+            {
+                result = (object?)factory.__call__(args);
+                return true;
+            }
             if (t == typeof(long) && args.Length == 2 && args[0] is string integerText && args[1] is int or long)
             {
                 result = @int(integerText, System.Convert.ToInt64(args[1]));
@@ -594,7 +679,7 @@ namespace Typhon.Runtime
         {
             PyFunction pf => pf.__call__(args),
             PyBoundMethod bm => bm.__call__(args),
-            Delegate d => d.DynamicInvoke(args),
+            Delegate d => Unwrapped(() => d.DynamicInvoke(args)),
             // a builtin type as a value (conv = int; conv("5")): the builtin's conversion
             Type t when t == typeof(MissingMemberException) => __attribute_error(args),
             Type t when BuiltinTypeCall(t, args, out var converted) => converted,
@@ -615,6 +700,10 @@ namespace Typhon.Runtime
     /// <summary>A CLR virtual slot used to forward to a different Python signature.</summary>
     [AttributeUsage(AttributeTargets.Method)]
     internal sealed class PyOverrideBridgeAttribute : Attribute { }
+
+    /// <summary>A CLR virtual slot synthesized solely for methods introduced in Python subclasses.</summary>
+    [AttributeUsage(AttributeTargets.Method, Inherited = false)]
+    internal sealed class PyMissingMethodAttribute : Attribute { }
 
     /// <summary>Marks *args when a following parameter prevents the array from being declared as C# params.</summary>
     [AttributeUsage(AttributeTargets.Parameter)]
@@ -742,6 +831,46 @@ namespace Typhon.Runtime
                 a[i] = defaults[i - required];
             }
             return a;
+        }
+
+        public static readonly object RequiredArgument = new();
+
+        public static object?[] BindArguments(string fn, string[] names, object?[] defaults, int positional, int positionalOnly,
+            object?[] args, IDictionary<string, object?>? kw, bool varargs, bool kwargs,
+            out IDictionary<string, object?>? extraKeywords)
+        {
+            int count = Math.Min(args.Length, positional);
+            int extraCount = args.Length - count;
+            if (!varargs && extraCount > 0)
+                throw new InvalidCastException(ArgCountError(fn, defaults.Take(positional)
+                    .Count(value => value == RequiredArgument), positional, args.Length).Message);
+            var bound = new object?[names.Length + extraCount];
+            defaults.CopyTo(bound, 0);
+            Array.Copy(args, bound, count);
+            Array.Copy(args, count, bound, names.Length, extraCount);
+            extraKeywords = null;
+            if (kw != null)
+            {
+                foreach (var item in kw)
+                {
+                    int index = Array.IndexOf(names, item.Key, positionalOnly);
+                    if (index < 0)
+                    {
+                        if (!kwargs) throw new InvalidCastException($"{fn}() got an unexpected keyword argument '{item.Key}'");
+                        (extraKeywords ??= new Dictionary<string, object?>()).Add(item.Key, item.Value);
+                    }
+                    else
+                    {
+                        if (index < count)
+                            throw new InvalidCastException($"{fn}() got multiple values for argument '{item.Key}'");
+                        bound[index] = item.Value;
+                    }
+                }
+            }
+            for (int index = 0; index < names.Length; index++)
+                if (bound[index] == RequiredArgument)
+                    throw new InvalidCastException($"{fn}() missing required argument: '{names[index]}'");
+            return bound;
         }
 
         /// <summary>The keyword arguments that name no parameter: a function's **kwargs dict.</summary>

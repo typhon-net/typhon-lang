@@ -584,18 +584,20 @@ namespace Typhon.Stdlib
         }
 
         /// <summary>The argument of threading.excepthook: the exception a thread's run() raised, and the thread.</summary>
-        internal sealed class ExceptHookArgs : IPyRepr
+        internal class ExceptHookArgs : PyStructSeq
         {
-            public readonly Type exc_type;
-            public readonly Exception exc_value;
+            public readonly dynamic? exc_type;
+            public readonly dynamic? exc_value;
             public readonly object? exc_traceback;
-            public readonly Thread? thread;
-            public ExceptHookArgs(Type exc_type, Exception exc_value, object? exc_traceback, Thread? thread)
+            public readonly dynamic? thread;
+            public ExceptHookArgs(object? exc_type, object? exc_value, object? exc_traceback, object? thread)
             {
                 this.exc_type = exc_type; this.exc_value = exc_value; this.exc_traceback = exc_traceback; this.thread = thread;
             }
-            public string __repr__() => $"ExceptHookArgs(exc_type={Builtins.PyTypeName(exc_type)}, exc_value={Builtins.repr(exc_value)}, exc_traceback=None, thread={Builtins.repr(thread)})";
-            public override string ToString() => __repr__();
+            protected override string TypeName => "_thread._ExceptHookArgs";
+            protected override string[] Fields => ["exc_type", "exc_value", "exc_traceback", "thread"];
+            protected override object?[] Values => [exc_type, exc_value, exc_traceback, thread];
+            public object? this[long index] => Item(index);
         }
 
         static long _counter;
@@ -929,10 +931,11 @@ namespace Typhon.Stdlib
         static void DefaultExcepthook(ExceptHookArgs args)
         {
             if (args.exc_value is SystemExit) return;
-            string name = args.thread != null ? args.thread.name : get_ident().ToString();
-            Console.Error.WriteLine($"Exception in thread {name}:");
-            Console.Error.WriteLine(PyExcInfo.Format(args.exc_value));
-            Console.Error.Flush();
+            if (args.exc_value is not Exception error) throw new InvalidCastException("exc_value must be an exception");
+            string name = args.thread is object target ? Builtins.str((object?)Builtins.getattr(target, "name")) : get_ident().ToString();
+            object output = (object?)sys_.stderr ?? sys_.__stderr__;
+            Builtins.print_kw([$"Exception in thread {name}:"], file: output);
+            Builtins.print_kw([PyExcInfo.Format(error)], file: output, flush: true);
         }
 
         // sys.settrace / sys.setprofile for threads: Typhon has no tracing hooks (the functions are kept, not called)
@@ -955,7 +958,7 @@ namespace Typhon.Stdlib
     }
 
     /// <summary>_thread: the low-level thread functions threading builds on.</summary>
-    internal static class _thread
+    internal static partial class _thread
     {
         public static readonly double TIMEOUT_MAX = PyWait.TimeoutMax;
 
@@ -964,7 +967,21 @@ namespace Typhon.Stdlib
         internal sealed class LockType : threading.Lock { }
         internal sealed class RLock : threading.RLock { }
         internal sealed class _local : threading.local { }
-        internal sealed class _ExceptHookArgs { }
+        internal sealed class _ExceptHookArgs : threading.ExceptHookArgs
+        {
+            public _ExceptHookArgs(object? sequence) : this(Items(sequence)) { }
+            _ExceptHookArgs(object?[] values) : base(values[0], values[1], values[2], values[3]) { }
+
+            static object?[] Items(object? sequence)
+            {
+                if (sequence is not (System.Collections.IEnumerable or System.Runtime.CompilerServices.ITuple))
+                    throw new InvalidCastException("constructor requires a sequence");
+                var values = Builtins.__iter_dyn(sequence).ToArray();
+                if (values.Length != 4)
+                    throw new InvalidCastException($"_thread._ExceptHookArgs() takes a 4-sequence ({values.Length}-sequence given)");
+                return values;
+            }
+        }
 
         public static LockType allocate_lock() => new LockType();
         public static LockType allocate() => new LockType();

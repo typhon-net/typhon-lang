@@ -1,0 +1,11 @@
+from typing import Any
+
+class Broken:
+    def __init__(self):
+        raise ValueError("construct")
+
+factory: Any = Broken
+try:
+    factory()
+except ValueError as error:
+    print(str(error))

@@ -1,0 +1,13 @@
+# typhon: int=bigint
+import re
+from typing import Any
+
+match_text = re.compile(r'b+').match
+match_bytes = re.compile(rb'b+').match
+
+def find(match: Any, sample: Any, start: int, end: int):
+    return match(sample, start, end).group()
+
+print(find(match_text, 'abcd', 1, 4))
+print(find(match_bytes, b'aaabbb', 3, 5))
+print(match_text('aabb', pos=2).span())

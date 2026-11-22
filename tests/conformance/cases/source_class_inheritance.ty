@@ -1,0 +1,60 @@
+from collections.abc import Mapping
+
+initial = {'ready': True}
+
+class State:
+    template = '{name}: {value}'
+    text = template.format(name='state', value=3)
+
+    def __init__(self, data=initial, labels=('start', 'end')):
+        self.data = data
+        self.labels = labels
+
+    def present(self, text):
+        return str(text) + '!'
+
+    def run(self, text):
+        return self.apply(self.present, text, prefix='greeting: ')
+
+    def apply(self, fn, text, **kw):
+        return kw['prefix'] + fn(text)
+
+class Ordinary(State):
+    pass
+
+class Overrides(State):
+    def __init__(self):
+        super().__init__({'override': True})
+
+class SkipParent(Overrides):
+    def __init__(self):
+        State.__init__(self, {'explicit': True})
+
+class Inspection(Mapping):
+    def __iter__(self):
+        return iter(('present',))
+
+    def __len__(self):
+        return 1
+
+    def __getitem__(self, key):
+        if key != 'present':
+            raise KeyError(key)
+        return 'value'
+
+    def get(self, key, fallback=None, *, uppercase=False):
+        value = super().get(key, fallback)
+        return value.upper() if uppercase else value
+
+print(State.text, Ordinary().data is initial, Ordinary().labels)
+print(SkipParent().data)
+print(Ordinary().run('hello'))
+print(Inspection().get('present', uppercase=True), Inspection().get('absent', 'default'))
+
+def choose(items, condition):
+    items.append('left') if condition else items.append('right')
+
+choices: list[str] = []
+choose(choices, True)
+choose(choices, False)
+print(choices)

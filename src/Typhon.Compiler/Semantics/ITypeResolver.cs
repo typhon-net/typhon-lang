@@ -18,12 +18,12 @@ namespace Typhon.Compiler.Semantics
         /// <summary>Does the type (or one of its base types) declare a member with that name?</summary>
         bool HasMember(string metadataName, string memberName);
         /// <summary>Is there a virtual/abstract/override member with that name in the type or its bases?</summary>
-        bool IsOverridable(string metadataName, string memberName);
+        bool IsOverridable(string metadataName, string memberName, int? parameterCount = null);
         /// <summary>
         /// The access modifier an override of that member must declare ("public", "protected", "protected internal", ...),
         /// or null when the type has no overridable member of that name (ComponentBase.OnInitialized → "protected").
         /// </summary>
-        string OverrideAccessibility(string metadataName, string memberName);
+        string OverrideAccessibility(string metadataName, string memberName, int? parameterCount = null);
         /// <summary>Public and protected instance constructors of a non-generic class (empty when unknown).</summary>
         IReadOnlyList<CtorSignature> GetConstructors(string metadataName);
         /// <summary>
@@ -54,6 +54,7 @@ namespace Typhon.Compiler.Semantics
         /// <summary>The C# type to narrow to when <see cref="Fit"/> is <see cref="LongFit.Narrow"/> ("int", "short", ...).</summary>
         public string NarrowTo;
         public bool IsParams;
+        public bool IsPackedArguments;
         public bool IsOptional;
         /// <summary>The parameter is System.Delegate itself (ASP.NET Core's MapGet): any function, by its own signature.</summary>
         public bool IsDelegateBase;
@@ -75,6 +76,10 @@ namespace Typhon.Compiler.Semantics
     {
         public bool IsMethod;
         public bool IsStatic;
+        public bool IsOptionalModuleMember;
+        public bool IsProperty;
+        public bool IsOverridable;
+        public bool RequiresClrArguments;
         /// <summary>The result type (method return, property or field type) as C# code, or null when Typhon should not adopt it.</summary>
         public string Type;
         /// <summary>For properties and fields: how a long assigned to it fits.</summary>
@@ -110,8 +115,8 @@ namespace Typhon.Compiler.Semantics
         public bool NamespaceExists(string dottedNamespace) => false;
         public IReadOnlyList<MemberSig> GetExtensionMethods(string receiverMetadataName, string name, IReadOnlyList<string> namespaces) => new List<MemberSig>();
         public bool HasMember(string metadataName, string memberName) => false;
-        public bool IsOverridable(string metadataName, string memberName) => false;
-        public string OverrideAccessibility(string metadataName, string memberName) => null;
+        public bool IsOverridable(string metadataName, string memberName, int? parameterCount = null) => false;
+        public string OverrideAccessibility(string metadataName, string memberName, int? parameterCount = null) => null;
         public IReadOnlyList<CtorSignature> GetConstructors(string metadataName) => new CtorSignature[0];
         public IReadOnlyList<MemberSig> GetMembers(string metadataName, string memberName) => new MemberSig[0];
     }

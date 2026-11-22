@@ -1,0 +1,5 @@
+[True] 3
+display b'abc' True
+owned descriptor closed
+True b'a'
+b'bc'
