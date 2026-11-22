@@ -60,8 +60,30 @@ namespace Typhon.Compiler.Emit
             Expr target = func is SubscriptExpr s ? s.Target : func;
             int arity = func is SubscriptExpr gs ? (gs.Index is TupleExpr t ? t.Elts.Count : 1) : 0;
             string dotted = DottedName(target);
-            if (dotted == null || !TryResolveType(dotted, arity, out var meta, out _) || meta == null) return null;
-            return _r.GetMembers(meta, ".ctor");
+            if (dotted == null || !TryResolveType(dotted, arity, out var meta, out var definition)) return null;
+            if (meta != null) return _r.GetMembers(meta, ".ctor");
+            if (InheritedNativeConstructorBase(definition) is not string native) return null;
+            return _r.GetConstructors(native).Where(c => !c.IsProtected && c.Signature != null)
+                .Select(c => c.Signature).ToList();
+        }
+
+        string InheritedNativeConstructorBase(ClassDef definition, int depth = 0)
+        {
+            if (definition == null || depth > 20 || HasDecorator(definition.Decorators, "dataclass") ||
+                definition.Body.OfType<FunctionDef>().Any(f => f.Name == "__init__")) return null;
+            var resolver = ClassDeclarationResolver(definition);
+            foreach (var basis in definition.Bases)
+            {
+                if (!resolver.ResolveBase(basis, out var parent, out var native)) continue;
+                if (parent != null)
+                {
+                    if (IsProtocol(parent)) continue;
+                    return InheritedNativeConstructorBase(parent, depth + 1);
+                }
+                // Exception wrappers have Python's variadic exception signature.
+                return native != null && !ExceptionMetaMap.ContainsValue(native) ? native : null;
+            }
+            return null;
         }
 
         IReadOnlyList<Semantics.MemberSig> DotNetOverloads(CallExpr c)

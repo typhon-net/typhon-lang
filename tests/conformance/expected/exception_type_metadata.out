@@ -1,0 +1,4 @@
+ValueError ValueError builtins
+TypeError TypeError builtins
+SyntaxError SyntaxError builtins
+AttributeError AttributeError builtins

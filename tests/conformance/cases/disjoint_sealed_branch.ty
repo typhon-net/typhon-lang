@@ -1,0 +1,18 @@
+def text_path(path: str) -> str:
+    if isinstance(path, bytes):
+        if not path.startswith(b'/'):
+            path = b'/' + path
+    elif not path.startswith('/'):
+        path = '/' + path
+    return path
+
+def bytes_path(path: bytes) -> bytes:
+    if isinstance(path, str):
+        if not path.startswith('/'):
+            path = '/' + path
+    else:
+        path = path.removeprefix(b'/')
+    return path
+
+print(text_path('typ'), text_path('/abs'))
+print(bytes_path(b'/abs'), bytes_path(b'rel'))

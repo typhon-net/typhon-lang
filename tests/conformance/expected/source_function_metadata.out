@@ -1,0 +1,2 @@
+Convenience function to create Timer object and call repeat method.
+repeat

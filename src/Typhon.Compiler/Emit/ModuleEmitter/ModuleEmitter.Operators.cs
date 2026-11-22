@@ -73,6 +73,7 @@ namespace Typhon.Compiler.Emit
         {
             string lt = InferType(b.Left), rt = InferType(b.Right);
             if (lt == TypeInference.Pending || rt == TypeInference.Pending || lt != null && lt.Contains(TypeInference.Pending) || rt != null && rt.Contains(TypeInference.Pending)) return false;
+            if ((lt == null || rt == null) && IsListy(b.Left) && IsListy(b.Right)) return true;
             // one side a list, the other a list of other items or of a type Typhon cannot tell (C# may see a different list)
             return lt != null && lt.StartsWith("List<") && (rt == null && MaybeLateBound(b.Right) || rt != null && rt.StartsWith("List<") && lt != rt) ||
                    rt != null && rt.StartsWith("List<") && lt == null && MaybeLateBound(b.Left);
@@ -138,6 +139,16 @@ namespace Typhon.Compiler.Emit
             var q = BigInteger.DivRem(a, b, out var rem);
             return !rem.IsZero && (rem.Sign < 0) != (b.Sign < 0) ? q - 1 : q;
         }
+
+        string IntegerPowerType(Expr exponent) => FoldInt(exponent) is BigInteger constant
+            ? constant.Sign < 0 ? "double" : IntT
+            : IsNonNegative(exponent) ? IntT : "dynamic";
+
+        BinOpExpr BinaryPowerCall(CallExpr call) =>
+            call.Func is NameExpr { Id: "pow" } && !IsShadowed("pow") && call.Args.Count == 2 &&
+            call.Args.All(arg => arg.Name == null && !arg.Star && !arg.DoubleStar)
+                ? new BinOpExpr { Op = "**", Left = call.Args[0].Value, Right = call.Args[1].Value, Line = call.Line, Col = call.Col }
+                : null;
 
         string EmitBinOp(BinOpExpr b)
         {
@@ -220,7 +231,16 @@ namespace Typhon.Compiler.Emit
                     return $"{Rt("truediv")}((object){Paren(l)}, (object){Paren(r)})";
                 case "/": return $"{Rt("truediv")}({l}, {r})";
                 case "//": return $"{Rt("floordiv")}({l}, {r})";
-                case "**": return $"{Rt("pow")}({l}, {r})";
+                case "**":
+                {
+                    string result = IsIntegral(lType) && IsIntegral(rType) ? IntegerPowerType(b.Right) : null;
+                    if (result is "dynamic" or "double" || IsUnknownType(lType) || IsUnknownType(rType))
+                    {
+                        string call = $"{Rt("pow")}((object){Paren(l)}, (object){Paren(r)})";
+                        return result == "double" ? $"((double){call})" : call;
+                    }
+                    return $"{Rt("pow")}({l}, {r})";
+                }
                 case "@": return $"{Paren(l)}.__matmul__({r})";
                 case "*" when IsSequenceLiteral(b.Left) || IsSequenceLiteral(b.Right) || IsSequenceTyped(b.Left) || IsSequenceTyped(b.Right): return $"{Rt("__repeat")}({l}, {r})";
                 // late-bound operands may be a str or list at run time: "ab" * 2 must repeat, not fail in the binder

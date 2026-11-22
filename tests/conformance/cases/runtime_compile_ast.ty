@@ -1,0 +1,33 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import ast
+import __future__
+
+ast_only = ast.PyCF_ONLY_AST
+expression = compile(b"40 + 2", "<expression>", "eval", ast_only)
+print(type(expression).__name__, type(expression.body.op).__name__)
+print(expression.body.left.value, expression.body.right.value)
+interactive = compile("if True:\n    pass\n", "<interactive>", "single", ast_only)
+print(type(interactive).__name__, type(interactive.body[0]).__name__)
+
+module = compile("return", "<module>", "exec", ast_only)
+print(type(module.body[0]).__name__)
+decorated = ast.parse("def decorate(f):\n    return f\n@decorate\ndef wrapped():\n    pass\n")
+print(decorated.body[1].name, decorated.body[1].decorator_list[0].id)
+compare = ast.parse("from __future__ import barry_as_FLUFL\n42 <> 0")
+print(type(compare.body[1].value.ops[0]).__name__)
+future_flag = __future__.barry_as_FLUFL.compiler_flag
+print(type(compile("41 <> 42", "<future>", "eval", ast_only | future_flag).body.ops[0]).__name__)
+
+for source in [" 1 + 2", "if True:\npass", "await f()", "nonlocal x"]:
+    try:
+        compile(source, "<syntax>", "exec")
+    except IndentationError:
+        print("indentation")
+    except SyntaxError:
+        print("syntax")
+try:
+    compile("1 = 2", "<syntax>", "exec", ast_only)
+except SyntaxError:
+    print("invalid AST target")

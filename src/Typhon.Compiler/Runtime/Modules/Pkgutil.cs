@@ -185,7 +185,7 @@ namespace Typhon.Stdlib
         public RuntimeCode get_code(string fullname)
         {
             string filename = get_filename(fullname);
-            try { return Builtins.compile(get_data(filename), filename, "exec", module: fullname); }
+            try { return (RuntimeCode)Builtins.compile(get_data(filename), filename, "exec", module: fullname); }
             catch (IOException error) { throw new ImportError(error.Message, fullname); }
         }
 
@@ -199,6 +199,16 @@ namespace Typhon.Stdlib
             using var data = new MemoryStream();
             input.CopyTo(data);
             return new PyBytes(data.ToArray());
+        }
+
+        public string path => origin;
+
+        public object get_resource_reader(string fullname)
+        {
+            _ = get_filename(fullname);
+            if (archive == null) return new importlib.resources.readers.FileReader(this);
+            string entry = member!;
+            return new importlib.resources.readers.ZipReader(archive, entry[..(entry.LastIndexOf('/') + 1)]);
         }
 
         public object? create_module(importlib.machinery.ModuleSpec spec) => null;

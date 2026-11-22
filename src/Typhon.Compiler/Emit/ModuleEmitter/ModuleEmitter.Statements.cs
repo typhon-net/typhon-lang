@@ -333,11 +333,22 @@ namespace Typhon.Compiler.Emit
                 ? comparison.Ops[0] == "not in" : null;
         }
 
+        bool? DisjointSealedInstanceTest(Expr test)
+        {
+            if (test is not CallExpr { Func: NameExpr { Id: "isinstance" }, Args.Count: 2 } check ||
+                IsShadowed("isinstance") || check.Args.Any(argument => argument.Star || argument.DoubleStar || argument.Name != null) ||
+                check.Args[0].Value is not NameExpr receiver || !IsLocal(receiver.Id) ||
+                check.Args[1].Value is not NameExpr { Id: "str" or "bytes" or "bytearray" } tested || IsShadowed(tested.Id)) return null;
+            string actual = KnownType(receiver.Id);
+            return (actual == "string" || IsBytesType(actual)) && actual != MapType(tested, test) ? false : (bool?)null;
+        }
+
         void EmitIf(IfStmt i, bool isElif)
         {
-            // Sealed text and byte values cannot match literals in the other domain.
-            // Keep evaluating the comparison before emitting the reachable suite.
-            if (!_m.IsGdScript && _scope?.IsGenerator != true && DisjointLiteralMembership(i.Test) is bool matches)
+            // An exact text or bytes representation cannot match a disjoint sealed type or its literals.
+            // Evaluate the original test before emitting the reachable suite.
+            if (!_m.IsGdScript && _scope?.IsGenerator != true &&
+                (DisjointLiteralMembership(i.Test) ?? DisjointSealedInstanceTest(i.Test)) is bool matches)
             {
                 if (isElif)
                 {
@@ -372,6 +383,7 @@ namespace Typhon.Compiler.Emit
                 _w.Line($"{(isElif ? "else if" : "if")} ({Cond(i.Test)})");
                 EmitBlock(i.Body, narrowed: NarrowedBy(i.Test, whenTrue: true));
             }
+            if (i.OrElse.Count != 0 && EmitNonMatchingSealedInstanceBranch(i)) return;
             if (i.OrElse.Count == 1 && i.OrElse[0] is IfStmt elif)
             {
                 LineDirective(elif);
@@ -382,6 +394,35 @@ namespace Typhon.Compiler.Emit
                 _w.Line("else");
                 EmitBlock(i.OrElse, narrowed: NarrowedBy(i.Test, whenTrue: false));
             }
+        }
+
+        // The branch that rejects an exact sealed type cannot continue using that type for dispatch or specialization.
+        bool EmitNonMatchingSealedInstanceBranch(IfStmt statement)
+        {
+            if (_m.IsGdScript || statement.Test is not CallExpr { Func: NameExpr { Id: "isinstance" }, Args.Count: 2 } check ||
+                IsShadowed("isinstance") || check.Args.Any(argument => argument.Star || argument.DoubleStar || argument.Name != null) ||
+                check.Args[0].Value is not NameExpr receiver || !IsLocal(receiver.Id) ||
+                check.Args[1].Value is not NameExpr { Id: "str" or "bytes" or "bytearray" } tested ||
+                IsShadowed(tested.Id) || KnownType(receiver.Id) != MapType(tested, statement.Test) ||
+                AssignsName(statement.OrElse, receiver.Id)) return false;
+
+            string original = EmitName(receiver);
+            string alias = NewTmp(receiver.Id);
+            bool hadRename = _renames.TryGetValue(receiver.Id, out var previousRename);
+            bool hadType = _scope.Types.TryGetValue(receiver.Id, out var previousType);
+            _renames[receiver.Id] = alias;
+            _scope.Types[receiver.Id] = "dynamic";
+            try
+            {
+                _w.Line("else");
+                EmitBlock(statement.OrElse, $"dynamic {alias} = {original};");
+            }
+            finally
+            {
+                if (hadRename) _renames[receiver.Id] = previousRename; else _renames.Remove(receiver.Id);
+                if (hadType) _scope.Types[receiver.Id] = previousType; else _scope.Types.Remove(receiver.Id);
+            }
+            return true;
         }
 
         /// <summary>isinstance(name, Cls) with one Typhon or .NET class, on a variable the block does not assign.</summary>
@@ -403,7 +444,7 @@ namespace Typhon.Compiler.Emit
             if (MayHaveVirtualSubclasses(clsMeta, pyClass)) return false;
             string current = KnownType(n.Id);
             type = MapType(cls, test);
-            if (type == null || current == type) return false;
+            if (type == null || type == "dynamic" || current == type) return false;
             name = n;
             return true;
         }
@@ -441,8 +482,17 @@ namespace Typhon.Compiler.Emit
                     _w.Line($"_ = {binding};");
                     _w.Line($"{binding} = global::Typhon.Runtime.PyModule.Unbound;");
                 }
-                // del name: Python unbinds it (a module's clean-up of helper names, a local no longer needed); the CLR
-                // cannot unbind a variable, and reading it later is an error in Python anyway: nothing to do
+                else if (t is NameExpr className && LateClassSlot(className.Id) is string storage)
+                {
+                    string nameLiteral = CsString(className.Id);
+                    if (HasUserMetaclass(_cls.Def))
+                    {
+                        _w.Line($"{Rt("__class_namespace_delete")}(typeof({_cls.CsSelfType}), {nameLiteral});");
+                        _w.Line($"{storage} = global::Typhon.Runtime.PyClassDescriptors.Unassigned;");
+                    }
+                    else _w.Line($"global::Typhon.Runtime.PyClassDescriptors.DeleteBodyName(ref {storage}, {nameLiteral});");
+                }
+                // Other local variables have no unbound state in the CLR.
                 else if (t is NameExpr) continue;
                 // del obj.attr: an attribute the class declares goes back to its default value; one added at run time is removed
                 else if (t is AttributeExpr da)

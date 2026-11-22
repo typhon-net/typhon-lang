@@ -1,0 +1,85 @@
+import importlib.machinery
+import importlib.resources
+import importlib.resources.readers
+import os
+import pathlib
+import sys
+import tempfile
+import zipfile
+from types import SimpleNamespace
+
+class ArchiveLoader:
+    prefix = ""
+    def __init__(self, name: str):
+        self.archive = name
+
+    def is_package(self, name: str) -> bool:
+        return name == "package"
+
+
+suffixes = importlib.machinery.EXTENSION_SUFFIXES
+print(bool(suffixes), suffixes[-1] == (".pyd" if os.name == "nt" else ".so"))
+
+with tempfile.TemporaryDirectory() as temp:
+    root = pathlib.Path(temp)
+    first = root.joinpath("first")
+    second = root.joinpath("second")
+    first.joinpath("nested").mkdir(parents=True)
+    second.joinpath("nested").mkdir(parents=True)
+    first.joinpath("shared.txt").write_text("first")
+    second.joinpath("shared.txt").write_text("second")
+    first.joinpath("nested", "a.txt").write_text("alpha")
+    second.joinpath("nested", "b.txt").write_text("beta")
+    merged = importlib.resources.readers.MultiplexedPath(first, second, first)
+    print(merged.name, merged.is_dir(), merged.is_file())
+    print([entry.name for entry in merged.iterdir()])
+    print([entry.name for entry in merged.joinpath("nested").iterdir()])
+    print(merged.joinpath("shared.txt").read_text())
+    print(merged.joinpath("nested/b.txt").read_text())
+    print(merged.joinpath("missing").is_file())
+
+    loader = SimpleNamespace(path=str(first.joinpath("__init__.py")))
+    reader = importlib.resources.readers.FileReader(loader)
+    print(reader.is_resource("shared.txt"), reader.is_resource("nested"))
+    with reader.open_resource("shared.txt") as stream:
+        print(stream.read())
+
+    archive = root.joinpath("resources.zip")
+    with zipfile.ZipFile(archive, "w") as writer:
+        writer.writestr("package/__init__.py", b"")
+        writer.writestr("package/nested/data.txt", "café")
+        writer.writestr("package/value.bin", b"\x00\xff")
+
+    zip_reader = importlib.resources.readers.ZipReader(ArchiveLoader(str(archive)), "package")
+    print(zip_reader.prefix, zip_reader.is_resource("value.bin"), zip_reader.is_resource("missing"))
+    print(sorted(zip_reader.contents()))
+    print(zip_reader.files().joinpath("nested", "data.txt").read_text(encoding="utf-8"))
+    with zip_reader.open_resource("value.bin") as stream:
+        print(stream.read())
+
+    disk_package = root.joinpath("disk_package")
+    disk_package.mkdir()
+    disk_package.joinpath("__init__.py").write_text("")
+    disk_package.joinpath("payload.txt").write_text("resources")
+    sys.path.insert(0, str(root))
+    sys.path.insert(0, str(archive))
+    try:
+        print(importlib.resources.files("disk_package").joinpath("payload.txt").read_bytes())
+        print(importlib.resources.files("package").joinpath("nested/data.txt").read_text(encoding="utf-8"))
+    finally:
+        sys.path.pop(0)
+        sys.path.pop(0)
+
+    first.joinpath("shared_namespace").mkdir()
+    second.joinpath("shared_namespace").mkdir()
+    first.joinpath("shared_namespace", "a.txt").write_text("alpha")
+    second.joinpath("shared_namespace", "b.txt").write_text("beta")
+    sys.path.insert(0, str(second))
+    sys.path.insert(0, str(first))
+    try:
+        entries = importlib.resources.files("shared_namespace")
+        print([item.name for item in entries.iterdir()])
+        print(entries.joinpath("a.txt").read_text(), entries.joinpath("b.txt").read_text())
+    finally:
+        sys.path.pop(0)
+        sys.path.pop(0)

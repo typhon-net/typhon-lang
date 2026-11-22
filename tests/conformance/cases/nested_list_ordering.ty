@@ -1,0 +1,8 @@
+paths: list[list[str]] = [["b"], ["a", "b"], ["a"], ["b", "a"]]
+print(min(paths), max(paths))
+print(sorted(paths))
+paths.sort(reverse=True)
+print(paths)
+print(min([8], [7, 10]), max([4], [4, 1]))
+print(min([(["a", "c"], 3), (["a", "b"], 4)]))
+print(sorted([["file2"], ["file1"], ["File1"]], key=lambda value: value))

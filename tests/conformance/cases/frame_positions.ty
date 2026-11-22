@@ -1,0 +1,15 @@
+from itertools import islice
+
+def fail():
+    raise ValueError("position")
+
+try:
+    fail()
+except ValueError as error:
+    tb = error.__traceback__
+    while tb is not None:
+        code = tb.tb_frame.f_code
+        index = tb.tb_lasti // 2
+        start, end, col, end_col = next(islice(code.co_positions(), index, None))
+        print(code.co_name, start == tb.tb_lineno, end is None or end >= start)
+        tb = tb.tb_next

@@ -1,0 +1,19 @@
+import os
+
+def find_extension(value, separator):
+    return value.rfind(separator)
+
+def extension_index(value):
+    value = os.fspath(value)
+    if isinstance(value, bytes):
+        return find_extension(value, b".")
+    else:
+        return find_extension(value, ".")
+
+def normalized(paths):
+    paths = tuple(map(os.fspath, paths))
+    return paths
+
+print(extension_index(b"a.b.c"), extension_index("a.b.c"))
+print(normalized(["one", "two"]))
+print(normalized([b"one", b"two"]))

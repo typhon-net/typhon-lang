@@ -1,0 +1,23 @@
+hints = frozendict({
+    "push": ((list, "append", False),),
+    "add": ((list, "set", True), (frozenset, "set", True)),
+    "items": ((dict, "items", False),),
+})
+
+def hint(subject: object, name: str):
+    for kind, text, raw in hints.get(name, ()):
+        if isinstance(subject, kind):
+            return text if raw else "." + text
+    return None
+
+print(hint([1], "push"))
+print(hint(frozenset([1]), "add"))
+print(hint({"a": 1}, "items"))
+print(hint("text", "push"))
+
+def fixed(record: tuple[type, str, bool]):
+    print(record[0] is dict, record[1], record[2])
+
+fixed((dict, "keys", False))
+pairs = {"one": (1, 2), "two": (3, 4)}
+print(pairs["one"], pairs["two"])

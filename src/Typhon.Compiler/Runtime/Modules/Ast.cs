@@ -15,6 +15,8 @@ namespace Typhon.Stdlib
 
     internal static partial class ast
     {
+        public const long PyCF_ONLY_AST = 0x400;
+
         internal class AST : DynamicObject
         {
             internal readonly Dictionary<string, object?> Fields = new(StringComparer.Ordinal);
@@ -195,17 +197,17 @@ namespace Typhon.Stdlib
             };
             if (mode is not ("exec" or "single" or "eval"))
                 throw new ArgumentException("compile() mode must be 'exec', 'eval' or 'single'");
+            return CompileTree(text, filename, mode, PyCF_ONLY_AST);
+        }
+
+        internal static AST CompileTree(string text, string filename, string mode, long flags)
+        {
             var parseSource = AppContext.GetData("Typhon.ParseRuntimeAst") as
-                Func<string, string, string, (object? Tree, string? Error, int Line, int Column, bool Indent)>
+                Func<string, string, string, long, (object? Tree, string? Error, int Line, int Column, int Kind)>
                 ?? throw new NotSupportedException("ast.parse() requires the Typhon runtime compiler host");
-            var parsed = parseSource(text, filename, mode);
+            var parsed = parseSource(text, filename, mode, flags);
             if (parsed.Error != null)
-            {
-                var lines = text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
-                string? line = parsed.Line > 0 && parsed.Line <= lines.Length ? lines[parsed.Line - 1] : null;
-                var details = (filename, (long)parsed.Line, (long)parsed.Column, line);
-                throw parsed.Indent ? new IndentationError(parsed.Error, details) : new SyntaxError(parsed.Error, details);
-            }
+                throw Builtins.RuntimeSyntaxError(text, filename, parsed.Error, parsed.Line, parsed.Column, parsed.Kind);
             return (AST)Materialize(parsed.Tree)!;
         }
 

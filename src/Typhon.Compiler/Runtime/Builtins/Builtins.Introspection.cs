@@ -90,7 +90,9 @@ namespace Typhon.Runtime
         {
             switch (classinfo)
             {
-                case Type t: return IsSubclass(cls, t);
+                case Type t:
+                    return PyMetaclasses.TryBindMember(t, "__subclasscheck__", out var check)
+                        ? truthy((object?)__invoke(check, [cls])) : IsSubclass(cls, t);
                 case Typhon.Stdlib.types.UnionType union:
                     return union.__args__.Any(type => issubclass(cls, type));
                 case ITuple tuple:
@@ -108,21 +110,42 @@ namespace Typhon.Runtime
         public static bool issubclass(object? cls, object? classinfo) =>
             cls is Type t ? issubclass(t, classinfo) : throw new InvalidCastException("issubclass() arg 1 must be a class");
 
-        static readonly List<(WeakReference<Type> Base, WeakReference<Type> Subclass)> VirtualBases = new();
+        static readonly List<(WeakReference<Type> Base, WeakReference<Type> Subclass, bool Explicit)> VirtualBases = new();
+        static long _abcCacheToken;
 
-        public static Type __register_abc(Type abc, Type subclass)
+        internal static long AbcCacheToken => System.Threading.Interlocked.Read(ref _abcCacheToken);
+
+        public static Type __register_abc(Type abc, Type subclass) => RegisterVirtualBase(abc, subclass, true);
+
+        public static void __register_mixin_base(Type abc, Type subclass) => RegisterVirtualBase(abc, subclass, false);
+
+        static Type RegisterVirtualBase(Type abc, Type subclass, bool explicitRegistration)
         {
             lock (VirtualBases)
             {
                 if (IsSubclass(subclass, abc)) return subclass;
                 if (IsSubclass(abc, subclass)) throw new InvalidOperationException("Refusing to create an inheritance cycle");
                 VirtualBases.RemoveAll(rule => !rule.Base.TryGetTarget(out _) || !rule.Subclass.TryGetTarget(out _));
-                VirtualBases.Add((new WeakReference<Type>(abc), new WeakReference<Type>(subclass)));
+                VirtualBases.Add((new WeakReference<Type>(abc), new WeakReference<Type>(subclass), explicitRegistration));
+                if (explicitRegistration) System.Threading.Interlocked.Increment(ref _abcCacheToken);
                 return subclass;
             }
         }
 
-        static bool IsSubclass(Type cls, Type of)
+        internal static void ClearAbcRegistry(Type abc)
+        {
+            lock (VirtualBases)
+                VirtualBases.RemoveAll(rule => rule.Explicit && rule.Base.TryGetTarget(out var parent) && parent == abc);
+        }
+
+        internal static Type[] AbcRegistry(Type abc)
+        {
+            lock (VirtualBases)
+                return VirtualBases.Select(rule => rule.Explicit && rule.Base.TryGetTarget(out var parent) && parent == abc &&
+                    rule.Subclass.TryGetTarget(out var child) ? child : null).OfType<Type>().ToArray();
+        }
+
+        internal static bool IsSubclass(Type cls, Type of)
         {
             if (DirectSubclass(cls, of)) return true;
             lock (VirtualBases)
@@ -161,6 +184,11 @@ namespace Typhon.Runtime
             if (of == typeof(Typhon.Stdlib.types.AsyncGeneratorType) && Typhon.Stdlib.inspect.IsAsyncGeneratorType(cls)) return true;
             if (of == typeof(Typhon.Stdlib.collections.abc.Mapping) && (typeof(IDictionary).IsAssignableFrom(cls) ||
                 cls.GetInterfaces().Any(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IReadOnlyDictionary<,>)))) return true;
+            if (of == typeof(Typhon.Stdlib.collections.abc.Sequence) && !typeof(IDictionary).IsAssignableFrom(cls) &&
+                (cls == typeof(string) || cls == typeof(global::memoryview) ||
+                typeof(IList).IsAssignableFrom(cls) || typeof(ITuple).IsAssignableFrom(cls) ||
+                typeof(Typhon.Stdlib.collections.UserList).IsAssignableFrom(cls) || typeof(Typhon.Stdlib.collections.UserString).IsAssignableFrom(cls) ||
+                cls.GetInterfaces().Any(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IReadOnlyList<>)))) return true;
             if (of == typeof(Typhon.Stdlib.collections.abc.Generator) && (cls == typeof(Typhon.Stdlib.types.GeneratorType) || Typhon.Stdlib.inspect.IsGeneratorType(cls) ||
                 Typhon.Stdlib.collections.abc._check_methods(cls, "__iter__", "__next__", "send", "throw", "close") is true)) return true;
             if (of == typeof(Typhon.Stdlib.collections.abc.Coroutine) && (cls == typeof(Typhon.Stdlib.types.CoroutineType) || typeof(System.Threading.Tasks.Task).IsAssignableFrom(cls) ||
@@ -295,15 +323,16 @@ namespace Typhon.Runtime
         /// that holds its members (getattr(m, "sqrt") works on it). Without fromlist, a dotted name gives the top-level
         /// package, like Python's. Typhon modules of the program itself are compiled in: import them with import.
         /// </summary>
-        public static object __import__(string name, object? globals = null, object? locals = null, object? fromlist = null, long level = 0)
+        public static object __import__(object? name, object? globals = null, object? locals = null, object? fromlist = null, long level = 0)
         {
+            if (name is not string moduleName) throw new InvalidCastException("module name must be a string");
             if (level != 0) throw new NotImplementedException("__import__() with a relative level is not supported");
-            var parts = name.Split('.');
+            var parts = moduleName.Split('.');
             bool wantsLeaf = fromlist is IEnumerable fl && fl.Cast<object?>().Any();
             Type? top = StdlibModuleType(parts[0]);
             if (top == null)
             {
-                object loaded = Typhon.Stdlib.SourceImport.ImportModule(name);
+                object loaded = Typhon.Stdlib.SourceImport.ImportModule(moduleName);
                 return wantsLeaf || parts.Length == 1 ? loaded : Typhon.Stdlib.SourceImport.ImportModule(parts[0]);
             }
             Type current = top;

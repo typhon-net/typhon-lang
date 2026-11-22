@@ -1,0 +1,5 @@
+'| alpha\n\n  \n| beta\n'
+'+ alpha\n\n  \nbeta\n'
+'alpha\n\n  \n= beta\n'
+'# alpha\n\n  \n# beta\n'
+''

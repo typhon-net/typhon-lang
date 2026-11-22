@@ -1,0 +1,2 @@
+for error in [ValueError("bad"), TypeError("wrong"), SyntaxError("oops"), AttributeError("missing")]:
+    print(type(error).__name__, type(error).__qualname__, type(error).__module__)

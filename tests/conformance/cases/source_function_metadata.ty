@@ -1,0 +1,9 @@
+#:pylib
+import timeit
+
+def run():
+    pass
+
+run.__doc__ = timeit.repeat.__doc__
+print(run.__doc__)
+print(timeit.repeat.__name__)

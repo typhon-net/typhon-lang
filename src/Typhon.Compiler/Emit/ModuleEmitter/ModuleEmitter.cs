@@ -133,9 +133,7 @@ namespace Typhon.Compiler.Emit
             LineDirective(body.FirstOrDefault());
             if (!_m.IsGdScript)
             {
-                string doc = body.FirstOrDefault() is ExprStmt statement && statement.Value is ConstExpr { Kind: ConstKind.Str } text
-                    ? CsString(text.Str) : "null";
-                _w.Line($"[global::Typhon.Runtime.PySource({CsString(_path)}, {CsString(PythonModuleName)}, doc: {doc})]");
+                _w.Line($"[global::Typhon.Runtime.PySource({CsString(_path)}, {CsString(PythonModuleName)}, doc: {ModuleDocLiteral(body)})]");
             }
             _w.Line("public static partial class " + Esc(_m.ClassName));
             _w.Open();
@@ -162,6 +160,9 @@ namespace Typhon.Compiler.Emit
             bool IsMain(Expr e) => e is ConstExpr k && k.Kind == ConstKind.Str && k.Str == "__main__";
             return (IsName(c.Left) && IsMain(c.Comparators[0])) || (IsMain(c.Left) && IsName(c.Comparators[0]));
         }
+
+        static string ModuleDocLiteral(List<Stmt> body) =>
+            body.FirstOrDefault() is ExprStmt { Value: ConstExpr { Kind: ConstKind.Str } text } ? CsString(text.Str) : "null";
 
         void EmitModuleBody(List<Stmt> body)
         {
@@ -195,6 +196,12 @@ namespace Typhon.Compiler.Emit
             var fields = new Dictionary<string, string>();      // name → C# type
             var execStmts = new List<Stmt>();                     // static ctor (regular) / Main (main module)
             var mainBlocks = new List<Stmt>();
+
+            if (!runtimeCode && !_m.IsGdScript && _m.Globals.Contains("__doc__"))
+            {
+                fields["__doc__"] = _moduleFieldTypes["__doc__"] = "dynamic";
+                _w.Line($"internal static dynamic? __doc__ = {ModuleDocLiteral(body)};");
+            }
 
             foreach (string name in _m.ReboundFunctions.OrderBy(name => name, StringComparer.Ordinal))
                 EmitLateModuleField(name, fields);
@@ -385,7 +392,7 @@ namespace Typhon.Compiler.Emit
                 foreach (var copy in mixin.Value)
                 {
                     if (copy.Module != _m || copy.Class.TypeParams.Count != 0) continue;
-                    registration.Append($"\n{Rt("__register_abc")}(typeof({ModuleClassName(owner)}.{Esc(ancestor.Name)}), typeof({Esc(copy.Class.Name)}));");
+                    registration.Append($"\n{Rt("__register_mixin_base")}(typeof({ModuleClassName(owner)}.{Esc(ancestor.Name)}), typeof({Esc(copy.Class.Name)}));");
                 }
             }
             return registration.ToString();
@@ -457,6 +464,8 @@ namespace Typhon.Compiler.Emit
             if (_m.WritesModuleGlobals || _lateModuleFields.Count != 0)
                 return $"((dynamic)global::Typhon.Runtime.PyModule.Of(typeof({ModuleClassName(_m)}), {CsString(_m.Name)}).__dict__)";
             var entries = new List<string> { $"[\"__name__\"] = {CsString(_m.Name)}" };
+            if (!_m.IsGdScript && !_moduleFieldNames.Contains("__doc__"))
+                entries.Add($"[\"__doc__\"] = {ModuleObject(_m)}.__doc__");
             foreach (var f in _moduleFieldNames.OrderBy(x => x, StringComparer.Ordinal)) entries.Add($"[{CsString(f)}] = {Esc(f)}");
             foreach (var c in _m.Classes.Keys.OrderBy(x => x, StringComparer.Ordinal)) entries.Add($"[{CsString(c)}] = typeof({Esc(c)})");
             foreach (var fn in _m.Ast.Body.OfType<FunctionDef>())

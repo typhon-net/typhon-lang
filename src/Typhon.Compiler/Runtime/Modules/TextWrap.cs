@@ -292,12 +292,18 @@ namespace Typhon.Stdlib
         }
 
         /// <summary>indent: prefix the lines the predicate selects (by default those that are not only whitespace).</summary>
-        public static string indent(string text, string prefix, Func<string, bool>? predicate = null)
+        public static string indent(string text, string prefix, object? predicate = null)
         {
+            Func<string, bool> select = predicate switch
+            {
+                null => static line => !IsSpaceString(line),
+                Func<string, bool> typed => typed,
+                _ => line => Builtins.truthy((object?)Builtins.__invoke(predicate, [line])),
+            };
             var sb = new StringBuilder();
             foreach (var line in SplitLinesKeepEnds(text))
             {
-                if (predicate == null ? !IsSpaceString(line) : predicate(line)) sb.Append(prefix);
+                if (select(line)) sb.Append(prefix);
                 sb.Append(line);
             }
             return sb.ToString();

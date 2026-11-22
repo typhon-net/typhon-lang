@@ -22,14 +22,14 @@ internal static class RuntimeCodeHost
     static readonly Lazy<ReferenceSet> References = new(() => new ReferenceSet());
     static readonly CSharpParseOptions ParseOptions = new(LanguageVersion.Preview);
     const string ModuleType = "__typhon_code";
-    const long DontImplyDedent = 0x200, AllowIncompleteInput = 0x4000;
+    const long DontImplyDedent = 0x200, OnlyAst = 0x400, AllowIncompleteInput = 0x4000;
     const long BarryAsFlufl = 0x400000, FutureAnnotations = 0x1000000;
     const long FutureMask = 0x1fe0000;
 
     public static void Install()
     {
         AppContext.SetData("Typhon.ParseRuntimeAst",
-            (Func<string, string, string, (object? Tree, string? Error, int Line, int Column, bool Indent)>)RuntimeAstHost.Parse);
+            (Func<string, string, string, long, (object? Tree, string? Error, int Line, int Column, int Kind)>)CompileAst);
         AppContext.SetData("Typhon.CheckRuntimeSyntax",
             (Func<string, string, string, long, (string? Error, int Line, int Column, int Kind, long Flags)>)CheckSyntax);
         AppContext.SetData("Typhon.RunRuntimeCode",
@@ -38,7 +38,16 @@ internal static class RuntimeCodeHost
 
     static ModuleInfo Parse(string source, string filename, string mode, long flags) =>
         TyphonCompiler.Parse(TyphonCompiler.IsGdScriptPath(filename) ? filename + ".py" : filename, source, "__main__", "",
-            barryAsFlufl: (flags & BarryAsFlufl) != 0, runtimeCode: true, expressionOnly: mode == "eval");
+            barryAsFlufl: (flags & BarryAsFlufl) != 0, runtimeCode: true, expressionOnly: mode == "eval",
+            runtimeAstOnly: (flags & OnlyAst) != 0);
+
+    static (object? Tree, string? Error, int Line, int Column, int Kind) CompileAst(string source, string filename, string mode, long flags)
+    {
+        var module = Parse(source, filename, mode, flags);
+        var result = CheckSyntax(module, source, mode, flags);
+        return result.Error == null ? (RuntimeAstHost.Project(source, module.Ast, mode), null, 0, 0, 0)
+            : (null, result.Error, result.Line, result.Column, result.Kind);
+    }
 
     static (string? Error, int Line, int Column, int Kind, long Flags) CheckSyntax(string source, string filename, string mode, long flags) =>
         CheckSyntax(Parse(source, filename, mode, flags), source, mode, flags);
@@ -76,7 +85,11 @@ internal static class RuntimeCodeHost
         {
             if (statement is ImportFromStmt { Level: 0, Module: "__future__" } from)
             {
-                if (!header) return ("from __future__ imports must occur at the beginning of the file", from.Line, from.Col, Syntax, 0);
+                if (!header)
+                {
+                    if ((flags & OnlyAst) != 0) continue;
+                    return ("from __future__ imports must occur at the beginning of the file", from.Line, from.Col, Syntax, 0);
+                }
                 foreach (var feature in from.Names)
                 {
                     switch (feature.Name)

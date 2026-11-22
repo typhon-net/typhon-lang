@@ -67,7 +67,7 @@ namespace Typhon.Compiler.Emit
         };
 
         bool NeedsRuntimeClassInfo(Expr expression) => IsUnionValue(expression) || IsMetaclassExpression(expression) ||
-            IsBuiltinGenericAlias(expression) ||
+            IsMetaclassInstance(expression) || IsBuiltinGenericAlias(expression) ||
             expression is NameExpr name && CanMaterializeTypeAlias(TypeAlias(name.Id));
 
         static IEnumerable<Expr> MaterializedArguments(Expr argument) =>

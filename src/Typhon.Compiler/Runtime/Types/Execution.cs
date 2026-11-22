@@ -58,7 +58,7 @@ namespace Typhon.Runtime
 
     internal static partial class Builtins
     {
-        public static RuntimeCode compile(object? source, object? filename = null, object? mode = null, long flags = 0, bool dont_inherit = false, long optimize = -1, object? module = null)
+        public static dynamic compile(object? source, object? filename = null, object? mode = null, long flags = 0, bool dont_inherit = false, long optimize = -1, object? module = null)
         {
             if (module != null && module is not string)
                 throw new InvalidCastException($"compile() argument 'module' must be str or None, not {PyTypeName(module.GetType())}");
@@ -72,26 +72,30 @@ namespace Typhon.Runtime
             string kind = mode as string ?? "exec";
             if (kind is not ("exec" or "eval" or "single"))
                 throw new ArgumentException("compile() mode must be 'exec', 'eval' or 'single'");
-            if (flags < 0 || (flags & ~0x1fe4210L) != 0)
+            if (flags < 0 || (flags & ~(0x1fe4210L | ast.PyCF_ONLY_AST)) != 0)
                 throw new ArgumentException("compile() flags are unsupported");
             if (optimize is < -1 or > 2) throw new ArgumentException("compile(): invalid optimize value");
+            if ((flags & ast.PyCF_ONLY_AST) != 0) return ast.CompileTree(text, path, kind, flags);
             var validate = AppContext.GetData("Typhon.CheckRuntimeSyntax") as
                 Func<string, string, string, long, (string? Error, int Line, int Column, int Kind, long Flags)>
                 ?? throw new NotSupportedException("compile() requires the Typhon runtime compiler host");
             var result = validate(text, path, kind, flags);
             if (result.Error is string message)
-            {
-                var lines = text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
-                string? line = result.Line > 0 && result.Line <= lines.Length ? lines[result.Line - 1] : null;
-                var details = (path, (long)result.Line, (long)result.Column, line);
-                throw result.Kind switch
-                {
-                    1 => new _IncompleteInputError(message, details),
-                    2 => new IndentationError(message, details),
-                    _ => new SyntaxError(message, details),
-                };
-            }
+                throw RuntimeSyntaxError(text, path, message, result.Line, result.Column, result.Kind);
             return new RuntimeCode(text, path, kind, result.Flags);
+        }
+
+        internal static SyntaxError RuntimeSyntaxError(string source, string path, string message, int line, int column, int kind)
+        {
+            var lines = source.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
+            string? text = line > 0 && line <= lines.Length ? lines[line - 1] : null;
+            var details = (path, (long)line, (long)column, text);
+            return kind switch
+            {
+                1 => new _IncompleteInputError(message, details),
+                2 => new IndentationError(message, details),
+                _ => new SyntaxError(message, details),
+            };
         }
 
         public static void exec(object? source, object? globals = null, object? locals = null) =>
@@ -102,7 +106,7 @@ namespace Typhon.Runtime
 
         static object? ExecuteCode(object? source, object? globals, object? locals, string defaultMode)
         {
-            var code = source as RuntimeCode ?? compile(source, "<string>", defaultMode);
+            var code = source as RuntimeCode ?? (RuntimeCode)compile(source, "<string>", defaultMode);
             var globalNames = globals == null ? new OrderedDictionary<string, object?>() :
                 globals as IDictionary ?? throw new InvalidCastException("globals must be a dictionary");
             var localNames = locals == null ? globalNames :

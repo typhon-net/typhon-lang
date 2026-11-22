@@ -1,0 +1,71 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import _abc
+from abc import abstractmethod
+
+
+class ContractMeta(type):
+    def __new__(mcls, name, bases, namespace, /, **keywords):
+        cls = super().__new__(mcls, name, bases, namespace, **keywords)
+        _abc._abc_init(cls)
+        return cls
+
+    def register(cls, subclass):
+        return _abc._abc_register(cls, subclass)
+
+    def __subclasscheck__(cls, subclass):
+        return _abc._abc_subclasscheck(cls, subclass)
+
+    def __instancecheck__(cls, instance):
+        return _abc._abc_instancecheck(cls, instance)
+
+
+class Contract(metaclass=ContractMeta):
+    @abstractmethod
+    def show(self) -> str:
+        return "default"
+
+    @property
+    @abstractmethod
+    def name(self) -> str:
+        return "base"
+
+
+class Partial(Contract):
+    def show(self) -> str:
+        return super().show().upper()
+
+
+class Concrete(Partial):
+    @property
+    def name(self) -> str:
+        return "concrete"
+
+
+class Registered:
+    pass
+
+
+class RegisteredChild(Registered):
+    pass
+
+
+print(sorted(Contract.__abstractmethods__), sorted(Partial.__abstractmethods__))
+print(sorted(Concrete.__abstractmethods__), Concrete().show(), Concrete().name)
+try:
+    Partial()
+except TypeError as error:
+    print("name" in str(error))
+print(issubclass(Concrete, Contract), isinstance(Concrete(), Contract))
+print(issubclass(Registered, Contract), isinstance(Registered(), Contract))
+token = _abc.get_cache_token()
+register = Contract.register
+print(register(Registered) is Registered, _abc.get_cache_token() != token)
+token = _abc.get_cache_token()
+print(issubclass(RegisteredChild, Contract), isinstance(Registered(), Contract))
+register(Registered)
+print(_abc.get_cache_token() == token)
+_abc._reset_registry(Contract)
+_abc._reset_caches(Contract)
+print(issubclass(Registered, Contract), _abc.get_cache_token() == token)

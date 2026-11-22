@@ -1,0 +1,12 @@
+import _colorize
+
+accented = _colorize.get_theme(force_color=True).traceback
+plain = _colorize.get_theme(force_no_color=True).traceback
+
+print([repr(getattr(accented, name)) for name in (
+    "type", "message", "note", "filename", "line_no", "frame", "error_highlight", "error_range", "reset"
+)])
+print([getattr(plain, name) for name in (
+    "type", "message", "note", "filename", "line_no", "frame", "error_highlight", "error_range", "reset"
+)])
+print(_colorize.get_theme(force_color=True, force_no_color=True).traceback.type == accented.type)

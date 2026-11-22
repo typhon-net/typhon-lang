@@ -1,0 +1,37 @@
+class Box:
+    pass
+
+box = Box()
+
+def describe(error: AttributeError, owner: object):
+    print(error.name, error.obj is owner)
+    print(error.args, repr(error), repr(str(error)))
+
+describe(AttributeError("wrong", 4, name="item", obj=box), box)
+describe(AttributeError(None), None)
+describe(AttributeError(), None)
+
+try:
+    getattr(box, "item")
+except AttributeError as error:
+    describe(error, box)
+    error.name = "replacement"
+    error.obj = None
+    print(error.name, error.obj is None)
+    del error.name
+    print(error.name)
+
+alias = AttributeError
+err = alias("alias", name="first")
+describe(err, None)
+print(type(err) is AttributeError, type(err).__name__, getattr(err, "name"))
+
+try:
+    AttributeError(unexpected=1)
+except TypeError as error:
+    print(error)
+
+try:
+    delattr(box, "missing")
+except AttributeError as error:
+    print(error.name, error.obj is box)

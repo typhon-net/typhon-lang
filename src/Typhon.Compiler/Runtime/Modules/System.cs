@@ -332,6 +332,13 @@ namespace Typhon.Stdlib
             public readonly long co_firstlineno, co_flags;
             public code(string name, string file, long line, long flags = 0, string? qualname = null)
             { co_name = name; co_qualname = qualname ?? name; co_filename = file; co_firstlineno = line; co_flags = flags; }
+            // A managed frame captures one mapped source position and uses instruction offset zero for it.
+            public PyIterator<(long?, long?, long?, long?)> co_positions()
+            {
+                long? line = co_firstlineno > 0 ? co_firstlineno : null;
+                return Builtins.iter<(long?, long?, long?, long?)>([(line, line, null, null)]);
+            }
+
             public string __repr__() => $"<code object {co_name} at 0x{System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(this):x}, file {Builtins.repr(co_filename)}, line {co_firstlineno}>";
             public override string ToString() => __repr__();
         }
@@ -389,7 +396,11 @@ namespace Typhon.Runtime
             return _of.GetOrAdd(type, t => new PyModule(name, t));
         }
         public string? __file__ => _source?.Filename;
-        public string? __doc__ => _source?.DocString;
+        public dynamic? __doc__
+        {
+            get => __dict__["__doc__"];
+            set => __dict__["__doc__"] = value;
+        }
         public PyAttrDict __dict__ { get; }
         public dynamic? ImportAttribute(string name) => __dict__.TryGetValue(name, out var value) ? value :
             throw new ImportError($"cannot import name '{name}' from '{__name__}'");
@@ -408,11 +419,14 @@ namespace Typhon.Runtime
             {
                 case "__name__": result = __name__; return true;
                 case "__file__" when __file__ != null: result = __file__; return true;
-                case "__doc__": result = __doc__; return true;
+                case "__doc__":
+                    result = _type?.GetField(name, Members) is FieldInfo doc ? doc.GetValue(null) : _source?.DocString;
+                    return true;
             }
             result = null;
             if (_type == null || !IsModuleName(name)) return false;
             if (_type == typeof(Typhon.Stdlib.os_) && name == "path") { result = Typhon.Stdlib.os_.__path_module__; return true; }
+            if (_type == typeof(Typhon.Stdlib.builtins) && name == "print") { result = Builtins.__print_value(); return true; }
             if (_type.GetField(name, Members) is FieldInfo f) { result = f.GetValue(null); return true; }
             if (_type.GetProperty(name, Members) is PropertyInfo p && p.GetIndexParameters().Length == 0)
             {

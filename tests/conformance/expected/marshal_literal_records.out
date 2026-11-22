@@ -1,0 +1,10 @@
+6
+ellipsis True
+(1+2j)
+(1+2j)
+(1+2j)
+slice(1, 4, 2)
+set [1, 2, 3] frozenset [1, 2, 3]
+frozendict 1 2
+unmarshallable object
+unmarshallable object

@@ -440,7 +440,7 @@ namespace Typhon.Compiler.Emit
             ["_collections"] = "collections", ["_contextvars"] = "contextvars",
             ["_md5"] = "hashlib", ["_sha1"] = "hashlib", ["_pydecimal"] = "decimal",
             ["_decimal"] = "decimal", ["_pickle"] = "pickle", ["_bz2"] = "bz2", ["_lzma"] = "lzma", ["_locale"] = "locale",
-            ["_stat"] = "stat", ["_warnings"] = "warnings", ["_py_warnings"] = "warnings", ["_abc"] = "abc", ["_typing"] = "typing", ["_queue"] = "queue", ["_socket"] = "socket",
+            ["_stat"] = "stat", ["_warnings"] = "warnings", ["_py_warnings"] = "warnings", ["_typing"] = "typing", ["_queue"] = "queue", ["_socket"] = "socket",
         };
 
         static string PublicModule(string dotted)
@@ -477,6 +477,42 @@ namespace Typhon.Compiler.Emit
         /// what Python runs when that import fails, the statements before it and the handler (Typhon resolves imports when
         /// it compiles, so the outcome is known then).
         /// </summary>
+        bool HasOnlyResolvedImports(TryStmt statement) =>
+            statement.Handlers.Count > 0 && statement.FinalBody.Count == 0 &&
+            statement.Handlers.All(handler => handler.Type != null && handler.Name == null &&
+                (handler.Type is TupleExpr tuple ? tuple.Elts : new List<Expr> { handler.Type })
+                    .All(e => e is NameExpr n && n.Id is "ImportError" or "ModuleNotFoundError")) &&
+            statement.Body.Count > 0 && statement.Body.All(s => s switch
+            {
+                ImportStmt import => import.Names.All(alias => ModuleExists(alias.Name)),
+                ImportFromStmt from => ImportFromResolves(from),
+                PassStmt => true,
+                _ => false,
+            }) &&
+            !statement.Body.Any(s => PlatformModules(s).Any()) &&
+            !statement.Body.OfType<ImportFromStmt>().Any(from => _m.ResolveImport(from.Module, from.Level) is string absolute &&
+                ResolvePsModule(absolute) is ModuleInfo source && from.Names.Any(a => a.Name != "*" && UsesRuntimeProjectMember(source, a.Name)));
+
+        // The selected class must enter the project class model before consumers resolve its bases and metaclass.
+        internal void PrepareImportClassBindings()
+        {
+            if (_m.RuntimeCodeMode != null) return;
+            var body = _m.Ast.Body;
+            for (int i = 0; i < body.Count; i++)
+            {
+                if (body[i] is not TryStmt branch || !branch.OrElse.OfType<ClassDef>().Any() ||
+                    !HasOnlyResolvedImports(branch)) continue;
+                var selected = branch.Body.Concat(branch.OrElse).ToList();
+                body.RemoveAt(i);
+                body.InsertRange(i, selected);
+                foreach (var definition in branch.OrElse.OfType<ClassDef>())
+                {
+                    _m.Classes[definition.Name] = definition;
+                    if (_m.ConditionalGlobals.Remove(definition.Name)) _m.Globals.Remove(definition.Name);
+                }
+            }
+        }
+
         void ResolveFailingImports(List<Stmt> body, bool moduleScope = true, bool optional = false)
         {
             for (int i = 0; i < body.Count; i++)
@@ -490,13 +526,7 @@ namespace Typhon.Compiler.Emit
                                                              st is ImportFromStmt imf && !ImportFromResolves(imf));
                         // try: from _queue import Empty / except ImportError: class Empty...: the imports all succeed, so
                         // the handler never runs (Typhon resolves imports when it compiles)
-                        if (failing < 0 && t.Handlers.Count > 0 && t.FinalBody.Count == 0 &&
-                            t.Handlers.All(h => h.Type != null && h.Name == null &&
-                                (h.Type is TupleExpr ht ? ht.Elts : new List<Expr> { h.Type }).All(e => e is NameExpr en && en.Id is "ImportError" or "ModuleNotFoundError")) &&
-                            t.Body.Count > 0 && t.Body.All(st => st is ImportStmt || st is ImportFromStmt || st is PassStmt) &&
-                            !t.Body.Any(st => PlatformModules(st).Any()) &&
-                            !t.Body.OfType<ImportFromStmt>().Any(from => _m.ResolveImport(from.Module, from.Level) is string absolute &&
-                                ResolvePsModule(absolute) is ModuleInfo source && from.Names.Any(a => a.Name != "*" && UsesRuntimeProjectMember(source, a.Name))))
+                        if (failing < 0 && HasOnlyResolvedImports(t))
                         {
                             var kept = t.Body.Concat(t.OrElse).ToList();
                             body.RemoveAt(i);

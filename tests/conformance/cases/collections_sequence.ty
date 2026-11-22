@@ -1,0 +1,23 @@
+import collections.abc
+from _collections_abc import Sequence
+from collections import deque
+
+print(isinstance([1], Sequence), isinstance((1, 2), Sequence), isinstance(range(4), Sequence))
+print(isinstance("text", Sequence), isinstance(b"x", Sequence), isinstance(memoryview(b"x"), Sequence))
+print(isinstance(deque(), Sequence), isinstance({}, Sequence), isinstance({1}, Sequence))
+print(isinstance([1], collections.abc.Sequence), isinstance({}, collections.abc.Sequence))
+
+class Digits(Sequence):
+    def __len__(self) -> int:
+        return 4
+
+    def __getitem__(self, index):
+        return [3, 1, 3, 2][int(index)]
+
+numbers = Digits()
+print(list(numbers), list(reversed(numbers)), 1 in numbers)
+print(numbers.count(3), numbers.index(3, -2), numbers.index(3, 1, -1))
+try:
+    numbers.index(9)
+except ValueError as error:
+    print(repr(str(error)))

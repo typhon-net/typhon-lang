@@ -1,6 +1,7 @@
 # Copyright (c) 2026 The Typhon contributors.
 # Licensed under the MIT License. See LICENSE file in the project root for full license information.
 
+import builtins
 from typing import Any
 
 
@@ -16,3 +17,5 @@ dispatch(invoke)
 saved = print
 print(saved is print)
 print(saved("saved") is None)
+
+print(saved is builtins.print, pow is pow, pow is builtins.pow)

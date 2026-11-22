@@ -113,7 +113,19 @@ namespace Typhon.Compiler.Emit
                     var ctors = _r.GetConstructors(meta);
                     foreach (var c in ctors)
                     {
-                        var ps = c.Parameters.Select(kv => $"{kv.Key} {Esc(kv.Value)}");
+                        var ps = c.Parameters.Select(kv => $"{kv.Key} {Esc(kv.Value)}").ToList();
+                        if (c.Defaults.Count == ps.Count)
+                        {
+                            var defaults = c.Defaults.ToArray();
+                            for (int i = 0; i < defaults.Length; i++)
+                            {
+                                if (defaults[i] == null || defaults[i] == "null" || c.Parameters[i].Key is not ("object" or "dynamic"))
+                                    continue;
+                                ps[i] = WithOptionalDefault(ps[i], defaults[i]);
+                                defaults[i] = "";
+                            }
+                            ApplyParameterDefaults(ps, defaults);
+                        }
                         _w.Line($"{(c.IsProtected ? "protected" : "public")} {Esc(ctx.Name)}({string.Join(", ", ps)}) : base({string.Join(", ", c.Parameters.Select(kv => Esc(kv.Value)))}) {{ }}");
                     }
                     if (ctors.Count > 0) _w.Line();
@@ -228,6 +240,8 @@ namespace Typhon.Compiler.Emit
                 foreach (var c in AllClasses())
                 {
                     var init = c.Body.OfType<FunctionDef>().FirstOrDefault(f => f.Name == "__init__");
+                    if (UsesCustomAllocation(c))
+                        for (var owner = CustomInitializerOwner(c); owner != null && set.Add(owner); owner = NearestInitAncestor(owner)) { }
                     // (an __init__ that never calls its base's: Python allows it, the base is then only allocated)
                     if (init == null || !(DefersBaseInit(init) || ForwardsBaseInit(c, init) ||
                         NeverCallsBaseInit(init) && NearestInitAncestor(c) != null)) continue;

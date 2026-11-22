@@ -21,11 +21,27 @@ namespace Typhon.Runtime
         bool _suppressContext;
         Traceback? _traceback;
         bool _tracebackAssigned;
+        object? _attributeName;
+        object? _attributeObject;
 
         internal static Exception? Handling => Active.Value;
 
-        internal static bool HasAttribute(string name) =>
-            name is "__cause__" or "__context__" or "__suppress_context__" or "__traceback__";
+        internal static bool IsAttributeErrorMember(string name) => name is "name" or "obj";
+
+        internal static bool HasAttribute(Exception error, string name) =>
+            name is "__cause__" or "__context__" or "__suppress_context__" or "__traceback__" ||
+            error is MissingMemberException && IsAttributeErrorMember(name);
+
+        internal static MissingMemberException CreateAttributeError(object?[] args, object? name, object? obj)
+        {
+            args = PyExc.Norm(args);
+            var error = new MissingMemberException(PyExc.Text(args));
+            error.Data["__args__"] = args;
+            var state = States.GetOrCreateValue(error);
+            state._attributeName = name;
+            state._attributeObject = obj;
+            return error;
+        }
 
         internal static object? GetAttribute(Exception error, string name)
         {
@@ -36,6 +52,8 @@ namespace Typhon.Runtime
                 "__context__" => state?._context,
                 "__suppress_context__" => state?._suppressContext ?? false,
                 "__traceback__" => GetTraceback(error),
+                "name" => state?._attributeName,
+                "obj" => state?._attributeObject,
                 _ => throw new MissingMemberException(name),
             };
         }
@@ -48,6 +66,12 @@ namespace Typhon.Runtime
             var state = States.GetOrCreateValue(error);
             switch (name)
             {
+                case "name":
+                    state._attributeName = value;
+                    return;
+                case "obj":
+                    state._attributeObject = value;
+                    return;
                 case "__cause__":
                     state._cause = ExceptionOrNone(value, "cause");
                     state._suppressContext = true;
@@ -101,6 +125,20 @@ namespace Typhon.Runtime
 
     internal static partial class Builtins
     {
+        public static MissingMemberException __attribute_error(object?[] args, IDictionary<string, object?>? keywords = null)
+        {
+            object? name = null, obj = null;
+            if (keywords != null)
+                foreach (var (key, value) in keywords)
+                    switch (key)
+                    {
+                        case "name": name = value; break;
+                        case "obj": obj = value; break;
+                        default: throw new InvalidCastException($"AttributeError() got an unexpected keyword argument '{key}'");
+                    }
+            return PyExceptionState.CreateAttributeError(args, name, obj);
+        }
+
         public static IDisposable __handling_exception(Exception error) => new PyExceptionState.Handler(error);
 
         public static Exception __prepare_exception(object? value, object? cause, bool explicitCause)

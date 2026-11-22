@@ -1,0 +1,19 @@
+import textwrap
+from typing import Any
+
+def via_dynamic(text: Any) -> str:
+    return textwrap.indent(text, "| ", lambda line: line.strip())
+
+class Predicate:
+    def __call__(self, line: str) -> list[str]:
+        return [line] if line.startswith("alpha") else []
+
+def typed_predicate(line: str) -> bool:
+    return line.startswith("beta")
+
+sample = "alpha\n\n  \nbeta\n"
+print(repr(via_dynamic(sample)))
+print(repr(textwrap.indent(sample, "+ ", predicate=Predicate())))
+print(repr(textwrap.indent(sample, "= ", typed_predicate)))
+print(repr(textwrap.indent(sample, "# ")))
+print(repr(textwrap.indent("", "!", Predicate())))

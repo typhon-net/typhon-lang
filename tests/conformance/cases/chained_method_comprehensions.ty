@@ -1,0 +1,26 @@
+from typing import Any
+
+def render(value) -> str:
+    return str(value)
+
+def assigned(value: Any):
+    lines = render(value).split("\n")
+    return [">" + item for item in lines if item]
+
+def direct(value: Any):
+    return [">" + item for item in render(value).split("\n") if item]
+
+print(assigned("one\n\ntwo"))
+print(direct("one\n\ntwo"))
+
+class CustomSplitter:
+    def split(self, sep: str) -> list[int]:
+        return [1, 2]
+
+def passthrough(value):
+    return value
+
+def custom(value: Any):
+    return [item + 1 for item in passthrough(value).split(",")]
+
+print(custom(CustomSplitter()))

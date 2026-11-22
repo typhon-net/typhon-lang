@@ -1,0 +1,16 @@
+class Frames(list):
+    @classmethod
+    def create(cls):
+        result = cls()
+        result.append("first")
+        return result
+
+def make(kind: type):
+    result = kind()
+    result.append("second")
+    return result
+
+first = Frames.create()
+second = make(Frames)
+print(isinstance(first, Frames), list(first))
+print(isinstance(second, Frames), list(second))

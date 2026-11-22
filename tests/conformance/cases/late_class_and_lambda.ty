@@ -1,0 +1,31 @@
+import ast
+from ast import Expr
+
+def check(value: object):
+    if isinstance(value, Expr):
+        print("expression")
+    else:
+        print("other")
+    print(isinstance(value, ast.Name), isinstance(value, (ast.Expr, ast.Name)))
+
+check(ast.parse("items[0]").body[0])
+check(ast.parse("items").body[0].value)
+check(ast.parse("pass").body[0])
+
+def test(value):
+    def apply(item, predicate):
+        return predicate(item)
+
+    print(apply(value, lambda x: x.isspace()))
+    print(repr(apply(value, lambda x: x.upper())))
+
+test(" ")
+test("abc")
+
+def capture(value: str):
+    if (char := value[0]).isspace():
+        print("space")
+    print(repr(char))
+
+capture(" ")
+capture("x")

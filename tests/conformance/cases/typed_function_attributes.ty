@@ -1,0 +1,9 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+def operation():
+    return "run"
+
+saved = operation
+saved.label = "callable"
+print(operation.label, saved())

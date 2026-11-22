@@ -45,6 +45,7 @@ namespace Typhon.Compiler.Emit
         public bool AsyncForm;
         public bool IsAsync;
         public bool HasSelf;             // instance method: 'self' → 'this'
+        public string ReboundReceiver;   // mutable local initialized from the CLR receiver
         public string ClassArgument;     // the classmethod's first parameter, supplied by the descriptor
         public bool IsFunctionBoundary = true;
         /// <summary>Parameters that stand for a function (def f(x, bisect=bisect) never passed): name → that function.</summary>

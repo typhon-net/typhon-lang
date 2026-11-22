@@ -141,6 +141,18 @@ namespace Typhon.Compiler.Emit
             return false;
         }
 
+        bool IsReboundReceiver(Expr expression)
+        {
+            if (expression is not NameExpr name || !_renames.TryGetValue(name.Id, out var local) ||
+                _lambdaParams.Any(scope => scope.ContainsKey(name.Id))) return false;
+            for (var scope = _scope; scope != null; scope = scope.Parent)
+            {
+                if (scope.ReboundReceiver == local) return true;
+                if (scope.Params.Contains(name.Id) || scope.Locals?.AllLocals.Contains(name.Id) == true) return false;
+            }
+            return false;
+        }
+
         bool HasSelfInScope()
         {
             for (var s = _scope; s != null; s = s.Parent) if (s.HasSelf) return true;
@@ -215,6 +227,8 @@ namespace Typhon.Compiler.Emit
             if (ImportAlias(n) is Expr imported) return EmitExpr(imported);
             if (id == "self" && HasSelfInScope()) return "this";
             if (id == "__debug__") return "true";
+            if (id == "__doc__" && !_m.IsGdScript && _m.RuntimeCodeMode == null && !IsShadowed(id))
+                return ModuleObject(_m) + ".__doc__";
             if (id == "__name__") return CsString(_m.Name);
             if (id == "__package__" && !IsShadowed(id)) return _m.PackageName.Length == 0 ? "null" : CsString(_m.PackageName);
             if (id == "__file__" && !IsShadowed(id)) return CsString(System.IO.Path.GetFullPath(_path));

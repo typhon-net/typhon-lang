@@ -295,6 +295,7 @@ namespace Typhon.Runtime
         public bool exists() => System.IO.File.Exists(_p) || System.IO.Directory.Exists(_p);
         public bool is_file() => System.IO.File.Exists(_p);
         public bool is_dir() => System.IO.Directory.Exists(_p);
+        public PyBytes read_bytes() => new PyBytes(System.IO.File.ReadAllBytes(_p));
         public string read_text(string? encoding = null, string? errors = null) { using var f = new PyFile(_p, "r", encoding, errors); return f.read(); }
         public long write_text(string data, string? encoding = null, string? errors = null, string? newline = null) { using var f = new PyFile(_p, "w", encoding, errors, newline); return f.write(data); }
         public PyFile open(string mode = "r", long buffering = -1, string? encoding = null, string? errors = null, string? newline = null) => new PyFile(_p, mode, encoding, errors, newline);

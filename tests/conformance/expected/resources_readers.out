@@ -1,0 +1,17 @@
+True True
+first True False
+['nested', 'shared.txt']
+['a.txt', 'b.txt']
+first
+beta
+False
+True False
+b'first'
+package/ True False
+['__init__.py', 'nested', 'value.bin']
+café
+b'\x00\xff'
+b'resources'
+café
+['a.txt', 'b.txt']
+alpha beta

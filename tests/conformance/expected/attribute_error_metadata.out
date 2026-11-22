@@ -1,0 +1,15 @@
+item True
+('wrong', 4) AttributeError('wrong', 4) "('wrong', 4)"
+None True
+(None,) AttributeError(None) 'None'
+None True
+() AttributeError() ''
+item True
+("'Box' object has no attribute 'item'",) AttributeError("'Box' object has no attribute 'item'") "'Box' object has no attribute 'item'"
+replacement True
+None
+first True
+('alias',) AttributeError('alias') 'alias'
+True AttributeError first
+AttributeError() got an unexpected keyword argument 'unexpected'
+missing True

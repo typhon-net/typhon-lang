@@ -40,7 +40,28 @@ namespace Typhon.Stdlib
         internal sealed class Theme
         {
             public TimeitTheme timeit { get; }
-            internal Theme(bool color) { timeit = new TimeitTheme(color); }
+            public TracebackTheme traceback { get; }
+
+            internal Theme(bool color)
+            {
+                timeit = new TimeitTheme(color);
+                traceback = new TracebackTheme(color);
+            }
+        }
+
+        internal sealed class TracebackTheme
+        {
+            readonly bool _color;
+            internal TracebackTheme(bool color) { _color = color; }
+            public string type => _color ? ANSIColors.BOLD_MAGENTA : "";
+            public string message => _color ? ANSIColors.MAGENTA : "";
+            public string note => _color ? ANSIColors.CYAN : "";
+            public string filename => _color ? ANSIColors.MAGENTA : "";
+            public string line_no => _color ? ANSIColors.MAGENTA : "";
+            public string frame => _color ? ANSIColors.MAGENTA : "";
+            public string error_highlight => _color ? ANSIColors.BOLD_RED : "";
+            public string error_range => _color ? ANSIColors.RED : "";
+            public string reset => _color ? ANSIColors.RESET : "";
         }
 
         internal sealed class TimeitTheme

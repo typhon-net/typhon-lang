@@ -16,8 +16,28 @@ namespace Typhon.Runtime
         /// <summary>Binds forwarded arguments to the selected base class's allocation-independent initializer.</summary>
         public static void __base_init(object instance, Type parent, object?[] args, IDictionary<string, object?>? kwargs)
         {
-            var candidates = parent.GetMethods(BindingFlags.DeclaredOnly | BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+            var candidates = DeclaredInitializers(parent);
+            InvokeInitializer(instance, parent, args, kwargs, candidates);
+        }
+
+        static List<MethodInfo> DeclaredInitializers(Type parent) =>
+            parent.GetMethods(BindingFlags.DeclaredOnly | BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
                 .Where(method => method.Name == "__init__" && !method.IsGenericMethodDefinition && !method.IsVirtual).ToList();
+
+        static void InitializeAllocated(object instance, object?[] args, IDictionary<string, object?>? kwargs)
+        {
+            for (Type? owner = instance.GetType(); owner != null; owner = owner.BaseType)
+            {
+                var candidates = DeclaredInitializers(owner);
+                if (candidates.Count == 0) continue;
+                InvokeInitializer(instance, owner, args, kwargs, candidates);
+                return;
+            }
+        }
+
+        static void InvokeInitializer(object instance, Type parent, object?[] args, IDictionary<string, object?>? kwargs,
+            List<MethodInfo> candidates)
+        {
             var selected = PyArgs.Best(candidates, args, kwargs, out var bound)
                 ?? throw PyArgs.NoFit(parent.Name + ".__init__", kwargs, candidates);
             try { selected.Invoke(instance, bound); }

@@ -1,0 +1,30 @@
+class Parent:
+    def describe(self) -> str:
+        return 'parent ' + self.label
+
+class Receiver(Parent):
+    def __init__(self, label: str):
+        self.label = label
+
+    def same_type(self, use_other: bool) -> str:
+        before = self.label
+        if use_other:
+            self, other = Receiver('replacement'), 'unused'
+        return before + '/' + self.label
+
+    def alternate(self) -> str:
+        self = {'replacement': 'mapping'}
+        return self['replacement']
+
+    def through_parent(self) -> str:
+        self = Receiver('switched')
+        return super().describe()
+
+    @property
+    def found(self) -> str:
+        self = Receiver('in property')
+        return self.label
+
+item = Receiver('original')
+print(item.same_type(False), item.same_type(True))
+print(item.alternate(), item.through_parent(), item.found, item.label)

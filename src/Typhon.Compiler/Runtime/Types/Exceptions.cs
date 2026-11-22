@@ -61,6 +61,7 @@ namespace Typhon.Runtime
         /// <summary>repr() that shows a .NET exception the way Python shows an exception: ValueError('bad').</summary>
         public static string ReprOf(object? o)
         {
+            if (o is MissingMemberException error) return Repr(error, Args(error));
             if (o is Exception e && o is not IPyRepr)
             {
                 string text = Builtins.str(e);
@@ -88,7 +89,9 @@ namespace Typhon.Runtime
         static bool IsLibrary(Type t) => t.Namespace is string ns && (ns == "System" || ns.StartsWith("System.") || ns.StartsWith("Microsoft.") || ns.StartsWith("Typhon."));
 
         /// <summary>The Python name of a class: KeyError for .NET's KeyNotFoundException, int for long, a Typhon class's own name.</summary>
-        public static string TypeName(Type t) => DotNetNames.TryGetValue(t, out var n) ? n : Builtins.PyTypeName(t);
+        public static string TypeName(Type t) => Builtins.PyTypeName(t);
+
+        internal static string? BuiltinTypeName(Type type) => DotNetNames.GetValueOrDefault(type);
 
         static readonly Dictionary<Type, string> DotNetNames = new Dictionary<Type, string>
         {

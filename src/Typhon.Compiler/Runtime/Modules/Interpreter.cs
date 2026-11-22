@@ -102,8 +102,12 @@ namespace Typhon.Stdlib
             switch (classinfo)
             {
                 case Type t:
-                    if (obj == null) return t == typeof(object) || t == typeof(Typhon.Stdlib.types.NoneType);
-                    return Builtins.issubclass(obj is Type cls ? PyMetaclasses.Of(cls) : obj.GetType(), t);
+                    Type actual = obj is Type cls ? PyMetaclasses.Of(cls) : obj?.GetType() ?? typeof(types.NoneType);
+                    if (actual == t) return true;
+                    if (PyMetaclasses.TryBindMember(t, "__instancecheck__", out var check))
+                        return Builtins.truthy((object?)Builtins.__invoke(check, [obj]));
+                    if (obj == null) return t == typeof(object);
+                    return Builtins.IsSubclass(actual, t);
                 case types.UnionType union:
                     return union.__args__.Any(type => isinstance(obj, type));
                 case ITuple tuple:
@@ -141,7 +145,7 @@ namespace Typhon.Stdlib
         public static PyRange range(long start, long stop, long step = 1) => Builtins.range(start, stop, step);
         public static dynamic frozendict(object mapping) => Builtins.frozendict((dynamic)mapping);
 
-        public static object __import__(string name, object? globals = null, object? locals = null, object? fromlist = null, long level = 0) =>
+        public static object __import__(object? name, object? globals = null, object? locals = null, object? fromlist = null, long level = 0) =>
             Builtins.__import__(name, globals, locals, fromlist, level);
         public static dynamic? compile(object? source, object? filename = null, object? mode = null, long flags = 0, bool dont_inherit = false, long optimize = -1, object? module = null) =>
             Builtins.compile(source, filename, mode, flags, dont_inherit, optimize, module);

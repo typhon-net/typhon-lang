@@ -103,7 +103,8 @@ namespace Typhon.Compiler.Syntax
         bool AtEndOfInput => Cur.Kind == TokenKind.EndOfFile || Cur.Pos == _t[_t.Count - 1].Pos && Cur.Pos == Cur.EndPos;
 
         SyntaxError Err(string msg, bool needsMoreInput = false, bool isIndentationError = false) =>
-            new SyntaxError(msg, Cur.Line, Cur.Col, AtEndOfInput, needsMoreInput || AtEndOfInput && _openGrouping, isIndentationError);
+            new SyntaxError(Cur.Kind == TokenKind.Indent ? "unexpected indent" : msg, Cur.Line, Cur.Col,
+                AtEndOfInput, needsMoreInput || AtEndOfInput && _openGrouping, isIndentationError || Cur.Kind == TokenKind.Indent);
 
         T At<T>(T node, Token tok) where T : Node
         {

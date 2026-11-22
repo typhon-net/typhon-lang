@@ -1,0 +1,34 @@
+index = "module"
+
+class Loop:
+    seen = []
+    total = 0
+    for index, label in enumerate(["a", "b", "c", "d"]):
+        if index == 1:
+            continue
+        seen.append(label)
+        total += index
+        if index == 2:
+            break
+    else:
+        total = -1
+    result = (total, index, label, seen)
+
+class Empty:
+    for missing in []:
+        raise AssertionError
+    else:
+        message = "complete"
+    copied = index
+
+class Complete:
+    answers = []
+    for number in range(2):
+        for letter in ["x", "y"]:
+            answers.append((number, letter))
+    else:
+        last = number
+
+print(Loop.result)
+print(hasattr(Empty, "missing"), Empty.message, Empty.copied)
+print(Complete.answers, Complete.last)

@@ -307,6 +307,7 @@ namespace Typhon.Runtime
                 if (owner.GetMethods(declaredStatic).Any(method => method.Name == "__new__"))
                 {
                     result = new PyBoundMethod(owner, "__new__", includeNonPublic: true).__call_kw__([type, .. args], keywords);
+                    if (result != null && type.IsInstanceOfType(result)) InitializeAllocated(result, args, keywords);
                     return true;
                 }
             }
@@ -316,6 +317,7 @@ namespace Typhon.Runtime
         static object? Construct(Type t, object?[] args)
         {
             if (TryCustomAllocation(t, args, null, out var allocated)) return allocated;
+            Typhon.Stdlib._abc.CheckAbstract(t);
             if (typeof(PyStrEnum).IsAssignableFrom(t))
             {
                 if (args.Length != 1) throw new InvalidCastException($"{t.Name}() expected one value");
@@ -436,9 +438,11 @@ namespace Typhon.Runtime
         public static string PyTypeName(Type t)
         {
             if (t == typeof(object)) return "object";
+            if (PyExc.BuiltinTypeName(t) is string exceptionName) return exceptionName;
             if (t == typeof(Typhon.Stdlib.types.UnionType)) return "Union";
             if (t == typeof(Typhon.Stdlib.types.BuiltinFunctionType)) return "builtin_function_or_method";
             if (t == typeof(Typhon.Stdlib.types.WrapperDescriptorType)) return "wrapper_descriptor";
+            if (t == typeof(Typhon.Stdlib.types.EllipsisType)) return "ellipsis";
             if (t == typeof(Typhon.Stdlib.types.GeneratorType)) return "generator";
             if (t == typeof(Typhon.Stdlib.types.CoroutineType)) return "coroutine";
             if (t == typeof(Typhon.Stdlib.types.AsyncGeneratorType)) return "async_generator";
@@ -494,6 +498,8 @@ namespace Typhon.Runtime
             if (f is Type t)
             {
                 if (TryCustomAllocation(t, args, kw, out var allocated)) return allocated;
+                Typhon.Stdlib._abc.CheckAbstract(t);
+                if (t == typeof(MissingMemberException)) return __attribute_error(args, kw);
                 if (t == typeof(frozendict<object, object>)) return ConstructFrozenDict(args, kw);
                 if (t == typeof(OrderedDictionary<object, object>)) return dict(ConstructFrozenDict(args, kw, "dict"));
                 if (t == typeof(frozenset<object>)) throw new InvalidCastException("frozenset() takes no keyword arguments");
@@ -509,6 +515,9 @@ namespace Typhon.Runtime
             if (f != null) return CallMember(f).__call_kw__(args, kw);
             throw new InvalidCastException("'NoneType' object is not callable");
         }
+
+        public static T __construct_metaclass<T>(object?[] args, IDictionary<string, object?>? keywords)
+            where T : class => (T)__invoke_kw(typeof(T), args, keywords);
 
         /// <summary>
         /// A decorated method's call: the decorators' result called with the instance (when there is one), the arguments
@@ -587,6 +596,7 @@ namespace Typhon.Runtime
             PyBoundMethod bm => bm.__call__(args),
             Delegate d => d.DynamicInvoke(args),
             // a builtin type as a value (conv = int; conv("5")): the builtin's conversion
+            Type t when t == typeof(MissingMemberException) => __attribute_error(args),
             Type t when BuiltinTypeCall(t, args, out var converted) => converted,
             // a class passed as a value (cls = Array2D; cls(n, n)): constructed with the constructor that fits the arguments
             Type t => Construct(t, args),

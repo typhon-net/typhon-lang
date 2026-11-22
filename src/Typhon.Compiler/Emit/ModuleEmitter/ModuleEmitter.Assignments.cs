@@ -164,7 +164,8 @@ namespace Typhon.Compiler.Emit
                 var members = _r.GetMembers(meta, a.Name);
                 if (members.Any(m => m.IsMethod && m.IsStatic && (meta.StartsWith("Typhon.Stdlib.") || !(m.TypeParams?.Count > 0))) &&
                     members.All(m => m.IsMethod) && TryTypeExpr(a.Target, out var type))
-                    return $"new global::Typhon.Runtime.PyBoundMethod(typeof({type}), {CsString(a.Name)})";
+                    return meta == "Typhon.Stdlib.builtins" ? BuiltinModuleFunction(a.Name) :
+                        $"new global::Typhon.Runtime.PyBoundMethod(typeof({type}), {CsString(a.Name)})";
                 return null;
             }
             if (IsDotNetMethod(a)) return EmitBoundMethod(a);
@@ -302,8 +303,15 @@ namespace Typhon.Compiler.Emit
                             value is SubscriptExpr { Target: NameExpr source, Index: not SliceExpr } && source.Id == n.Id;
                         bool convertsToString = known is not (null or "dynamic" or "object" or "string") && valueType == "string" &&
                             value is CallExpr { Func: NameExpr { Id: "str" } } && !IsShadowed("str");
+                        // The element type can be unknown even when the builtin constructor fixes the collection family.
+                        bool changesContainer = valueType == null && known != null &&
+                            (IsPythonContainer(known) || TupleItemOrMixed(known) != null) &&
+                            value is CallExpr { Func: NameExpr constructor } &&
+                            constructor.Id is "tuple" or "list" or "set" or "dict" && !IsShadowed(constructor.Id) &&
+                            !ContainerMatches(constructor, known);
+                        if (changesContainer) valueType = "dynamic";
                         if (Obs != null && valueType != null && known != null && !sameBlock &&
-                            (Incompatible(known, valueType) || incompatibleClass || differentFunction || extractsItem || convertsToString ||
+                            (Incompatible(known, valueType) || incompatibleClass || differentFunction || extractsItem || convertsToString || changesContainer ||
                              known == "double" && IsIntegral(valueType) && valueType != "bool" && IsIntConversion(value)))
                             Obs.AddConflict(_scopeKey + "|" + n.Id, IsIntegral(known) && valueType == "double" ? "double" : "dynamic");
                         // total = total + x with a late-bound x on a number variable: the sum may be a float, the variable is late-bound
@@ -317,7 +325,7 @@ namespace Typhon.Compiler.Emit
                             Obs.AddConflict(_scopeKey + "|" + n.Id, "dynamic");
                         // (x = int(x) on a float: from here on x is an int, so it gets a new variable too)
                         bool narrows = known == "double" && IsIntegral(valueType) && valueType != "bool";
-                        if (valueType != null && (Incompatible(known, valueType) || incompatibleClass || differentFunction || extractsItem || convertsToString || narrows) && sameBlock)
+                        if (valueType != null && (Incompatible(known, valueType) || incompatibleClass || differentFunction || extractsItem || convertsToString || changesContainer || narrows) && sameBlock)
                         {
                             string fresh = NewTmp(n.Id + "_");
                             _w.Line($"var {fresh} = {EmitValue(value)};");
@@ -451,7 +459,8 @@ namespace Typhon.Compiler.Emit
             {
                 case AttributeExpr at:
                 {
-                    if (!_m.IsGdScript && (at.Name == "__class__" || UsesExceptionAttribute(at) || MetaclassMember(at, out _)) ||
+                    if (!_m.IsGdScript && (at.Name == "__class__" || UsesExceptionAttribute(at) || MetaclassMember(at, out _) ||
+                        FunctionOfType(InferType(at.Target), out _, out _)) ||
                         at.Target is NameExpr owner && IsClassArgument(owner.Id) || IsInstanceClassDefault(at) || InferType(at.Target) == LocalDataClassType)
                     {
                         string temporary = NewTmp("value");
@@ -548,7 +557,9 @@ namespace Typhon.Compiler.Emit
 
         /// <summary>A call C# binds at run time (a late-bound argument or receiver): its C# type is dynamic.</summary>
         bool IsDynamicallyDispatched(Expr e) =>
-            e is CallExpr c && (c.Args.Any(a => InferType(a.Value) == "dynamic") || c.Func is AttributeExpr fa && InferType(fa.Target) == "dynamic");
+            e is CallExpr c && (c.Args.Any(a => InferType(a.Value) == "dynamic") ||
+                InferType(c.Func) is "global::System.Type" or "System.Type" ||
+                c.Func is AttributeExpr fa && InferType(fa.Target) == "dynamic" || IsLateRuntimeMethodCall(c, out _));
 
         /// <summary>Whether a value of this C# type deconstructs into its items (C# tuple syntax); other iterables unpack by position.</summary>
         bool HasDeconstruct(string t) =>

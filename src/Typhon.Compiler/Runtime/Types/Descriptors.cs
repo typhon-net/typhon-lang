@@ -31,6 +31,8 @@ namespace Typhon.Stdlib
             public dynamic? fset { get; }
             public dynamic? fdel { get; }
             public object? __doc__ { get; set; }
+            public bool __isabstractmethod__ => _abc.IsAbstract((object?)fget) ||
+                _abc.IsAbstract((object?)fset) || _abc.IsAbstract((object?)fdel);
             readonly bool _usesGetterDoc;
             string? _name;
 
@@ -87,14 +89,19 @@ namespace Typhon.Stdlib
 
         internal abstract class MethodDescriptor : DynamicObject
         {
-            public dynamic? __func__ { get; }
+            public dynamic? __func__ { get; private set; }
             public dynamic? __wrapped__ => __func__;
+            public bool __isabstractmethod__ => _abc.IsAbstract((object?)__func__);
             public object? __doc__ { get; set; }
-            public string __name__ { get; set; }
-            public string __qualname__ { get; set; }
-            public string __module__ { get; set; }
+            public string __name__ { get; set; } = null!;
+            public string __qualname__ { get; set; } = null!;
+            public string __module__ { get; set; } = null!;
 
-            protected MethodDescriptor(object? function)
+            protected MethodDescriptor() { }
+
+            protected MethodDescriptor(object? function) => __init__(function);
+
+            public void __init__(object? function)
             {
                 __func__ = function;
                 __doc__ = Builtins.getattr(function, "__doc__", null);
@@ -106,6 +113,7 @@ namespace Typhon.Stdlib
 
         internal class staticmethod : MethodDescriptor, IPyKeywordCallable
         {
+            protected staticmethod() { }
             public staticmethod(object? function) : base(function) { }
 
             public dynamic? __get__(object? instance, object? owner = null) =>
@@ -131,6 +139,7 @@ namespace Typhon.Stdlib
 
         internal class classmethod : MethodDescriptor
         {
+            protected classmethod() { }
             public classmethod(object? function) : base(function) { }
 
             public dynamic __get__(object? instance, object? owner = null) =>

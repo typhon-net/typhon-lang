@@ -19,6 +19,7 @@ def _double(value: int) -> int:
 module = system.modules["__main__"]
 namespace = vars(module)
 print(module.__name__, module.__doc__)
+print(__doc__, globals()["__doc__"])
 print(namespace is module.__dict__, namespace["unreferenced"], namespace["Sample"] is Sample)
 print("unreferenced" in namespace, "missing" in namespace)
 method = namespace["_double"]
@@ -28,3 +29,8 @@ namespace["unreferenced"] = 12
 print(unreferenced, getattr(module, "unreferenced"))
 namespace["another"] = "hello"
 print(getattr(module, "another"), namespace.copy()["another"])
+
+__doc__ = 123
+print(__doc__, module.__doc__)
+setattr(module, "__doc__", None)
+print(__doc__ is None, globals()["__doc__"] is None)

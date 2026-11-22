@@ -98,7 +98,7 @@ namespace Typhon.Compiler.Emit
                 case FStringExpr _: return "string";
                 case LambdaExpr l when l.RequiresArgumentBinding: return "dynamic";
                 case YieldExpr _ when _scope != null && _scope.AsyncForm: return "dynamic";
-                case NamedExpr ne: return InferType(ne.Value);
+                case NamedExpr ne: return InferType(ne.Target) ?? InferType(ne.Value);
                 case ComprehensionExpr comp: return ComprehensionType(comp);
                 case NameExpr { Id: "__debug__" }: return "bool";
                 case NameExpr n when n.Id == "__file__" && !IsShadowed(n.Id): return "string";
@@ -303,7 +303,9 @@ namespace Typhon.Compiler.Emit
                         return PyTuplePrefix + itemType + ">";
                     }
                     if (t.Elts.Count == 0) return "ValueTuple";
-                    string ItemType(Expr value) => InferType(value) ?? (BoundMethodValue(value) != null ? "dynamic" : null);
+                    string ItemType(Expr value) => InferType(value) ??
+                        (value is NameExpr name && BuiltinTypeValue(name) != null ? "global::System.Type" :
+                         BoundMethodValue(value) != null ? "dynamic" : null);
                     if (t.Elts.Count == 1) { var one = PyType(ItemType(t.Elts[0])); return one == null || one == TypeInference.Pending ? one : $"ValueTuple<{one}>"; }
                     // a long tuple of one item type is a data sequence (a table of numbers), not a record: PyTuple<T>
                     if (t.Elts.Count >= 8 && !t.Elts.Any(x => x is StarredExpr))
@@ -323,7 +325,9 @@ namespace Typhon.Compiler.Emit
         string CallType(CallExpr call)
         {
             if (CustomAllocatorTarget(call.Func, out _) ||
-                call.Func is AttributeExpr allocator && BaseObjectMethod(allocator) == "__object_new") return "dynamic";
+                call.Func is AttributeExpr allocator && (BaseObjectMethod(allocator) == "__object_new" ||
+                    allocator.Name == "__new__" && CustomAllocatorTarget(allocator.Target, out _)))
+                return "dynamic";
             if (SuperListAppend(call) != null || ConditionalClassReference(call.Func)) return "dynamic";
             if (call.Func is NameExpr aliasName && AliasTarget(aliasName) is Expr aliasTarget)
                 return InferType(new CallExpr { Func = aliasTarget, Args = call.Args, Line = call.Line, Col = call.Col });
@@ -380,6 +384,7 @@ namespace Typhon.Compiler.Emit
             if (call.Func is AttributeExpr ma && ma.Target is NameExpr ms && ms.Id == "self" && _cls != null && _cls.MethodReturnTypes.TryGetValue(ma.Name, out var mrt))
                 return mrt == "void" ? null : mrt;
             if (_m.IsGdScript && GdCallType(call) is string gdRet) return gdRet;
+            if (BinaryPowerCall(call) is BinOpExpr power) return BinOpType(power);
             if (StdlibCallType(call) is string stdlibRet) return stdlibRet;
             if (call.Func is NameExpr fn && !IsShadowed(fn.Id))
             {
@@ -557,7 +562,7 @@ namespace Typhon.Compiler.Emit
             if (b.Op == "+" && l.StartsWith("List<") && l == r) return l;
             if (l == "dynamic" || r == "dynamic") return "dynamic";
             if (!NumericTypes.Contains(l) || !NumericTypes.Contains(r)) return l == r ? l : null;
-            if (b.Op == "**") return IsIntegral(l) && IsIntegral(r) ? IntT : "double";
+            if (b.Op == "**") return IsIntegral(l) && IsIntegral(r) ? IntegerPowerType(b.Right) : "double";
             if (_big && IsIntegral(l) && IsIntegral(r))
                 return WideningOps.Contains(b.Op) || l == IntT || r == IntT ? IntT : (IsSmallInt(l) && IsSmallInt(r) && l == r ? l : "long");
             if (_big && (l == IntT || r == IntT) && (l == "double" || r == "double")) return "double";

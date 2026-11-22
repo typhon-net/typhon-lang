@@ -1,0 +1,26 @@
+value = "module"
+
+def enabled() -> bool:
+    return True
+
+class Removed:
+    value = "local"
+    del value
+    previous = value
+    none = None
+    print("during", previous, none is None)
+
+class Parent:
+    answer = "inherited"
+
+class Child(Parent):
+    answer = "temporary"
+    if enabled():
+        del answer
+    else:
+        answer = "still set"
+
+print(Removed.previous, "value" in Removed.__dict__, hasattr(Removed, "value"))
+print(Child.answer, Child().answer, "answer" in Child.__dict__)
+Child.answer = None
+print(Child.answer is None, "answer" in Child.__dict__)

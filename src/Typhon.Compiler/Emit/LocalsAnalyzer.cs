@@ -29,6 +29,7 @@ namespace Typhon.Compiler.Emit
         public readonly HashSet<string> HoistedPlain = new HashSet<string>();
         public readonly Dictionary<string, Expr> Annotations = new Dictionary<string, Expr>();
         public readonly HashSet<string> AllLocals = new HashSet<string>();
+        public readonly HashSet<string> AssignedParameters = new HashSet<string>();
         public readonly HashSet<string> Globals = new HashSet<string>();
         public readonly HashSet<string> LocalFunctions = new HashSet<string>();
         public bool HasYield;
@@ -342,7 +343,8 @@ namespace Typhon.Compiler.Emit
                 string name = kv.Key;
                 var occs = kv.Value;
                 if (!occs.Any(o => o.Kind != Kind.Load)) continue;              // only read → not a local
-                if (_params.Contains(name) || _excluded.Contains(name) || _r.Globals.Contains(name)) continue;
+                if (_params.Contains(name)) { _r.AssignedParameters.Add(name); continue; }
+                if (_excluded.Contains(name) || _r.Globals.Contains(name)) continue;
                 if (_r.LocalFunctions.Contains(name))
                 {
                     // A single unconditional def can be a CLR local function. Conditional or rebound names are variables.

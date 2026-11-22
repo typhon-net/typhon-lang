@@ -321,12 +321,37 @@ namespace Typhon.Compiler.Semantics
                 // skip [Obsolete] (e.g. Exception's serialization constructor) and by-ref parameters
                 if (c.GetAttributes().Any(a => a.AttributeClass?.Name == "ObsoleteAttribute")) continue;
                 if (c.Parameters.Any(p => p.RefKind != RefKind.None || p.IsParams)) continue;
-                var sig = new CtorSignature { IsProtected = isProtected };
+                var sig = new CtorSignature { IsProtected = isProtected, Signature = MethodSig(c) };
                 foreach (var p in c.Parameters)
-                    sig.Parameters.Add(new KeyValuePair<string, string>(p.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), p.Name));
+                {
+                    string type = p.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+                    sig.Parameters.Add(new KeyValuePair<string, string>(type, p.Name));
+                    sig.Defaults.Add(ConstructorDefault(p, type));
+                }
                 result.Add(sig);
             }
             return result;
+        }
+
+        static string ConstructorDefault(IParameterSymbol parameter, string type)
+        {
+            if (!parameter.IsOptional || !parameter.HasExplicitDefaultValue) return null;
+            object value = parameter.ExplicitDefaultValue;
+            if (value == null) return parameter.Type.IsValueType ? "default" : "null";
+            string literal = Microsoft.CodeAnalysis.CSharp.SymbolDisplay.FormatPrimitive(value, quoteStrings: true, useHexadecimalNumbers: false);
+            if (literal == null) return null;
+            if (value is float or double && literal is "NaN" or "Infinity" or "-Infinity")
+                return (value is float ? "float." : "double.") +
+                    (literal == "Infinity" ? "PositiveInfinity" : literal == "-Infinity" ? "NegativeInfinity" : "NaN");
+            literal = value switch
+            {
+                sbyte => "(sbyte)" + literal, byte => "(byte)" + literal,
+                short => "(short)" + literal, ushort => "(ushort)" + literal,
+                uint => literal + "u", long => literal + "L", ulong => literal + "UL",
+                float => literal + "f", double => literal + "d", decimal => literal + "m",
+                _ => literal,
+            };
+            return parameter.Type.TypeKind == TypeKind.Enum ? $"({type})({literal})" : literal;
         }
     }
 }

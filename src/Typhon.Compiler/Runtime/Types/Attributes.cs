@@ -23,9 +23,15 @@ namespace Typhon.Runtime
         const BindingFlags StaticMembers = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
 
         public static dynamic? getattr(object? o, string name) =>
-            TryGetAttr(o, name, out var v) ? v : throw new MissingMemberException(o is PyModule module
-                ? $"module '{module.__name__}' has no attribute '{name}'"
-                : $"'{(o == null ? "NoneType" : o is Type ? "type" : PyTypeName(o.GetType()))}' object has no attribute '{name}'");
+            TryGetAttr(o, name, out var v) ? v : throw MissingAttribute(o, name);
+
+        static MissingMemberException MissingAttribute(object? receiver, string name, string? message = null) =>
+            PyExceptionState.CreateAttributeError([message ?? (receiver switch
+            {
+                PyModule module => $"module '{module.__name__}' has no attribute '{name}'",
+                Type type => $"type object '{PyTypeName(type)}' has no attribute '{name}'",
+                _ => $"'{(receiver == null ? "NoneType" : PyTypeName(receiver.GetType()))}' object has no attribute '{name}'",
+            })], name, receiver);
         public static dynamic? getattr(object? o, string name, object? @default) => TryGetAttr(o, name, out var v) ? v : @default;
         public static bool hasattr(object? o, string name) => TryGetAttr(o, name, out _);
 
@@ -39,6 +45,7 @@ namespace Typhon.Runtime
         {
             value = null;
             if (o == null && name == "__class__") { value = __type_of(o); return true; }
+            if (o == null && name == "__dir__") { value = DirectoryMethod(null); return true; }
             if (o == null || name.StartsWith("<")) return false;
             if (o is Typhon.Stdlib.builtins.super proxy && proxy.TryResolve(name, out value)) return true;
             if (o is PyBoundMethod { BuiltinOwner: { } owner } && name == "__self__") { value = owner; return true; }
@@ -51,9 +58,11 @@ namespace Typhon.Runtime
             {
                 if (name == "__dict__") { value = module.__dict__; return true; }
                 if (name == "__class__") { value = typeof(PyModule); return true; }
-                return module.__dict__.TryGetValue(name, out value);
+                if (module.__dict__.TryGetValue(name, out value)) return true;
+                if (name == "__dir__") { value = DirectoryMethod(module); return true; }
+                return false;
             }
-            if (o is Exception error && PyExceptionState.HasAttribute(name))
+            if (o is Exception error && PyExceptionState.HasAttribute(error, name))
             {
                 value = PyExceptionState.GetAttribute(error, name);
                 return true;
@@ -70,6 +79,7 @@ namespace Typhon.Runtime
                 }
                 if (name == "__module__") { value = __module_of(t); return true; }
                 if (name == "__mro__") { value = new PyTuple<Type>(Ancestors(t)); return true; }
+                if (name == "__bases__") { value = new PyTuple<Type>(PyMetaclasses.Bases(t)); return true; }
                 if (t is PyLocalDataClass local)
                 {
                     if (local.Members.TryGetValue(name, out value) || name == "__doc__") return true;
@@ -79,6 +89,11 @@ namespace Typhon.Runtime
                 if (PyMetaclasses.TryOwnValue(t, name, out value)) { value = PyMetaclasses.Bind(value, null, t); return true; }
                 if (PyClassDescriptors.TryGetAttribute(t, name, out value)) return true;
                 if (name == "__repr__") { value = ReprSlot(t); return true; }
+                if (name == "__dir__" && !t.GetMethods(StaticMembers | InstanceMembers).Any(m => m.Name == name))
+                {
+                    value = DirectoryMethod(t, unbound: !t.IsAbstract || !t.IsSealed);
+                    return true;
+                }
                 if (name == "__module__") { value = ModuleOfType(t); return true; }
                 if (TryGetClassData(t, name, out value)) return true;
                 if (t.GetMethods(StaticMembers | InstanceMembers).Any(m => m.Name == name)) { value = new PyBoundMethod(t, name); return true; }
@@ -94,6 +109,7 @@ namespace Typhon.Runtime
                 }
                 if (FindNestedType(t, name) is Type nested) { value = nested; return true; }
                 if (TryBuiltinClassMethod(t, name, out value)) return true;
+                if (PyMetaclasses.TryBindMember(t, name, out value)) return true;
                 // CLR reflection consumers may also read members of the Type object itself.
             }
             if (o is PyFunction pf)
@@ -199,6 +215,7 @@ namespace Typhon.Runtime
             }
             if (FindNestedType(type, name) is Type nestedType) { value = nestedType; return true; }
             if (name == "__repr__") { value = ReprSlot(type).__get__(o, type); return true; }
+            if (name == "__dir__") { value = DirectoryMethod(o); return true; }
             if (name == "__getstate__")
             {
                 value = new Typhon.Stdlib.types.MethodType(__object_method("__object_getstate"), o);
@@ -206,6 +223,15 @@ namespace Typhon.Runtime
             }
             return allowFallback && TryFallbackAttribute(o, name, out value);
         }
+
+        static PyClosure DirectoryMethod(object? target, bool unbound = false) =>
+            new("__dir__", (args, keywords) =>
+            {
+                int required = unbound ? 1 : 0;
+                if (args.Length != required || keywords?.Count > 0)
+                    throw new InvalidCastException(unbound ? "unbound method __dir__() needs one argument" : "__dir__() takes no arguments");
+                return dir(unbound ? args[0] : target);
+            });
 
         static bool TryGetClassData(Type type, string name, out object? value, Type? before = null)
         {
@@ -273,6 +299,7 @@ namespace Typhon.Runtime
         {
             if (!cls.IsClass || cls.IsAbstract || cls == typeof(string) || typeof(Delegate).IsAssignableFrom(cls))
                 throw new InvalidCastException($"object.__new__({PyTypeName(cls)}) is not safe");
+            Typhon.Stdlib._abc.CheckAbstract(cls);
             return System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(cls);
         }
 
@@ -317,7 +344,7 @@ namespace Typhon.Runtime
 
 
         public static object? __object_getattribute(object? obj, string name) =>
-            TryGetAttr(obj, name, out var value, allowFallback: false) ? value : throw new MissingMemberException(name);
+            TryGetAttr(obj, name, out var value, allowFallback: false) ? value : throw MissingAttribute(obj, name);
 
         public static object? __object_setattr(object? obj, string name, object? value)
         {
@@ -344,7 +371,7 @@ namespace Typhon.Runtime
             if (PyAttrDict.TryGetExtra(instance, name, out var value)) return value;
             if (FallbackAttributeMethod(instance, name) is MethodInfo getter)
                 return Unwrapped(() => getter.Invoke(instance, [name]));
-            throw new MissingMemberException($"'{PyTypeName(instance.GetType())}' object has no attribute '{name}'");
+            throw MissingAttribute(instance, name);
         }
 
         static bool TryFallbackAttribute(object instance, string name, out object? value)
@@ -402,7 +429,8 @@ namespace Typhon.Runtime
         /// <summary>Python instances can acquire attributes, while CLR receivers keep their normal setter behavior.</summary>
         public static void __setattr_late(object? value, object? receiver, string name, Action<dynamic, dynamic> clrSet, bool freshEmptyDict = false)
         {
-            if (receiver == null || (receiver as Type ?? receiver.GetType()).IsDefined(typeof(PySourceAttribute), false))
+            if (receiver == null || receiver is Exception error && PyExceptionState.HasAttribute(error, name) ||
+                (receiver as Type ?? receiver.GetType()).IsDefined(typeof(PySourceAttribute), false))
                 SetAttribute(receiver, name, value, freshEmptyDict);
             else
                 clrSet(receiver, value);
@@ -413,8 +441,8 @@ namespace Typhon.Runtime
 
         static void SetAttribute(object? o, string name, object? value, bool freshEmptyDict)
         {
-            if (o == null) throw new MissingMemberException($"'NoneType' object has no attribute '{name}'");
-            if (o is Exception error && PyExceptionState.HasAttribute(name))
+            if (o == null) throw MissingAttribute(null, name);
+            if (o is Exception error && PyExceptionState.HasAttribute(error, name))
             {
                 PyExceptionState.SetAttribute(error, name, value);
                 return;
@@ -430,7 +458,7 @@ namespace Typhon.Runtime
                 if (PyMetaclasses.Set(t, name, value)) return;
                 if (t.GetProperty(name, StaticMembers) is PropertyInfo sp && sp.CanWrite) { sp.SetValue(null, AttributeValue(value, sp.PropertyType, freshEmptyDict)); return; }
                 if (t.GetField(name, StaticMembers) is FieldInfo sf && !sf.IsInitOnly) { sf.SetValue(null, AttributeValue(value, sf.FieldType, freshEmptyDict)); return; }
-                throw new MissingMemberException($"type object '{PyTypeName(t)}' has no attribute '{name}' (Typhon classes cannot gain attributes at run time)");
+                throw MissingAttribute(t, name, $"type object '{PyTypeName(t)}' has no attribute '{name}' (Typhon classes cannot gain attributes at run time)");
             }
             if (o is PyFunction pf)
             {
@@ -453,11 +481,16 @@ namespace Typhon.Runtime
 
         public static void delattr(object? o, string name)
         {
+            if (o is MissingMemberException error && PyExceptionState.IsAttributeErrorMember(name))
+            {
+                PyExceptionState.SetAttribute(error, name, null);
+                return;
+            }
             if (o is PyLocalDataClass local && local.Members.Remove(name)) return;
             if (o is Type type && PyClassDescriptors.DeleteSlot(type, name)) return;
             if (o != null && PyAttrDict.RemoveExtra(o, name)) return;
             if (o is PyFunction pf && pf._attrs != null && pf._attrs.Remove(name)) return;
-            throw new MissingMemberException($"'{(o == null ? "NoneType" : PyTypeName(o.GetType()))}' object has no attribute '{name}' (or it is declared by its class)");
+            throw MissingAttribute(o, name, $"'{(o == null ? "NoneType" : PyTypeName(o.GetType()))}' object has no attribute '{name}' (or it is declared by its class)");
         }
 
         // A literal {} has no aliases. Construct it with the receiver's closed mapping type when the C# field requires one.

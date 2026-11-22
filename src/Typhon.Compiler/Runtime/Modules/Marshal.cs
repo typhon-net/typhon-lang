@@ -8,8 +8,10 @@ namespace Typhon.Stdlib
 {
     using System;
     using System.Collections;
+    using System.Collections.Generic;
     using System.Globalization;
     using System.IO;
+    using System.Linq;
     using System.Numerics;
     using System.Runtime.CompilerServices;
     using System.Text;
@@ -18,13 +20,13 @@ namespace Typhon.Stdlib
     /// <summary>The CPython marshal wire format for ordinary data objects, including profiler stats.</summary>
     internal static class marshal
     {
-        public const long version = 5;
+        public const long version = 6;
 
         public static PyBytes dumps(object? value, long version = marshal.version, bool allow_code = true)
         {
             using var output = new MemoryStream();
             using var writer = new BinaryWriter(output, Encoding.UTF8, leaveOpen: true);
-            Write(writer, value, version, depth: 0);
+            Write(writer, value, version, allow_code, depth: 0);
             return new PyBytes(output.ToArray());
         }
 
@@ -33,25 +35,58 @@ namespace Typhon.Stdlib
 
         /// <summary>Read one value from a binary file, leaving it positioned at the start of the next value.</summary>
         public static dynamic? load(object file, bool allow_code = true) =>
-            file is io.IOBase { __stream: Stream input } ? Read(input)
+            file is io.IOBase { __stream: Stream input } ? Read(input, allow_code)
             : throw new InvalidCastException("marshal.load() expected a binary file");
 
         public static dynamic? loads(object bytes, bool allow_code = true)
         {
             using var input = new MemoryStream(ByteOps.From(bytes), writable: false);
-            return Read(input);
+            return Read(input, allow_code);
         }
 
-        static object? Read(Stream input)
+        static object? Read(Stream input, bool allowCode)
         {
             using var binary = new BinaryReader(input, Encoding.UTF8, leaveOpen: true);
-            return new Reader(binary).Item();
+            return new Reader(binary, allowCode).Item();
         }
 
-        sealed class Reader(BinaryReader binary)
+        /// <summary>Bytecode and metadata preserved from a CPython marshal record.</summary>
+        internal sealed class MarshalledCode(
+            string name, string filename, int firstLine, int flags, string qualifiedName,
+            int arguments, int positional, int keywordOnly, int stackSize,
+            PyBytes bytecode, PyTuple<object?> constants, PyTuple<object?> names,
+            PyTuple<object?> localNames, PyBytes localKinds, PyBytes lines, PyBytes exceptions)
+            : sys_.code(name, filename, firstLine, flags, qualifiedName)
+        {
+            public readonly long co_argcount = arguments;
+            public readonly long co_posonlyargcount = positional;
+            public readonly long co_kwonlyargcount = keywordOnly;
+            public readonly long co_stacksize = stackSize;
+            public readonly PyBytes co_code = bytecode;
+            public readonly PyTuple<object?> co_consts = constants;
+            public readonly PyTuple<object?> co_names = names;
+            public readonly PyBytes co_linetable = lines;
+            public readonly PyBytes co_exceptiontable = exceptions;
+            internal readonly PyTuple<object?> LocalNames = localNames;
+            internal readonly PyBytes LocalKinds = localKinds;
+            public readonly PyTuple<string> co_varnames = NamesWithKind(localNames, localKinds, 0x20);
+            public readonly PyTuple<string> co_cellvars = NamesWithKind(localNames, localKinds, 0x40);
+            public readonly PyTuple<string> co_freevars = NamesWithKind(localNames, localKinds, 0x80);
+            public long co_nlocals => co_varnames.Count;
+
+            static PyTuple<string> NamesWithKind(PyTuple<object?> names, PyBytes kinds, int mask)
+            {
+                var result = new List<string>();
+                for (int i = 0; i < names.Count; i++)
+                    if ((kinds.Data[i] & mask) != 0) result.Add((string)names[i]!);
+                return new PyTuple<string>(result);
+            }
+        }
+
+        sealed class Reader(BinaryReader binary, bool allowCode)
         {
             static readonly object Terminator = new();
-            readonly System.Collections.Generic.List<object?> references = new();
+            readonly List<object?> references = new();
 
             public object? Item()
             {
@@ -84,12 +119,15 @@ namespace Typhon.Stdlib
                 {
                     '0' => Terminator,
                     'r' => Reference(),
-                    '{' => Mapping(reference, depth),
+                    '{' => Mapping(reference, depth, frozen: false),
+                    '}' => Mapping(reference, depth, frozen: true),
                     '(' => Tuple(binary.ReadInt32(), reference, depth),
                     ')' => Tuple(binary.ReadByte(), reference, depth),
                     '[' => List(reference, depth),
                     '<' => Set(reference, depth, frozen: false),
                     '>' => Set(reference, depth, frozen: true),
+                    ':' => Remember(reference, new PySlice(Child(depth), Child(depth), Child(depth))),
+                    'c' => Remember(reference, CodeObject(depth)),
                     _ => Remember(reference, Scalar((char)type)),
                 };
             }
@@ -106,6 +144,7 @@ namespace Typhon.Stdlib
                 'N' => null,
                 'T' => true,
                 'F' => false,
+                '.' => Builtins.Ellipsis,
                 'i' => (long)binary.ReadInt32(),
                 'I' => binary.ReadInt64(),
                 'l' => Long(),
@@ -117,9 +156,39 @@ namespace Typhon.Stdlib
                 'u' or 't' => Encoding.UTF8.GetString(Bytes(binary.ReadInt32())),
                 'a' or 'A' => Encoding.ASCII.GetString(Bytes(binary.ReadInt32())),
                 'z' or 'Z' => Encoding.ASCII.GetString(Bytes(binary.ReadByte())),
-                'c' => throw new ArgumentException("marshal code objects are unsupported"),
                 _ => throw InvalidData(),
             };
+
+            MarshalledCode CodeObject(int depth)
+            {
+                if (!allowCode) throw new ArgumentException("unmarshalling code objects is disallowed");
+                T Field<T>() where T : class => Child(depth) as T ?? throw InvalidData();
+
+                int arguments = binary.ReadInt32();
+                int positional = binary.ReadInt32();
+                int keywords = binary.ReadInt32();
+                int stackSize = binary.ReadInt32();
+                int flags = binary.ReadInt32();
+                var code = Field<PyBytes>();
+                var constants = Field<PyTuple<object?>>();
+                var names = Field<PyTuple<object?>>();
+                var localNames = Field<PyTuple<object?>>();
+                var localKinds = Field<PyBytes>();
+                var filename = Field<string>();
+                var name = Field<string>();
+                var qualifiedName = Field<string>();
+                int firstLine = binary.ReadInt32();
+                var lines = Field<PyBytes>();
+                var exceptions = Field<PyBytes>();
+                if (arguments < 0 || positional < 0 || positional > arguments || keywords < 0 || stackSize < 0 ||
+                    (code.Data.Length & 1) != 0 || localNames.Count != localKinds.Data.Length)
+                    throw InvalidData();
+                foreach (object? local in localNames)
+                    if (local is not string) throw InvalidData();
+                return new MarshalledCode(name, filename, firstLine, flags, qualifiedName,
+                    arguments, positional, keywords, stackSize, code, constants,
+                    names, localNames, localKinds, lines, exceptions);
+            }
 
             double TextFloat() => Builtins.@float(Encoding.ASCII.GetString(Bytes(binary.ReadByte())));
 
@@ -165,14 +234,15 @@ namespace Typhon.Stdlib
                 return tuple;
             }
 
-            object Mapping(int reference, int depth)
+            object Mapping(int reference, int depth, bool frozen)
             {
                 var map = Builtins.__newdict<object, object?>();
-                Remember(reference, map);
+                if (!frozen) Remember(reference, map);
                 while (true)
                 {
                     object? key = Value(depth + 1);
-                    if (ReferenceEquals(key, Terminator)) return map;
+                    if (ReferenceEquals(key, Terminator))
+                        return frozen ? Remember(reference, Builtins.frozendict(map))! : map;
                     if (key == null) throw new ArgumentException("None dictionary keys are unsupported");
                     map[key] = Child(depth);
                 }
@@ -182,7 +252,7 @@ namespace Typhon.Stdlib
             {
                 int size = binary.ReadInt32();
                 if (size < 0) throw InvalidData();
-                var list = new System.Collections.Generic.List<object?>();
+                var list = new List<object?>();
                 Remember(reference, list);
                 for (int i = 0; i < size; i++) list.Add(Child(depth));
                 return list;
@@ -199,12 +269,27 @@ namespace Typhon.Stdlib
             }
         }
 
-        static void Write(BinaryWriter writer, object? value, long version, int depth)
+        static char? SetTag(Type type)
+        {
+            if (!type.IsGenericType) return null;
+            Type definition = type.GetGenericTypeDefinition();
+            if (definition == typeof(frozenset<>)) return '>';
+            return definition == typeof(HashSet<>) ? '<' : null;
+        }
+
+        static void Write(BinaryWriter writer, object? value, long version, bool allowCode, int depth)
         {
             if (depth > 500) throw new ArgumentException("object too deeply nested to marshal");
             void Type(char tag) => writer.Write((byte)tag);
             void Blob(char tag, byte[] bytes) { Type(tag); writer.Write(bytes.Length); writer.Write(bytes); }
-            void Item(object? child) => Write(writer, child, version, depth + 1);
+            void Item(object? child) => Write(writer, child, version, allowCode, depth + 1);
+            void Float(double number)
+            {
+                if (version >= 2) { writer.Write(number); return; }
+                var bytes = Encoding.ASCII.GetBytes(number.ToString("G17", CultureInfo.InvariantCulture).ToLowerInvariant());
+                writer.Write((byte)bytes.Length);
+                writer.Write(bytes);
+            }
             void Integral(BigInteger number)
             {
                 if (number >= int.MinValue && number <= int.MaxValue) { Type('i'); writer.Write((int)number); return; }
@@ -219,21 +304,47 @@ namespace Typhon.Stdlib
             {
                 case null: Type('N'); break;
                 case bool flag: Type(flag ? 'T' : 'F'); break;
+                case types.EllipsisType: Type('.'); break;
                 case int number: Integral(number); break;
                 case long number: Integral(number); break;
                 case BigInteger number: Integral(number); break;
                 case double number:
-                    if (version >= 2) { Type('g'); writer.Write(number); }
-                    else
-                    {
-                        Type('f');
-                        var bytes = Encoding.ASCII.GetBytes(number.ToString("G17", CultureInfo.InvariantCulture).ToLowerInvariant());
-                        writer.Write((byte)bytes.Length);
-                        writer.Write(bytes);
-                    }
+                    Type(version >= 2 ? 'g' : 'f');
+                    Float(number);
+                    break;
+                case Complex number:
+                    Type(version >= 2 ? 'y' : 'x');
+                    Float(number.Real);
+                    Float(number.Imaginary);
                     break;
                 case string text: Blob('u', Encoding.UTF8.GetBytes(text)); break;
                 case PyBytes bytes: Blob('s', bytes.Data); break;
+                case PySlice slice when version >= 5:
+                    Type(':');
+                    Item(slice.start);
+                    Item(slice.stop);
+                    Item(slice.step);
+                    break;
+                case sys_.code when !allowCode: throw new ArgumentException("marshalling code objects is disallowed");
+                case MarshalledCode code:
+                    Type('c');
+                    writer.Write((int)code.co_argcount);
+                    writer.Write((int)code.co_posonlyargcount);
+                    writer.Write((int)code.co_kwonlyargcount);
+                    writer.Write((int)code.co_stacksize);
+                    writer.Write((int)code.co_flags);
+                    Item(code.co_code);
+                    Item(code.co_consts);
+                    Item(code.co_names);
+                    Item(code.LocalNames);
+                    Item(code.LocalKinds);
+                    Item(code.co_filename);
+                    Item(code.co_name);
+                    Item(code.co_qualname);
+                    writer.Write((int)code.co_firstlineno);
+                    Item(code.co_linetable);
+                    Item(code.co_exceptiontable);
+                    break;
                 case ITuple tuple:
                     Type('('); writer.Write(tuple.Length);
                     for (int i = 0; i < tuple.Length; i++) Item(tuple[i]);
@@ -243,7 +354,9 @@ namespace Typhon.Stdlib
                     for (int i = 0; i < tuple.Count; i++) Item(tuple[i]);
                     break;
                 case IDictionary entries:
-                    Type('{');
+                    bool frozen = Builtins.__type_of(entries) == typeof(frozendict<object, object>);
+                    if (frozen && version < 6) throw new ArgumentException("unmarshallable object");
+                    Type(frozen ? '}' : '{');
                     var iterator = entries.GetEnumerator();
                     while (iterator.MoveNext()) { Item(iterator.Key); Item(iterator.Value); }
                     Type('0');
@@ -251,6 +364,12 @@ namespace Typhon.Stdlib
                 case IList list:
                     Type('['); writer.Write(list.Count);
                     foreach (var child in list) Item(child);
+                    break;
+                case IEnumerable sequence when SetTag(sequence.GetType()) is char tag:
+                    Type(tag);
+                    object?[] members = sequence.Cast<object?>().ToArray();
+                    writer.Write(members.Length);
+                    foreach (var member in members) Item(member);
                     break;
                 default: throw new ArgumentException("unmarshallable object");
             }

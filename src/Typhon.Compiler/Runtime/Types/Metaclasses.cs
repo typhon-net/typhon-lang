@@ -9,16 +9,20 @@ namespace Typhon.Runtime
     using System.Collections;
     using System.Collections.Generic;
     using System.Linq;
+    using System.Reflection;
     using System.Runtime.CompilerServices;
     using Typhon.Stdlib;
 
     [AttributeUsage(AttributeTargets.Class, Inherited = false)]
     internal sealed class PyMetaclassDefinitionAttribute : Attribute { }
 
+    [AttributeUsage(AttributeTargets.Method, Inherited = false)]
+    internal sealed class PyMetaclassMethodAttribute : Attribute { }
+
     /// <summary>Python class-creation metadata for classes that keep their declared CLR type.</summary>
     internal static class PyMetaclasses
     {
-        sealed record Definition(Type Meta, OrderedDictionary<string, object?> Namespace);
+        sealed record Definition(Type Meta, Type[] Bases, OrderedDictionary<string, object?> Namespace);
         sealed record Creation(Type Target, Type Meta, string Name, Type[] Bases, IDictionary Namespace);
         static readonly ConditionalWeakTable<Type, Definition> Definitions = new();
         [ThreadStatic] static Creation? _creating;
@@ -31,6 +35,26 @@ namespace Typhon.Runtime
 
         internal static IDictionary? Namespace(Type type) =>
             Definitions.TryGetValue(type, out var definition) ? definition.Namespace : null;
+
+        internal static Type[] Bases(Type type) => Definitions.TryGetValue(type, out var definition)
+            ? definition.Bases.Length == 0 ? [typeof(object)] : definition.Bases
+            : type.BaseType is Type parent ? [parent] : [];
+
+        internal static bool TryBindMember(Type target, string name, out object? value)
+        {
+            value = null;
+            if (!Definitions.TryGetValue(target, out var definition)) return false;
+            const BindingFlags flags = BindingFlags.DeclaredOnly | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
+            for (Type? owner = definition.Meta; owner != null && IsMetaclass(owner); owner = owner.BaseType)
+            {
+                var methods = owner.GetMethods(flags).Where(m => m.Name == name).ToArray();
+                if (methods.Length == 0) continue;
+                if (!methods.Any(m => m.IsDefined(typeof(PyMetaclassMethodAttribute), false))) return false;
+                value = new types.MethodType((object?)Builtins.getattr(owner, name), target);
+                return true;
+            }
+            return false;
+        }
 
         internal static bool TryOwnValue(Type type, string name, out object? value)
         {
@@ -60,8 +84,8 @@ namespace Typhon.Runtime
             foreach (Type basis in bases)
             {
                 Type candidate = Of(basis);
-                if (Builtins.issubclass(winner, candidate)) continue;
-                if (Builtins.issubclass(candidate, winner)) winner = candidate;
+                if (Builtins.IsSubclass(winner, candidate)) continue;
+                if (Builtins.IsSubclass(candidate, winner)) winner = candidate;
                 else throw new InvalidCastException("metaclass conflict: the metaclass of a derived class must be a (non-strict) subclass of the metaclasses of all its bases");
             }
             return winner;
@@ -82,7 +106,7 @@ namespace Typhon.Runtime
                 if (entries.Key is not string key) throw new InvalidCastException("type.__new__ namespace keys must be strings");
                 owned[key] = entries.Value;
             }
-            Definitions.Add(creation.Target, new Definition(metaclass, owned));
+            Definitions.Add(creation.Target, new Definition(metaclass, creation.Bases, owned));
             return creation.Target;
         });
 
@@ -90,6 +114,13 @@ namespace Typhon.Runtime
         {
             if (_creating is { } frame && frame.Target == type) frame.Namespace[name] = value;
             return value;
+        }
+
+        internal static void Delete(Type type, string name)
+        {
+            if (_creating is not { } frame || frame.Target != type || !frame.Namespace.Contains(name))
+                throw new NameError($"name '{name}' is not defined", name: name);
+            frame.Namespace.Remove(name);
         }
 
         internal static object? Publish(Type type, string name)
@@ -151,6 +182,7 @@ namespace Typhon.Runtime
 
         public static T __class_namespace_set<T>(Type type, string name, T value) => PyMetaclasses.Write(type, name, value);
         public static object? __class_namespace_publish(Type type, string name) => PyMetaclasses.Publish(type, name);
+        public static void __class_namespace_delete(Type type, string name) => PyMetaclasses.Delete(type, name);
         public static dynamic? __class_namespace_read(Type type, string name, Type module, string moduleName) =>
             PyMetaclasses.Read(type, name, module, moduleName);
     }

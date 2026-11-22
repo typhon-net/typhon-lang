@@ -204,6 +204,12 @@ namespace Typhon.Compiler.Emit
         /// <summary>Emits a function-like body with its signature's prologue and renames in effect.</summary>
         void EmitSignatureBody(List<Stmt> body, Signature sig)
         {
+            var enclosingRenames = _renames.Count == 0 ? null : new Dictionary<string, string>(_renames);
+            if (enclosingRenames != null)
+            {
+                foreach (var name in sig.Scope.Params) _renames.Remove(name);
+                foreach (var name in sig.Locals.AllLocals) _renames.Remove(name);
+            }
             foreach (var kv in sig.Renames) _renames[kv.Key] = kv.Value;
             if (sig.IsGenerator)
             {
@@ -221,6 +227,8 @@ namespace Typhon.Compiler.Emit
             }
             else EmitFunctionBody(body, sig.Scope, null, sig.Locals, extraPrologue: () => { foreach (var line in sig.Prologue) _w.Line(line); });
             foreach (var kv in sig.Renames) _renames.Remove(kv.Key);
+            if (enclosingRenames != null)
+                foreach (var kv in enclosingRenames) _renames[kv.Key] = kv.Value;
         }
 
         const string PyGeneratorPrefix = "global::Typhon.Runtime.PyGenerator<", GenVar = "__gen";
@@ -316,6 +324,14 @@ namespace Typhon.Compiler.Emit
             if (_cls != null && f.Name == "__new__" && IsStringEnum(_cls.Def) && f.Params.Count > 0)
                 scope.ClassArgument = f.Params[0].Name;
             sig.Scope = scope;
+            if (!_m.IsGdScript && dropFirst && f.Params.Count > 0 && locals.AssignedParameters.Contains(f.Params[0].Name))
+            {
+                string name = f.Params[0].Name;
+                scope.ReboundReceiver = NewTmp("receiver");
+                scope.Types[name] = "dynamic";
+                sig.Renames[name] = scope.ReboundReceiver;
+                sig.Prologue.Add($"dynamic {scope.ReboundReceiver} = this;");
+            }
 
             var ps = new List<string>();
             var defaults = new List<string>();

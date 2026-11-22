@@ -186,7 +186,7 @@ namespace Typhon.Runtime
         public static int min(int a, int b) => Math.Min(a, b);
         public static long min(long a, long b) => Math.Min(a, b);
         public static double min(double a, double b) => Math.Min(a, b);
-        public static T min<T>(T a, T b) where T : IComparable<T> => PyComparer<T>().Compare(a, b) <= 0 ? a : b;
+        public static T min<T>(T a, T b) => PyComparer<T>().Compare(a, b) <= 0 ? a : b;
         public static T min<T>(T a, T b, T c, params T[] rest) => new[] { a, b, c }.Concat(rest).Min(PyComparer<T>())!;
         public static T min<T>(IEnumerable<T> xs) => xs.Min(PyComparer<T>()) ?? throw new ArgumentException("min() arg is an empty sequence");
         public static T min<T, K>(IEnumerable<T> xs, Func<T, K> key) => xs.MinBy(key, PyComparer<K>()) ?? throw new ArgumentException("min() arg is an empty sequence");
@@ -198,7 +198,7 @@ namespace Typhon.Runtime
         public static int max(int a, int b) => Math.Max(a, b);
         public static long max(long a, long b) => Math.Max(a, b);
         public static double max(double a, double b) => Math.Max(a, b);
-        public static T max<T>(T a, T b) where T : IComparable<T> => PyComparer<T>().Compare(a, b) >= 0 ? a : b;
+        public static T max<T>(T a, T b) => PyComparer<T>().Compare(a, b) >= 0 ? a : b;
         public static T max<T>(T a, T b, T c, params T[] rest) => new[] { a, b, c }.Concat(rest).Max(PyComparer<T>())!;
         public static T max<T>(IEnumerable<T> xs) => xs.Max(PyComparer<T>()) ?? throw new ArgumentException("max() arg is an empty sequence");
         public static T max<T, K>(IEnumerable<T> xs, Func<T, K> key) => xs.MaxBy(key, PyComparer<K>()) ?? throw new ArgumentException("max() arg is an empty sequence");
@@ -207,11 +207,16 @@ namespace Typhon.Runtime
         public static T max<T, K>(IEnumerable<T> xs, Func<T, K> key, T @default) { var l = xs.ToList(); return l.Count == 0 ? @default : max(l, key); }
         public static object? max<T, K>(IEnumerable<T> xs, Func<T, K> key, object? @default) { var l = xs.ToList(); return l.Count == 0 ? @default : max(l, key); }
 
-        /// <summary>Python orders strings by code point, .NET's default comparer is culture-aware: use ordinal.</summary>
-        internal static IComparer<T> PyComparer<T>() => typeof(T) == typeof(string) ? (IComparer<T>)(object)StringComparer.Ordinal
-            : typeof(T) == typeof(object) ? (IComparer<T>)(object)PyObjectComparer.Instance
-            // tuples order item by item with Python's rules (strs by code point, not by culture)
-            : typeof(ITuple).IsAssignableFrom(typeof(T)) && typeof(T).IsValueType ? Comparer<T>.Create((a, b) => compare(a, b)) : Comparer<T>.Default;
+        internal static IComparer<T> PyComparer<T>() => SequenceComparer<T>.Instance;
+
+        static class SequenceComparer<T>
+        {
+            public static readonly IComparer<T> Instance = typeof(T) == typeof(string) ? (IComparer<T>)(object)StringComparer.Ordinal
+                : typeof(T) == typeof(object) ? (IComparer<T>)(object)PyObjectComparer.Instance
+                : typeof(IList).IsAssignableFrom(typeof(T)) || (typeof(T).IsValueType && typeof(ITuple).IsAssignableFrom(typeof(T)))
+                    ? Comparer<T>.Create((a, b) => compare(a, b))
+                    : Comparer<T>.Default;
+        }
 
         /// <summary>Late-bound values (List&lt;dynamic&gt;) order by Python's rules: strs by code point, numbers by value, sequences lexicographically.</summary>
         sealed class PyObjectComparer : IComparer<object?>

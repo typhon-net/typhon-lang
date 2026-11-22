@@ -83,6 +83,7 @@ namespace Typhon.Runtime
             string s => Quote(s),
             char c => Quote(c.ToString()),
             IPyRepr own => own.__repr__(), // repr(): Fraction(1, 2), PosixPath('/tmp/x')
+            MissingMemberException error => PyExc.Repr(error, PyExc.Args(error)),
             _ => str(o),
         };
 

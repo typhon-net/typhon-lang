@@ -1,0 +1,10 @@
+from typing import Any
+
+def pair(text: str) -> Any:
+    return "prefix", text
+
+def split_pairs(value: int):
+    data = [pair("a,b"), pair("c,d")]
+    return [value.split(",") for tag, value in data]
+
+print(split_pairs(42))

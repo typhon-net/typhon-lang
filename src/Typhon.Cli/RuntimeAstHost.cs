@@ -22,24 +22,16 @@ internal sealed class RuntimeAstHost
         _lineStarts = lines.ToArray();
     }
 
-    internal static (object? Tree, string? Error, int Line, int Column, bool Indent) Parse(string source, string filename, string mode)
+    internal static object Project(string source, ModuleAst module, string mode)
     {
         string text = source.Replace("\r\n", "\n").Replace('\r', '\n');
         var projection = new RuntimeAstHost(text);
-        try
+        return mode switch
         {
-            var module = Parser.ParseModule(text, filename, expressionOnly: mode == "eval");
-            object? tree = mode switch
-            {
-                "eval" when module.Body.FirstOrDefault() is ExprStmt expr => Make("Expression", ("body", projection.Expr(expr.Value))),
-                "single" when module.Body.Count > 0 && module.Body.All(statement => statement.Line == module.Body[0].Line) =>
-                    Make("Interactive", ("body", projection.Body(module.Body))),
-                "exec" => Make("Module", ("body", projection.Body(module.Body)), ("type_ignores", Array.Empty<object>())),
-                _ => null,
-            };
-            return tree == null ? (null, "invalid syntax", 1, 1, false) : (tree, null, 0, 0, false);
-        }
-        catch (SyntaxError error) { return (null, error.Message, error.Line, error.Col, error.IsIndentationError); }
+            "eval" => Make("Expression", ("body", projection.Expr(((ExprStmt)module.Body[0]).Value))),
+            "single" => Make("Interactive", ("body", projection.Body(module.Body))),
+            _ => Make("Module", ("body", projection.Body(module.Body)), ("type_ignores", Array.Empty<object>())),
+        };
     }
 
     static object Make(string kind, params (string Name, object? Value)[] fields) => Pack(kind, null, fields);

@@ -208,7 +208,7 @@ namespace Typhon.Compiler
         }
 
         public static ModuleInfo Parse(string path, string source, string moduleName, string rootNamespace,
-            bool barryAsFlufl = false, bool runtimeCode = false, bool expressionOnly = false)
+            bool barryAsFlufl = false, bool runtimeCode = false, bool expressionOnly = false, bool runtimeAstOnly = false)
         {
             var info = new ModuleInfo { Name = moduleName, Path = path };
             int lastDot = moduleName.LastIndexOf('.');
@@ -240,18 +240,18 @@ namespace Typhon.Compiler
             if (runtimeCode && info.ParseDiagnostics.Count == 0)
             {
                 Node invalid = null;
-                if (AstWalker.ContainsOutsideNestedScopes(info.Ast.Body, node =>
+                if (!runtimeAstOnly && AstWalker.ContainsOutsideNestedScopes(info.Ast.Body, node =>
                 {
-                    if (!(node is ReturnStmt || node is YieldExpr)) return false;
+                    if (RuntimeModuleContextError(node) == null) return false;
                     invalid = node;
                     return true;
                 }))
                     info.ParseDiagnostics.Add(new TyDiagnostic
                     {
                         Id = "TY0001", Severity = Severity.Error, Path = path, Line = invalid.Line, Col = invalid.Col,
-                        Message = invalid is ReturnStmt ? "'return' outside function" : "'yield' outside function",
+                        Message = RuntimeModuleContextError(invalid),
                     });
-                else if (FindInvalidLoopControl(info.Ast.Body, false) is Node loopControl)
+                else if (!runtimeAstOnly && FindInvalidLoopControl(info.Ast.Body, false) is Node loopControl)
                     info.ParseDiagnostics.Add(new TyDiagnostic
                     {
                         Id = "TY0001", Severity = Severity.Error, Path = path, Line = loopControl.Line, Col = loopControl.Col,
@@ -277,6 +277,7 @@ namespace Typhon.Compiler
                             });
                     });
             }
+            if (runtimeAstOnly) return info;
             Decorators.Apply(info.Ast);
             ModuleAliases.Apply(info.Ast);
             if (!runtimeCode && !info.IsGdScript) ReboundModuleFunctions.Apply(info);
@@ -325,6 +326,17 @@ namespace Typhon.Compiler
             });
             return info;
         }
+
+        static string RuntimeModuleContextError(Node node) => node switch
+        {
+            ReturnStmt => "'return' outside function",
+            YieldExpr => "'yield' outside function",
+            AwaitExpr => "'await' outside function",
+            ForStmt { IsAsync: true } => "'async for' outside async function",
+            WithStmt { IsAsync: true } => "'async with' outside async function",
+            GlobalStmt { Nonlocal: true } => "nonlocal declaration not allowed at module level",
+            _ => null,
+        };
 
         static bool IsSingleAssignmentTarget(Expr target) => target is NameExpr || target is AttributeExpr || target is SubscriptExpr;
 
@@ -390,6 +402,9 @@ namespace Typhon.Compiler
             {
                 if (project.Modules.Values.Any(m => m.BigIntPragma)) project.BigInts = true;
                 GdScriptLowering.Run(project);
+                foreach (var source in project.Modules.Values)
+                    if (source.Ast != null && source.ParseDiagnostics.Count == 0)
+                        new ModuleEmitter(source, project, diagnostics).PrepareImportClassBindings();
                 ClassModel.Complete(project);
                 TypeInference.Run(project);
             }

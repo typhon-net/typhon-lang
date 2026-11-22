@@ -63,7 +63,7 @@ namespace Typhon.Stdlib
                     {
                         ["__name__"] = "__main__", ["__file__"] = path, ["__package__"] = null, ["__spec__"] = null,
                     };
-                    var source = Builtins.compile(File.ReadAllText(path), path, "exec");
+                    RuntimeCode source = Builtins.compile(File.ReadAllText(path), path, "exec");
                     runctx(source, globals, globals, output, sort);
                 }
             }

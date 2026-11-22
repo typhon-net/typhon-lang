@@ -251,7 +251,11 @@ namespace Typhon.Runtime
             while (b > 0) { if ((b & 1) != 0) r = checked(r * a); b >>= 1; if (b > 0) a = checked(a * a); }
             return r;
         }
-        public static double pow(double a, double b) => b == 2 ? a * a : Math.Pow(a, b);
+        public static double pow(double a, double b)
+        {
+            if (a == 0 && b < 0) throw new DivideByZeroException("zero to a negative power");
+            return b == 2 ? a * a : Math.Pow(a, b);
+        }
         /// <summary>pow(base, exp, mod): modular exponentiation (a negative exponent takes the modular inverse, as in Python 3.8+).</summary>
         public static long pow(long b, long e, long m)
         {
@@ -270,9 +274,24 @@ namespace Typhon.Runtime
         }
         public static dynamic pow(object a, object b)
         {
+            if (a is bool flagA) a = flagA ? 1L : 0L;
+            if (b is bool flagB) b = flagB ? 1L : 0L;
             if (AsInt(a, out var x) && AsInt(b, out var y) && y >= 0) return pow(x, y);
-            if (a is IConvertible && b is IConvertible) return Math.Pow(Convert.ToDouble(a, Inv), Convert.ToDouble(b, Inv));
+            if ((a is BigInteger || b is BigInteger) && (a is BigInteger || AsInt(a, out _)) &&
+                (b is BigInteger || AsInt(b, out _)))
+            {
+                var exponent = BigOf(b);
+                if (exponent.Sign >= 0) return pow(BigOf(a), exponent);
+            }
+            if (IsRealNumber(a) && IsRealNumber(b)) return pow(PowerFloat(a), PowerFloat(b));
             return ((dynamic)a).__pow__((dynamic)b);
+        }
+
+        static double PowerFloat(object value)
+        {
+            if (value is not BigInteger integer) return Convert.ToDouble(value, Inv);
+            double converted = (double)integer;
+            return double.IsInfinity(converted) ? throw new OverflowException("int too large to convert to float") : converted;
         }
 
 

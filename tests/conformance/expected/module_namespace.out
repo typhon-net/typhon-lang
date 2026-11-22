@@ -1,7 +1,10 @@
 __main__ A module whose dictionary is visible at run time.
+A module whose dictionary is visible at run time. A module whose dictionary is visible at run time.
 True 8 True
 True False
 _double Double the argument. __main__ 12
 True True
 12 12
 hello hello
+123 123
+True True

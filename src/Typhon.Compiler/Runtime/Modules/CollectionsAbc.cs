@@ -55,6 +55,48 @@ namespace Typhon.Stdlib
                 return true;
             }
 
+            public abstract class Sequence : IPyLen, IEnumerable<object?>
+            {
+                public Sequence() { }
+                public abstract long __len__();
+                public abstract object? __getitem__(object? index);
+
+                IEnumerable<object?> Items(long start, long? stop)
+                {
+                    for (long position = start; !stop.HasValue || position < stop.Value; position++)
+                    {
+                        object? value;
+                        try { value = __getitem__(position); }
+                        catch (Exception error) when (error is IndexOutOfRangeException or ArgumentOutOfRangeException) { yield break; }
+                        yield return value;
+                    }
+                }
+
+                public IEnumerator<object?> GetEnumerator() => Items(0, null).GetEnumerator();
+                IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+                public IEnumerator<object?> __iter__() => GetEnumerator();
+                public bool __contains__(object? value) => this.Any(item => ReferenceEquals(item, value) || Builtins.eq(item, value));
+                public long count(object? value) => this.LongCount(item => ReferenceEquals(item, value) || Builtins.eq(item, value));
+
+                public IEnumerable<object?> __reversed__()
+                {
+                    for (long position = __len__(); position > 0; position--) yield return __getitem__(position - 1);
+                }
+
+                public long index(object? value, long start = 0, long? stop = null)
+                {
+                    if (start < 0) start = Math.Max(0, start + __len__());
+                    if (stop < 0) stop += __len__();
+                    long position = start;
+                    foreach (var item in Items(start, stop))
+                    {
+                        if (ReferenceEquals(item, value) || Builtins.eq(item, value)) return position;
+                        position++;
+                    }
+                    throw new ArgumentException("");
+                }
+            }
+
             /// <summary>The read-only mapping mixin implemented by __getitem__, __iter__, and __len__.</summary>
             public abstract class Mapping : IEnumerable<object?>
             {

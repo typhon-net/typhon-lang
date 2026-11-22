@@ -1,0 +1,12 @@
+class Normal:
+    def __init__(self):
+        self.label = "value"
+
+class Custom:
+    def __dir__(self):
+        return ["zeta", "alpha"]
+
+obj = Normal()
+print("label" in obj.__dir__(), "label" in Normal.__dir__(obj), "label" in object.__dir__(obj))
+print(Custom().__dir__())
+print("strip" in "abc".__dir__(), "__class__" in None.__dir__())

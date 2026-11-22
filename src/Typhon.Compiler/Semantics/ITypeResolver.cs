@@ -97,6 +97,9 @@ namespace Typhon.Compiler.Semantics
     {
         public bool IsProtected;
         public List<KeyValuePair<string, string>> Parameters = new List<KeyValuePair<string, string>>();
+        /// <summary>C# expressions for optional defaults in parameter order, or null when no expression is available.</summary>
+        public List<string> Defaults = new List<string>();
+        public MemberSig Signature;
     }
 
     /// <summary>Resolver used when no compilation is available (unit tests, syntax-only tools).</summary>

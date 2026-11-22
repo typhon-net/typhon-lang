@@ -1,0 +1,16 @@
+import types
+from typing import Any
+
+def import_ready(error: ImportError):
+    try:
+        return getattr(__import__(error.name), "sqrt")(9)
+    except TypeError as invalid:
+        return str(invalid)
+
+def names(frame: Any):
+    return list(frame.f_locals) + list(frame.f_globals) + list(frame.f_builtins)
+
+frame = types.SimpleNamespace(f_locals={"a": 1}, f_globals={"b": 2}, f_builtins={"a": 3, "c": 4})
+print(names(frame))
+print(import_ready(ImportError("bad import", name="math")))
+print(import_ready(ImportError("bad import", name=3)))

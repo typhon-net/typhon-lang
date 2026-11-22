@@ -1,0 +1,24 @@
+class Record:
+    def __new__(cls, value: int = 2):
+        print("allocate", cls.__name__, value)
+        if value < 0:
+            return "substitute"
+        result = super().__new__(cls)
+        result.valid = True
+        return result
+
+    def __init__(self, value: int = 2):
+        print("initialize", self.valid, value)
+        self.value = value
+
+class Child(Record):
+    def __init__(self, value: int = 2):
+        print("child initializer", value)
+        super().__init__(value + 1)
+
+print(Record().value)
+factory = Child
+print(factory(value=5).value)
+print(Record(-1))
+manual = Record.__new__(Record, 7)
+print(manual.valid, hasattr(manual, "value"))

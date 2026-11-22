@@ -1,0 +1,11 @@
+allocate Record 2
+initialize True 2
+2
+allocate Child 5
+child initializer 5
+initialize True 6
+6
+allocate Record -1
+substitute
+allocate Record 7
+True False

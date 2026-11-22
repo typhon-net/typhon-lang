@@ -908,6 +908,7 @@ public sealed class ConformanceTests(ITestOutputHelper output)
             string script = Path.Combine(dir, "uses_codeop.ty");
             File.WriteAllText(script, $"#:pylib {lib}\n" + """"
                 import __future__
+                import ast
                 import codeop
 
                 scope = {}
@@ -952,6 +953,20 @@ public sealed class ConformanceTests(ITestOutputHelper output)
                     codeop.compile_command('return')
                 except SyntaxError:
                     print('invalid module return')
+                for text in [' 1 + 2', 'await f()', 'nonlocal missing']:
+                    try:
+                        codeop.compile_command(text)
+                    except SyntaxError as error:
+                        print(type(error).__name__)
+                blank = codeop.compile_command('# comment', symbol='exec')
+                print(blank is not None)
+                print(codeop.compile_command('if True:\n    pass\nelse:') is None)
+                local_scope = {}
+                exec(compiler('value = 40', '<commands>', 'exec'), local_scope)
+                exec(compiler('value + 2', '<commands>', 'single'), local_scope)
+                tree = compiler('6 * 7', '<tree>', 'eval', flags=ast.PyCF_ONLY_AST)
+                print(type(tree).__name__, tree.body.left.value, tree.body.right.value)
+                print(bool(compiler('pass', '<input>', 'exec').co_flags & annotation_flag))
                 import warnings
                 with warnings.catch_warnings(record=True) as recorded:
                     warnings.simplefilter('always')

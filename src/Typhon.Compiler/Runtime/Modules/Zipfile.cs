@@ -12,7 +12,7 @@ namespace Typhon.Stdlib
     using System.Text;
     using Typhon.Runtime;
 
-    internal static class zipfile
+    internal static partial class zipfile
     {
         public const long ZIP_STORED = 0;
         public const long ZIP_DEFLATED = 8;

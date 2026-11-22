@@ -1,0 +1,6 @@
+def apply(operation, first: int, second: int):
+    return operation(first, second)
+
+print(apply(divmod, 17, 5))
+print(apply(pow, 3, 4))
+print(divmod.__name__)

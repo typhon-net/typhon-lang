@@ -69,6 +69,12 @@ namespace Typhon.Runtime
             return !ReferenceEquals(builtin, Unassigned) ? builtin : Builtins.__unbound_import(name);
         }
 
+        internal static void DeleteBodyName(ref object? value, string name)
+        {
+            if (ReferenceEquals(value, Unassigned)) Builtins.__unbound_import(name);
+            value = Unassigned;
+        }
+
         internal static bool TryReadSlot(PropertyInfo property, PyClassSlotAttribute slot, out object? value)
         {
             value = slot.Storage(property).GetValue(null);
@@ -118,8 +124,9 @@ namespace Typhon.Runtime
             (functools.cached_property)Namespace(type).Descriptors[name]!;
 
         static PyClosure Callable(Type type, string name, PySourceAttribute? source, MethodInfo? method,
-            Func<object?[], IDictionary<string, object?>?, object?> invoke) =>
-            new PyClosure(name, invoke)
+            Func<object?[], IDictionary<string, object?>?, object?> invoke)
+        {
+            var callable = new PyClosure(name, invoke)
             {
                 __module__ = source?.Module ?? Builtins.__module_of(type),
                 __qualname__ = Builtins.PyTypeName(type) + "." + name,
@@ -127,6 +134,10 @@ namespace Typhon.Runtime
                 _signature = method != null ? PySignatureAttribute.Of(method) : null,
                 _code = source is { Line: > 0 } ? new sys_.code(name, source.Filename, source.Line) : null,
             };
+            if (method?.IsDefined(typeof(PyAbstractMethodAttribute), false) == true)
+                Builtins.setattr(callable, "__isabstractmethod__", true);
+            return callable;
+        }
 
         static object? Invoke(IEnumerable<MethodInfo> methods, string name, object? target, object?[] args, IDictionary<string, object?>? keywords)
         {

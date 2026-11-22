@@ -15,9 +15,13 @@ namespace Typhon.Compiler.Emit
 
         bool IsUserMetaclass(ClassDef definition) => IsUserMetaclass(definition, new HashSet<ClassDef>());
 
-        bool IsUserMetaclass(ClassDef definition, HashSet<ClassDef> seen) =>
-            definition != null && seen.Add(definition) && definition.Bases.Any(b =>
-                BuiltinTypeBase(b) || ResolveBase(b, out var parent, out _) && IsUserMetaclass(parent, seen));
+        bool IsUserMetaclass(ClassDef definition, HashSet<ClassDef> seen)
+        {
+            if (definition == null || !seen.Add(definition)) return false;
+            var resolver = ClassDeclarationResolver(definition);
+            return definition.Bases.Any(b => resolver.BuiltinTypeBase(b) ||
+                resolver.ResolveBase(b, out var parent, out _) && IsUserMetaclass(parent, seen));
+        }
 
         bool IsMetaclassExpression(Expr expression) =>
             DottedName(expression) is string name && TryResolveType(name, 0, out _, out var definition) &&
@@ -26,10 +30,14 @@ namespace Typhon.Compiler.Emit
         bool HasUserMetaclass(ClassDef definition) =>
             !_m.IsGdScript && HasUserMetaclass(definition, new HashSet<ClassDef>());
 
-        bool HasUserMetaclass(ClassDef definition, HashSet<ClassDef> seen) =>
-            definition != null && seen.Add(definition) &&
-            (IsMetaclassExpression(definition.Metaclass) || definition.Bases.Any(b =>
-                ResolveBase(b, out var parent, out _) && HasUserMetaclass(parent, seen)));
+        bool HasUserMetaclass(ClassDef definition, HashSet<ClassDef> seen)
+        {
+            if (definition == null || !seen.Add(definition)) return false;
+            var resolver = ClassDeclarationResolver(definition);
+            return DottedName(definition.Metaclass) is string name &&
+                resolver.TryResolveType(name, 0, out _, out var meta) && IsUserMetaclass(meta) ||
+                definition.Bases.Any(b => resolver.ResolveBase(b, out var parent, out _) && HasUserMetaclass(parent, seen));
+        }
 
         bool MetaclassMember(AttributeExpr member, out string type)
         {
@@ -39,9 +47,19 @@ namespace Typhon.Compiler.Emit
                 TryTypeExpr(member.Target, out type);
         }
 
-        static bool IsMetaclassHook(FunctionDef method) => method.Name is "__new__" or "__init__";
+        bool IsMetaclassInstance(Expr expression) => DottedName(expression) is string name &&
+            TryResolveType(name, 0, out _, out var definition) && HasUserMetaclass(definition);
 
-        static FunctionDef StaticMetaclassHook(FunctionDef hook)
+        readonly HashSet<FunctionDef> _metaclassMethods = new();
+
+        static bool HasMetaclassReceiver(FunctionDef method) => method.Params.Count > 0 &&
+            (method.Name is "__new__" or "__init__" ||
+                !HasDecorator(method.Decorators, "staticmethod") &&
+                !HasDecorator(method.Decorators, "classmethod") &&
+                !HasDecorator(method.Decorators, "property") &&
+                !method.Decorators.Any(d => DecoratorName(d)?.EndsWith(".setter") == true));
+
+        FunctionDef StaticMetaclassMethod(FunctionDef hook)
         {
             var receiver = hook.Params[0];
             var parameters = new List<Param>
@@ -54,12 +72,15 @@ namespace Typhon.Compiler.Emit
                 },
             };
             parameters.AddRange(hook.Params.Skip(1));
-            return new FunctionDef
+            var transformed = new FunctionDef
             {
                 Name = hook.Name, Line = hook.Line, Col = hook.Col, Params = parameters,
-                Returns = hook.Returns, Body = hook.Body,
-                Decorators = new List<Expr> { new NameExpr { Id = "staticmethod" } },
+                Returns = hook.Returns, Body = hook.Body, IsAsync = hook.IsAsync, TypeParams = hook.TypeParams,
+                Decorators = hook.Decorators.Where(d => DecoratorName(d) != "staticmethod")
+                    .Append(new NameExpr { Id = "staticmethod" }).ToList(),
             };
+            _metaclassMethods.Add(transformed);
+            return transformed;
         }
 
         void EmitClassInitialization(ClassDef definition)
@@ -100,7 +121,11 @@ namespace Typhon.Compiler.Emit
 
         string EmitBuiltinTypeNew(CallExpr call)
         {
-            if (call.Func is not AttributeExpr { Name: "__new__" } member || !BuiltinTypeBase(member.Target)) return null;
+            if (call.Func is not AttributeExpr { Name: "__new__" } member) return null;
+            if (_scope?.ClassArgument != null && _cls != null && IsUserMetaclass(_cls.Def) &&
+                member.Target is CallExpr { Func: NameExpr { Id: "super" }, Args.Count: 0 } && !IsShadowed("super"))
+                return InvokeLogicalMethod(member, $"(object?){Paren(EmitExpr(member.Target))}", call.Args);
+            if (!BuiltinTypeBase(member.Target)) return null;
             string callable = $"{Rt("getattr")}(typeof(global::System.Type), {CsString("__new__")})";
             var arguments = call.Args.Where(a => a.Name == null && !a.DoubleStar)
                 .Select(a => a.Star ? $".. {Rt("__iter_dyn")}((object?){Paren(EmitExpr(a.Value))})" : $"(object?){Paren(EmitLooseValue(a.Value))}");

@@ -1,0 +1,22 @@
+import marshal
+
+print(marshal.version)
+ellipsis = marshal.loads(marshal.dumps(Ellipsis))
+print(type(ellipsis).__name__, ellipsis is Ellipsis)
+for version in (0, 2, 6):
+    print(marshal.loads(marshal.dumps(complex(1, 2), version)))
+span = slice(1, 4, 2)
+print(marshal.loads(marshal.dumps(span, 5)))
+regular = marshal.loads(marshal.dumps({3, 1, 2}))
+frozen = marshal.loads(marshal.dumps(frozenset([3, 1, 2])))
+print(type(regular).__name__, sorted(regular), type(frozen).__name__, sorted(frozen))
+settings = marshal.loads(marshal.dumps(frozendict({"alpha": 1, "beta": 2}), 6))
+print(type(settings).__name__, settings["alpha"], settings["beta"])
+try:
+    marshal.dumps(span, 4)
+except ValueError as error:
+    print(str(error))
+try:
+    marshal.dumps(settings, 5)
+except ValueError as error:
+    print(str(error))

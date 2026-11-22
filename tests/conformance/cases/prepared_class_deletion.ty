@@ -1,0 +1,20 @@
+value = 'module'
+
+class Observe(type):
+    @classmethod
+    def __prepare__(mcls, name, bases):
+        return {'prepared': 'discarded'}
+
+    def __new__(mcls, name, bases, namespace):
+        print('bindings', 'value' in namespace, 'prepared' in namespace, 'instant' in namespace)
+        return type.__new__(mcls, name, bases, namespace)
+
+class Mixed(metaclass=Observe):
+    value = 'temporary'
+    del value, prepared
+    from_module = value
+    if from_module:
+        instant = 'temporary'
+        del instant
+
+print(Mixed.from_module, hasattr(Mixed, 'instant'))

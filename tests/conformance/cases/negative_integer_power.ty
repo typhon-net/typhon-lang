@@ -1,0 +1,17 @@
+def show(exponent: int):
+    operator_value = 2 ** exponent
+    builtin_value = pow(2, exponent)
+    print(type(operator_value).__name__, operator_value, type(builtin_value).__name__, builtin_value)
+
+show(5)
+show(-3)
+show(0)
+print(2 ** -(1 + 2), pow(-4, -3), 2 ** -0)
+try:
+    print(0 ** -1)
+except ZeroDivisionError as error:
+    print(str(error))
+try:
+    print(pow(0.0, -1.0))
+except ZeroDivisionError as error:
+    print(str(error))

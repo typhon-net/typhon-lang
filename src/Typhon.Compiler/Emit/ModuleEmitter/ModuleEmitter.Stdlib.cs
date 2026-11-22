@@ -436,7 +436,9 @@ namespace Typhon.Compiler.Emit
             else if (target is TupleExpr tup)
             {
                 var parts = TupleElementTypes(type);
-                for (int i = 0; i < tup.Elts.Count; i++) BindTargetTypes(s, tup.Elts[i], parts != null && i < parts.Count ? parts[i] : null);
+                string element = type is null or "object" or "dynamic" ? "dynamic" : null;
+                for (int i = 0; i < tup.Elts.Count; i++)
+                    BindTargetTypes(s, tup.Elts[i], parts != null && i < parts.Count ? parts[i] : element);
             }
         }
 
@@ -444,6 +446,7 @@ namespace Typhon.Compiler.Emit
         bool IsListy(Expr e)
         {
             if (e is ListExpr) return true;
+            if (e is CallExpr { Func: NameExpr { Id: "list" } } && !IsShadowed("list")) return true;
             if (e is ComprehensionExpr c) return c.Kind == ComprehensionKind.List;
             if (e is BinOpExpr b && (b.Op == "+" || b.Op == "*")) return IsListy(b.Left) || IsListy(b.Right);
             var t = InferType(e);
