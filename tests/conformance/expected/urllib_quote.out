@@ -15,4 +15,4 @@ safe requires characters
 %FF%FEA%00 A
 %3F %00%00%00%E9 A
 ('C:', '/', 'folder/file') ('//server/share', '/', 'file')
-(b'D:', b'\\', b'a\xff')
+(b'D:', b'\\', b'a\xc3\xa9')

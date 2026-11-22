@@ -40,4 +40,4 @@ print(quote("A", encoding="UTF_16"), unquote("%FF%FEA%00", encoding="utf-16"))
 print(quote("😀", encoding="ascii", errors="replace"),
       quote("é", encoding="utf-32-be"), unquote("%FF%FE%00%00A%00%00%00", encoding="utf-32"))
 print(ntpath.splitroot("C:/folder/file"), ntpath.splitroot("//server/share/file"))
-print(ntpath.splitroot(b"D:\\a\xff"))
+print(ntpath.splitroot(b"D:\\a\xc3\xa9"))
