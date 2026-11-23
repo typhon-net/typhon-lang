@@ -234,6 +234,7 @@ namespace Typhon.Compiler
         public static ModuleInfo Parse(string path, string source, string moduleName, string rootNamespace,
             bool barryAsFlufl = false, bool runtimeCode = false, bool expressionOnly = false, bool runtimeAstOnly = false)
         {
+            source = Lexer.NormalizeSource(source);
             var info = new ModuleInfo { Name = moduleName, Path = path, SourceText = source };
             int lastDot = moduleName.LastIndexOf('.');
             info.ClassName = lastDot < 0 ? moduleName : moduleName.Substring(lastDot + 1);

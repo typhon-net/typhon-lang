@@ -55,6 +55,10 @@ namespace Typhon.Stdlib
             return ("", p.Substring(0, 2), p.Substring(2));
         }
 
+        public static (string, string) splitext(string p) => GenericPath.splitext(p, '/', null);
+        public static (PyBytes, PyBytes) splitext(PyBytes p) => GenericPath.splitext(p, '/', null);
+        public static dynamic splitext(object p) => GenericPath.splitext(p, '/', null);
+
         public static string basename(string p) => p.Substring(p.LastIndexOf('/') + 1);
 
         public static string dirname(string p)
@@ -208,6 +212,9 @@ namespace Typhon.Stdlib
     {
         public const string sep = "\\", altsep = "/", pathsep = ";", curdir = ".", pardir = "..", extsep = ".", devnull = "nul";
         static bool IsSep(char c) => c == '\\' || c == '/';
+        public static (string, string) splitext(string p) => GenericPath.splitext(p, '\\', '/');
+        public static (PyBytes, PyBytes) splitext(PyBytes p) => GenericPath.splitext(p, '\\', '/');
+        public static dynamic splitext(object p) => GenericPath.splitext(p, '\\', '/');
         public static string normcase(string s) => s.Replace('/', '\\').ToLowerInvariant();
         public static PyBytes normcase(PyBytes s)
         {
@@ -508,6 +515,19 @@ namespace Typhon.Runtime
             return (p, "");
         }
 
+        public static (PyBytes, PyBytes) splitext(PyBytes p, char sep, char? altsep)
+        {
+            var (root, extension) = splitext(p.decode("latin-1"), sep, altsep);
+            return (PyBytes.Latin1(root), PyBytes.Latin1(extension));
+        }
+
+        public static dynamic splitext(object p, char sep, char? altsep) => (object)Typhon.Stdlib.os_.fspath(p) switch
+        {
+            string text => splitext(text, sep, altsep),
+            PyBytes bytes => splitext(bytes, sep, altsep),
+            _ => throw new InvalidCastException("expected str, bytes or os.PathLike object"),
+        };
+
         public static string commonprefix(IList<string> m)
         {
             if (m.Count == 0) return "";
@@ -571,7 +591,9 @@ namespace Typhon.Stdlib
                 var (head, tail) = split(p.decode("latin-1"));
                 return (PyBytes.Latin1(head), PyBytes.Latin1(tail));
             }
-            public static (string, string) splitext(string p) => Win ? GenericPath.splitext(p, '\\', '/') : GenericPath.splitext(p, '/', null);
+            public static (string, string) splitext(string p) => Win ? NtPath.splitext(p) : PosixPath.splitext(p);
+            public static (PyBytes, PyBytes) splitext(PyBytes p) => Win ? NtPath.splitext(p) : PosixPath.splitext(p);
+            public static dynamic splitext(object p) => Win ? NtPath.splitext(p) : PosixPath.splitext(p);
             public static (string, string) splitdrive(string p) => Win ? NtPath.splitdrive(p) : ("", p);
             public static (PyBytes, PyBytes) splitdrive(PyBytes p)
             {

@@ -1,0 +1,6 @@
+('directory\\', '.profile')
+(b'directory/.data', b'.bin')
+('local/...profile', '')
+('directory\\.profile', '')
+(b'directory/.data', b'.bin')
+('local/...profile', '')

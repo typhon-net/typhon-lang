@@ -1,0 +1,11 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import ntpath
+import posixpath
+
+for separator in [posixpath, ntpath]:
+    splitext = getattr(separator, 'splitext')
+    print(splitext(r'directory\.profile'))
+    print(splitext(b'directory/.data.bin'))
+    print(splitext('local/...profile'))

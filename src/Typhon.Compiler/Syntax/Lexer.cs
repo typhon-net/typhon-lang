@@ -52,9 +52,12 @@ namespace Typhon.Compiler.Syntax
 
         public Lexer(string source, int lineOffset = 0)
         {
-            _src = source.Replace("\r\n", "\n").Replace('\r', '\n');
+            _src = NormalizeSource(source);
             _lineOffset = lineOffset;
         }
+
+        // Token offsets index this canonical spelling of the source.
+        internal static string NormalizeSource(string source) => source.Replace("\r\n", "\n").Replace('\r', '\n');
 
         public List<Token> Tokenize()
         {

@@ -84,6 +84,22 @@ public sealed class ConformanceTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public void RuntimeFunctionCodeWithWindowsNewlines()
+    {
+        const string name = "runtime_function_rebinding";
+        string directory = Directory.CreateTempSubdirectory("typhon-crlf-").FullName;
+        try
+        {
+            string path = Path.Combine(directory, name + ".ty");
+            File.WriteAllText(path, File.ReadAllText(Suite.CasePath(name)).ReplaceLineEndings("\r\n"));
+            var run = Suite.Run("dotnet", [Suite.Cli, "run", path, "--no-cache", "--no-server"], TimeSpan.FromMinutes(2));
+            Assert.True(run.ExitCode == 0, run.StdErr);
+            Assert.Equal(Suite.Expected(name), Suite.Normalize(run.StdOut));
+        }
+        finally { Directory.Delete(directory, recursive: true); }
+    }
+
+    [Fact]
     public void ImportedDeferredConstructor()
     {
         string directory = Directory.CreateTempSubdirectory("typhon-imported-constructor-").FullName;
