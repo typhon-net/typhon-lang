@@ -268,6 +268,7 @@ namespace Typhon.Compiler.Syntax
 
     public sealed class ModuleAst
     {
+        public IReadOnlyList<SourceTypeComment> TypeComments = System.Array.Empty<SourceTypeComment>();
         public string Path;
         public List<Stmt> Body = new List<Stmt>();
         /// <summary>Global names that a failed optional import would have bound.</summary>

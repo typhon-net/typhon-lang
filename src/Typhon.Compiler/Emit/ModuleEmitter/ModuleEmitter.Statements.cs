@@ -376,12 +376,20 @@ namespace Typhon.Compiler.Emit
         {
             if (test is not CallExpr { Func: NameExpr { Id: "isinstance" }, Args.Count: 2 } check ||
                 IsShadowed("isinstance") || check.Args.Any(argument => argument.Star || argument.DoubleStar || argument.Name != null) ||
-                check.Args[0].Value is not NameExpr receiver || !IsLocal(receiver.Id) ||
-                check.Args[1].Value is not NameExpr { Id: "str" or "bytes" or "bytearray" or "tuple" } tested ||
-                IsShadowed(tested.Id)) return null;
+                check.Args[0].Value is not NameExpr receiver || !IsLocal(receiver.Id)) return null;
+            Expr tested = check.Args[1].Value;
             string actual = KnownType(receiver.Id);
-            if (tested.Id == "tuple" && actual is ("System.Type" or "global::System.Type")) return false;
-            return (actual == "string" || IsBytesType(actual)) && actual != MapType(tested, test) ? false : (bool?)null;
+            if (tested is NameExpr { Id: "str" or "bytes" or "bytearray" or "tuple" } builtin && !IsShadowed(builtin.Id))
+            {
+                if (builtin.Id == "tuple" && actual is ("System.Type" or "global::System.Type")) return false;
+                return (actual == "string" || IsBytesType(actual)) && actual != MapType(builtin, test) ? false : (bool?)null;
+            }
+            if ((actual == "string" || IsBytesType(actual)) && DotNetMeta(actual) is string actualMeta &&
+                DottedName(tested) is string testedName && TryResolveType(testedName, 0, out string expected, out var declared) &&
+                declared == null && expected != null && IsRuntimeClassMeta(expected) && !MayHaveVirtualSubclasses(expected, declared) &&
+                _r is RoslynTypeResolver resolver && resolver.SealedTypeMatches(actualMeta, expected) == false)
+                return false;
+            return null;
         }
 
         void EmitIf(IfStmt i, bool isElif)
@@ -394,17 +402,22 @@ namespace Typhon.Compiler.Emit
                 check.Args[0].Value is NameExpr parameter && _scope?.Params.Contains(parameter.Id) == true &&
                 !IsUnknownType(KnownType(parameter.Id)) && AssignsName(i.Body, parameter.Id))
                 Obs.AddConflict(_scopeKey + "|" + parameter.Id, "dynamic");
+            // A failing type test short-circuits the remaining operands of an and expression.
+            Expr evaluatedTest = i.Test;
+            if (i.Test is BoolOpExpr { Op: "and", Values.Count: > 1 } conjunction &&
+                DisjointSealedInstanceTest(conjunction.Values[0]) == false)
+                evaluatedTest = conjunction.Values[0];
             // An exact text or bytes representation cannot match a disjoint sealed type or its literals.
-            // Evaluate the original test before emitting the reachable suite.
+            // Evaluate the reachable part of the test before emitting the reachable suite.
             if (!_m.IsGdScript && _scope?.IsGenerator != true &&
-                (DisjointLiteralMembership(i.Test) ?? DisjointSealedInstanceTest(i.Test)) is bool matches)
+                (DisjointLiteralMembership(evaluatedTest) ?? DisjointSealedInstanceTest(evaluatedTest)) is bool matches)
             {
                 if (isElif)
                 {
                     _w.Line("else");
                     _w.Open();
                 }
-                _w.Line($"_ = {Cond(i.Test)};");
+                _w.Line($"_ = {Cond(evaluatedTest)};");
                 EmitBlock(matches ? i.Body : i.OrElse);
                 if (isElif) _w.Close();
                 return;

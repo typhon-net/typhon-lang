@@ -37,6 +37,31 @@ namespace Typhon.Compiler.Syntax
         }
     }
 
+    public sealed class SourceTypeComment
+    {
+        public string Text { get; }
+        public int Line { get; }
+        public int Column { get; }
+        public int Offset { get; }
+        public int PreviousTokenEnd { get; }
+        public bool FollowingColon { get; }
+        public bool Standalone { get; }
+        public bool IsIgnore { get; }
+
+        internal SourceTypeComment(string text, int line, int column, int offset, int previousTokenEnd,
+            bool followingColon, bool standalone, bool isIgnore)
+        {
+            Text = text;
+            Line = line;
+            Column = column;
+            Offset = offset;
+            PreviousTokenEnd = previousTokenEnd;
+            FollowingColon = followingColon;
+            Standalone = standalone;
+            IsIgnore = isIgnore;
+        }
+    }
+
     /// <summary>Python-style tokenizer with INDENT/DEDENT and implicit line joining.</summary>
     public sealed class Lexer
     {
@@ -49,11 +74,14 @@ namespace Typhon.Compiler.Syntax
         public bool HasOpenGrouping => _parenDepth > 0;
         readonly List<int> _indents = new List<int> { 0 };
         readonly List<Token> _tokens = new List<Token>();
+        readonly List<SourceTypeComment> _typeComments;
+        public IReadOnlyList<SourceTypeComment> TypeComments => _typeComments ?? (IReadOnlyList<SourceTypeComment>)Array.Empty<SourceTypeComment>();
 
-        public Lexer(string source, int lineOffset = 0)
+        public Lexer(string source, int lineOffset = 0, bool typeComments = false)
         {
             _src = NormalizeSource(source);
             _lineOffset = lineOffset;
+            if (typeComments) _typeComments = new List<SourceTypeComment>();
         }
 
         // Token offsets index this canonical spelling of the source.
@@ -82,7 +110,7 @@ namespace Typhon.Compiler.Syntax
                     continue;
                 }
                 if (c == ' ' || c == '\t' || c == '\f') { _pos++; continue; }
-                if (c == '#') { while (_pos < _src.Length && _src[_pos] != '\n') _pos++; continue; }
+                if (c == '#') { SkipComment(standalone: false); continue; }
                 if (c == '\\' && _pos + 1 < _src.Length && _src[_pos + 1] == '\n')
                 {
                     ContinueLine();
@@ -128,6 +156,31 @@ namespace Typhon.Compiler.Syntax
 
         void NewLine() { _line++; _lineStart = _pos; }
 
+        void SkipComment(bool standalone)
+        {
+            int start = _pos;
+            while (_pos < _src.Length && _src[_pos] != '\n') _pos++;
+            if (_typeComments == null) return;
+
+            string content = _src.Substring(start + 1, _pos - start - 1).TrimStart(' ', '\t', '\f');
+            if (!content.StartsWith("type:", StringComparison.Ordinal)) return;
+            string text = content.Substring(5).TrimStart(' ', '\t');
+            bool ignore = text.StartsWith("ignore", StringComparison.Ordinal) &&
+                (text.Length == 6 || !char.IsLetterOrDigit(text[6]) && text[6] != '_');
+            if (ignore)
+            {
+                text = text.Substring(6);
+                if (standalone && text.Length > 0 && _pos < _src.Length) text += "\n";
+            }
+
+            int previous = _tokens.Count - 1;
+            bool followingColon = previous >= 0 && _tokens[previous].Is(":");
+            if (previous >= 0 && _tokens[previous].Is(",")) previous--;
+            int previousEnd = !standalone && previous >= 0 ? _tokens[previous].EndPos : -1;
+            _typeComments.Add(new SourceTypeComment(text, _line + _lineOffset, start - _lineStart + 1,
+                start, previousEnd, followingColon, standalone, ignore));
+        }
+
         void ContinueLine()
         {
             _pos += 2;
@@ -149,7 +202,7 @@ namespace Typhon.Compiler.Syntax
                 }
                 if (p >= _src.Length) { _pos = p; return false; }
                 if (_src[p] == '\n') { _pos = p + 1; NewLine(); continue; }
-                if (_src[p] == '#') { while (p < _src.Length && _src[p] != '\n') p++; _pos = p; continue; }
+                if (_src[p] == '#') { _pos = p; SkipComment(standalone: true); continue; }
                 if (_src[p] == '\\' && p + 1 < _src.Length && _src[p + 1] == '\n') { _pos = p; ContinueLine(); continue; }
 
                 _pos = p;

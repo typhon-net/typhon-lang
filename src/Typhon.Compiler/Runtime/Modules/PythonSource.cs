@@ -128,7 +128,7 @@ namespace Typhon.Stdlib
                     RequireBuiltin(spec.name);
                     var stdlib = typeof(sys_).Assembly;
                     string name = "Typhon.Stdlib." + spec.name;
-                    Type type = stdlib.GetType(name) ?? stdlib.GetType(name + "_") ??
+                    Type type = spec.name == "_ast" ? typeof(ast) : stdlib.GetType(name) ?? stdlib.GetType(name + "_") ??
                         throw new ImportError($"No built-in module named '{spec.name}'", name: spec.name);
                     return PyModule.Of(type, spec.name);
                 }

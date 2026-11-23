@@ -86,16 +86,32 @@ namespace Typhon.Compiler.Emit
             if (RuntimeModuleValue(member.Target) != null && DotNetStaticMeta(member.Target) is string owner)
             {
                 // Platform-specific and dynamically set members use Python's lookup on the module object.
-                string module = RuntimeModuleName(owner);
+                string module = RuntimeModuleName(member.Target, owner);
                 return !RuntimeExport(module, owner, member.Name);
             }
             return InferType(member.Target) is "global::Typhon.Runtime.PyModule" or "Typhon.Runtime.PyModule" &&
                 !_r.HasMember("Typhon.Runtime.PyModule", member.Name);
         }
 
-        bool IsRuntimeObjectAttribute(AttributeExpr member) =>
-            !_m.IsGdScript && (InferType(member.Target) is "object" or "object?" ||
-                IsTypeParamType(InferType(member.Target))) && !_r.HasMember("System.Object", member.Name);
+        bool IsRuntimeObjectAttribute(AttributeExpr member)
+        {
+            if (_m.IsGdScript) return false;
+            string receiver = InferType(member.Target);
+            if (receiver is "object" or "object?" || IsTypeParamType(receiver))
+                return !_r.HasMember("System.Object", member.Name);
+            if (receiver is null or "dynamic" || PrimitiveCsTypes.Contains(receiver)) return false;
+            if (ClassKeyOfType(receiver, out _) is string key && ClassDefOfKey(key) is ClassDef definition)
+            {
+                var resolver = ClassDeclarationResolver(definition);
+                return resolver.HasRuntimeBaseMember(definition, "TryGetMember", instanceMethod: true) &&
+                    ImplicitFieldOwner(definition, member.Name) == null &&
+                    ClassVariableOwner(definition, member.Name) == null &&
+                    MethodInHierarchy(definition, member.Name) == null &&
+                    !resolver.HasRuntimeBaseMember(definition, member.Name);
+            }
+            return DotNetMeta(receiver) is string metadata && _r.HasMember(metadata, "TryGetMember") &&
+                !_r.HasMember(metadata, member.Name);
+        }
 
         string InferType(Expr e)
         {

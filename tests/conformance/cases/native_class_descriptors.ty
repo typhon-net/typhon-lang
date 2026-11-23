@@ -1,0 +1,9 @@
+import _ast
+
+_ast.Tuple.typhon_alias = property(lambda self: self.elts, lambda self, value: setattr(self, "elts", value))
+node = _ast.Tuple([_ast.Constant(3)], _ast.Load())
+print(node.typhon_alias[0].value)
+node.typhon_alias = [_ast.Constant(7)]
+print(node.elts[0].value, isinstance(_ast.Tuple.typhon_alias, property))
+del _ast.Tuple.typhon_alias
+print(hasattr(node, "typhon_alias"))

@@ -24,6 +24,7 @@
     <!-- the runtime precompiled for scripts compiled in memory (`typhon run`, the compile server) -->
     <ProjectReference Include="..\Typhon.Runtime\Typhon.Runtime.csproj" />
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.0.0" />
+    <None Update="Lib/**/*.ty" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

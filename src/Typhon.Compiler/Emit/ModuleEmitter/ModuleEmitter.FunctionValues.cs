@@ -614,7 +614,10 @@ namespace Typhon.Compiler.Emit
             }
             int positional = call.Args.Count(arg => arg.Name == null && !arg.Star && !arg.DoubleStar);
             var named = call.Args.Where(arg => arg.Name != null).Select(arg => arg.Name).ToList();
-            var methods = DotNetOverloads(call)?.Where(method => Applicable(method, positional, named)).ToList();
+            var overloads = DotNetOverloads(call);
+            if (overloads == null && call.Func is NameExpr name && !IsShadowed(name.Id))
+                overloads = _r.GetMembers("Typhon.Runtime.Builtins", name.Id).Where(m => m.IsMethod && m.IsStatic).ToList();
+            var methods = overloads?.Where(method => Applicable(method, positional, named)).ToList();
             return methods is { Count: > 0 } && methods.All(method => method.ReturnsVoid);
         }
 

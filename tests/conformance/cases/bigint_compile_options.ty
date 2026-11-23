@@ -1,0 +1,13 @@
+# typhon: int=bigint
+import ast
+
+flag = 0x400
+level = 0
+version = 12
+print(type(compile("4", "<test>", "eval", flag, optimize=level, _feature_version=version)).__name__)
+print(type(compile("pass", "<test>", "exec", flags=flag)).__name__)
+print(type(compile("4", "<test>", "eval", optimize=level)).__name__)
+try:
+    compile("4", "<test>", "eval", optimize=None)
+except TypeError:
+    print("integer required")

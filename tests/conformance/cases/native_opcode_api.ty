@@ -1,0 +1,17 @@
+import opcode
+import hashlib
+
+def digest(data):
+    return hashlib.sha256(repr(data).encode()).hexdigest()
+
+print(opcode.HAVE_ARGUMENT, opcode.EXTENDED_ARG)
+print(len(opcode.opmap), len(opcode.opname), opcode.opname[opcode.EXTENDED_ARG])
+print(digest(opcode.opmap), digest(opcode.opname))
+print(digest(opcode.hasarg), digest(opcode.hasjump), digest(opcode.hasname))
+print(opcode.stack_effect(opcode.opmap["POP_TOP"]), opcode.stack_effect(opcode.opmap["BUILD_LIST"], 3))
+print(opcode._inline_cache_entries["CALL"], opcode._inline_cache_entries["LOAD_ATTR"])
+import _opcode
+import _opcode_metadata
+print(opcode.stack_effect is _opcode.stack_effect)
+print(opcode.opmap is _opcode_metadata.opmap, opcode.hasjump is opcode.hasjrel)
+print(digest(opcode._cache_format), digest(opcode._inline_cache_entries))

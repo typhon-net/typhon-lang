@@ -255,7 +255,7 @@ namespace Typhon.Compiler.Emit
                 case ConstKind.Bool: return c.Raw == "True" ? "true" : "false";
                 case ConstKind.Str: return CsString(c.Str);
                 case ConstKind.Bytes: return $"global::Typhon.Runtime.PyBytes.Latin1({CsString(c.Str)})";
-                case ConstKind.Ellipsis: return "default";
+                case ConstKind.Ellipsis: return Rt("Ellipsis");
                 case ConstKind.Imaginary:
                 {
                     double coefficient = double.Parse(c.Raw.Replace("_", ""), CultureInfo.InvariantCulture);
@@ -533,7 +533,9 @@ namespace Typhon.Compiler.Emit
 
         bool TypeObjectMember(AttributeExpr member) =>
             InferType(member.Target) is ("global::System.Type" or "System.Type") &&
-            !_r.HasMember("System.Type", member.Name);
+            !_r.HasMember("System.Type", member.Name) ||
+            DotNetStaticMeta(member.Target) is string metadata && metadata.StartsWith("Typhon.Stdlib.") &&
+            IsRuntimeClassMeta(metadata) && !_r.GetMembers(metadata, member.Name).Any(candidate => candidate.IsStatic);
 
         /// <summary>Does the class (or a Typhon base) set args itself (args = ... in its body, self.args = ... in a method)?</summary>
         bool AssignsArgs(ClassDef c, int depth = 0)
@@ -640,11 +642,15 @@ namespace Typhon.Compiler.Emit
             else metadata = DotNetStaticMeta(expression);
             if (metadata == null || !metadata.StartsWith("Typhon.Stdlib.") || IsRuntimeClassMeta(metadata))
                 return null;
-            string canonical = RuntimeModuleName(metadata);
+            string canonical = RuntimeModuleName(expression, metadata);
             return StdlibType(canonical) == metadata
                 ? $"global::Typhon.Runtime.PyModule.Of(typeof({CsTypeName(metadata)}), {CsString(canonical)})"
                 : null;
         }
+
+        string RuntimeModuleName(Expr expression, string metadata) =>
+            expression is NameExpr name && _runtimeModuleAliases.TryGetValue(name.Id, out string alias)
+                ? alias : RuntimeModuleName(metadata);
 
         static string RuntimeModuleName(string metadata) => string.Join(".",
             metadata.Substring("Typhon.Stdlib.".Length).Split('+').Select(part =>
@@ -857,9 +863,9 @@ namespace Typhon.Compiler.Emit
                 RuntimeReExport(source, a.Name) is var export && export.Module != null && StdlibType(export.Module) is string exportMeta)
             {
                 string runtimeOwner = CsTypeName(exportMeta);
-                if (!Receivers.Contains(a) && !allowMethodGroup && _r.GetMembers(exportMeta, export.Member) is { Count: > 0 } members &&
-                    members.All(m => m.IsMethod))
-                    return $"new global::Typhon.Runtime.PyBoundMethod(typeof({runtimeOwner}), {CsString(export.Member)})";
+                string module = $"global::Typhon.Runtime.PyModule.Of(typeof({runtimeOwner}), {CsString(PublicModule(export.Module))})";
+                if (!Receivers.Contains(a) && !allowMethodGroup && NativeModuleMethodValue(exportMeta, module, export.Member) is string function)
+                    return function;
                 return runtimeOwner + "." + Esc(export.Member);
             }
             if (a.Name is "__name__" or "__doc__" &&

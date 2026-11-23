@@ -246,8 +246,32 @@ namespace Typhon.Compiler
             return sb.ToString();
         }
 
+        static (string Message, int Line, int Column)? CheckAstFeatureVersion(ModuleAst ast, int featureVersion)
+        {
+            (string Message, int Line, int Column)? unavailable = null;
+            AstWalker.VisitAll(ast.Body, node =>
+            {
+                if (unavailable.HasValue) return;
+                (int required, string? description) = node switch
+                {
+                    FStringExpr { IsTemplate: true } => (14, "t-strings are"),
+                    FStringExpr => (6, "Format strings are"),
+                    AnnAssignStmt => (6, "Variable annotation syntax is"),
+                    NamedExpr => (8, "Assignment expressions are"),
+                    Param { PositionalOnly: true } => (8, "Positional-only parameters are"),
+                    MatchStmt => (10, "Pattern matching is"),
+                    FunctionDef { TypeParams.Count: > 0 } or ClassDef { TypeParams.Count: > 0 } => (12, "Type parameter lists are"),
+                    ImportStmt { IsLazy: true } or ImportFromStmt { IsLazy: true } => (15, "Lazy imports are"),
+                    _ => (0, null),
+                };
+                if (featureVersion < required)
+                    unavailable = ($"{description} only supported in Python 3.{required} and greater", node.Line, node.Col);
+            });
+            return unavailable;
+        }
+
         public static ModuleInfo Parse(string path, string source, string moduleName, string rootNamespace,
-            bool barryAsFlufl = false, bool runtimeCode = false, bool expressionOnly = false, bool runtimeAstOnly = false)
+            bool barryAsFlufl = false, bool runtimeCode = false, bool expressionOnly = false, bool runtimeAstOnly = false, int astFeatureVersion = -1, bool astTypeComments = false)
         {
             source = Lexer.NormalizeSource(source);
             var info = new ModuleInfo { Name = moduleName, Path = path, SourceText = source };
@@ -266,7 +290,7 @@ namespace Typhon.Compiler
                     info.Ast = GdScriptParser.ParseModule(source, path, info.IsMainModule, out var gd);
                     info.GdScript = gd;
                 }
-                else info.Ast = Parser.ParseModule(source, path, barryAsFlufl, expressionOnly);
+                else info.Ast = Parser.ParseModule(source, path, barryAsFlufl, expressionOnly, astTypeComments);
             }
             catch (SyntaxError e)
             {
@@ -317,7 +341,17 @@ namespace Typhon.Compiler
                             });
                     });
             }
-            if (runtimeAstOnly) return info;
+            if (runtimeAstOnly)
+            {
+                if (astFeatureVersion >= 0 && info.ParseDiagnostics.Count == 0 &&
+                    CheckAstFeatureVersion(info.Ast, astFeatureVersion) is { } unavailable)
+                    info.ParseDiagnostics.Add(new TyDiagnostic
+                    {
+                        Id = "TY0001", Severity = Severity.Error, Path = path,
+                        Line = unavailable.Line, Col = unavailable.Column, Message = unavailable.Message,
+                    });
+                return info;
+            }
             Decorators.Apply(info.Ast);
             ModuleAliases.Apply(info.Ast);
             if (!runtimeCode && !info.IsGdScript) ReboundModuleFunctions.Apply(info);

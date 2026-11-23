@@ -114,7 +114,7 @@ namespace Typhon.Stdlib
         public static readonly int_info_t int_info = new int_info_t();
         public static readonly hash_info_t hash_info = new hash_info_t();
         /// <summary>The C modules CPython compiles into itself that Typhon's runtime also provides.</summary>
-        public static readonly PyTuple<string> builtin_module_names = new PyTuple<string>(new[] { "_signal", "array", "binascii", "builtins", "itertools", "math", "sys", "time" });
+        public static readonly PyTuple<string> builtin_module_names = new PyTuple<string>(new[] { "_ast", "_signal", "array", "binascii", "builtins", "itertools", "math", "sys", "time" });
         public static bool dont_write_bytecode = false;
         public static readonly List<string> warnoptions = new List<string>();
         public static readonly OrderedDictionary<string, object?> _xoptions = new OrderedDictionary<string, object?>();
@@ -434,6 +434,7 @@ namespace Typhon.Runtime
 
         readonly Type? _type;
         readonly PySourceAttribute? _source;
+        readonly Func<string, bool>? _exports;
         bool _registeredSource;
         Typhon.Stdlib.importlib.machinery.ModuleSpec? _builtinSpec;
 
@@ -446,18 +447,22 @@ namespace Typhon.Runtime
         }
         readonly System.Collections.Concurrent.ConcurrentDictionary<string, PyBoundMethod> _methodValues = new();
         internal Type? SourceType => _type;
-        public PyModule(string name, Type? type)
+        public PyModule(string name, Type? type, Func<string, bool>? exports = null)
         {
             _name = name;
             _type = type;
+            _exports = exports;
             _source = type?.GetCustomAttribute<PySourceAttribute>();
             __dict__ = new PyAttrDict(this);
         }
         static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, PyModule> _of = new();
+        static readonly Lazy<PyModule> AstPrimitives = new(() =>
+            new PyModule("_ast", typeof(Typhon.Stdlib.ast), Typhon.Stdlib.ast.IsPrimitiveExport));
         static readonly Type NativePathModule = OperatingSystem.IsWindows() ? typeof(Typhon.Stdlib.ntpath) : typeof(Typhon.Stdlib.posixpath);
         /// <summary>A standard module used as a value (hasattr(os, "sep")): one object per module, like sys.modules' entry.</summary>
         public static PyModule Of(Type type, string name)
         {
+            if (type == typeof(Typhon.Stdlib.ast) && name == "_ast") return AstPrimitives.Value;
             // os.path is the native path module, including its filesystem operations.
             if (type == NativePathModule || type == typeof(Typhon.Stdlib.os_.path))
                 return _of.GetOrAdd(typeof(Typhon.Stdlib.os_.path), t => new PyModule(NativePathModule.Name, t));
@@ -553,6 +558,7 @@ namespace Typhon.Runtime
 
         BindingFlags Members => BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly |
             (_source != null ? BindingFlags.NonPublic : 0);
+        bool IsExported(string name) => IsModuleName(name) && (_exports?.Invoke(name) ?? true);
         static bool IsModuleName(string name) => !name.StartsWith("<", StringComparison.Ordinal) && !name.StartsWith("__fn_", StringComparison.Ordinal) &&
             !name.StartsWith("__undecorated_", StringComparison.Ordinal) && !name.StartsWith("__typhon_", StringComparison.Ordinal) &&
             !name.StartsWith("__default_", StringComparison.Ordinal) && !name.StartsWith("__memo_", StringComparison.Ordinal);
@@ -571,7 +577,7 @@ namespace Typhon.Runtime
                 case "__loader__" when BuiltinSpec() is { } builtIn: result = builtIn.loader; return true;
             }
             result = null;
-            if (_type == null || !IsModuleName(name)) return false;
+            if (_type == null || !IsExported(name)) return false;
             if (_type == typeof(Typhon.Stdlib.os_) && name == "path") { result = Typhon.Stdlib.os_.__path_module__; return true; }
             if (_type == typeof(Typhon.Stdlib.builtins) && name == "print") { result = Builtins.__print_value(); return true; }
             if (_type == typeof(Typhon.Stdlib.builtins) && Typhon.Stdlib.builtins.RuntimeClasses.TryGetValue(name, out Type? cls))
@@ -646,13 +652,13 @@ namespace Typhon.Runtime
             if (_type == typeof(Typhon.Stdlib.builtins))
                 foreach (string name in Typhon.Stdlib.builtins.RuntimeClasses.Keys) yield return name;
             foreach (var member in _type.GetMembers(Members))
-                if (IsModuleName(member.Name) && (member is FieldInfo or PropertyInfo || member is MethodInfo method && IsNamespaceMethod(method)) &&
+                if (IsExported(member.Name) && (member is FieldInfo or PropertyInfo || member is MethodInfo method && IsNamespaceMethod(method)) &&
                     (member is not FieldInfo field || !field.IsDefined(typeof(PyOptionalModuleMemberAttribute), false) ||
                         !ReferenceEquals(field.GetValue(null), Unbound)) &&
                     (member is not PropertyInfo property || !property.IsDefined(typeof(PyLateAttributeAttribute)) || TryGetNamespaceMember(property.Name, out _)))
                     yield return member.Name;
             foreach (var nested in _type.GetNestedTypes(BindingFlags.Public | BindingFlags.NonPublic))
-                if (IsModuleName(nested.Name) && PyConditionalModuleClassAttribute.IsBound(nested)) yield return nested.Name;
+                if (IsExported(nested.Name) && PyConditionalModuleClassAttribute.IsBound(nested)) yield return nested.Name;
         }
 
         public override IEnumerable<string> GetDynamicMemberNames() => __dict__.Keys;
@@ -681,6 +687,7 @@ namespace Typhon.Runtime
                     d.TryAdd(submodule, Of(nested, submodule));
                 }
             }
+            d.TryAdd("_ast", Of(typeof(Typhon.Stdlib.ast), "_ast"));
             d.TryAdd("builtins", Of(typeof(Builtins), "builtins"));
             mainModule ??= Assembly.GetEntryAssembly()?.GetType("__main__");
             d["__main__"] = mainModule == null ? new PyModule("__main__", null) : Of(mainModule, "__main__");

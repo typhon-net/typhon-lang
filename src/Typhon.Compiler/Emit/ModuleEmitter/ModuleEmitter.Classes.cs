@@ -81,7 +81,8 @@ namespace Typhon.Compiler.Emit
 
         void EmitClass(ClassDef c)
         {
-            if (!_m.IsGdScript && IsStringEnum(c)) { EmitStringEnum(c); return; }
+            if (!_m.IsGdScript && IsStringEnum(c)) { EmitObjectEnum(c, integer: false); return; }
+            if (!_m.IsGdScript && IsObjectIntegerEnum(c)) { EmitObjectEnum(c, integer: true); return; }
             var bases = new List<Expr>();
             bool isInterface = false, isEnum = false, isAbstract = false;
             foreach (var b in c.Bases)
@@ -118,7 +119,7 @@ namespace Typhon.Compiler.Emit
             if (vis == "public" && DerivesFromInternalClass(c)) vis = "internal";
             string kind = isInterface ? "partial interface" : (isAbstract ? "abstract partial class" : (ctx.IsSealed ? "sealed partial class" : "partial class"));
             var baseTypes = bases.Select(b => BuiltinStringBase(b) ? "global::Typhon.Runtime.PyString" :
-                (RuntimeClassBase(b) ?? MappingBaseMetadata(b)) is string runtime ? CsTypeName(runtime) : MapType(b, c)).ToList();
+                (RuntimeClassBase(b) ?? MappingBaseMetadata(b)) is string runtime ? CsTypeName(runtime) : MapType(b, c, preserveClrType: true)).ToList();
             vis = SurfaceVisibility(vis, baseTypes.ToArray());
             if (!isInterface) baseTypes.AddRange(StructuralProtocols(c, bases));
             if (!_m.IsGdScript && !isInterface && DefinesInHierarchy(c, "__getattr__"))

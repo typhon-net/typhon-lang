@@ -12,27 +12,53 @@ internal sealed class RuntimeAstHost
 {
     readonly string _source;
     readonly int[] _lineStarts;
+    readonly List<SourceTypeComment> _unclaimedTypeComments;
+    readonly int _optimize;
+    readonly bool _optimizedAst;
 
-    RuntimeAstHost(string source)
+    RuntimeAstHost(string source, ModuleAst module, int optimize, bool optimizedAst)
     {
         _source = source;
+        _optimize = optimize;
+        _optimizedAst = optimizedAst;
+        _unclaimedTypeComments = module.TypeComments.Where(comment => !comment.IsIgnore).ToList();
         var lines = new List<int> { 0 };
         for (int i = 0; i < source.Length; i++)
             if (source[i] == '\n') lines.Add(i + 1);
         _lineStarts = lines.ToArray();
     }
 
-    internal static object Project(string source, ModuleAst module, string mode)
+    internal static (object Value, SourceTypeComment? InvalidTypeComment) Project(string source, ModuleAst module, string mode, int optimize, bool optimizedAst)
     {
         string text = source.Replace("\r\n", "\n").Replace('\r', '\n');
-        var projection = new RuntimeAstHost(text);
-        return mode switch
+        var projection = new RuntimeAstHost(text, module, optimize, optimizedAst);
+        object value = mode switch
         {
             "eval" => Make("Expression", ("body", projection.Expr(((ExprStmt)module.Body[0]).Value))),
             "single" => Make("Interactive", ("body", projection.Body(module.Body))),
-            _ => Make("Module", ("body", projection.Body(module.Body)), ("type_ignores", Array.Empty<object>())),
+            _ => Make("Module", ("body", projection.Body(module.Body, hasDocstring: true)),
+                ("type_ignores", module.TypeComments.Where(comment => comment.IsIgnore)
+                    .Select(comment => Make("TypeIgnore", ("lineno", (long)comment.Line), ("tag", comment.Text))).ToArray())),
         };
+        return (value, projection._unclaimedTypeComments.FirstOrDefault());
     }
+
+    string? TakeTypeComment(Func<SourceTypeComment, bool> matches)
+    {
+        int index = _unclaimedTypeComments.FindIndex(comment => matches(comment));
+        if (index < 0) return null;
+        string text = _unclaimedTypeComments[index].Text;
+        _unclaimedTypeComments.RemoveAt(index);
+        return text;
+    }
+
+    string? TrailingTypeComment(Node node) =>
+        TakeTypeComment(comment => comment.PreviousTokenEnd == node.EndOffset);
+
+    string? HeaderTypeComment(Node node, List<Stmt> body, bool allowStandalone = false) =>
+        body.Count == 0 ? null : TakeTypeComment(comment => node.StartOffset < comment.Offset &&
+            comment.Offset < body[0].StartOffset && (comment.Standalone ? allowStandalone : comment.FollowingColon));
+
 
     static object Make(string kind, params (string Name, object? Value)[] fields) => Pack(kind, null, fields);
 
@@ -55,7 +81,15 @@ internal sealed class RuntimeAstHost
         return (line + 1, Encoding.UTF8.GetByteCount(_source.AsSpan(begin, offset - begin)));
     }
 
-    object?[] Body(IEnumerable<Stmt> nodes) => nodes.Select(Stmt).ToArray();
+    object?[] Body(List<Stmt> nodes, bool hasDocstring = false)
+    {
+        if (_optimize < 2 || !hasDocstring || nodes.Count == 0 ||
+            nodes[0] is not ExprStmt { Value: ConstExpr { Kind: ConstKind.Str } })
+            return nodes.Select(Stmt).ToArray();
+        if (nodes.Count > 1) return nodes.Skip(1).Select(Stmt).ToArray();
+        var (line, column) = Coordinate(nodes[0].StartOffset);
+        return [Pack("Pass", [line, column, line, column + 4], [])];
+    }
     object?[] Exprs(IEnumerable<Expr> nodes, string context = "Load") => nodes.Select(node => Expr(node, context)).ToArray();
 
     object[] Aliases(IEnumerable<ImportAlias> aliases) => aliases.Select(alias =>
@@ -65,15 +99,15 @@ internal sealed class RuntimeAstHost
     {
         ClassDef n => At("ClassDef", n, ("name", n.Name), ("bases", Exprs(n.Bases)),
             ("keywords", n.Metaclass == null ? Array.Empty<object>() : new[] { Make("keyword", ("arg", "metaclass"), ("value", Expr(n.Metaclass))) }),
-            ("body", Body(n.Body)), ("decorator_list", Exprs(n.Decorators)), ("type_params", TypeParams(n.TypeParams))),
+            ("body", Body(n.Body, hasDocstring: true)), ("decorator_list", Exprs(n.Decorators)), ("type_params", TypeParams(n.TypeParams))),
         FunctionDef n => At(n.IsAsync ? "AsyncFunctionDef" : "FunctionDef", n, ("name", n.Name),
-            ("args", Parameters(n.Params)), ("body", Body(n.Body)), ("decorator_list", Exprs(n.Decorators)),
-            ("returns", Expr(n.Returns)), ("type_comment", null), ("type_params", TypeParams(n.TypeParams))),
+            ("args", Parameters(n.Params)), ("body", Body(n.Body, hasDocstring: true)), ("decorator_list", Exprs(n.Decorators)),
+            ("returns", Expr(n.Returns)), ("type_comment", HeaderTypeComment(n, n.Body, allowStandalone: true)), ("type_params", TypeParams(n.TypeParams))),
         ImportStmt n => At("Import", n, ("names", Aliases(n.Names)), ("is_lazy", n.IsLazy ? 1L : 0L)),
         ImportFromStmt n => At("ImportFrom", n, ("module", string.IsNullOrEmpty(n.Module) ? null : n.Module),
             ("names", Aliases(n.Names)), ("level", (long)n.Level), ("is_lazy", n.IsLazy ? 1L : 0L)),
         ExprStmt n => At("Expr", n, ("value", Expr(n.Value))),
-        AssignStmt n => At("Assign", n, ("targets", Exprs(n.Targets, "Store")), ("value", Expr(n.Value)), ("type_comment", null)),
+        AssignStmt n => At("Assign", n, ("targets", Exprs(n.Targets, "Store")), ("value", Expr(n.Value)), ("type_comment", TrailingTypeComment(n))),
         AugAssignStmt n => At("AugAssign", n, ("target", Expr(n.Target, "Store")), ("op", Operator(n.Op.TrimEnd('='))), ("value", Expr(n.Value))),
         AnnAssignStmt n => At("AnnAssign", n, ("target", Expr(n.Target, "Store")), ("annotation", Expr(n.Annotation)), ("value", Expr(n.Value)),
             ("simple", n.Target is NameExpr ? 1L : 0L)),
@@ -85,10 +119,10 @@ internal sealed class RuntimeAstHost
         IfStmt n => At("If", n, ("test", Expr(n.Test)), ("body", Body(n.Body)), ("orelse", Body(n.OrElse))),
         WhileStmt n => At("While", n, ("test", Expr(n.Test)), ("body", Body(n.Body)), ("orelse", Body(n.OrElse))),
         ForStmt n => At(n.IsAsync ? "AsyncFor" : "For", n, ("target", Expr(n.Target, "Store")), ("iter", Expr(n.Iter)),
-            ("body", Body(n.Body)), ("orelse", Body(n.OrElse)), ("type_comment", null)),
+            ("body", Body(n.Body)), ("orelse", Body(n.OrElse)), ("type_comment", HeaderTypeComment(n, n.Body))),
         WithStmt n => At(n.IsAsync ? "AsyncWith" : "With", n, ("items", n.Items.Select(item => Make("withitem",
             ("context_expr", Expr(item.Context)), ("optional_vars", Expr(item.Var, "Store")))).ToArray()),
-            ("body", Body(n.Body)), ("type_comment", null)),
+            ("body", Body(n.Body)), ("type_comment", HeaderTypeComment(n, n.Body))),
         TryStmt n => At("Try", n, ("body", Body(n.Body)), ("handlers", n.Handlers.Select(handler => At("ExceptHandler", handler,
             ("type", Expr(handler.Type)), ("name", handler.Name), ("body", Body(handler.Body)))).ToArray()),
             ("orelse", Body(n.OrElse)), ("finalbody", Body(n.FinalBody))),
@@ -103,7 +137,7 @@ internal sealed class RuntimeAstHost
     object[] TypeParams(IEnumerable<TypeParam> parameters) => parameters.Select(parameter =>
         Make("TypeVar", ("name", parameter.Name), ("bound", Expr(parameter.Bound)), ("default_value", null))).ToArray();
 
-    object Parameter(Param param) => At("arg", param, ("arg", param.Name), ("annotation", Expr(param.Annotation)), ("type_comment", null));
+    object Parameter(Param param) => At("arg", param, ("arg", param.Name), ("annotation", Expr(param.Annotation)), ("type_comment", TrailingTypeComment(param)));
     object Parameters(List<Param> parameters)
     {
         var positional = parameters.Where(p => p.Kind == ParamKind.Normal && !p.KeywordOnly).ToArray();
@@ -122,6 +156,8 @@ internal sealed class RuntimeAstHost
     object? Expr(Expr? node, string context = "Load") => node switch
     {
         null => null,
+        NameExpr { Id: "__debug__" } n when _optimizedAst && context == "Load" =>
+            At("Constant", n, ("value", _optimize <= 0), ("kind", null)),
         NameExpr n => At("Name", n, ("id", n.Id), ("ctx", Make(context))),
         ConstExpr n => At("Constant", n, ("value", Constant(n)), ("kind", n.Kind == ConstKind.Str &&
             (_source[n.StartOffset] is 'u' or 'U') ? "u" : null)),

@@ -204,8 +204,7 @@ namespace Typhon.Runtime
                 value = ioError.Data[name];
                 return true;
             }
-            if (type.IsDefined(typeof(PySourceAttribute), false) && TryGetClassData(type, name, out var descriptor) &&
-                descriptor is Typhon.Stdlib.builtins.property getter)
+            if (ClassProperty(type, name) is { } getter)
             {
                 value = getter.__get__(o, type);
                 return true;
@@ -390,6 +389,10 @@ namespace Typhon.Runtime
         static object? ClassDocumentation(Type type) =>
             TryGetClassData(type, "__doc__", out var value, before: type.BaseType)
                 ? value : type.GetCustomAttribute<PySourceAttribute>()?.DocString;
+
+        internal static Typhon.Stdlib.builtins.property? ClassProperty(Type type, string name) =>
+            PyClassDescriptors.HasWritableNamespace(type) && TryGetClassData(type, name, out var value)
+                ? value as Typhon.Stdlib.builtins.property : null;
 
         static bool TryGetClassData(Type type, string name, out object? value, Type? before = null)
         {
@@ -640,15 +643,15 @@ namespace Typhon.Runtime
                 return;
             }
             var type = o.GetType();
-            if (type.IsDefined(typeof(PySourceAttribute), false) && TryGetClassData(type, name, out var descriptor) &&
-                descriptor is Typhon.Stdlib.builtins.property setter)
+            if (ClassProperty(type, name) is { } setter)
             {
                 setter.__set__(o, value);
                 return;
             }
             if (NamedProperty(type, name, InstanceMembers) is PropertyInfo p && p.CanWrite) { p.SetValue(o, AttributeValue(value, p.PropertyType, freshEmptyDict)); return; }
             if (type.GetField(name, InstanceMembers) is FieldInfo f && !f.IsInitOnly) { f.SetValue(o, AttributeValue(value, f.FieldType, freshEmptyDict)); return; }
-            new PyAttrDict(o)[name] = value;
+            if (o is IPyInstanceAttributes attributes) attributes.SetAttribute(name, value);
+            else new PyAttrDict(o)[name] = value;
         }
 
         public static void delattr(object? o, string name)
@@ -670,12 +673,12 @@ namespace Typhon.Runtime
                 throw new InvalidCastException($"cannot delete '__doc__' attribute of type '{PyTypeName(annotated)}'");
             if (o is Type type && PyClassDescriptors.DeleteSlot(type, name)) return;
             if (o is Type owner && PyClassDescriptors.DeleteAddedAttribute(owner, name)) return;
-            if (o != null && o.GetType().IsDefined(typeof(PySourceAttribute), false) &&
-                TryGetClassData(o.GetType(), name, out var descriptor) && descriptor is Typhon.Stdlib.builtins.property deleter)
+            if (o != null && ClassProperty(o.GetType(), name) is { } deleter)
             {
                 deleter.__delete__(o);
                 return;
             }
+            if (o is IPyInstanceAttributes attributes && attributes.RemoveAttribute(name)) return;
             if (o != null && PyAttrDict.RemoveExtra(o, name)) return;
             if (o is PyFunction pf && pf._attrs != null && pf._attrs.Remove(name)) return;
             throw MissingAttribute(o, name, $"'{(o == null ? "NoneType" : PyTypeName(o.GetType()))}' object has no attribute '{name}' (or it is declared by its class)");

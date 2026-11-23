@@ -1,0 +1,11 @@
+class Reader:
+    def __init__(self, value):
+        self.value = value
+
+    def token(self):
+        return getattr(self, "value", None)
+
+reader = Reader("# comment")
+token = reader.token()
+if token is not None:
+    print(token.startswith("#"), token.removeprefix("# ").upper())

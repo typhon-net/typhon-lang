@@ -401,12 +401,14 @@ namespace Typhon.Compiler.Emit
                         else if (Obs != null && valueType == "dynamic" && (IsNumeric(known) || TupleItemOrMixed(known) != null) &&
                                  value is BinOpExpr vb && ArithmeticOps.Contains(vb.Op))
                             Obs.AddConflict(_scopeKey + "|" + n.Id, "dynamic");
-                        // A class or bytes value can be rebound to a different type by a late-bound operation.
+                        // A typed input can be rebound to an expression whose value has no stable CLR type.
                         else if (Obs != null && known != null &&
                             (ClassKeyOfType(known, out _) != null && (valueType == "dynamic" ||
                                  valueType == null && value is BinOpExpr arithmetic && ArithmeticOps.Contains(arithmetic.Op)) ||
-                             (IsBytesType(known) || known == "string" && _scope.Params.Contains(n.Id) && value is CallExpr) &&
-                                (valueType == "dynamic" || valueType == null && MaybeLateBound(value))))
+                             IsBytesType(known) && (valueType == "dynamic" || IsUnknownType(valueType) && MaybeLateBound(value)) ||
+                             known == "string" && _scope?.Params.Contains(n.Id) == true &&
+                                 value is CallExpr or AttributeExpr or SubscriptExpr &&
+                                 (IsUnknownType(valueType) || valueType is "dynamic" or "object" or "object?")))
                             Obs.AddConflict(_scopeKey + "|" + n.Id, "dynamic");
                         // (x = int(x) on a float: from here on x is an int, so it gets a new variable too)
                         bool narrows = known == "double" && IsIntegral(valueType) && valueType != "bool";
@@ -420,6 +422,12 @@ namespace Typhon.Compiler.Emit
                             return;
                         }
                         bool typed = known != null && known != "dynamic";
+                        // A typed storage slot can supply the collection type. An inferred local keeps the
+                        // representation of each comprehension, as it does at the original declaration.
+                        if (rawValue == null && typed && value is ComprehensionExpr comprehension &&
+                            (_scope.Locals?.Annotations.ContainsKey(n.Id) == true || !IsLocal(n.Id) && _moduleFieldTypes.ContainsKey(n.Id)) &&
+                            !TypeInference.IsNonePlaceholder(comprehension))
+                            rawValue = EmitComprehension(comprehension, known);
                         // a lambda into a late-bound variable or field: a delegate of dynamic values
                         if (rawValue == null && value is LambdaExpr dl && !typed) { string dtype = EmitLambdaLocal(dl, null, out var dcode); rawValue = $"({dtype}){dcode}"; }
                         _w.Line($"{EmitName(n)} = {rawValue ?? TupleLiteralValue(value, known) ??

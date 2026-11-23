@@ -1,0 +1,25 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+from enum import IntEnum, _simple_enum, auto
+
+@_simple_enum(IntEnum)
+class Order:
+    FIRST = auto()
+    NEXT = auto()
+    ALIAS = NEXT
+    LATER = 7
+    LAST = auto()
+
+    def following(self):
+        try:
+            return self.__class__(self + 1)
+        except ValueError:
+            return self
+
+print(Order.FIRST.name, Order.FIRST.value, int(Order.FIRST), repr(Order.FIRST))
+print(Order.ALIAS is Order.NEXT, Order(2) is Order.NEXT)
+print(Order.LAST.value, Order.LAST.following() is Order.LAST)
+print(Order.FIRST.following() is Order.NEXT, Order.LATER.following() is Order.LAST)
+print(isinstance(Order.FIRST, int), isinstance(Order.FIRST, IntEnum), issubclass(Order, int))
+print(Order.FIRST + 2, Order.FIRST == 1)

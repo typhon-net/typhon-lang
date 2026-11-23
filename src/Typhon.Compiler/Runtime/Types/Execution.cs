@@ -6,6 +6,7 @@
 namespace Typhon.Runtime
 {
     using System;
+    using System.Runtime.InteropServices;
     using System.Collections;
     using System.Collections.Generic;
     using Typhon.Stdlib;
@@ -73,10 +74,31 @@ namespace Typhon.Runtime
     internal static partial class Builtins
     {
         public static dynamic compile(object? source, object? filename, object? mode, System.Numerics.BigInteger flags,
-            bool dont_inherit = false, long optimize = -1, object? module = null) =>
-            compile(source, filename, mode, checked((long)flags), dont_inherit, optimize, module);
+            [Optional, DefaultParameterValue(false)] bool dont_inherit,
+            [Optional, DefaultParameterValue(-1L)] object? optimize,
+            [PyKeywordOnly, Optional, DefaultParameterValue(null)] object? module,
+            [PyKeywordOnly, Optional, DefaultParameterValue(-1L)] object? _feature_version) =>
+            CompileSource(source, filename, mode, checked((long)flags), dont_inherit,
+                CompileInteger(optimize), module, CompileInteger(_feature_version));
 
-        public static dynamic compile(object? source, object? filename = null, object? mode = null, long flags = 0, bool dont_inherit = false, long optimize = -1, object? module = null)
+        public static dynamic compile(object? source,
+            [Optional, DefaultParameterValue(null)] object? filename,
+            [Optional, DefaultParameterValue(null)] object? mode,
+            [Optional, DefaultParameterValue(0L)] long flags,
+            [Optional, DefaultParameterValue(false)] bool dont_inherit,
+            [Optional, DefaultParameterValue(-1L)] object? optimize,
+            [PyKeywordOnly, Optional, DefaultParameterValue(null)] object? module,
+            [PyKeywordOnly, Optional, DefaultParameterValue(-1L)] object? _feature_version) =>
+            CompileSource(source, filename, mode, flags, dont_inherit, CompileInteger(optimize), module, CompileInteger(_feature_version));
+
+        static long CompileInteger(object? value)
+        {
+            object index = __index_value(value);
+            return index is System.Numerics.BigInteger wide ? checked((long)wide) : (long)index;
+        }
+
+        static dynamic CompileSource(object? source, object? filename, object? mode, long flags, bool dont_inherit,
+            long optimize, object? module, long _feature_version)
         {
             if (module != null && module is not string)
                 throw new InvalidCastException($"compile() argument 'module' must be str or None, not {PyTypeName(module.GetType())}");
@@ -90,10 +112,14 @@ namespace Typhon.Runtime
             string kind = mode as string ?? "exec";
             if (kind is not ("exec" or "eval" or "single"))
                 throw new ArgumentException("compile() mode must be 'exec', 'eval' or 'single'");
-            if (flags < 0 || (flags & ~(0x1fe4210L | ast.PyCF_ONLY_AST)) != 0)
+            long validFlags = 0x1fe4210L | ast.PyCF_ONLY_AST;
+            if ((flags & ast.PyCF_ONLY_AST) != 0) validFlags |= ast.PyCF_TYPE_COMMENTS | ast.PyCF_OPTIMIZED_AST;
+            if (flags < 0 || (flags & ~validFlags) != 0)
                 throw new ArgumentException("compile() flags are unsupported");
             if (optimize is < -1 or > 2) throw new ArgumentException("compile(): invalid optimize value");
-            if ((flags & ast.PyCF_ONLY_AST) != 0) return ast.CompileTree(text, path, kind, flags);
+            if (_feature_version < int.MinValue || _feature_version > int.MaxValue)
+                throw new OverflowException("Python int too large to convert to C int");
+            if ((flags & ast.PyCF_ONLY_AST) != 0) return ast.CompileTree(text, path, kind, flags, (int)_feature_version, (int)optimize);
             var validate = AppContext.GetData("Typhon.CheckRuntimeSyntax") as
                 Func<string, string, string, long, (string? Error, int Line, int Column, int Kind, long Flags)>
                 ?? throw new NotSupportedException("compile() requires the Typhon runtime compiler host");

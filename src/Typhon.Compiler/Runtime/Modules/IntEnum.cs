@@ -13,6 +13,7 @@ namespace Typhon.Runtime
     using System.Numerics;
     using System.Reflection;
     using System.Runtime.CompilerServices;
+    using System.Globalization;
     using Typhon.Stdlib;
 
     internal sealed class PyIntEnumType : TypeDelegator, IPyKeywordCallable, IEnumerable<PyIntEnumMember>, IPyLen
@@ -81,19 +82,63 @@ namespace Typhon.Runtime
         public long __len__() => _values.Count;
     }
 
-    internal sealed class PyIntEnumMember(PyIntEnumType owner, string name, BigInteger integer) : IPyRepr
+    internal abstract class PyIntegerEnum : IPyRepr, IComparable
     {
-        internal PyIntEnumType Owner => owner;
-        internal BigInteger Integer => integer;
-        public string name { get; } = name;
-        public dynamic value => integer >= long.MinValue && integer <= long.MaxValue ? (object)(long)integer : integer;
+        internal BigInteger Integer { get; private set; }
+        internal string _name_ = "";
+        internal virtual string EnumName => GetType().Name;
+        public string name => _name_;
+        public dynamic value => Integer >= long.MinValue && Integer <= long.MaxValue ? (object)(long)Integer : Integer;
+
+        protected PyIntegerEnum() { }
+
+        protected PyIntegerEnum(string name, BigInteger integer)
+        {
+            _name_ = name;
+            Integer = integer;
+        }
+
         public dynamic __int__() => value;
         public dynamic __index__() => value;
-        public override string ToString() => integer.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        public string __repr__() => $"<{owner.Name}.{name}: {this}>";
-        public override bool Equals(object? other) => other is PyIntEnumMember member
-            ? integer == member.Integer : Builtins.eq((object)value, other);
+        public override string ToString() => Integer.ToString(CultureInfo.InvariantCulture);
+        public string __repr__() => $"<{EnumName}.{name}: {this}>";
+        public override bool Equals(object? other) => other is PyIntegerEnum member
+            ? Integer == member.Integer : Builtins.eq((object)value, other);
         public override int GetHashCode() => Builtins.KeyHash((object)value);
+        public int CompareTo(object? other) => Integer.CompareTo(PyIntEnumType.Integer(other));
+
+        public static BigInteger operator +(PyIntegerEnum member, BigInteger offset) => member.Integer + offset;
+        public static BigInteger operator +(BigInteger offset, PyIntegerEnum member) => offset + member.Integer;
+        public static BigInteger operator -(PyIntegerEnum member, BigInteger offset) => member.Integer - offset;
+
+        internal static PyIntegerEnum Allocate(Type type, object? input)
+        {
+            var member = (PyIntegerEnum)RuntimeHelpers.GetUninitializedObject(type);
+            member.Integer = PyIntEnumType.Integer(input);
+            return member;
+        }
+
+        internal static BigInteger NextAutoValue(IEnumerable<BigInteger> values) =>
+            values.DefaultIfEmpty(BigInteger.Zero).Max() + BigInteger.One;
+
+        internal static PyIntegerEnum Lookup(Type type, object? input)
+        {
+            if (input is PyIntegerEnum member && type.IsInstanceOfType(member)) return member;
+            const BindingFlags flags = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
+            var entries = (IDictionary?)type.GetField("_value2member_map_", flags)?.GetValue(null);
+            try
+            {
+                if (entries?[PyIntEnumType.Integer(input)] is PyIntegerEnum selected) return selected;
+            }
+            catch (InvalidCastException) { }
+            throw new ArgumentException($"{Builtins.repr(input)} is not a valid {type.Name}");
+        }
+    }
+
+    internal sealed class PyIntEnumMember(PyIntEnumType owner, string name, BigInteger integer) : PyIntegerEnum(name, integer)
+    {
+        internal PyIntEnumType Owner => owner;
+        internal override string EnumName => owner.Name;
     }
 }
 

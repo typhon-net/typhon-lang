@@ -65,10 +65,10 @@ internal static class PyLib
     });
 
     /// <summary>Is the module one Typhon provides itself (a runtime module, a typing-only one)? Those are never taken from Lib.</summary>
-    public static bool ProvidedByTyphon(string module, bool bigInts)
+    public static bool ProvidedByTyphon(string module, bool bigInts, bool sourceRequested)
     {
         // Compile the Lib implementations that use Typhon's runtime primitives.
-        if (module is "timeit" or "copyreg" or "csv" or "hashlib" or "hmac" or "traceback" or "codeop") return false;
+        if (sourceRequested || module is "timeit" or "copyreg" or "csv" or "hashlib" or "hmac" or "traceback" or "codeop") return false;
         // urllib.parse imports ipaddress, whose IPv6 constants require Python's wide integers.
         if (bigInts && module is ("urllib" or "urllib.parse")) return false;
         if (TypingOnly.Contains(module)) return true;
@@ -79,6 +79,7 @@ internal static class PyLib
     static Type? RuntimeModule(string module)
     {
         if (module == "_collections_abc") module = "collections.abc";
+        if (module == "_ast") module = "ast";
         string[] parts = module.Split('.');
         string name = "Typhon.Stdlib." + parts[0];
         var assembly = Runtime.Value;

@@ -1,0 +1,16 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import ast
+import _ast as primitives
+from _ast import Constant, PyCF_ONLY_AST
+from importlib.util import find_spec
+import sys
+
+print(primitives.__name__, primitives is sys.modules["_ast"], primitives is ast)
+print(Constant is ast.Constant, primitives.AST is ast.AST, PyCF_ONLY_AST == ast.PyCF_ONLY_AST)
+print(hasattr(primitives, "parse"), hasattr(primitives, "NodeVisitor"))
+print(primitives.PyCF_TYPE_COMMENTS, primitives.PyCF_OPTIMIZED_AST)
+node = compile("42", "<expression>", "eval", PyCF_ONLY_AST)
+print(isinstance(node.body, primitives.expr), node.body.value)
+print(find_spec("_ast").origin)

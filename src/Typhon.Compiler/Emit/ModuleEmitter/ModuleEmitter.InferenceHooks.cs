@@ -160,7 +160,7 @@ namespace Typhon.Compiler.Emit
         }
 
         /// <summary>
-        /// obj.m / self.m where obj's Typhon class (or a base class) defines m and m's parameters are inferred: its target
+        /// obj.m / self.m where the receiver's Typhon class defines a method with an inference target
         /// (null for anything else, a class name as the receiver included: Cls.m(obj, ...) passes self explicitly).
         /// </summary>
         InferenceTarget MethodTarget(AttributeExpr a)
@@ -180,7 +180,7 @@ namespace Typhon.Compiler.Emit
                 {
                     var owner = _p.Modules.Values.FirstOrDefault(m => m.Classes.TryGetValue(cd.Name, out var mc) && mc == cd);
                     var target = owner != null ? TargetOf(owner, cd, def.Name) : null;
-                    return target != null && target.InferParams && target.Def == def && !HasDecorator(def.Decorators, "staticmethod") ? target : null;
+                    return target != null && target.Def == def && !HasDecorator(def.Decorators, "staticmethod") ? target : null;
                 }
                 cd = cd.Bases.Count > 0 && ResolveBase(cd.Bases[0], out var bpy, out _) ? bpy : null;
             }

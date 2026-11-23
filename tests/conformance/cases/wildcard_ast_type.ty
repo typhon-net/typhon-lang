@@ -1,0 +1,10 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import ast
+from _ast import *
+
+node = ast.parse("(1, 2)", mode="eval").body
+print(isinstance(node, Tuple))
+print(type(Tuple([])).__name__)
+print([value.value for value in node.elts])

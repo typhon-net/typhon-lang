@@ -1,0 +1,22 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import ast
+from ast import Name as Node
+from typing import Any
+
+def qualified(options: Any):
+    return ast.Name("first", **options)
+
+def imported(options: Any):
+    return Node(**options)
+
+first = qualified({"ctx": ast.Store()})
+second = imported({"id": "second", "ctx": ast.Load()})
+print(first.id, type(first.ctx).__name__)
+print(second.id, type(second.ctx).__name__)
+
+try:
+    ast.Name("first", **{"id": "second"})
+except TypeError:
+    print("duplicate argument")

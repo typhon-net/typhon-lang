@@ -1,0 +1,15 @@
+from typing import Any
+
+class Red:
+    pass
+
+class Blue:
+    pass
+
+def labels(flags: Any, traps: Any):
+    names = [flag.__name__ for flag, enabled in flags.items() if enabled]
+    print(", ".join(names))
+    names = [trap.__name__ for trap, enabled in traps.items() if enabled]
+    print(", ".join(names))
+
+labels({Red: True, Blue: False}, {Blue: True})

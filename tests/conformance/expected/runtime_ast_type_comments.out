@@ -1,0 +1,6 @@
+None int
+(int, int) -> int ['int', 'int']
+str Handle
+[(1, '[header]\n'), (16, '[assignment]')]
+None 0
+invalid syntax

@@ -1,0 +1,15 @@
+# typhon: int=bigint
+from typing import Any
+from types import SimpleNamespace
+
+def counts(result: Any):
+    try:
+        lengths = map(len, (result.expectedFailures, result.unexpectedSuccesses, result.skipped))
+    except AttributeError:
+        return None
+    else:
+        expected, unexpected, skipped = lengths
+        return (expected, unexpected, skipped)
+
+print(counts(SimpleNamespace(expectedFailures=[1], unexpectedSuccesses=[], skipped=[1, 2])))
+print(counts(SimpleNamespace(expectedFailures=[1])))

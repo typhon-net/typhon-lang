@@ -6,6 +6,10 @@ The [status page](https://typhon-lang.com/status) explains the principles behind
 * `out`/`ref` parameters as tuple returns
 * A faster big-int mode: a hybrid int (64-bit fast path, BigInteger only on overflow) instead of BigInteger everywhere
 * `decimal` with a precision context; running `doctest` examples; compiling more of CPython's pure-Python stdlib
+* Keep the same Python imports and behavior when a module has both a .NET-backed implementation and a CPython-source build.
+  Verify both against CPython and measure both in the same .NET workload.
+* Pin the version of bundled CPython source, and retain the upstream attribution and full license in the header of each
+  unchanged file.
 * Grow the conformance suite (port relevant parts of CPython's own test suite)
 * Ship the CLI as a `dotnet tool` with platform-specific ReadyToRun packages
 * Re-run the Linux benchmark with type inference (the untyped N-body row there predates it)

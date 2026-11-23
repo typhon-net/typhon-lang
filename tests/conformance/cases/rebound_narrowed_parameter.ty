@@ -1,0 +1,23 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import ast
+
+def parse(text, filename="<example>", mode="eval"):
+    return compile(text, filename, mode, ast.PyCF_ONLY_AST)
+
+def literal(node_or_string):
+    if isinstance(node_or_string, str):
+        node_or_string = parse(node_or_string).body
+    elif isinstance(node_or_string, ast.Expression):
+        node_or_string = node_or_string.body
+    return convert(node_or_string)
+
+def convert(node):
+    if isinstance(node, ast.Constant):
+        return node.value
+    if isinstance(node, ast.Tuple):
+        return tuple(convert(item) for item in node.elts)
+    raise ValueError("unsupported node")
+
+print(literal("(30, 12)"))

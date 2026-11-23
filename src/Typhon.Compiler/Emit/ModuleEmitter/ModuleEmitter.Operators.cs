@@ -298,6 +298,9 @@ namespace Typhon.Compiler.Emit
 
         // Dict views inferred through a call boundary can have only their collection interface as a static type.
         static bool MayBeDictView(string t) => t != null && (t.StartsWith("IEnumerable<") || t.StartsWith("ICollection<"));
+        bool IsObjectIntegerEnumType(string type) =>
+            ClassKeyOfType(type, out _) is string key && ClassDefOfKey(key) is ClassDef definition && IsObjectIntegerEnum(definition);
+
         static bool IsUnknownType(string t) => t == null || t == "dynamic" || t == "object" || t == TypeInference.Pending;
 
         static bool IsNumeric(string t) => t != null && t != "char" && t != "bool" && t != "string" && NumericOrText.Contains(t);
@@ -341,6 +344,7 @@ namespace Typhon.Compiler.Emit
                 string reflected = op == "<" ? "gt" : op == "<=" ? "ge" : op == ">" ? "lt" : "le";
                 if (PythonOrdered(lt) || PythonOrdered(rt) || MayBeDictView(lt) || MayBeDictView(rt) ||
                     IsUnknownType(lt) || IsUnknownType(rt) || lt == "object?" || rt == "object?" ||
+                    IsObjectIntegerEnumType(lt) || IsObjectIntegerEnumType(rt) ||
                     HasClassAssignedOperator(lt, "__" + helper + "__") || HasClassAssignedOperator(rt, "__" + reflected + "__"))
                     return $"{Rt(helper)}({l}, {r})";
             }

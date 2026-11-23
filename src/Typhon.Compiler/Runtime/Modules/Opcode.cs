@@ -33,133 +33,133 @@ namespace Typhon.Stdlib
             }));
         }
 
-        sealed record Instruction(byte Flags, StackCount? Pops = null, StackCount? Pushes = null)
+        sealed record Instruction(string Name, byte Flags, StackCount? Pops = null, StackCount? Pushes = null)
         {
-            internal Instruction(byte flags, int pops, int pushes) : this(flags, new StackCount(pops), new StackCount(pushes)) { }
+            internal Instruction(string name, byte flags, int pops, int pushes) : this(name, flags, new StackCount(pops), new StackCount(pushes)) { }
         }
 
         static readonly Instruction?[] Instructions =
         [
-            new(0x00, 0, 0), // 0 CACHE
-            new(0x00, 3, 1), // 1 BINARY_SLICE
-            new(0x00, 2, 1), // 2 BUILD_TEMPLATE
-            new(0x20), // 3 BINARY_OP_INPLACE_ADD_UNICODE
-            new(0x00, 4, 1), // 4 CALL_FUNCTION_EX
-            new(0x00, 2, 2), // 5 CHECK_EG_MATCH
-            new(0x00, 2, 2), // 6 CHECK_EXC_MATCH
-            new(0x00, 4, 3), // 7 CLEANUP_THROW
-            new(0x00, 2, 0), // 8 DELETE_SUBSCR
-            new(0x00, 1, 0), // 9 END_FOR
-            new(0x00, 3, 1), // 10 END_SEND
-            new(0x00, 1, 0), // 11 EXIT_INIT_CHECK
-            new(0x00, 1, 1), // 12 FORMAT_SIMPLE
-            new(0x00, 2, 1), // 13 FORMAT_WITH_SPEC
-            new(0x00, 1, 1), // 14 GET_AITER
-            new(0x00, 1, 2), // 15 GET_ANEXT
-            new(0x00, 1, 2), // 16 GET_LEN
-            new(0x00, 0, 0), // 17 RESERVED
-            new(0x00, 1, 0), // 18 INTERPRETER_EXIT
-            new(0x00, 0, 1), // 19 LOAD_BUILD_CLASS
-            new(0x00, 0, 1), // 20 LOAD_LOCALS
-            new(0x00, 1, 1), // 21 MAKE_FUNCTION
-            new(0x00, 2, 3), // 22 MATCH_KEYS
-            new(0x00, 1, 2), // 23 MATCH_MAPPING
-            new(0x00, 1, 2), // 24 MATCH_SEQUENCE
-            new(0x00, 0, 0), // 25 NOP
-            new(0x00, 0, 0), // 26 NOT_TAKEN
-            new(0x00, 1, 0), // 27 POP_EXCEPT
-            new(0x00, 2, 0), // 28 POP_ITER
-            new(0x00, 1, 0), // 29 POP_TOP
-            new(0x00, 1, 2), // 30 PUSH_EXC_INFO
-            new(0x00, 0, 1), // 31 PUSH_NULL
-            new(0x00, 0, 1), // 32 RETURN_GENERATOR
-            new(0x00, 1, 1), // 33 RETURN_VALUE
-            new(0x00, 0, 0), // 34 SETUP_ANNOTATIONS
-            new(0x00, 4, 0), // 35 STORE_SLICE
-            new(0x00, 3, 0), // 36 STORE_SUBSCR
-            new(0x00, 1, 1), // 37 TO_BOOL
-            new(0x00, 1, 1), // 38 UNARY_INVERT
-            new(0x00, 1, 1), // 39 UNARY_NEGATIVE
-            new(0x00, 1, 1), // 40 UNARY_NOT
-            new(0x00, 5, 6), // 41 HAVE_ARGUMENT
-            new(0x01, 2, 1), // 42 BINARY_OP
-            new(0x01, new StackCount(2, ArgumentRule.LowBit), new StackCount(1)), // 43 BUILD_INTERPOLATION
-            new(0x01, new StackCount(0, ArgumentRule.Whole), new StackCount(1)), // 44 BUILD_LIST
-            new(0x01, new StackCount(0, ArgumentRule.Double), new StackCount(1)), // 45 BUILD_MAP
-            new(0x01, new StackCount(0, ArgumentRule.Whole), new StackCount(1)), // 46 BUILD_SET
-            new(0x01, new StackCount(0, ArgumentRule.Whole), new StackCount(1)), // 47 BUILD_SLICE
-            new(0x01, new StackCount(0, ArgumentRule.Whole), new StackCount(1)), // 48 BUILD_STRING
-            new(0x01, new StackCount(0, ArgumentRule.Whole), new StackCount(1)), // 49 BUILD_TUPLE
-            new(0x01, new StackCount(2, ArgumentRule.Whole), new StackCount(1)), // 50 CALL
-            new(0x01, 1, 1), // 51 CALL_INTRINSIC_1
-            new(0x01, 2, 1), // 52 CALL_INTRINSIC_2
-            new(0x01, new StackCount(3, ArgumentRule.Whole), new StackCount(1)), // 53 CALL_KW
-            new(0x01, 2, 1), // 54 COMPARE_OP
-            new(0x01, 2, 1), // 55 CONTAINS_OP
-            new(0x01, 1, 1), // 56 CONVERT_VALUE
-            new(0x01, new StackCount(0, ArgumentRule.Whole), new StackCount(1, ArgumentRule.Whole)), // 57 COPY
-            new(0x01, 0, 0), // 58 COPY_FREE_VARS
-            new(0x05, 1, 0), // 59 DELETE_ATTR
-            new(0x11, 0, 0), // 60 DELETE_DEREF
-            new(0x21, 0, 0), // 61 DELETE_FAST
-            new(0x05, 0, 0), // 62 DELETE_GLOBAL
-            new(0x05, 0, 0), // 63 DELETE_NAME
-            new(0x01, new StackCount(4, ArgumentRule.Whole), new StackCount(3, ArgumentRule.Whole)), // 64 DICT_MERGE
-            new(0x01, new StackCount(1, ArgumentRule.Whole), new StackCount(0, ArgumentRule.Whole)), // 65 DICT_UPDATE
-            new(0x09, 2, 0), // 66 END_ASYNC_FOR
-            new(0x01, 0, 0), // 67 EXTENDED_ARG
-            new(0x09, 2, 3), // 68 FOR_ITER
-            new(0x01, 1, 1), // 69 GET_AWAITABLE
-            new(0x01, 1, 2), // 70 GET_ITER
-            new(0x05, 1, 2), // 71 IMPORT_FROM
-            new(0x05, 2, 1), // 72 IMPORT_NAME
-            new(0x01, 2, 1), // 73 IS_OP
-            new(0x09, 0, 0), // 74 JUMP_BACKWARD
-            new(0x09, 0, 0), // 75 JUMP_BACKWARD_NO_INTERRUPT
-            new(0x09, 0, 0), // 76 JUMP_FORWARD
-            new(0x01, new StackCount(1, ArgumentRule.Whole), new StackCount(0, ArgumentRule.Whole)), // 77 LIST_APPEND
-            new(0x01, new StackCount(1, ArgumentRule.Whole), new StackCount(0, ArgumentRule.Whole)), // 78 LIST_EXTEND
-            new(0x05, new StackCount(1), new StackCount(1, ArgumentRule.LowBit)), // 79 LOAD_ATTR
-            new(0x01, 0, 1), // 80 LOAD_COMMON_CONSTANT
-            new(0x03, 0, 1), // 81 LOAD_CONST
-            new(0x21, 0, 1), // 82 LOAD_DEREF
-            new(0x21, 0, 1), // 83 LOAD_FAST
-            new(0x21, 0, 1), // 84 LOAD_FAST_AND_CLEAR
-            new(0x21, 0, 1), // 85 LOAD_FAST_BORROW
-            new(0x21, 0, 2), // 86 LOAD_FAST_BORROW_LOAD_FAST_BORROW
-            new(0x21, 0, 1), // 87 LOAD_FAST_CHECK
-            new(0x21, 0, 2), // 88 LOAD_FAST_LOAD_FAST
-            new(0x11, 1, 1), // 89 LOAD_FROM_DICT_OR_DEREF
-            new(0x05, 1, 1), // 90 LOAD_FROM_DICT_OR_GLOBALS
-            new(0x05, new StackCount(0), new StackCount(1, ArgumentRule.LowBit)), // 91 LOAD_GLOBAL
-            new(0x05, 0, 1), // 92 LOAD_NAME
-            new(0x01, 0, 1), // 93 LOAD_SMALL_INT
-            new(0x01, 1, 2), // 94 LOAD_SPECIAL
-            new(0x05, new StackCount(3), new StackCount(1, ArgumentRule.LowBit)), // 95 LOAD_SUPER_ATTR
-            new(0x11, 0, 0), // 96 MAKE_CELL
-            new(0x01, new StackCount(2, ArgumentRule.Whole), new StackCount(0, ArgumentRule.Whole)), // 97 MAP_ADD
-            new(0x01, 3, 1), // 98 MATCH_CLASS
-            new(0x09, 1, 0), // 99 POP_JUMP_IF_FALSE
-            new(0x09, 1, 0), // 100 POP_JUMP_IF_NONE
-            new(0x09, 1, 0), // 101 POP_JUMP_IF_NOT_NONE
-            new(0x09, 1, 0), // 102 POP_JUMP_IF_TRUE
-            new(0x01, new StackCount(0, ArgumentRule.Whole), new StackCount(0)), // 103 RAISE_VARARGS
-            new(0x01, new StackCount(1, ArgumentRule.Whole), new StackCount(0, ArgumentRule.Whole)), // 104 RERAISE
-            new(0x09, 3, 3), // 105 SEND
-            new(0x01, new StackCount(1, ArgumentRule.Whole), new StackCount(0, ArgumentRule.Whole)), // 106 SET_ADD
-            new(0x01, 2, 1), // 107 SET_FUNCTION_ATTRIBUTE
-            new(0x01, new StackCount(1, ArgumentRule.Whole), new StackCount(0, ArgumentRule.Whole)), // 108 SET_UPDATE
-            new(0x05, 2, 0), // 109 STORE_ATTR
-            new(0x11, 1, 0), // 110 STORE_DEREF
-            new(0x21, 1, 0), // 111 STORE_FAST
-            new(0x21, 1, 1), // 112 STORE_FAST_LOAD_FAST
-            new(0x21, 2, 0), // 113 STORE_FAST_STORE_FAST
-            new(0x05, 1, 0), // 114 STORE_GLOBAL
-            new(0x05, 1, 0), // 115 STORE_NAME
-            new(0x01, new StackCount(0, ArgumentRule.Whole), new StackCount(0, ArgumentRule.Whole)), // 116 SWAP
-            new(0x01, new StackCount(1), new StackCount(1, ArgumentRule.Split)), // 117 UNPACK_EX
-            new(0x01, new StackCount(1), new StackCount(0, ArgumentRule.Whole)), // 118 UNPACK_SEQUENCE
-            new(0x01, 1, 1), // 119 YIELD_VALUE
+            new("CACHE", 0x00, 0, 0), // 0
+            new("BINARY_SLICE", 0x00, 3, 1), // 1
+            new("BUILD_TEMPLATE", 0x00, 2, 1), // 2
+            new("BINARY_OP_INPLACE_ADD_UNICODE", 0x20), // 3
+            new("CALL_FUNCTION_EX", 0x00, 4, 1), // 4
+            new("CHECK_EG_MATCH", 0x00, 2, 2), // 5
+            new("CHECK_EXC_MATCH", 0x00, 2, 2), // 6
+            new("CLEANUP_THROW", 0x00, 4, 3), // 7
+            new("DELETE_SUBSCR", 0x00, 2, 0), // 8
+            new("END_FOR", 0x00, 1, 0), // 9
+            new("END_SEND", 0x00, 3, 1), // 10
+            new("EXIT_INIT_CHECK", 0x00, 1, 0), // 11
+            new("FORMAT_SIMPLE", 0x00, 1, 1), // 12
+            new("FORMAT_WITH_SPEC", 0x00, 2, 1), // 13
+            new("GET_AITER", 0x00, 1, 1), // 14
+            new("GET_ANEXT", 0x00, 1, 2), // 15
+            new("GET_LEN", 0x00, 1, 2), // 16
+            new("RESERVED", 0x00, 0, 0), // 17
+            new("INTERPRETER_EXIT", 0x00, 1, 0), // 18
+            new("LOAD_BUILD_CLASS", 0x00, 0, 1), // 19
+            new("LOAD_LOCALS", 0x00, 0, 1), // 20
+            new("MAKE_FUNCTION", 0x00, 1, 1), // 21
+            new("MATCH_KEYS", 0x00, 2, 3), // 22
+            new("MATCH_MAPPING", 0x00, 1, 2), // 23
+            new("MATCH_SEQUENCE", 0x00, 1, 2), // 24
+            new("NOP", 0x00, 0, 0), // 25
+            new("NOT_TAKEN", 0x00, 0, 0), // 26
+            new("POP_EXCEPT", 0x00, 1, 0), // 27
+            new("POP_ITER", 0x00, 2, 0), // 28
+            new("POP_TOP", 0x00, 1, 0), // 29
+            new("PUSH_EXC_INFO", 0x00, 1, 2), // 30
+            new("PUSH_NULL", 0x00, 0, 1), // 31
+            new("RETURN_GENERATOR", 0x00, 0, 1), // 32
+            new("RETURN_VALUE", 0x00, 1, 1), // 33
+            new("SETUP_ANNOTATIONS", 0x00, 0, 0), // 34
+            new("STORE_SLICE", 0x00, 4, 0), // 35
+            new("STORE_SUBSCR", 0x00, 3, 0), // 36
+            new("TO_BOOL", 0x00, 1, 1), // 37
+            new("UNARY_INVERT", 0x00, 1, 1), // 38
+            new("UNARY_NEGATIVE", 0x00, 1, 1), // 39
+            new("UNARY_NOT", 0x00, 1, 1), // 40
+            new("WITH_EXCEPT_START", 0x00, 5, 6), // 41
+            new("BINARY_OP", 0x01, 2, 1), // 42
+            new("BUILD_INTERPOLATION", 0x01, new StackCount(2, ArgumentRule.LowBit), new StackCount(1)), // 43
+            new("BUILD_LIST", 0x01, new StackCount(0, ArgumentRule.Whole), new StackCount(1)), // 44
+            new("BUILD_MAP", 0x01, new StackCount(0, ArgumentRule.Double), new StackCount(1)), // 45
+            new("BUILD_SET", 0x01, new StackCount(0, ArgumentRule.Whole), new StackCount(1)), // 46
+            new("BUILD_SLICE", 0x01, new StackCount(0, ArgumentRule.Whole), new StackCount(1)), // 47
+            new("BUILD_STRING", 0x01, new StackCount(0, ArgumentRule.Whole), new StackCount(1)), // 48
+            new("BUILD_TUPLE", 0x01, new StackCount(0, ArgumentRule.Whole), new StackCount(1)), // 49
+            new("CALL", 0x01, new StackCount(2, ArgumentRule.Whole), new StackCount(1)), // 50
+            new("CALL_INTRINSIC_1", 0x01, 1, 1), // 51
+            new("CALL_INTRINSIC_2", 0x01, 2, 1), // 52
+            new("CALL_KW", 0x01, new StackCount(3, ArgumentRule.Whole), new StackCount(1)), // 53
+            new("COMPARE_OP", 0x01, 2, 1), // 54
+            new("CONTAINS_OP", 0x01, 2, 1), // 55
+            new("CONVERT_VALUE", 0x01, 1, 1), // 56
+            new("COPY", 0x01, new StackCount(0, ArgumentRule.Whole), new StackCount(1, ArgumentRule.Whole)), // 57
+            new("COPY_FREE_VARS", 0x01, 0, 0), // 58
+            new("DELETE_ATTR", 0x05, 1, 0), // 59
+            new("DELETE_DEREF", 0x11, 0, 0), // 60
+            new("DELETE_FAST", 0x21, 0, 0), // 61
+            new("DELETE_GLOBAL", 0x05, 0, 0), // 62
+            new("DELETE_NAME", 0x05, 0, 0), // 63
+            new("DICT_MERGE", 0x01, new StackCount(4, ArgumentRule.Whole), new StackCount(3, ArgumentRule.Whole)), // 64
+            new("DICT_UPDATE", 0x01, new StackCount(1, ArgumentRule.Whole), new StackCount(0, ArgumentRule.Whole)), // 65
+            new("END_ASYNC_FOR", 0x09, 2, 0), // 66
+            new("EXTENDED_ARG", 0x01, 0, 0), // 67
+            new("FOR_ITER", 0x09, 2, 3), // 68
+            new("GET_AWAITABLE", 0x01, 1, 1), // 69
+            new("GET_ITER", 0x01, 1, 2), // 70
+            new("IMPORT_FROM", 0x05, 1, 2), // 71
+            new("IMPORT_NAME", 0x05, 2, 1), // 72
+            new("IS_OP", 0x01, 2, 1), // 73
+            new("JUMP_BACKWARD", 0x09, 0, 0), // 74
+            new("JUMP_BACKWARD_NO_INTERRUPT", 0x09, 0, 0), // 75
+            new("JUMP_FORWARD", 0x09, 0, 0), // 76
+            new("LIST_APPEND", 0x01, new StackCount(1, ArgumentRule.Whole), new StackCount(0, ArgumentRule.Whole)), // 77
+            new("LIST_EXTEND", 0x01, new StackCount(1, ArgumentRule.Whole), new StackCount(0, ArgumentRule.Whole)), // 78
+            new("LOAD_ATTR", 0x05, new StackCount(1), new StackCount(1, ArgumentRule.LowBit)), // 79
+            new("LOAD_COMMON_CONSTANT", 0x01, 0, 1), // 80
+            new("LOAD_CONST", 0x03, 0, 1), // 81
+            new("LOAD_DEREF", 0x21, 0, 1), // 82
+            new("LOAD_FAST", 0x21, 0, 1), // 83
+            new("LOAD_FAST_AND_CLEAR", 0x21, 0, 1), // 84
+            new("LOAD_FAST_BORROW", 0x21, 0, 1), // 85
+            new("LOAD_FAST_BORROW_LOAD_FAST_BORROW", 0x21, 0, 2), // 86
+            new("LOAD_FAST_CHECK", 0x21, 0, 1), // 87
+            new("LOAD_FAST_LOAD_FAST", 0x21, 0, 2), // 88
+            new("LOAD_FROM_DICT_OR_DEREF", 0x11, 1, 1), // 89
+            new("LOAD_FROM_DICT_OR_GLOBALS", 0x05, 1, 1), // 90
+            new("LOAD_GLOBAL", 0x05, new StackCount(0), new StackCount(1, ArgumentRule.LowBit)), // 91
+            new("LOAD_NAME", 0x05, 0, 1), // 92
+            new("LOAD_SMALL_INT", 0x01, 0, 1), // 93
+            new("LOAD_SPECIAL", 0x01, 1, 2), // 94
+            new("LOAD_SUPER_ATTR", 0x05, new StackCount(3), new StackCount(1, ArgumentRule.LowBit)), // 95
+            new("MAKE_CELL", 0x11, 0, 0), // 96
+            new("MAP_ADD", 0x01, new StackCount(2, ArgumentRule.Whole), new StackCount(0, ArgumentRule.Whole)), // 97
+            new("MATCH_CLASS", 0x01, 3, 1), // 98
+            new("POP_JUMP_IF_FALSE", 0x09, 1, 0), // 99
+            new("POP_JUMP_IF_NONE", 0x09, 1, 0), // 100
+            new("POP_JUMP_IF_NOT_NONE", 0x09, 1, 0), // 101
+            new("POP_JUMP_IF_TRUE", 0x09, 1, 0), // 102
+            new("RAISE_VARARGS", 0x01, new StackCount(0, ArgumentRule.Whole), new StackCount(0)), // 103
+            new("RERAISE", 0x01, new StackCount(1, ArgumentRule.Whole), new StackCount(0, ArgumentRule.Whole)), // 104
+            new("SEND", 0x09, 3, 3), // 105
+            new("SET_ADD", 0x01, new StackCount(1, ArgumentRule.Whole), new StackCount(0, ArgumentRule.Whole)), // 106
+            new("SET_FUNCTION_ATTRIBUTE", 0x01, 2, 1), // 107
+            new("SET_UPDATE", 0x01, new StackCount(1, ArgumentRule.Whole), new StackCount(0, ArgumentRule.Whole)), // 108
+            new("STORE_ATTR", 0x05, 2, 0), // 109
+            new("STORE_DEREF", 0x11, 1, 0), // 110
+            new("STORE_FAST", 0x21, 1, 0), // 111
+            new("STORE_FAST_LOAD_FAST", 0x21, 1, 1), // 112
+            new("STORE_FAST_STORE_FAST", 0x21, 2, 0), // 113
+            new("STORE_GLOBAL", 0x05, 1, 0), // 114
+            new("STORE_NAME", 0x05, 1, 0), // 115
+            new("SWAP", 0x01, new StackCount(0, ArgumentRule.Whole), new StackCount(0, ArgumentRule.Whole)), // 116
+            new("UNPACK_EX", 0x01, new StackCount(1), new StackCount(1, ArgumentRule.Split)), // 117
+            new("UNPACK_SEQUENCE", 0x01, new StackCount(1), new StackCount(0, ArgumentRule.Whole)), // 118
+            new("YIELD_VALUE", 0x01, 1, 1), // 119
             null, // 120
             null, // 121
             null, // 122
@@ -168,97 +168,97 @@ namespace Typhon.Stdlib
             null, // 125
             null, // 126
             null, // 127
-            new(0x01, 0, 0), // 128 RESUME
-            new(0x00), // 129 MIN_SPECIALIZED_OPCODE
-            new(0x00), // 130 BINARY_OP_ADD_INT
-            new(0x00), // 131 BINARY_OP_ADD_UNICODE
-            new(0x00), // 132 BINARY_OP_EXTEND
-            new(0x00), // 133 BINARY_OP_MULTIPLY_FLOAT
-            new(0x00), // 134 BINARY_OP_MULTIPLY_INT
-            new(0x00), // 135 BINARY_OP_SUBSCR_DICT
-            new(0x00), // 136 BINARY_OP_SUBSCR_GETITEM
-            new(0x00), // 137 BINARY_OP_SUBSCR_LIST_INT
-            new(0x00), // 138 BINARY_OP_SUBSCR_LIST_SLICE
-            new(0x00), // 139 BINARY_OP_SUBSCR_STR_INT
-            new(0x00), // 140 BINARY_OP_SUBSCR_TUPLE_INT
-            new(0x00), // 141 BINARY_OP_SUBSCR_USTR_INT
-            new(0x00), // 142 BINARY_OP_SUBTRACT_FLOAT
-            new(0x00), // 143 BINARY_OP_SUBTRACT_INT
-            new(0x01), // 144 CALL_ALLOC_AND_ENTER_INIT
-            new(0x01), // 145 CALL_BOUND_METHOD_EXACT_ARGS
-            new(0x01), // 146 CALL_BOUND_METHOD_GENERAL
-            new(0x01), // 147 CALL_BUILTIN_CLASS
-            new(0x01), // 148 CALL_BUILTIN_FAST
-            new(0x01), // 149 CALL_BUILTIN_FAST_WITH_KEYWORDS
-            new(0x01), // 150 CALL_BUILTIN_O
-            new(0x00), // 151 CALL_EX_NON_PY_GENERAL
-            new(0x01), // 152 CALL_EX_PY
-            new(0x00), // 153 CALL_ISINSTANCE
-            new(0x01), // 154 CALL_KW_BOUND_METHOD
-            new(0x01), // 155 CALL_KW_NON_PY
-            new(0x01), // 156 CALL_KW_PY
-            new(0x00), // 157 CALL_LEN
-            new(0x01), // 158 CALL_LIST_APPEND
-            new(0x01), // 159 CALL_METHOD_DESCRIPTOR_FAST
-            new(0x01), // 160 CALL_METHOD_DESCRIPTOR_FAST_WITH_KEYWORDS
-            new(0x01), // 161 CALL_METHOD_DESCRIPTOR_NOARGS
-            new(0x01), // 162 CALL_METHOD_DESCRIPTOR_O
-            new(0x01), // 163 CALL_NON_PY_GENERAL
-            new(0x01), // 164 CALL_PY_EXACT_ARGS
-            new(0x01), // 165 CALL_PY_GENERAL
-            new(0x01), // 166 CALL_STR_1
-            new(0x01), // 167 CALL_TUPLE_1
-            new(0x01), // 168 CALL_TYPE_1
-            new(0x01), // 169 COMPARE_OP_FLOAT
-            new(0x01), // 170 COMPARE_OP_INT
-            new(0x01), // 171 COMPARE_OP_STR
-            new(0x01), // 172 CONTAINS_OP_DICT
-            new(0x01), // 173 CONTAINS_OP_SET
-            new(0x01), // 174 FOR_ITER_GEN
-            new(0x09), // 175 FOR_ITER_LIST
-            new(0x09), // 176 FOR_ITER_RANGE
-            new(0x09), // 177 FOR_ITER_TUPLE
-            new(0x09), // 178 FOR_ITER_VIRTUAL
-            new(0x00), // 179 GET_ITER_SELF
-            new(0x00), // 180 GET_ITER_VIRTUAL
-            new(0x09), // 181 JUMP_BACKWARD_JIT
-            new(0x09), // 182 JUMP_BACKWARD_NO_JIT
-            new(0x01), // 183 LOAD_ATTR_CLASS
-            new(0x01), // 184 LOAD_ATTR_CLASS_WITH_METACLASS_CHECK
-            new(0x05), // 185 LOAD_ATTR_GETATTRIBUTE_OVERRIDDEN
-            new(0x01), // 186 LOAD_ATTR_INSTANCE_VALUE
-            new(0x01), // 187 LOAD_ATTR_METHOD_LAZY_DICT
-            new(0x01), // 188 LOAD_ATTR_METHOD_NO_DICT
-            new(0x01), // 189 LOAD_ATTR_METHOD_WITH_VALUES
-            new(0x01), // 190 LOAD_ATTR_MODULE
-            new(0x01), // 191 LOAD_ATTR_NONDESCRIPTOR_NO_DICT
-            new(0x01), // 192 LOAD_ATTR_NONDESCRIPTOR_WITH_VALUES
-            new(0x01), // 193 LOAD_ATTR_PROPERTY
-            new(0x01), // 194 LOAD_ATTR_SLOT
-            new(0x05), // 195 LOAD_ATTR_WITH_HINT
-            new(0x01), // 196 LOAD_GLOBAL_BUILTIN
-            new(0x01), // 197 LOAD_GLOBAL_MODULE
-            new(0x05), // 198 LOAD_SUPER_ATTR_ATTR
-            new(0x05), // 199 LOAD_SUPER_ATTR_METHOD
-            new(0x00), // 200 RESUME_CHECK
-            new(0x01), // 201 RESUME_CHECK_JIT
-            new(0x09), // 202 SEND_ASYNC_GEN
-            new(0x01), // 203 SEND_GEN
-            new(0x09), // 204 SEND_VIRTUAL
-            new(0x00), // 205 STORE_ATTR_INSTANCE_VALUE
-            new(0x00), // 206 STORE_ATTR_SLOT
-            new(0x05), // 207 STORE_ATTR_WITH_HINT
-            new(0x00), // 208 STORE_SUBSCR_DICT
-            new(0x00), // 209 STORE_SUBSCR_LIST_INT
-            new(0x00), // 210 TO_BOOL_ALWAYS_TRUE
-            new(0x00), // 211 TO_BOOL_BOOL
-            new(0x00), // 212 TO_BOOL_INT
-            new(0x00), // 213 TO_BOOL_LIST
-            new(0x00), // 214 TO_BOOL_NONE
-            new(0x00), // 215 TO_BOOL_STR
-            new(0x01), // 216 UNPACK_SEQUENCE_LIST
-            new(0x01), // 217 UNPACK_SEQUENCE_TUPLE
-            new(0x01), // 218 UNPACK_SEQUENCE_TWO_TUPLE
+            new("RESUME", 0x01, 0, 0), // 128
+            new("BINARY_OP_ADD_FLOAT", 0x00), // 129
+            new("BINARY_OP_ADD_INT", 0x00), // 130
+            new("BINARY_OP_ADD_UNICODE", 0x00), // 131
+            new("BINARY_OP_EXTEND", 0x00), // 132
+            new("BINARY_OP_MULTIPLY_FLOAT", 0x00), // 133
+            new("BINARY_OP_MULTIPLY_INT", 0x00), // 134
+            new("BINARY_OP_SUBSCR_DICT", 0x00), // 135
+            new("BINARY_OP_SUBSCR_GETITEM", 0x00), // 136
+            new("BINARY_OP_SUBSCR_LIST_INT", 0x00), // 137
+            new("BINARY_OP_SUBSCR_LIST_SLICE", 0x00), // 138
+            new("BINARY_OP_SUBSCR_STR_INT", 0x00), // 139
+            new("BINARY_OP_SUBSCR_TUPLE_INT", 0x00), // 140
+            new("BINARY_OP_SUBSCR_USTR_INT", 0x00), // 141
+            new("BINARY_OP_SUBTRACT_FLOAT", 0x00), // 142
+            new("BINARY_OP_SUBTRACT_INT", 0x00), // 143
+            new("CALL_ALLOC_AND_ENTER_INIT", 0x01), // 144
+            new("CALL_BOUND_METHOD_EXACT_ARGS", 0x01), // 145
+            new("CALL_BOUND_METHOD_GENERAL", 0x01), // 146
+            new("CALL_BUILTIN_CLASS", 0x01), // 147
+            new("CALL_BUILTIN_FAST", 0x01), // 148
+            new("CALL_BUILTIN_FAST_WITH_KEYWORDS", 0x01), // 149
+            new("CALL_BUILTIN_O", 0x01), // 150
+            new("CALL_EX_NON_PY_GENERAL", 0x00), // 151
+            new("CALL_EX_PY", 0x01), // 152
+            new("CALL_ISINSTANCE", 0x00), // 153
+            new("CALL_KW_BOUND_METHOD", 0x01), // 154
+            new("CALL_KW_NON_PY", 0x01), // 155
+            new("CALL_KW_PY", 0x01), // 156
+            new("CALL_LEN", 0x00), // 157
+            new("CALL_LIST_APPEND", 0x01), // 158
+            new("CALL_METHOD_DESCRIPTOR_FAST", 0x01), // 159
+            new("CALL_METHOD_DESCRIPTOR_FAST_WITH_KEYWORDS", 0x01), // 160
+            new("CALL_METHOD_DESCRIPTOR_NOARGS", 0x01), // 161
+            new("CALL_METHOD_DESCRIPTOR_O", 0x01), // 162
+            new("CALL_NON_PY_GENERAL", 0x01), // 163
+            new("CALL_PY_EXACT_ARGS", 0x01), // 164
+            new("CALL_PY_GENERAL", 0x01), // 165
+            new("CALL_STR_1", 0x01), // 166
+            new("CALL_TUPLE_1", 0x01), // 167
+            new("CALL_TYPE_1", 0x01), // 168
+            new("COMPARE_OP_FLOAT", 0x01), // 169
+            new("COMPARE_OP_INT", 0x01), // 170
+            new("COMPARE_OP_STR", 0x01), // 171
+            new("CONTAINS_OP_DICT", 0x01), // 172
+            new("CONTAINS_OP_SET", 0x01), // 173
+            new("FOR_ITER_GEN", 0x01), // 174
+            new("FOR_ITER_LIST", 0x09), // 175
+            new("FOR_ITER_RANGE", 0x09), // 176
+            new("FOR_ITER_TUPLE", 0x09), // 177
+            new("FOR_ITER_VIRTUAL", 0x09), // 178
+            new("GET_ITER_SELF", 0x00), // 179
+            new("GET_ITER_VIRTUAL", 0x00), // 180
+            new("JUMP_BACKWARD_JIT", 0x09), // 181
+            new("JUMP_BACKWARD_NO_JIT", 0x09), // 182
+            new("LOAD_ATTR_CLASS", 0x01), // 183
+            new("LOAD_ATTR_CLASS_WITH_METACLASS_CHECK", 0x01), // 184
+            new("LOAD_ATTR_GETATTRIBUTE_OVERRIDDEN", 0x05), // 185
+            new("LOAD_ATTR_INSTANCE_VALUE", 0x01), // 186
+            new("LOAD_ATTR_METHOD_LAZY_DICT", 0x01), // 187
+            new("LOAD_ATTR_METHOD_NO_DICT", 0x01), // 188
+            new("LOAD_ATTR_METHOD_WITH_VALUES", 0x01), // 189
+            new("LOAD_ATTR_MODULE", 0x01), // 190
+            new("LOAD_ATTR_NONDESCRIPTOR_NO_DICT", 0x01), // 191
+            new("LOAD_ATTR_NONDESCRIPTOR_WITH_VALUES", 0x01), // 192
+            new("LOAD_ATTR_PROPERTY", 0x01), // 193
+            new("LOAD_ATTR_SLOT", 0x01), // 194
+            new("LOAD_ATTR_WITH_HINT", 0x05), // 195
+            new("LOAD_GLOBAL_BUILTIN", 0x01), // 196
+            new("LOAD_GLOBAL_MODULE", 0x01), // 197
+            new("LOAD_SUPER_ATTR_ATTR", 0x05), // 198
+            new("LOAD_SUPER_ATTR_METHOD", 0x05), // 199
+            new("RESUME_CHECK", 0x00), // 200
+            new("RESUME_CHECK_JIT", 0x01), // 201
+            new("SEND_ASYNC_GEN", 0x09), // 202
+            new("SEND_GEN", 0x01), // 203
+            new("SEND_VIRTUAL", 0x09), // 204
+            new("STORE_ATTR_INSTANCE_VALUE", 0x00), // 205
+            new("STORE_ATTR_SLOT", 0x00), // 206
+            new("STORE_ATTR_WITH_HINT", 0x05), // 207
+            new("STORE_SUBSCR_DICT", 0x00), // 208
+            new("STORE_SUBSCR_LIST_INT", 0x00), // 209
+            new("TO_BOOL_ALWAYS_TRUE", 0x00), // 210
+            new("TO_BOOL_BOOL", 0x00), // 211
+            new("TO_BOOL_INT", 0x00), // 212
+            new("TO_BOOL_LIST", 0x00), // 213
+            new("TO_BOOL_NONE", 0x00), // 214
+            new("TO_BOOL_STR", 0x00), // 215
+            new("UNPACK_SEQUENCE_LIST", 0x01), // 216
+            new("UNPACK_SEQUENCE_TUPLE", 0x01), // 217
+            new("UNPACK_SEQUENCE_TWO_TUPLE", 0x01), // 218
             null, // 219
             null, // 220
             null, // 221
@@ -273,41 +273,44 @@ namespace Typhon.Stdlib
             null, // 230
             null, // 231
             null, // 232
-            new(0x00, 3, 2), // 233 MIN_INSTRUMENTED_OPCODE
-            new(0x00, 2, 0), // 234 INSTRUMENTED_POP_ITER
-            new(0x00, 3, 1), // 235 INSTRUMENTED_END_SEND
-            new(0x09, 2, 3), // 236 INSTRUMENTED_FOR_ITER
-            new(0x00, 0, 0), // 237 INSTRUMENTED_INSTRUCTION
-            new(0x01, 0, 0), // 238 INSTRUMENTED_JUMP_FORWARD
-            new(0x00, 0, 0), // 239 INSTRUMENTED_NOT_TAKEN
-            new(0x01, 1, 0), // 240 INSTRUMENTED_POP_JUMP_IF_TRUE
-            new(0x01, 1, 0), // 241 INSTRUMENTED_POP_JUMP_IF_FALSE
-            new(0x01, 1, 0), // 242 INSTRUMENTED_POP_JUMP_IF_NONE
-            new(0x01, 1, 0), // 243 INSTRUMENTED_POP_JUMP_IF_NOT_NONE
-            new(0x01, 0, 0), // 244 INSTRUMENTED_RESUME
-            new(0x00, 1, 1), // 245 INSTRUMENTED_RETURN_VALUE
-            new(0x01, 1, 1), // 246 INSTRUMENTED_YIELD_VALUE
-            new(0x09, 2, 0), // 247 INSTRUMENTED_END_ASYNC_FOR
-            new(0x05, new StackCount(3), new StackCount(1, ArgumentRule.LowBit)), // 248 INSTRUMENTED_LOAD_SUPER_ATTR
-            new(0x01, new StackCount(2, ArgumentRule.Whole), new StackCount(1)), // 249 INSTRUMENTED_CALL
-            new(0x01, new StackCount(3, ArgumentRule.Whole), new StackCount(1)), // 250 INSTRUMENTED_CALL_KW
-            new(0x00, 4, 1), // 251 INSTRUMENTED_CALL_FUNCTION_EX
-            new(0x01, 0, 0), // 252 INSTRUMENTED_JUMP_BACKWARD
-            new(0x00, 0, 0), // 253 INSTRUMENTED_LINE
-            new(0x01, 0, 0), // 254 ENTER_EXECUTOR
-            new(0x01, 0, 0), // 255 TRACE_RECORD
-            new(0x00, 0, 0), // 256 ANNOTATIONS_PLACEHOLDER
-            new(0x09, 0, 0), // 257 JUMP
-            new(0x09, 1, 1), // 258 JUMP_IF_FALSE
-            new(0x09, 1, 1), // 259 JUMP_IF_TRUE
-            new(0x09, 0, 0), // 260 JUMP_NO_INTERRUPT
-            new(0x21, 0, 1), // 261 LOAD_CLOSURE
-            new(0x00, 0, 0), // 262 POP_BLOCK
-            new(0x41, 0, 2), // 263 SETUP_CLEANUP
-            new(0x41, 0, 1), // 264 SETUP_FINALLY
-            new(0x41, 0, 1), // 265 SETUP_WITH
-            new(0x21, 1, 0), // 266 STORE_FAST_MAYBE_NULL
+            new("INSTRUMENTED_END_FOR", 0x00, 3, 2), // 233
+            new("INSTRUMENTED_POP_ITER", 0x00, 2, 0), // 234
+            new("INSTRUMENTED_END_SEND", 0x00, 3, 1), // 235
+            new("INSTRUMENTED_FOR_ITER", 0x09, 2, 3), // 236
+            new("INSTRUMENTED_INSTRUCTION", 0x00, 0, 0), // 237
+            new("INSTRUMENTED_JUMP_FORWARD", 0x01, 0, 0), // 238
+            new("INSTRUMENTED_NOT_TAKEN", 0x00, 0, 0), // 239
+            new("INSTRUMENTED_POP_JUMP_IF_TRUE", 0x01, 1, 0), // 240
+            new("INSTRUMENTED_POP_JUMP_IF_FALSE", 0x01, 1, 0), // 241
+            new("INSTRUMENTED_POP_JUMP_IF_NONE", 0x01, 1, 0), // 242
+            new("INSTRUMENTED_POP_JUMP_IF_NOT_NONE", 0x01, 1, 0), // 243
+            new("INSTRUMENTED_RESUME", 0x01, 0, 0), // 244
+            new("INSTRUMENTED_RETURN_VALUE", 0x00, 1, 1), // 245
+            new("INSTRUMENTED_YIELD_VALUE", 0x01, 1, 1), // 246
+            new("INSTRUMENTED_END_ASYNC_FOR", 0x09, 2, 0), // 247
+            new("INSTRUMENTED_LOAD_SUPER_ATTR", 0x05, new StackCount(3), new StackCount(1, ArgumentRule.LowBit)), // 248
+            new("INSTRUMENTED_CALL", 0x01, new StackCount(2, ArgumentRule.Whole), new StackCount(1)), // 249
+            new("INSTRUMENTED_CALL_KW", 0x01, new StackCount(3, ArgumentRule.Whole), new StackCount(1)), // 250
+            new("INSTRUMENTED_CALL_FUNCTION_EX", 0x00, 4, 1), // 251
+            new("INSTRUMENTED_JUMP_BACKWARD", 0x01, 0, 0), // 252
+            new("INSTRUMENTED_LINE", 0x00, 0, 0), // 253
+            new("ENTER_EXECUTOR", 0x01, 0, 0), // 254
+            new("TRACE_RECORD", 0x01, 0, 0), // 255
+            new("ANNOTATIONS_PLACEHOLDER", 0x00, 0, 0), // 256
+            new("JUMP", 0x09, 0, 0), // 257
+            new("JUMP_IF_FALSE", 0x09, 1, 1), // 258
+            new("JUMP_IF_TRUE", 0x09, 1, 1), // 259
+            new("JUMP_NO_INTERRUPT", 0x09, 0, 0), // 260
+            new("LOAD_CLOSURE", 0x21, 0, 1), // 261
+            new("POP_BLOCK", 0x00, 0, 0), // 262
+            new("SETUP_CLEANUP", 0x41, 0, 2), // 263
+            new("SETUP_FINALLY", 0x41, 0, 1), // 264
+            new("SETUP_WITH", 0x41, 0, 1), // 265
+            new("STORE_FAST_MAYBE_NULL", 0x21, 1, 0), // 266
         ];
+
+        internal static string InstructionName(int code) =>
+            Instructions[code]?.Name ?? throw new ArgumentOutOfRangeException(nameof(code));
 
         static long Integer(object? value)
         {

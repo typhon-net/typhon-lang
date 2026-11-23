@@ -194,7 +194,7 @@ namespace Typhon.Compiler.Emit
         /// brings all of its members into scope, not only the imported ones.
         /// </summary>
         readonly Dictionary<string, string> _stdlibImported = new Dictionary<string, string>();
-        readonly List<string> _stdlibStar = new List<string>();
+        readonly List<(string Module, string Metadata)> _stdlibStar = new List<(string, string)>();
         readonly Dictionary<string, bool> _clashes = new Dictionary<string, bool>();
 
         static string CsTypeName(string meta) => "global::" + EscapeDottedName(meta.Replace('+', '.'));
@@ -202,7 +202,9 @@ namespace Typhon.Compiler.Emit
         string StdlibOwner(string name)
         {
             if (_stdlibImported.TryGetValue(name, out var meta)) return meta;
-            foreach (var star in _stdlibStar) if (_r.GetMembers(star, name).Count > 0) return star;
+            foreach (var star in _stdlibStar.AsEnumerable().Reverse())
+                if (RuntimeExport(star.Module, star.Metadata, name) && _r.GetMembers(star.Metadata, name).Count > 0)
+                    return star.Metadata;
             return null;
         }
 
@@ -332,6 +334,15 @@ namespace Typhon.Compiler.Emit
                 if (_importedFromModules.TryGetValue(first, out var imp)) return imp.Key.Classes.TryGetValue(imp.Value, out pyClass);
                 foreach (var w in _wildcardModules) if (w.Classes.TryGetValue(first, out pyClass)) return true;
                 if (_importedTypes.TryGetValue(first, out var full) && _r.TypeExists(full + sfx)) { meta = full + sfx; return true; }
+                foreach (var star in _stdlibStar.AsEnumerable().Reverse())
+                {
+                    string candidate = star.Metadata + "+" + first + sfx;
+                    if (RuntimeExport(star.Module, star.Metadata, first) && _r.TypeExists(candidate))
+                    {
+                        meta = candidate;
+                        return true;
+                    }
+                }
                 if (ExceptionMetaMap.TryGetValue(first, out var exMeta)) { meta = exMeta; return true; }
             }
             else
@@ -468,7 +479,7 @@ namespace Typhon.Compiler.Emit
             (definition.PyName ?? definition.Name) == "Any" && _p.DeclaringModule(definition)?.Name == "typing";
 
         /// <summary>Maps a Python type annotation to a C# type.</summary>
-        string MapType(Expr e, Node at, bool isReturn = false)
+        string MapType(Expr e, Node at, bool isReturn = false, bool preserveClrType = false)
         {
             // Python functions satisfy callable protocols without a CLR interface wrapper.
             if (isReturn && !_m.IsGdScript && CallableProtocolAnnotation(e)) return "dynamic";
@@ -477,7 +488,7 @@ namespace Typhon.Compiler.Emit
                 case null: return "dynamic";
                 case ConstExpr c when c.Kind == ConstKind.None: return isReturn ? "void" : "object";
                 case ConstExpr c when c.Kind == ConstKind.Str:
-                    try { return MapType(Parser.ParseExpression(c.Str, c.Line, c.Col), at, isReturn); }
+                    try { return MapType(Parser.ParseExpression(c.Str, c.Line, c.Col), at, isReturn, preserveClrType); }
                     catch (SyntaxError) { Error(at, $"invalid type annotation '{c.Str}'"); return "dynamic"; }
                 case NameExpr n:
                 {
@@ -496,7 +507,7 @@ namespace Typhon.Compiler.Emit
                     if (_big && n.Id == "range" && !IsShadowed("range")) return BigRangeType;
                     if (!IsShadowed(n.Id) && PrimitiveTypes.TryGetValue(n.Id, out var prim)) return prim;
                     if (ExceptionMap.TryGetValue(n.Id, out var ex) && !IsShadowed(n.Id)) return ex;
-                    if (IsLateBoundDotNetType(n.Id)) return "dynamic";
+                    if (!preserveClrType && IsLateBoundDotNetType(n.Id)) return "dynamic";
                     if (TryResolveType(n.Id, 0, out var stdMeta, out var stdPy))
                     {
                         if (IsSourceTypingAny(stdPy)) return "dynamic";
@@ -520,7 +531,7 @@ namespace Typhon.Compiler.Emit
                             return sourceType;
                         return MapType(new NameExpr { Id = stripped, Line = a.Line, Col = a.Col }, at, isReturn);
                     }
-                    if (IsLateBoundDotNetType(dotted)) return "dynamic";
+                    if (!preserveClrType && IsLateBoundDotNetType(dotted)) return "dynamic";
                     if (TryResolveType(dotted, 0, out var stdMeta, out var stdPy))
                     {
                         if (IsSourceTypingAny(stdPy)) return "dynamic";

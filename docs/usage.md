@@ -109,12 +109,17 @@ print(list(ts.static_order()), colorsys.rgb_to_hsv(0.2, 0.4, 0.4))
 
 The module is compiled like a module of the program: its functions get typed versions for the program's calls, and the
 compile cache keeps the result until a source changes. Typhon's runtime modules normally take precedence over `Lib/`
-sources. With the directive enabled, `doctest` comes from CPython's source and runs examples through the Typhon CLI.
+sources. With the directive enabled, import `ast`, `opcode` or `dis` in the entry file to select its CPython
+source under the same Python import name. Imports from dependencies can use Typhon's managed implementations.
+The original `doctest` runs examples through the Typhon CLI.
+Typhon bundles selected CPython 3.15.2 sources for programs that use them without an external Lib directory.
+These include `_ast_unparse`, `cmd`, `netrc`, `selectors`, and `token`. Each file header contains the upstream
+attribution and license.
 Which modules compile is tracked by compiling
 each of CPython's modules alone (`docs/conformance.md`); a module that does not compile reports its errors with
 `Lib/<name>.py` lines, and tracebacks show its frames. The `Lib` folder is `#:pylib DIR`, else the `TYPHON_PYLIB`
-environment variable, else the standard library of the `python3` (`python` on Windows) on the PATH. The plan is to
-ship a pinned copy of CPython's `Lib/` (PSF license) with Typhon instead.
+environment variable, else the standard library of the `python3` (`python` on Windows) on the PATH.
+The [roadmap](roadmap.md) covers managed and pinned CPython implementations of these modules.
 
 ## Frameworks the typhon command can use
 

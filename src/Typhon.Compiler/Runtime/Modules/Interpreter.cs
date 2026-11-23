@@ -25,6 +25,7 @@ namespace Typhon.Runtime
 namespace Typhon.Stdlib
 {
     using System;
+    using System.Runtime.InteropServices;
     using System.Collections;
     using System.Collections.Generic;
     using System.Linq;
@@ -177,11 +178,21 @@ namespace Typhon.Stdlib
         public static object __import__(object? name, object? globals = null, object? locals = null, object? fromlist = null, long level = 0) =>
             Builtins.__import__(name, globals, locals, fromlist, level);
         public static dynamic? compile(object? source, object? filename, object? mode, System.Numerics.BigInteger flags,
-            bool dont_inherit = false, long optimize = -1, object? module = null) =>
-            Builtins.compile(source, filename, mode, flags, dont_inherit, optimize, module);
+            [Optional, DefaultParameterValue(false)] bool dont_inherit,
+            [Optional, DefaultParameterValue(-1L)] object? optimize,
+            [PyKeywordOnly, Optional, DefaultParameterValue(null)] object? module,
+            [PyKeywordOnly, Optional, DefaultParameterValue(-1L)] object? _feature_version) =>
+            Builtins.compile(source, filename, mode, flags, dont_inherit, optimize, module, _feature_version);
 
-        public static dynamic? compile(object? source, object? filename = null, object? mode = null, long flags = 0, bool dont_inherit = false, long optimize = -1, object? module = null) =>
-            Builtins.compile(source, filename, mode, flags, dont_inherit, optimize, module);
+        public static dynamic? compile(object? source,
+            [Optional, DefaultParameterValue(null)] object? filename,
+            [Optional, DefaultParameterValue(null)] object? mode,
+            [Optional, DefaultParameterValue(0L)] long flags,
+            [Optional, DefaultParameterValue(false)] bool dont_inherit,
+            [Optional, DefaultParameterValue(-1L)] object? optimize,
+            [PyKeywordOnly, Optional, DefaultParameterValue(null)] object? module,
+            [PyKeywordOnly, Optional, DefaultParameterValue(-1L)] object? _feature_version) =>
+            Builtins.compile(source, filename, mode, flags, dont_inherit, optimize, module, _feature_version);
         public static void exec(object? source, object? globals = null, object? locals = null) => Builtins.exec(source, globals, locals);
         public static dynamic? eval(object? source, object? globals = null, object? locals = null) => Builtins.eval(source, globals, locals);
         public static void breakpoint() => Builtins.breakpoint();

@@ -259,6 +259,9 @@ namespace Typhon.Compiler.Emit
                         bool typedFunctionArgs = false, IReadOnlyList<Semantics.MemberSig> functionShapes = null, bool typhonCallee = false)
         {
             functionShapes ??= overloads;
+            bool lateIterableItems = iterableAt != null && args.Where((argument, index) =>
+                argument.Name == null && !argument.Star && iterableAt(index))
+                .Any(argument => IsUnknownType(IterElementType(InferType(argument.Value))));
             var parts = new List<string>();
             int position = 0, positional = 0;
             // a call to a Typhon function with some late-bound arguments: the overload inferred for exactly these argument types
@@ -320,6 +323,7 @@ namespace Typhon.Compiler.Emit
                 // (also where no overload of a .NET callee takes a function there: print(f), xs.append(f), str(f))
                 var paramsHere = functionShapes?.Select(o => a.Name != null ? o.Parameters.FirstOrDefault(x => x.Name == a.Name) : ParamAt(o, argPos)).Where(x => x != null).ToList();
                 bool noDelegateHere = paramsHere != null && paramsHere.Count > 0 && paramsHere.All(x => !x.TakesFunction);
+                bool concreteCallbackInput = paramsHere != null && paramsHere.Count > 0 && paramsHere.All(x => x.HasConcreteCallbackInput);
                 // (and to an unannotated parameter of a Typhon function, even in a call that runs its dynamic version)
                 bool untypedTyphonParam = typhonCallee && !a.Star && paramTypeAt?.Invoke(argPos, a.Name) == null;
                 if (!a.Star && a.Value is NameExpr typeName && BuiltinTypeValue(typeName) is string typeValue &&
@@ -359,7 +363,8 @@ namespace Typhon.Compiler.Emit
                            !(noDelegateHere && BuiltinTypeValues.ContainsKey(vn.Id) && paramsHere.All(x => x.GenericType == "object" || x.GenericType == "global::System.Type" || x.GenericType == "System.Type"))
                     ? (_big && vn.Id == "int" ? $"(__v => {Rt("__bigint")}(__v))"
                        // (map(repr, items) with items late-bound: nothing gives the lambda's parameter a type: object, the builtin's object overload)
-                       : args.Any(o => o != a && !o.Star && InferType(o.Value) is var ot && (ot == null || ot == "dynamic" || ot.Contains("<dynamic>") || ot == "object"))
+                       : !concreteCallbackInput && (lateIterableItems ||
+                           args.Any(o => o != a && !o.Star && InferType(o.Value) is var ot && (ot == null || ot == "dynamic" || ot.Contains("<dynamic>") || ot == "object")))
                        ? $"((dynamic __v) => {EmitName(vn)}((object?)__v))"
                        : $"(__v => {EmitName(vn)}(__v))")
                     // str.upper / str.lower / list.copy passed as a function: a lambda calling the method on its argument
@@ -730,7 +735,7 @@ namespace Typhon.Compiler.Emit
             bool typedFunctionArgs = typhonTarget != null && TypedCall(typhonTarget, c.Args);
             var overloads = DotNetOverloads(c);
             // which parameters take functions: the .NET overloads, or a builtin's (print(f), str(f) take the function object)
-            var shapes = overloads ?? (c.Func is NameExpr bfn && !IsShadowed(bfn.Id) && c.Args.Any(x => x.Value is NameExpr || x.Value is AttributeExpr)
+            var shapes = overloads ?? (c.Func is NameExpr bfn && !IsShadowed(bfn.Id) && c.Args.Any(x => x.Value is NameExpr or AttributeExpr or LambdaExpr)
                 ? _r.GetMembers("Typhon.Runtime.Builtins", bfn.Id).Where(m => m.IsMethod && m.IsStatic).ToList() : null);
             if ((shapes == null || shapes.Count == 0) && c.Func is AttributeExpr extension &&
                 RuntimeExtensionMethods.Contains(extension.Name) && IsPythonContainer(InferType(extension.Target)))
@@ -1232,10 +1237,12 @@ namespace Typhon.Compiler.Emit
                 c.Args.Any(a => a.Name != null) && TyphonCallee(c, out _) == null;
             if (!bindPositionalSpread && !namedAttributeCall && !c.Args.Any(a => a.DoubleStar)) return null;
             string callee = null;
-            if (c.Func is NameExpr n && !IsLocal(n.Id) && !_moduleFieldTypes.ContainsKey(n.Id))
+            if (DottedName(c.Func) is string typeName && !IsLocal(typeName.Split('.')[0]) &&
+                TryTypeExpr(c.Func, out var constructor))
+                callee = $"typeof({constructor})";
+            else if (c.Func is NameExpr n && !IsLocal(n.Id) && !_moduleFieldTypes.ContainsKey(n.Id))
             {
-                if (TryResolveType(n.Id, 0, out _, out var cls) && cls != null) callee = $"typeof({MapType(n, n)})";
-                else if (TyphonCallee(c, out _) != null)
+                if (TyphonCallee(c, out _) != null)
                 {
                     if (_importedFromModules.TryGetValue(n.Id, out var imported))
                         callee = RuntimeProjectMember(imported.Key, imported.Value);
@@ -1518,8 +1525,11 @@ namespace Typhon.Compiler.Emit
             {
                 if (c.Args.Count == 1 && c.Args[0] is Arg { Name: null or "value", Star: false, DoubleStar: false } enumValue &&
                     DottedName(c.Func) is string enumName && TryResolveType(enumName, 0, out _, out var enumClass) &&
-                    enumClass != null && IsStringEnum(enumClass))
-                    return $"(({typeCode})global::Typhon.Runtime.PyStrEnum.Lookup(typeof({typeCode}), (object?){Paren(EmitValue(enumValue.Value))}))";
+                    enumClass != null && (IsStringEnum(enumClass) || IsObjectIntegerEnum(enumClass)))
+                {
+                    string runtimeClass = IsObjectIntegerEnum(enumClass) ? "PyIntegerEnum" : "PyStrEnum";
+                    return $"(({typeCode})global::Typhon.Runtime.{runtimeClass}.Lookup(typeof({typeCode}), (object?){Paren(EmitValue(enumValue.Value))}))";
+                }
                 if (Obs != null && TryDataclassConstructor(c, out _))
                     for (int i = 0; i < c.Args.Count; i++)
                     {

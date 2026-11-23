@@ -570,6 +570,7 @@ namespace Typhon.Runtime
             return add((object?)a, (object?)b);
         }
         public static void insert<T>(this List<T> l, long i, T x) => l.Insert((int)(i < 0 ? Math.Max(0, l.Count + i) : Math.Min(i, l.Count)), x);
+        public static void insert<T>(this List<T> l, BigInteger i, T x) => insert(l, checked((long)i), x);
         public static T pop<T>(this List<T> l, long i = -1)
         {
             if (i < 0) i += l.Count;

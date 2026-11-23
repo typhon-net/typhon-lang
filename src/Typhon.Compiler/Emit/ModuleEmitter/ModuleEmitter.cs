@@ -319,7 +319,9 @@ namespace Typhon.Compiler.Emit
                         _globalsBeforeFieldInitializer = fields.Keys.Where(name => name != fieldName);
                         try
                         {
-                            string initial = type != "dynamic" ? EmitExpr(value, targetTyped: true) : EmitLooseValue(value);
+                            string initial = value is ComprehensionExpr comprehension && !TypeInference.IsNonePlaceholder(comprehension)
+                                ? EmitComprehension(comprehension, type)
+                                : type != "dynamic" ? EmitExpr(value, targetTyped: true) : EmitLooseValue(value);
                             _w.Line($"{vis} static {type} {Esc(fieldName)} = {Checked(initial)};");
                         }
                         finally { _globalsBeforeFieldInitializer = null; }

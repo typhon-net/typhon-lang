@@ -1,0 +1,35 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import ast
+
+tree = ast.parse("value = 2 # type: int", type_comments=True, feature_version=(3, 15), module="examples")
+print(tree.body[0].type_comment)
+try:
+    ast.parse("(x := 2)", mode="eval", feature_version=(3, 7))
+except SyntaxError as exc:
+    print(exc.msg)
+try:
+    ast.parse("x = 1", feature_version=(2, 7))
+except ValueError as exc:
+    print(exc)
+
+source = '''"module doc"
+debug = __debug__
+class Example: "class doc"
+def function(): "function doc"
+'''
+for level in (0, 1, 2):
+    tree = ast.parse(source, optimize=level)
+    print([type(node).__name__ for node in tree.body])
+    assignment = tree.body[0] if level == 2 else tree.body[1]
+    print(type(assignment.value).__name__,
+          assignment.value.id if level == 0 else assignment.value.value)
+    print(type(tree.body[-2].body[0]).__name__, type(tree.body[-1].body[0]).__name__)
+
+single = compile('"doc"', "<sample>", "single", ast.PyCF_ONLY_AST, optimize=2)
+print(type(single.body[0]).__name__)
+mod = compile('"substantially longer doc"', "<sample>", "exec", ast.PyCF_ONLY_AST, optimize=2)
+print(type(mod.body[0]).__name__, mod.body[0].col_offset, mod.body[0].end_col_offset)
+debug = compile("__debug__", "<sample>", "eval", ast.PyCF_OPTIMIZED_AST, optimize=0)
+print(debug.body.value)

@@ -1,0 +1,13 @@
+import ast
+
+class Tagged:
+    pass
+
+class Visitor(ast.NodeVisitor):
+    def visit_Tagged(self, node):
+        return type(node).__name__
+
+def visit(value):
+    return Visitor().visit(value)
+
+print(visit(Tagged()))

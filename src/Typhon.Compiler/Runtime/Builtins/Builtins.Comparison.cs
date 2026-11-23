@@ -40,8 +40,8 @@ namespace Typhon.Runtime
         /// <summary>Python's ==: numbers by value (1 == 1.0 == True), str by characters, containers element by element.</summary>
         public static bool eq(object? a, object? b)
         {
-            if (a is PyIntEnumMember leftIntegerEnum) a = leftIntegerEnum.value;
-            if (b is PyIntEnumMember rightIntegerEnum) b = rightIntegerEnum.value;
+            if (a is PyIntegerEnum leftIntegerEnum) a = leftIntegerEnum.value;
+            if (b is PyIntegerEnum rightIntegerEnum) b = rightIntegerEnum.value;
             if (ReferenceEquals(a, b)) return true;
             if (b is PyApprox) return b.Equals(a); // (Python tries the right operand's __eq__ when the left one has none for it)
             if (a is null || b is null) return false;
@@ -222,19 +222,55 @@ namespace Typhon.Runtime
         public static dynamic lt(object? a, object? b) => CompareDictSetViews(a, b, "<") is bool view ? view :
             MixedNumbers(a, b, out int __c) ? __c < 0 : PyOrdered(a) || PyOrdered(b) ?
                 (IsSet(a!) ? SetLe(a, b) && !eq(a, b) : compare(a, b) < 0) :
-            TryRichComparison(a, b, "__lt__", "__gt__", "<", out var result) ? result! : (dynamic)a! < (dynamic)b!;
+            TryRichComparison(a, b, "__lt__", "__gt__", "<", out var result) ? result! :
+            TryIntegerEnumOrder(a, b, out var order) ? order < 0 : (dynamic)a! < (dynamic)b!;
         public static dynamic le(object? a, object? b) => CompareDictSetViews(a, b, "<=") is bool view ? view :
             MixedNumbers(a, b, out int __c) ? __c <= 0 : PyOrdered(a) || PyOrdered(b) ?
                 (IsSet(a!) ? SetLe(a, b) : compare(a, b) <= 0) :
-            TryRichComparison(a, b, "__le__", "__ge__", "<=", out var result) ? result! : (dynamic)a! <= (dynamic)b!;
+            TryRichComparison(a, b, "__le__", "__ge__", "<=", out var result) ? result! :
+            TryIntegerEnumOrder(a, b, out var order) ? order <= 0 : (dynamic)a! <= (dynamic)b!;
         public static dynamic gt(object? a, object? b) => CompareDictSetViews(a, b, ">") is bool view ? view :
             MixedNumbers(a, b, out int __c) ? __c > 0 : PyOrdered(a) || PyOrdered(b) ?
                 (IsSet(a!) ? SetLe(b, a) && !eq(a, b) : compare(a, b) > 0) :
-            TryRichComparison(a, b, "__gt__", "__lt__", ">", out var result) ? result! : (dynamic)a! > (dynamic)b!;
+            TryRichComparison(a, b, "__gt__", "__lt__", ">", out var result) ? result! :
+            TryIntegerEnumOrder(a, b, out var order) ? order > 0 : (dynamic)a! > (dynamic)b!;
         public static dynamic ge(object? a, object? b) => CompareDictSetViews(a, b, ">=") is bool view ? view :
             MixedNumbers(a, b, out int __c) ? __c >= 0 : PyOrdered(a) || PyOrdered(b) ?
                 (IsSet(a!) ? SetLe(b, a) : compare(a, b) >= 0) :
-            TryRichComparison(a, b, "__ge__", "__le__", ">=", out var result) ? result! : (dynamic)a! >= (dynamic)b!;
+            TryRichComparison(a, b, "__ge__", "__le__", ">=", out var result) ? result! :
+            TryIntegerEnumOrder(a, b, out var order) ? order >= 0 : (dynamic)a! >= (dynamic)b!;
+
+        static bool TryIntegerEnumOrder(object? left, object? right, out int? order)
+        {
+            if (left is PyIntegerEnum leftInteger)
+                return OrderInteger(leftInteger.Integer, right, out order);
+            if (right is PyIntegerEnum rightInteger && OrderInteger(rightInteger.Integer, left, out order))
+            {
+                order = -order;
+                return true;
+            }
+            order = null;
+            return false;
+        }
+
+        static bool OrderInteger(BigInteger integer, object? other, out int? order)
+        {
+            if (other is PyIntegerEnum member) { order = integer.CompareTo(member.Integer); return true; }
+            if (other is BigInteger wide) { order = integer.CompareTo(wide); return true; }
+            if (IntLike(other!, out long small)) { order = integer.CompareTo(small); return true; }
+            double? real = other switch { double value => value, float value => value, _ => null };
+            order = null;
+            if (real is not double number) return false;
+            if (double.IsNaN(number)) return true;
+            if (double.IsPositiveInfinity(number)) { order = -1; return true; }
+            if (double.IsNegativeInfinity(number)) { order = 1; return true; }
+
+            // Compare exactly before considering the fractional part so large integers retain their precision.
+            double whole = Math.Truncate(number);
+            int comparison = integer.CompareTo(new BigInteger(whole));
+            order = comparison == 0 ? whole.CompareTo(number) : comparison;
+            return true;
+        }
 
         static bool TryRichComparison(object? left, object? right, string direct, string reflected,
             string symbol, out object? result)

@@ -17,8 +17,17 @@ namespace Typhon.Stdlib
     internal static partial class ast
     {
         public const long PyCF_ONLY_AST = 0x400;
+        public const long PyCF_TYPE_COMMENTS = 0x1000;
+        public const long PyCF_ALLOW_TOP_LEVEL_AWAIT = 0x2000;
+        public const long PyCF_OPTIMIZED_AST = 0x8000 | PyCF_ONLY_AST;
 
-        internal class AST : DynamicObject
+        internal static bool IsPrimitiveExport(string name) => name == "AST" ||
+            name.StartsWith("PyCF_", StringComparison.Ordinal) || NodeTypes.ContainsKey(name);
+
+        // The node hierarchy follows CPython 3.15's Python.asdl. See CPython-LICENSE.txt.
+
+        [PyMutableClass]
+        internal class AST : DynamicObject, IPyInstanceAttributes
         {
             internal readonly Dictionary<string, object?> Fields = new(StringComparer.Ordinal);
             internal readonly Dictionary<string, object?> Attributes = new(StringComparer.Ordinal);
@@ -31,213 +40,249 @@ namespace Typhon.Stdlib
             public PyTuple<string> _fields => new PyTuple<string>(Fields.Keys);
             public PyTuple<string> _attributes => new PyTuple<string>(Attributes.Keys);
             public override IEnumerable<string> GetDynamicMemberNames() => Fields.Keys.Concat(Attributes.Keys);
-            public override bool TryGetMember(GetMemberBinder binder, out object? result) =>
-                Fields.TryGetValue(binder.Name, out result) || Attributes.TryGetValue(binder.Name, out result);
+            void IPyInstanceAttributes.SetAttribute(string name, object? value) =>
+                (Fields.ContainsKey(name) ? Fields : Attributes)[name] = value;
+            bool IPyInstanceAttributes.RemoveAttribute(string name) =>
+                Fields.Remove(name) || Attributes.Remove(name);
+
+            public override bool TryGetMember(GetMemberBinder binder, out object? result)
+            {
+                if (Builtins.ClassProperty(GetType(), binder.Name) is { } property)
+                {
+                    result = property.__get__(this, GetType());
+                    return true;
+                }
+                return Fields.TryGetValue(binder.Name, out result) || Attributes.TryGetValue(binder.Name, out result) ||
+                    PyClassDescriptors.TryGetAddedInstanceAttribute(this, binder.Name, out result);
+            }
             public override bool TrySetMember(SetMemberBinder binder, object? value)
             {
-                (Fields.ContainsKey(binder.Name) ? Fields : Attributes)[binder.Name] = value;
+                if (Builtins.ClassProperty(GetType(), binder.Name) is { } property) property.__set__(this, value);
+                else ((IPyInstanceAttributes)this).SetAttribute(binder.Name, value);
                 return true;
             }
         }
 
-        internal sealed class Module : AST { }
-        internal sealed class Expression : AST { }
-        internal sealed class Interactive : AST { }
-        internal sealed class ClassDef : AST { }
-        internal sealed class FunctionDef : AST { }
-        internal sealed class AsyncFunctionDef : AST { }
-        internal sealed class Return : AST { }
-        internal sealed class Delete : AST { }
-        internal sealed class Assign : AST { }
-        internal sealed class AugAssign : AST { }
-        internal sealed class AnnAssign : AST { }
-        internal sealed class For : AST { }
-        internal sealed class AsyncFor : AST { }
-        internal sealed class While : AST { }
-        internal sealed class If : AST { }
-        internal sealed class With : AST { }
-        internal sealed class AsyncWith : AST { }
-        internal sealed class Match : AST { }
-        internal sealed class Raise : AST { }
-        internal sealed class Try : AST { }
-        internal sealed class Assert : AST { }
-        internal sealed class Import : AST { }
-        internal sealed class ImportFrom : AST { }
-        internal sealed class Global : AST { }
-        internal sealed class Nonlocal : AST { }
-        internal sealed class Expr : AST { }
-        internal sealed class Pass : AST { }
-        internal sealed class Break : AST { }
-        internal sealed class Continue : AST { }
-        internal sealed class BoolOp : AST { }
-        internal sealed class NamedExpr : AST { }
-        internal sealed class BinOp : AST
+        internal class mod : AST { }
+        internal class FunctionType : mod { }
+        internal class Module : mod { }
+        internal class Expression : mod { }
+        internal class Interactive : mod { }
+        internal class stmt : AST { }
+        internal class TypeAlias : stmt { }
+        internal class TryStar : stmt { }
+        internal class ClassDef : stmt { }
+        internal class FunctionDef : stmt { }
+        internal class AsyncFunctionDef : stmt { }
+        internal class Return : stmt { }
+        internal class Delete : stmt { }
+        internal class Assign : stmt { }
+        internal class AugAssign : stmt { }
+        internal class AnnAssign : stmt { }
+        internal class For : stmt { }
+        internal class AsyncFor : stmt { }
+        internal class While : stmt { }
+        internal class If : stmt { }
+        internal class With : stmt { }
+        internal class AsyncWith : stmt { }
+        internal class Match : stmt { }
+        internal class Raise : stmt { }
+        internal class Try : stmt { }
+        internal class Assert : stmt { }
+        internal class Import : stmt { }
+        internal class ImportFrom : stmt { }
+        internal class Global : stmt { }
+        internal class Nonlocal : stmt { }
+        internal class Expr : stmt { }
+        internal class Pass : stmt { }
+        internal class Break : stmt { }
+        internal class Continue : stmt { }
+        internal class expr : AST
         {
-            private BinOp() { }
+            public expr() { }
+            protected expr(params (string Name, object? Value)[] fields) : base(fields) { }
+        }
+        internal class BoolOp : expr { }
+        internal class NamedExpr : expr { }
+        internal class BinOp : expr
+        {
+            protected BinOp() { }
             public BinOp(AST left, AST op, AST right)
                 : base(("left", left), ("op", op), ("right", right)) { }
         }
-        internal sealed class UnaryOp : AST
+        internal class UnaryOp : expr
         {
-            private UnaryOp() { }
+            protected UnaryOp() { }
             public UnaryOp(AST op, AST operand)
                 : base(("op", op), ("operand", operand)) { }
         }
-        internal sealed class Lambda : AST { }
-        internal sealed class IfExp : AST { }
-        internal sealed class Dict : AST
+        internal class Lambda : expr { }
+        internal class IfExp : expr { }
+        internal class Dict : expr
         {
-            private Dict() { }
+            protected Dict() { }
             public Dict(IList? keys = null, IList? values = null)
                 : base(("keys", keys ?? new List<object?>()), ("values", values ?? new List<object?>())) { }
         }
-        internal sealed class Set : AST
+        internal class Set : expr
         {
-            private Set() { }
+            protected Set() { }
             public Set(IList? elts = null)
                 : base(("elts", elts ?? new List<object?>())) { }
         }
-        internal sealed class ListComp : AST { }
-        internal sealed class SetComp : AST { }
-        internal sealed class DictComp : AST { }
-        internal sealed class GeneratorExp : AST { }
-        internal sealed class Await : AST { }
-        internal sealed class Yield : AST { }
-        internal sealed class YieldFrom : AST { }
-        internal sealed class Compare : AST
+        internal class ListComp : expr { }
+        internal class SetComp : expr { }
+        internal class DictComp : expr { }
+        internal class GeneratorExp : expr { }
+        internal class Await : expr { }
+        internal class Yield : expr { }
+        internal class YieldFrom : expr { }
+        internal class Compare : expr
         {
-            private Compare() { }
+            protected Compare() { }
             public Compare(AST left, IList? ops = null, IList? comparators = null)
                 : base(("left", left), ("ops", ops ?? new List<object?>()), ("comparators", comparators ?? new List<object?>())) { }
         }
-        internal sealed class Call : AST
+        internal class Call : expr
         {
-            private Call() { }
+            protected Call() { }
             public Call(AST func, IList? args = null, IList? keywords = null)
                 : base(("func", func), ("args", args ?? new List<object?>()), ("keywords", keywords ?? new List<object?>())) { }
         }
-        internal sealed class FormattedValue : AST { }
-        internal sealed class JoinedStr : AST { }
-        internal sealed class TemplateStr : AST
+        internal class FormattedValue : expr { }
+        internal class JoinedStr : expr { }
+        internal class TemplateStr : expr
         {
-            private TemplateStr() { }
+            protected TemplateStr() { }
             public TemplateStr(IList? values = null)
                 : base(("values", values ?? new List<object?>())) { }
         }
-        internal sealed class Interpolation : AST
+        internal class Interpolation : expr
         {
-            private Interpolation() { }
+            protected Interpolation() { }
             public Interpolation(AST value, string? str, object conversion, AST? format_spec = null)
                 : base(("value", value), ("str", str), ("conversion", conversion), ("format_spec", format_spec)) { }
         }
-        internal sealed class Constant : AST
+        internal class Constant : expr
         {
-            private Constant() { }
+            protected Constant() { }
             public Constant(object? value, string? kind = null)
                 : base(("value", value), ("kind", kind)) { }
         }
-        internal sealed class Attribute : AST
+        internal class Attribute : expr
         {
-            private Attribute() { }
+            protected Attribute() { }
             public Attribute(AST value, string attr, AST? ctx = null)
                 : base(("value", value), ("attr", attr), ("ctx", ctx ?? new Load())) { }
         }
-        internal sealed class Subscript : AST
+        internal class Subscript : expr
         {
-            private Subscript() { }
+            protected Subscript() { }
             public Subscript(AST value, AST slice, AST? ctx = null)
                 : base(("value", value), ("slice", slice), ("ctx", ctx ?? new Load())) { }
         }
-        internal sealed class Starred : AST
+        internal class Starred : expr
         {
-            private Starred() { }
+            protected Starred() { }
             public Starred(AST value, AST? ctx = null)
                 : base(("value", value), ("ctx", ctx ?? new Load())) { }
         }
-        internal sealed class Name : AST
+        internal class Name : expr
         {
-            private Name() { }
+            protected Name() { }
             public Name(string id, AST? ctx = null)
                 : base(("id", id), ("ctx", ctx ?? new Load())) { }
         }
-        internal sealed class List : AST
+        internal class List : expr
         {
-            private List() { }
+            protected List() { }
             public List(IList? elts = null, AST? ctx = null)
                 : base(("elts", elts ?? new List<object?>()), ("ctx", ctx ?? new Load())) { }
         }
-        internal sealed class Tuple : AST
+        internal class Tuple : expr
         {
-            private Tuple() { }
+            protected Tuple() { }
             public Tuple(IList? elts = null, AST? ctx = null)
                 : base(("elts", elts ?? new List<object?>()), ("ctx", ctx ?? new Load())) { }
         }
-        internal sealed class Slice : AST
+        internal class Slice : expr
         {
-            private Slice() { }
+            protected Slice() { }
             public Slice(AST? lower = null, AST? upper = null, AST? step = null)
                 : base(("lower", lower), ("upper", upper), ("step", step)) { }
         }
-        internal sealed class Load : AST { }
-        internal sealed class Store : AST { }
-        internal sealed class Del : AST { }
-        internal sealed class Add : AST { }
-        internal sealed class Sub : AST { }
-        internal sealed class Mult : AST { }
-        internal sealed class MatMult : AST { }
-        internal sealed class Div : AST { }
-        internal sealed class Mod : AST { }
-        internal sealed class Pow : AST { }
-        internal sealed class LShift : AST { }
-        internal sealed class RShift : AST { }
-        internal sealed class BitOr : AST { }
-        internal sealed class BitXor : AST { }
-        internal sealed class BitAnd : AST { }
-        internal sealed class FloorDiv : AST { }
-        internal sealed class And : AST { }
-        internal sealed class Or : AST { }
-        internal sealed class Invert : AST { }
-        internal sealed class Not : AST { }
-        internal sealed class UAdd : AST { }
-        internal sealed class USub : AST { }
-        internal sealed class Eq : AST { }
-        internal sealed class NotEq : AST { }
-        internal sealed class Lt : AST { }
-        internal sealed class LtE : AST { }
-        internal sealed class Gt : AST { }
-        internal sealed class GtE : AST { }
-        internal sealed class Is : AST { }
-        internal sealed class IsNot : AST { }
-        internal sealed class In : AST { }
-        internal sealed class NotIn : AST { }
-        internal sealed class comprehension : AST { }
-        internal sealed class ExceptHandler : AST { }
-        internal sealed class arguments : AST { }
-        internal sealed class arg : AST { }
-        internal sealed class keyword : AST
+        internal class expr_context : AST { }
+        internal class Load : expr_context { }
+        internal class Store : expr_context { }
+        internal class Del : expr_context { }
+        internal class @operator : AST { }
+        internal class Add : @operator { }
+        internal class Sub : @operator { }
+        internal class Mult : @operator { }
+        internal class MatMult : @operator { }
+        internal class Div : @operator { }
+        internal class Mod : @operator { }
+        internal class Pow : @operator { }
+        internal class LShift : @operator { }
+        internal class RShift : @operator { }
+        internal class BitOr : @operator { }
+        internal class BitXor : @operator { }
+        internal class BitAnd : @operator { }
+        internal class FloorDiv : @operator { }
+        internal class boolop : AST { }
+        internal class And : boolop { }
+        internal class Or : boolop { }
+        internal class unaryop : AST { }
+        internal class Invert : unaryop { }
+        internal class Not : unaryop { }
+        internal class UAdd : unaryop { }
+        internal class USub : unaryop { }
+        internal class cmpop : AST { }
+        internal class Eq : cmpop { }
+        internal class NotEq : cmpop { }
+        internal class Lt : cmpop { }
+        internal class LtE : cmpop { }
+        internal class Gt : cmpop { }
+        internal class GtE : cmpop { }
+        internal class Is : cmpop { }
+        internal class IsNot : cmpop { }
+        internal class In : cmpop { }
+        internal class NotIn : cmpop { }
+        internal class comprehension : AST { }
+        internal class excepthandler : AST { }
+        internal class ExceptHandler : excepthandler { }
+        internal class arguments : AST { }
+        internal class arg : AST { }
+        internal class keyword : AST
         {
-            private keyword() { }
+            protected keyword() { }
             public keyword(string? arg, AST value)
                 : base(("arg", arg), ("value", value)) { }
         }
-        internal sealed class alias : AST { }
-        internal sealed class withitem : AST { }
-        internal sealed class match_case : AST { }
-        internal sealed class MatchValue : AST { }
-        internal sealed class MatchSingleton : AST { }
-        internal sealed class MatchSequence : AST { }
-        internal sealed class MatchMapping : AST { }
-        internal sealed class MatchClass : AST { }
-        internal sealed class MatchStar : AST { }
-        internal sealed class MatchAs : AST { }
-        internal sealed class MatchOr : AST { }
-        internal sealed class TypeVar : AST { }
+        internal class alias : AST { }
+        internal class withitem : AST { }
+        internal class match_case : AST { }
+        internal class pattern : AST { }
+        internal class MatchValue : pattern { }
+        internal class MatchSingleton : pattern { }
+        internal class MatchSequence : pattern { }
+        internal class MatchMapping : pattern { }
+        internal class MatchClass : pattern { }
+        internal class MatchStar : pattern { }
+        internal class MatchAs : pattern { }
+        internal class MatchOr : pattern { }
+        internal class type_ignore : AST { }
+        internal class TypeIgnore : type_ignore { }
+        internal class type_param : AST { }
+        internal class ParamSpec : type_param { }
+        internal class TypeVarTuple : type_param { }
+        internal class TypeVar : type_param { }
 
         internal class NodeVisitor
         {
-            public dynamic? visit(AST node)
+            public dynamic? visit(object? node)
             {
-                object? visit = Builtins.getattr(this, "visit_" + node.GetType().Name, null);
+                object? visit = Builtins.getattr(this, "visit_" + Builtins.__name_of(Builtins.__type_of(node)), null);
                 visit ??= Builtins.getattr(this, "generic_visit");
                 return Builtins.__invoke(visit, [node]);
             }
@@ -309,25 +354,40 @@ namespace Typhon.Stdlib
         static readonly Dictionary<string, Type> NodeTypes = typeof(ast).GetNestedTypes(BindingFlags.NonPublic)
             .Where(type => type.IsSubclassOf(typeof(AST))).ToDictionary(type => type.Name);
 
-        public static dynamic parse(object source, string filename = "<unknown>", string mode = "exec")
+        public static dynamic parse(object source, string filename = "<unknown>", string mode = "exec",
+            [PyKeywordOnly] bool type_comments = false, [PyKeywordOnly] object? feature_version = null,
+            [PyKeywordOnly] long optimize = -1, [PyKeywordOnly] object? module = null)
         {
-            string text = source switch
-            {
-                string value => value,
-                PyBytes bytes => importlib.util.decode_source(bytes),
-                _ => throw new InvalidCastException("compile() arg 1 must be a string or bytes"),
-            };
-            if (mode is not ("exec" or "single" or "eval"))
-                throw new ArgumentException("compile() mode must be 'exec', 'eval' or 'single'");
-            return CompileTree(text, filename, mode, PyCF_ONLY_AST);
+            long flags = optimize > 0 ? PyCF_OPTIMIZED_AST : PyCF_ONLY_AST;
+            if (type_comments) flags |= PyCF_TYPE_COMMENTS;
+            return Builtins.compile(source, filename, mode, flags, optimize: optimize, module: module,
+                _feature_version: FeatureMinor(feature_version));
         }
 
-        internal static AST CompileTree(string text, string filename, string mode, long flags)
+        static long FeatureMinor(object? version)
+        {
+            if (version is System.Runtime.CompilerServices.ITuple or IPyTuple)
+            {
+                var parts = Builtins.__iter_dyn(version).Take(3).ToArray();
+                if (parts.Length < 2)
+                    throw new ArgumentException($"not enough values to unpack (expected 2, got {parts.Length})");
+                if (parts.Length > 2) throw new ArgumentException("too many values to unpack (expected 2)");
+                if (!Builtins.eq((object?)parts[0], 3L))
+                    throw new ArgumentException($"Unsupported major version: {Builtins.str(parts[0])}");
+                version = parts[1];
+            }
+            else if (version == null) return -1;
+
+            object minor = Builtins.__index_value(version);
+            return minor is System.Numerics.BigInteger wide ? (long)wide : (long)minor;
+        }
+
+        internal static AST CompileTree(string text, string filename, string mode, long flags, int featureVersion = -1, int optimize = -1)
         {
             var parseSource = AppContext.GetData("Typhon.ParseRuntimeAst") as
-                Func<string, string, string, long, (object? Tree, string? Error, int Line, int Column, int Kind)>
+                Func<string, string, string, long, int, int, (object? Tree, string? Error, int Line, int Column, int Kind)>
                 ?? throw new NotSupportedException("ast.parse() requires the Typhon runtime compiler host");
-            var parsed = parseSource(text, filename, mode, flags);
+            var parsed = parseSource(text, filename, mode, flags, featureVersion, optimize);
             if (parsed.Error != null)
                 throw Builtins.RuntimeSyntaxError(text, filename, parsed.Error, parsed.Line, parsed.Column, parsed.Kind);
             return (AST)Materialize(parsed.Tree)!;

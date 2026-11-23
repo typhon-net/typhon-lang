@@ -1,0 +1,10 @@
+Assignment expressions are only supported in Python 3.8 and greater
+Expression
+Pattern matching is only supported in Python 3.10 and greater
+Module
+Type parameter lists are only supported in Python 3.12 and greater
+Module
+t-strings are only supported in Python 3.14 and greater
+Expression
+2
+invalid feature version

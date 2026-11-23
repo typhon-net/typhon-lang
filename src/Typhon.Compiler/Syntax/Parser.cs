@@ -17,11 +17,11 @@ namespace Typhon.Compiler.Syntax
         public Parser(List<Token> tokens, bool openGrouping = false, bool barryAsFlufl = false)
         { _t = tokens; _openGrouping = openGrouping; _barryAsFlufl = barryAsFlufl; }
 
-        public static ModuleAst ParseModule(string source, string path, bool barryAsFlufl = false, bool expressionOnly = false)
+        public static ModuleAst ParseModule(string source, string path, bool barryAsFlufl = false, bool expressionOnly = false, bool typeComments = false)
         {
-            var lexer = new Lexer(source);
+            var lexer = new Lexer(source, typeComments: typeComments);
             var p = new Parser(lexer.Tokenize(), lexer.HasOpenGrouping, barryAsFlufl);
-            var m = new ModuleAst { Path = path };
+            var m = new ModuleAst { Path = path, TypeComments = lexer.TypeComments };
             if (expressionOnly)
             {
                 if (p.Cur.Kind == TokenKind.EndOfFile) return m;

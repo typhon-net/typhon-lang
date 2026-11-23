@@ -1,0 +1,11 @@
+# typhon: int=bigint
+
+items: list[str] = ["one", "three"]
+items.insert(1, "two")
+items.insert(-100, "first")
+items.insert(100, "last")
+print(items)
+try:
+    items.insert(1 << 100, "overflow")
+except OverflowError:
+    print("overflow")

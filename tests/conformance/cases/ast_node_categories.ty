@@ -1,0 +1,18 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import ast
+
+tree = ast.parse("answer = 40 + 2")
+assignment = tree.body[0]
+expression = assignment.value
+print(isinstance(tree, ast.mod), isinstance(assignment, ast.stmt))
+print(isinstance(expression, ast.expr), isinstance(expression.op, ast.operator))
+print(isinstance(assignment.targets[0].ctx, ast.expr_context))
+
+class Special(ast.Constant):
+    pass
+
+node = Special(9)
+print(type(node).__name__, isinstance(node, ast.Constant), isinstance(node, ast.expr), node.value)
+print(issubclass(ast.MatchAs, ast.pattern), issubclass(ast.TypeVar, ast.type_param))

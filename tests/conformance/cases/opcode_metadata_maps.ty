@@ -1,0 +1,13 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import _opcode_metadata as metadata
+import hashlib
+
+def digest(data):
+    return hashlib.sha256(repr(data).encode()).hexdigest()
+
+print(metadata.HAVE_ARGUMENT, metadata.MIN_INSTRUMENTED_OPCODE)
+print(len(metadata.opmap), len(metadata._specialized_opmap), len(metadata._specializations))
+print(digest(metadata.opmap), digest(metadata._specialized_opmap), digest(metadata._specializations))
+print(metadata.opmap["WITH_EXCEPT_START"], metadata._specialized_opmap["BINARY_OP_ADD_FLOAT"])

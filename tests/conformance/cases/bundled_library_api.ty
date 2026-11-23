@@ -1,0 +1,15 @@
+from cmd import Cmd
+from io import StringIO
+import selectors
+import token
+
+stream = StringIO()
+commands = Cmd(stdout=stream)
+print(commands.parseline("  greet Ada "))
+commands.onecmd("unknown")
+print(stream.getvalue().strip())
+print(selectors.EVENT_READ | selectors.EVENT_WRITE)
+with selectors.SelectSelector() as ready:
+    print(len(ready.get_map()))
+print(token.tok_name[token.ENDMARKER], token.EXACT_TOKEN_TYPES["**"] == token.DOUBLESTAR)
+print(token.ISNONTERMINAL(token.NT_OFFSET), token.ISTERMINAL(token.NAME))

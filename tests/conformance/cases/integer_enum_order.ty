@@ -1,0 +1,21 @@
+from enum import IntEnum, _simple_enum
+from typing import Any
+
+@_simple_enum(IntEnum)
+class Rank:
+    LOW = -1
+    HIGH = 2
+    LARGE = 9007199254740993
+
+@_simple_enum(IntEnum)
+class OtherRank:
+    HIGH = 2
+
+print(Rank.LOW < Rank.HIGH, Rank.HIGH <= OtherRank.HIGH)
+print(Rank.HIGH > 1.5, 1.5 < Rank.HIGH, Rank.LOW < -0.5)
+print(Rank.LARGE > 9007199254740992.0)
+a: Any = Rank.HIGH
+b: Any = Rank.LOW
+print(a >= b, a <= 2, a > False, 0 > b, float("inf") > a)
+nan = float("nan")
+print(a < nan, a <= nan, a > nan, a >= nan)

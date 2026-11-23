@@ -47,6 +47,16 @@ namespace Typhon.Runtime
         public void __delete__(object? instance) => throw new MissingMemberException("can't delete attribute");
     }
 
+    // Native implementations of Python heap types can opt in to a writable class namespace.
+    [AttributeUsage(AttributeTargets.Class, Inherited = true)]
+    internal sealed class PyMutableClassAttribute : Attribute { }
+
+    internal interface IPyInstanceAttributes
+    {
+        void SetAttribute(string name, object? value);
+        bool RemoveAttribute(string name);
+    }
+
     /// <summary>A compiled class's declared Python members and their stable descriptor objects.</summary>
     internal static class PyClassDescriptors
     {
@@ -116,8 +126,11 @@ namespace Typhon.Runtime
         internal static bool TryGetDeclaredDescriptor(Type type, string name, out object? value) =>
             Namespace(type).Descriptors.TryGetValue(name, out value);
 
+        internal static bool HasWritableNamespace(Type type) => !type.IsValueType &&
+            (type.IsDefined(typeof(PySourceAttribute), false) || type.IsDefined(typeof(PyMutableClassAttribute), true));
+
         internal static bool SetAddedAttribute(Type type, string name, object? value) =>
-            !type.IsValueType && type.IsDefined(typeof(PySourceAttribute), false) && Namespace(type).SetAdded(name, value);
+            HasWritableNamespace(type) && Namespace(type).SetAdded(name, value);
 
         internal static bool DeleteAddedAttribute(Type type, string name) =>
             Namespaces.TryGetValue(type, out var members) && members.RemoveAdded(name);
@@ -133,7 +146,7 @@ namespace Typhon.Runtime
             Type type = instance.GetType();
             for (Type? declaration = type; declaration != null; declaration = declaration.BaseType)
             {
-                if (!declaration.IsDefined(typeof(PySourceAttribute), false)) continue;
+                if (!HasWritableNamespace(declaration)) continue;
                 var members = Namespace(declaration);
                 if (members.TryReadAdded(name, out value))
                 {
@@ -150,7 +163,7 @@ namespace Typhon.Runtime
         {
             for (Type? declaration = type; declaration != null; declaration = declaration.BaseType)
             {
-                if (!declaration.IsDefined(typeof(PySourceAttribute))) continue;
+                if (!HasWritableNamespace(declaration)) continue;
                 var ns = Namespace(declaration);
                 if (!ns.TryRead(name, out var binding)) continue;
                 if (ns.Descriptors.TryGetValue(name, out value))

@@ -1,0 +1,885 @@
+# Source: CPython 3.15.2, Lib/selectors.py
+# https://github.com/python/cpython/blob/v3.15.2/Lib/selectors.py
+# The original source follows the license below without changes.
+#
+# A. HISTORY OF THE SOFTWARE
+# ==========================
+#
+# Python was created in the early 1990s by Guido van Rossum at Stichting
+# Mathematisch Centrum (CWI, see https://www.cwi.nl) in the Netherlands
+# as a successor of a language called ABC.  Guido remains Python's
+# principal author, although it includes many contributions from others.
+#
+# In 1995, Guido continued his work on Python at the Corporation for
+# National Research Initiatives (CNRI, see https://www.cnri.reston.va.us)
+# in Reston, Virginia where he released several versions of the
+# software.
+#
+# In May 2000, Guido and the Python core development team moved to
+# BeOpen.com to form the BeOpen PythonLabs team.  In October of the same
+# year, the PythonLabs team moved to Digital Creations, which became
+# Zope Corporation.  In 2001, the Python Software Foundation (PSF, see
+# https://www.python.org/psf/) was formed, a non-profit organization
+# created specifically to own Python-related Intellectual Property.
+# Zope Corporation was a sponsoring member of the PSF.
+#
+# All Python releases are Open Source (see https://opensource.org for
+# the Open Source Definition).  Historically, most, but not all, Python
+# releases have also been GPL-compatible; the table below summarizes
+# the various releases.
+#
+#     Release         Derived     Year        Owner       GPL-
+#                     from                                compatible? (1)
+#
+#     0.9.0 thru 1.2              1991-1995   CWI         yes
+#     1.3 thru 1.5.2  1.2         1995-1999   CNRI        yes
+#     1.6             1.5.2       2000        CNRI        no
+#     2.0             1.6         2000        BeOpen.com  no
+#     1.6.1           1.6         2001        CNRI        yes (2)
+#     2.1             2.0+1.6.1   2001        PSF         no
+#     2.0.1           2.0+1.6.1   2001        PSF         yes
+#     2.1.1           2.1+2.0.1   2001        PSF         yes
+#     2.1.2           2.1.1       2002        PSF         yes
+#     2.1.3           2.1.2       2002        PSF         yes
+#     2.2 and above   2.1.1       2001-now    PSF         yes
+#
+# Footnotes:
+#
+# (1) GPL-compatible doesn't mean that we're distributing Python under
+#     the GPL.  All Python licenses, unlike the GPL, let you distribute
+#     a modified version without making your changes open source.  The
+#     GPL-compatible licenses make it possible to combine Python with
+#     other software that is released under the GPL; the others don't.
+#
+# (2) According to Richard Stallman, 1.6.1 is not GPL-compatible,
+#     because its license has a choice of law clause.  According to
+#     CNRI, however, Stallman's lawyer has told CNRI's lawyer that 1.6.1
+#     is "not incompatible" with the GPL.
+#
+# Thanks to the many outside volunteers who have worked under Guido's
+# direction to make these releases possible.
+#
+#
+# B. TERMS AND CONDITIONS FOR ACCESSING OR OTHERWISE USING PYTHON
+# ===============================================================
+#
+# Python software and documentation are licensed under the
+# Python Software Foundation License Version 2.
+#
+# Starting with Python 3.8.6, examples, recipes, and other code in
+# the documentation are dual licensed under the PSF License Version 2
+# and the Zero-Clause BSD license.
+#
+# Some software incorporated into Python is under different licenses.
+# The licenses are listed with code falling under that license.
+#
+#
+# PYTHON SOFTWARE FOUNDATION LICENSE VERSION 2
+# --------------------------------------------
+#
+# 1. This LICENSE AGREEMENT is between the Python Software Foundation
+# ("PSF"), and the Individual or Organization ("Licensee") accessing and
+# otherwise using this software ("Python") in source or binary form and
+# its associated documentation.
+#
+# 2. Subject to the terms and conditions of this License Agreement, PSF hereby
+# grants Licensee a nonexclusive, royalty-free, world-wide license to reproduce,
+# analyze, test, perform and/or display publicly, prepare derivative works,
+# distribute, and otherwise use Python alone or in any derivative version,
+# provided, however, that PSF's License Agreement and PSF's notice of copyright,
+# i.e., "Copyright (c) 2001 Python Software Foundation; All Rights Reserved"
+# are retained in Python alone or in any derivative version prepared by Licensee.
+#
+# 3. In the event Licensee prepares a derivative work that is based on
+# or incorporates Python or any part thereof, and wants to make
+# the derivative work available to others as provided herein, then
+# Licensee hereby agrees to include in any such work a brief summary of
+# the changes made to Python.
+#
+# 4. PSF is making Python available to Licensee on an "AS IS"
+# basis.  PSF MAKES NO REPRESENTATIONS OR WARRANTIES, EXPRESS OR
+# IMPLIED.  BY WAY OF EXAMPLE, BUT NOT LIMITATION, PSF MAKES NO AND
+# DISCLAIMS ANY REPRESENTATION OR WARRANTY OF MERCHANTABILITY OR FITNESS
+# FOR ANY PARTICULAR PURPOSE OR THAT THE USE OF PYTHON WILL NOT
+# INFRINGE ANY THIRD PARTY RIGHTS.
+#
+# 5. PSF SHALL NOT BE LIABLE TO LICENSEE OR ANY OTHER USERS OF PYTHON
+# FOR ANY INCIDENTAL, SPECIAL, OR CONSEQUENTIAL DAMAGES OR LOSS AS
+# A RESULT OF MODIFYING, DISTRIBUTING, OR OTHERWISE USING PYTHON,
+# OR ANY DERIVATIVE THEREOF, EVEN IF ADVISED OF THE POSSIBILITY THEREOF.
+#
+# 6. This License Agreement will automatically terminate upon a material
+# breach of its terms and conditions.
+#
+# 7. Nothing in this License Agreement shall be deemed to create any
+# relationship of agency, partnership, or joint venture between PSF and
+# Licensee.  This License Agreement does not grant permission to use PSF
+# trademarks or trade name in a trademark sense to endorse or promote
+# products or services of Licensee, or any third party.
+#
+# 8. By copying, installing or otherwise using Python, Licensee
+# agrees to be bound by the terms and conditions of this License
+# Agreement.
+#
+#
+# BEOPEN.COM LICENSE AGREEMENT FOR PYTHON 2.0
+# -------------------------------------------
+#
+# BEOPEN PYTHON OPEN SOURCE LICENSE AGREEMENT VERSION 1
+#
+# 1. This LICENSE AGREEMENT is between BeOpen.com ("BeOpen"), having an
+# office at 160 Saratoga Avenue, Santa Clara, CA 95051, and the
+# Individual or Organization ("Licensee") accessing and otherwise using
+# this software in source or binary form and its associated
+# documentation ("the Software").
+#
+# 2. Subject to the terms and conditions of this BeOpen Python License
+# Agreement, BeOpen hereby grants Licensee a non-exclusive,
+# royalty-free, world-wide license to reproduce, analyze, test, perform
+# and/or display publicly, prepare derivative works, distribute, and
+# otherwise use the Software alone or in any derivative version,
+# provided, however, that the BeOpen Python License is retained in the
+# Software, alone or in any derivative version prepared by Licensee.
+#
+# 3. BeOpen is making the Software available to Licensee on an "AS IS"
+# basis.  BEOPEN MAKES NO REPRESENTATIONS OR WARRANTIES, EXPRESS OR
+# IMPLIED.  BY WAY OF EXAMPLE, BUT NOT LIMITATION, BEOPEN MAKES NO AND
+# DISCLAIMS ANY REPRESENTATION OR WARRANTY OF MERCHANTABILITY OR FITNESS
+# FOR ANY PARTICULAR PURPOSE OR THAT THE USE OF THE SOFTWARE WILL NOT
+# INFRINGE ANY THIRD PARTY RIGHTS.
+#
+# 4. BEOPEN SHALL NOT BE LIABLE TO LICENSEE OR ANY OTHER USERS OF THE
+# SOFTWARE FOR ANY INCIDENTAL, SPECIAL, OR CONSEQUENTIAL DAMAGES OR LOSS
+# AS A RESULT OF USING, MODIFYING OR DISTRIBUTING THE SOFTWARE, OR ANY
+# DERIVATIVE THEREOF, EVEN IF ADVISED OF THE POSSIBILITY THEREOF.
+#
+# 5. This License Agreement will automatically terminate upon a material
+# breach of its terms and conditions.
+#
+# 6. This License Agreement shall be governed by and interpreted in all
+# respects by the law of the State of California, excluding conflict of
+# law provisions.  Nothing in this License Agreement shall be deemed to
+# create any relationship of agency, partnership, or joint venture
+# between BeOpen and Licensee.  This License Agreement does not grant
+# permission to use BeOpen trademarks or trade names in a trademark
+# sense to endorse or promote products or services of Licensee, or any
+# third party.  As an exception, the "BeOpen Python" logos available at
+# http://www.pythonlabs.com/logos.html may be used according to the
+# permissions granted on that web page.
+#
+# 7. By copying, installing or otherwise using the software, Licensee
+# agrees to be bound by the terms and conditions of this License
+# Agreement.
+#
+#
+# CNRI LICENSE AGREEMENT FOR PYTHON 1.6.1
+# ---------------------------------------
+#
+# 1. This LICENSE AGREEMENT is between the Corporation for National
+# Research Initiatives, having an office at 1895 Preston White Drive,
+# Reston, VA 20191 ("CNRI"), and the Individual or Organization
+# ("Licensee") accessing and otherwise using Python 1.6.1 software in
+# source or binary form and its associated documentation.
+#
+# 2. Subject to the terms and conditions of this License Agreement, CNRI
+# hereby grants Licensee a nonexclusive, royalty-free, world-wide
+# license to reproduce, analyze, test, perform and/or display publicly,
+# prepare derivative works, distribute, and otherwise use Python 1.6.1
+# alone or in any derivative version, provided, however, that CNRI's
+# License Agreement and CNRI's notice of copyright, i.e., "Copyright (c)
+# 1995-2001 Corporation for National Research Initiatives; All Rights
+# Reserved" are retained in Python 1.6.1 alone or in any derivative
+# version prepared by Licensee.  Alternately, in lieu of CNRI's License
+# Agreement, Licensee may substitute the following text (omitting the
+# quotes): "Python 1.6.1 is made available subject to the terms and
+# conditions in CNRI's License Agreement.  This Agreement together with
+# Python 1.6.1 may be located on the internet using the following
+# unique, persistent identifier (known as a handle): 1895.22/1013.  This
+# Agreement may also be obtained from a proxy server on the internet
+# using the following URL: http://hdl.handle.net/1895.22/1013".
+#
+# 3. In the event Licensee prepares a derivative work that is based on
+# or incorporates Python 1.6.1 or any part thereof, and wants to make
+# the derivative work available to others as provided herein, then
+# Licensee hereby agrees to include in any such work a brief summary of
+# the changes made to Python 1.6.1.
+#
+# 4. CNRI is making Python 1.6.1 available to Licensee on an "AS IS"
+# basis.  CNRI MAKES NO REPRESENTATIONS OR WARRANTIES, EXPRESS OR
+# IMPLIED.  BY WAY OF EXAMPLE, BUT NOT LIMITATION, CNRI MAKES NO AND
+# DISCLAIMS ANY REPRESENTATION OR WARRANTY OF MERCHANTABILITY OR FITNESS
+# FOR ANY PARTICULAR PURPOSE OR THAT THE USE OF PYTHON 1.6.1 WILL NOT
+# INFRINGE ANY THIRD PARTY RIGHTS.
+#
+# 5. CNRI SHALL NOT BE LIABLE TO LICENSEE OR ANY OTHER USERS OF PYTHON
+# 1.6.1 FOR ANY INCIDENTAL, SPECIAL, OR CONSEQUENTIAL DAMAGES OR LOSS AS
+# A RESULT OF MODIFYING, DISTRIBUTING, OR OTHERWISE USING PYTHON 1.6.1,
+# OR ANY DERIVATIVE THEREOF, EVEN IF ADVISED OF THE POSSIBILITY THEREOF.
+#
+# 6. This License Agreement will automatically terminate upon a material
+# breach of its terms and conditions.
+#
+# 7. This License Agreement shall be governed by the federal
+# intellectual property law of the United States, including without
+# limitation the federal copyright law, and, to the extent such
+# U.S. federal law does not apply, by the law of the Commonwealth of
+# Virginia, excluding Virginia's conflict of law provisions.
+# Notwithstanding the foregoing, with regard to derivative works based
+# on Python 1.6.1 that incorporate non-separable material that was
+# previously distributed under the GNU General Public License (GPL), the
+# law of the Commonwealth of Virginia shall govern this License
+# Agreement only as to issues arising under or with respect to
+# Paragraphs 4, 5, and 7 of this License Agreement.  Nothing in this
+# License Agreement shall be deemed to create any relationship of
+# agency, partnership, or joint venture between CNRI and Licensee.  This
+# License Agreement does not grant permission to use CNRI trademarks or
+# trade name in a trademark sense to endorse or promote products or
+# services of Licensee, or any third party.
+#
+# 8. By clicking on the "ACCEPT" button where indicated, or by copying,
+# installing or otherwise using Python 1.6.1, Licensee agrees to be
+# bound by the terms and conditions of this License Agreement.
+#
+#         ACCEPT
+#
+#
+# CWI LICENSE AGREEMENT FOR PYTHON 0.9.0 THROUGH 1.2
+# --------------------------------------------------
+#
+# Copyright (c) 1991 - 1995, Stichting Mathematisch Centrum Amsterdam,
+# The Netherlands.  All rights reserved.
+#
+# Permission to use, copy, modify, and distribute this software and its
+# documentation for any purpose and without fee is hereby granted,
+# provided that the above copyright notice appear in all copies and that
+# both that copyright notice and this permission notice appear in
+# supporting documentation, and that the name of Stichting Mathematisch
+# Centrum or CWI not be used in advertising or publicity pertaining to
+# distribution of the software without specific, written prior
+# permission.
+#
+# STICHTING MATHEMATISCH CENTRUM DISCLAIMS ALL WARRANTIES WITH REGARD TO
+# THIS SOFTWARE, INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+# FITNESS, IN NO EVENT SHALL STICHTING MATHEMATISCH CENTRUM BE LIABLE
+# FOR ANY SPECIAL, INDIRECT OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+# ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT
+# OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+#
+# ZERO-CLAUSE BSD LICENSE FOR CODE IN THE PYTHON DOCUMENTATION
+# ----------------------------------------------------------------------
+#
+# Permission to use, copy, modify, and/or distribute this software for any
+# purpose with or without fee is hereby granted.
+#
+# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+# REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY
+# AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+# INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM
+# LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR
+# OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+# PERFORMANCE OF THIS SOFTWARE.
+
+"""Selectors module.
+
+This module allows high-level and efficient I/O multiplexing, built upon the
+`select` module primitives.
+"""
+
+
+from abc import ABCMeta, abstractmethod
+from collections import namedtuple
+from collections.abc import Mapping
+import math
+import select
+import sys
+
+
+# generic events, that must be mapped to implementation-specific ones
+EVENT_READ = (1 << 0)
+EVENT_WRITE = (1 << 1)
+
+
+def _fileobj_to_fd(fileobj):
+    """Return a file descriptor from a file object.
+
+    Parameters:
+    fileobj -- file object or file descriptor
+
+    Returns:
+    corresponding file descriptor
+
+    Raises:
+    ValueError if the object is invalid
+    """
+    if isinstance(fileobj, int):
+        fd = fileobj
+    else:
+        try:
+            fd = int(fileobj.fileno())
+        except (AttributeError, TypeError, ValueError):
+            raise ValueError("Invalid file object: "
+                             "{!r}".format(fileobj)) from None
+    if fd < 0:
+        raise ValueError("Invalid file descriptor: {}".format(fd))
+    return fd
+
+
+SelectorKey = namedtuple('SelectorKey', ['fileobj', 'fd', 'events', 'data'])
+
+SelectorKey.__doc__ = """SelectorKey(fileobj, fd, events, data)
+
+    Object used to associate a file object to its backing
+    file descriptor, selected event mask, and attached data.
+"""
+SelectorKey.fileobj.__doc__ = 'File object registered.'
+SelectorKey.fd.__doc__ = 'Underlying file descriptor.'
+SelectorKey.events.__doc__ = 'Events that must be waited for on this file object.'
+SelectorKey.data.__doc__ = ('''Optional opaque data associated to this file object.
+For example, this could be used to store a per-client session ID.''')
+
+
+class _SelectorMapping(Mapping):
+    """Mapping of file objects to selector keys."""
+
+    def __init__(self, selector):
+        self._selector = selector
+
+    def __len__(self):
+        return len(self._selector._fd_to_key)
+
+    def get(self, fileobj, default=None):
+        fd = self._selector._fileobj_lookup(fileobj)
+        return self._selector._fd_to_key.get(fd, default)
+
+    def __getitem__(self, fileobj):
+        fd = self._selector._fileobj_lookup(fileobj)
+        key = self._selector._fd_to_key.get(fd)
+        if key is None:
+            raise KeyError("{!r} is not registered".format(fileobj))
+        return key
+
+    def __iter__(self):
+        return iter(self._selector._fd_to_key)
+
+
+class BaseSelector(metaclass=ABCMeta):
+    """Selector abstract base class.
+
+    A selector supports registering file objects to be monitored for specific
+    I/O events.
+
+    A file object is a file descriptor or any object with a `fileno()` method.
+    An arbitrary object can be attached to the file object, which can be used
+    for example to store context information, a callback, etc.
+
+    A selector can use various implementations (select(), poll(), epoll()...)
+    depending on the platform. The default `Selector` class uses the most
+    efficient implementation on the current platform.
+    """
+
+    @abstractmethod
+    def register(self, fileobj, events, data=None):
+        """Register a file object.
+
+        Parameters:
+        fileobj -- file object or file descriptor
+        events  -- events to monitor (bitwise mask of EVENT_READ|EVENT_WRITE)
+        data    -- attached data
+
+        Returns:
+        SelectorKey instance
+
+        Raises:
+        ValueError if events is invalid
+        KeyError if fileobj is already registered
+        OSError if fileobj is closed or otherwise is unacceptable to
+                the underlying system call (if a system call is made)
+
+        Note:
+        OSError may or may not be raised
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def unregister(self, fileobj):
+        """Unregister a file object.
+
+        Parameters:
+        fileobj -- file object or file descriptor
+
+        Returns:
+        SelectorKey instance
+
+        Raises:
+        KeyError if fileobj is not registered
+
+        Note:
+        If fileobj is registered but has since been closed this does
+        *not* raise OSError (even if the wrapped syscall does)
+        """
+        raise NotImplementedError
+
+    def modify(self, fileobj, events, data=None):
+        """Change a registered file object monitored events or attached data.
+
+        Parameters:
+        fileobj -- file object or file descriptor
+        events  -- events to monitor (bitwise mask of EVENT_READ|EVENT_WRITE)
+        data    -- attached data
+
+        Returns:
+        SelectorKey instance
+
+        Raises:
+        Anything that unregister() or register() raises
+        """
+        self.unregister(fileobj)
+        return self.register(fileobj, events, data)
+
+    @abstractmethod
+    def select(self, timeout=None):
+        """Perform the actual selection, until some monitored file objects are
+        ready or a timeout expires.
+
+        Parameters:
+        timeout -- if timeout > 0, this specifies the maximum wait time, in
+                   seconds
+                   if timeout <= 0, the select() call won't block, and will
+                   report the currently ready file objects
+                   if timeout is None, select() will block until a monitored
+                   file object becomes ready
+
+        Returns:
+        list of (key, events) for ready file objects
+        `events` is a bitwise mask of EVENT_READ|EVENT_WRITE
+        """
+        raise NotImplementedError
+
+    def close(self):
+        """Close the selector.
+
+        This must be called to make sure that any underlying resource is freed.
+        """
+        pass
+
+    def get_key(self, fileobj):
+        """Return the key associated to a registered file object.
+
+        Returns:
+        SelectorKey for this file object
+        """
+        mapping = self.get_map()
+        if mapping is None:
+            raise RuntimeError('Selector is closed')
+        try:
+            return mapping[fileobj]
+        except KeyError:
+            raise KeyError("{!r} is not registered".format(fileobj)) from None
+
+    @abstractmethod
+    def get_map(self):
+        """Return a mapping of file objects to selector keys."""
+        raise NotImplementedError
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()
+
+
+class _BaseSelectorImpl(BaseSelector):
+    """Base selector implementation."""
+
+    def __init__(self):
+        # this maps file descriptors to keys
+        self._fd_to_key = {}
+        # read-only mapping returned by get_map()
+        self._map = _SelectorMapping(self)
+
+    def _fileobj_lookup(self, fileobj):
+        """Return a file descriptor from a file object.
+
+        This wraps _fileobj_to_fd() to do an exhaustive search in case
+        the object is invalid but we still have it in our map.  This
+        is used by unregister() so we can unregister an object that
+        was previously registered even if it is closed.  It is also
+        used by _SelectorMapping.
+        """
+        try:
+            return _fileobj_to_fd(fileobj)
+        except ValueError:
+            # Do an exhaustive search.
+            for key in self._fd_to_key.values():
+                if key.fileobj is fileobj:
+                    return key.fd
+            # Raise ValueError after all.
+            raise
+
+    def register(self, fileobj, events, data=None):
+        if (not events) or (events & ~(EVENT_READ | EVENT_WRITE)):
+            raise ValueError("Invalid events: {!r}".format(events))
+
+        key = SelectorKey(fileobj, self._fileobj_lookup(fileobj), events, data)
+
+        if key.fd in self._fd_to_key:
+            raise KeyError("{!r} (FD {}) is already registered"
+                           .format(fileobj, key.fd))
+
+        self._fd_to_key[key.fd] = key
+        return key
+
+    def unregister(self, fileobj):
+        try:
+            key = self._fd_to_key.pop(self._fileobj_lookup(fileobj))
+        except KeyError:
+            raise KeyError("{!r} is not registered".format(fileobj)) from None
+        return key
+
+    def modify(self, fileobj, events, data=None):
+        try:
+            key = self._fd_to_key[self._fileobj_lookup(fileobj)]
+        except KeyError:
+            raise KeyError("{!r} is not registered".format(fileobj)) from None
+        if events != key.events:
+            self.unregister(fileobj)
+            key = self.register(fileobj, events, data)
+        elif data != key.data:
+            # Use a shortcut to update the data.
+            key = key._replace(data=data)
+            self._fd_to_key[key.fd] = key
+        return key
+
+    def close(self):
+        self._fd_to_key.clear()
+        self._map = None
+
+    def get_map(self):
+        return self._map
+
+
+
+class SelectSelector(_BaseSelectorImpl):
+    """Select-based selector."""
+
+    def __init__(self):
+        super().__init__()
+        self._readers = set()
+        self._writers = set()
+
+    def register(self, fileobj, events, data=None):
+        key = super().register(fileobj, events, data)
+        if events & EVENT_READ:
+            self._readers.add(key.fd)
+        if events & EVENT_WRITE:
+            self._writers.add(key.fd)
+        return key
+
+    def unregister(self, fileobj):
+        key = super().unregister(fileobj)
+        self._readers.discard(key.fd)
+        self._writers.discard(key.fd)
+        return key
+
+    if sys.platform == 'win32':
+        def _select(self, r, w, _, timeout=None):
+            r, w, x = select.select(r, w, w, timeout)
+            return r, w + x, []
+    else:
+        _select = select.select
+
+    def select(self, timeout=None):
+        timeout = None if timeout is None else max(timeout, 0)
+        ready = []
+        try:
+            r, w, _ = self._select(self._readers, self._writers, [], timeout)
+        except InterruptedError:
+            return ready
+        r = frozenset(r)
+        w = frozenset(w)
+        rw = r | w
+        fd_to_key_get = self._fd_to_key.get
+        for fd in rw:
+            key = fd_to_key_get(fd)
+            if key:
+                events = ((fd in r and EVENT_READ)
+                          | (fd in w and EVENT_WRITE))
+                ready.append((key, events & key.events))
+        return ready
+
+
+class _PollLikeSelector(_BaseSelectorImpl):
+    """Base class shared between poll, epoll and devpoll selectors."""
+    _selector_cls = None
+    _EVENT_READ = None
+    _EVENT_WRITE = None
+
+    def __init__(self):
+        super().__init__()
+        self._selector = self._selector_cls()
+
+    def register(self, fileobj, events, data=None):
+        key = super().register(fileobj, events, data)
+        poller_events = ((events & EVENT_READ and self._EVENT_READ)
+                         | (events & EVENT_WRITE and self._EVENT_WRITE) )
+        try:
+            self._selector.register(key.fd, poller_events)
+        except:
+            super().unregister(fileobj)
+            raise
+        return key
+
+    def unregister(self, fileobj):
+        key = super().unregister(fileobj)
+        try:
+            self._selector.unregister(key.fd)
+        except OSError:
+            # This can happen if the FD was closed since it
+            # was registered.
+            pass
+        return key
+
+    def modify(self, fileobj, events, data=None):
+        try:
+            key = self._fd_to_key[self._fileobj_lookup(fileobj)]
+        except KeyError:
+            raise KeyError(f"{fileobj!r} is not registered") from None
+
+        changed = False
+        if events != key.events:
+            selector_events = ((events & EVENT_READ and self._EVENT_READ)
+                               | (events & EVENT_WRITE and self._EVENT_WRITE))
+            try:
+                self._selector.modify(key.fd, selector_events)
+            except:
+                super().unregister(fileobj)
+                raise
+            changed = True
+        if data != key.data:
+            changed = True
+
+        if changed:
+            key = key._replace(events=events, data=data)
+            self._fd_to_key[key.fd] = key
+        return key
+
+    def select(self, timeout=None):
+        # This is shared between poll() and epoll().
+        # epoll() has a different signature and handling of timeout parameter.
+        if timeout is None:
+            timeout = None
+        elif timeout <= 0:
+            timeout = 0
+        else:
+            # poll() has a resolution of 1 millisecond, round away from
+            # zero to wait *at least* timeout seconds.
+            timeout = math.ceil(timeout * 1e3)
+        ready = []
+        try:
+            fd_event_list = self._selector.poll(timeout)
+        except InterruptedError:
+            return ready
+
+        fd_to_key_get = self._fd_to_key.get
+        for fd, event in fd_event_list:
+            key = fd_to_key_get(fd)
+            if key:
+                events = ((event & ~self._EVENT_READ and EVENT_WRITE)
+                           | (event & ~self._EVENT_WRITE and EVENT_READ))
+                ready.append((key, events & key.events))
+        return ready
+
+
+if hasattr(select, 'poll'):
+
+    class PollSelector(_PollLikeSelector):
+        """Poll-based selector."""
+        _selector_cls = select.poll
+        _EVENT_READ = select.POLLIN
+        _EVENT_WRITE = select.POLLOUT
+
+
+if hasattr(select, 'epoll'):
+
+    _NOT_EPOLLIN = ~select.EPOLLIN
+    _NOT_EPOLLOUT = ~select.EPOLLOUT
+
+    class EpollSelector(_PollLikeSelector):
+        """Epoll-based selector."""
+        _selector_cls = select.epoll
+        _EVENT_READ = select.EPOLLIN
+        _EVENT_WRITE = select.EPOLLOUT
+
+        def fileno(self):
+            return self._selector.fileno()
+
+        def select(self, timeout=None):
+            if timeout is None:
+                timeout = -1
+            elif timeout <= 0:
+                timeout = 0
+            else:
+                # epoll_wait() has a resolution of 1 millisecond, round away
+                # from zero to wait *at least* timeout seconds.
+                timeout = math.ceil(timeout * 1e3) * 1e-3
+
+            # epoll_wait() expects `maxevents` to be greater than zero;
+            # we want to make sure that `select()` can be called when no
+            # FD is registered.
+            max_ev = len(self._fd_to_key) or 1
+
+            ready = []
+            try:
+                fd_event_list = self._selector.poll(timeout, max_ev)
+            except InterruptedError:
+                return ready
+
+            fd_to_key = self._fd_to_key
+            for fd, event in fd_event_list:
+                key = fd_to_key.get(fd)
+                if key:
+                    events = ((event & _NOT_EPOLLIN and EVENT_WRITE)
+                              | (event & _NOT_EPOLLOUT and EVENT_READ))
+                    ready.append((key, events & key.events))
+            return ready
+
+        def close(self):
+            self._selector.close()
+            super().close()
+
+
+if hasattr(select, 'devpoll'):
+
+    class DevpollSelector(_PollLikeSelector):
+        """Solaris /dev/poll selector."""
+        _selector_cls = select.devpoll
+        _EVENT_READ = select.POLLIN
+        _EVENT_WRITE = select.POLLOUT
+
+        def fileno(self):
+            return self._selector.fileno()
+
+        def close(self):
+            self._selector.close()
+            super().close()
+
+
+if hasattr(select, 'kqueue'):
+
+    class KqueueSelector(_BaseSelectorImpl):
+        """Kqueue-based selector."""
+
+        def __init__(self):
+            super().__init__()
+            self._selector = select.kqueue()
+            self._max_events = 0
+
+        def fileno(self):
+            return self._selector.fileno()
+
+        def register(self, fileobj, events, data=None):
+            key = super().register(fileobj, events, data)
+            try:
+                if events & EVENT_READ:
+                    kev = select.kevent(key.fd, select.KQ_FILTER_READ,
+                                        select.KQ_EV_ADD)
+                    self._selector.control([kev], 0, 0)
+                    self._max_events += 1
+                if events & EVENT_WRITE:
+                    kev = select.kevent(key.fd, select.KQ_FILTER_WRITE,
+                                        select.KQ_EV_ADD)
+                    self._selector.control([kev], 0, 0)
+                    self._max_events += 1
+            except:
+                super().unregister(fileobj)
+                raise
+            return key
+
+        def unregister(self, fileobj):
+            key = super().unregister(fileobj)
+            if key.events & EVENT_READ:
+                kev = select.kevent(key.fd, select.KQ_FILTER_READ,
+                                    select.KQ_EV_DELETE)
+                self._max_events -= 1
+                try:
+                    self._selector.control([kev], 0, 0)
+                except OSError:
+                    # This can happen if the FD was closed since it
+                    # was registered.
+                    pass
+            if key.events & EVENT_WRITE:
+                kev = select.kevent(key.fd, select.KQ_FILTER_WRITE,
+                                    select.KQ_EV_DELETE)
+                self._max_events -= 1
+                try:
+                    self._selector.control([kev], 0, 0)
+                except OSError:
+                    # See comment above.
+                    pass
+            return key
+
+        def select(self, timeout=None):
+            timeout = None if timeout is None else max(timeout, 0)
+            # If max_ev is 0, kqueue will ignore the timeout. For consistent
+            # behavior with the other selector classes, we prevent that here
+            # (using max). See https://bugs.python.org/issue29255
+            max_ev = self._max_events or 1
+            ready = []
+            try:
+                kev_list = self._selector.control(None, max_ev, timeout)
+            except InterruptedError:
+                return ready
+
+            fd_to_key_get = self._fd_to_key.get
+            for kev in kev_list:
+                fd = kev.ident
+                flag = kev.filter
+                key = fd_to_key_get(fd)
+                if key:
+                    events = ((flag == select.KQ_FILTER_READ and EVENT_READ)
+                              | (flag == select.KQ_FILTER_WRITE and EVENT_WRITE))
+                    ready.append((key, events & key.events))
+            return ready
+
+        def close(self):
+            self._selector.close()
+            super().close()
+
+
+def _can_use(method):
+    """Check if we can use the selector depending upon the
+    operating system. """
+    # Implementation based upon https://github.com/sethmlarson/selectors2/blob/master/selectors2.py
+    selector = getattr(select, method, None)
+    if selector is None:
+        # select module does not implement method
+        return False
+    # check if the OS and Kernel actually support the method. Call may fail with
+    # OSError: [Errno 38] Function not implemented
+    try:
+        selector_obj = selector()
+        if method == 'poll':
+            # check that poll actually works
+            selector_obj.poll(0)
+        else:
+            # close epoll, kqueue, and devpoll fd
+            selector_obj.close()
+        return True
+    except OSError:
+        return False
+
+
+# Choose the best implementation, roughly:
+#    epoll|kqueue|devpoll > poll > select.
+# select() also can't accept a FD > FD_SETSIZE (usually around 1024)
+if _can_use('kqueue'):
+    DefaultSelector = KqueueSelector
+elif _can_use('epoll'):
+    DefaultSelector = EpollSelector
+elif _can_use('devpoll'):
+    DefaultSelector = DevpollSelector
+elif _can_use('poll'):
+    DefaultSelector = PollSelector
+else:
+    DefaultSelector = SelectSelector

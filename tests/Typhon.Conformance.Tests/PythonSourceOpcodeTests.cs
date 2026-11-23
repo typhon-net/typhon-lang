@@ -64,6 +64,26 @@ public sealed class PythonSourceOpcodeTests
     }
 
     [Fact]
+    public void PythonSourceOpcodeMatchesManagedApi()
+    {
+        string? python = Python315(out string lib);
+        if (python == null) return;
+
+        string directory = Directory.CreateTempSubdirectory("typhon-opcode-backends-").FullName;
+        try
+        {
+            string script = Path.Combine(directory, "probe.ty");
+            File.WriteAllText(script, $"#:pylib {lib}\n" + File.ReadAllText(Suite.CasePath("native_opcode_api")));
+            var expected = Suite.Run(python, [script], TimeSpan.FromMinutes(1));
+            Assert.True(expected.ExitCode == 0, expected.StdErr);
+            var actual = Suite.Run("dotnet", [Suite.Cli, "run", script, "--no-cache", "--no-server"], TimeSpan.FromMinutes(3));
+            Assert.True(actual.ExitCode == 0, actual.StdErr);
+            Assert.Equal(Suite.Normalize(expected.StdOut), Suite.Normalize(actual.StdOut));
+        }
+        finally { Directory.Delete(directory, recursive: true); }
+    }
+
+    [Fact]
     public void CPythonMarshalCodeLocations()
     {
         string? python = Python315(out string lib);

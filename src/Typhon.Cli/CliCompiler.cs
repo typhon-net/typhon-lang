@@ -123,6 +123,9 @@ internal static class CliCompiler
         string? aspNetReason = null;
         // #:pylib: modules neither the folder nor the runtime has come from CPython's standard library source
         string? pylib = null;
+        string bundledLib = Path.Combine(AppContext.BaseDirectory, "Lib");
+        var sourceBackends = new HashSet<string>(StringComparer.Ordinal);
+        bool ProvidedByTyphon(string name) => PyLib.ProvidedByTyphon(name, project.BigInts, sourceBackends.Contains(name));
         ModuleInfo ReadModule(string path, string name, bool isPackage)
         {
             string source = ReadSource(path, output.Probes);
@@ -136,6 +139,22 @@ internal static class CliCompiler
                 if (pylib == null) output.Messages.Add($"{path}: warning TY0102: #:pylib: no CPython standard library found (give #:pylib DIR or set TYPHON_PYLIB)");
             }
             var m = TyphonCompiler.Parse(path, source, name, "");
+            if (name == "__main__" && pylib != null)
+                foreach (var import in TyphonCompiler.Imports(m))
+                {
+                    IEnumerable<string> names = import switch
+                    {
+                        ImportStmt direct => direct.Names.Select(alias => alias.Name),
+                        ImportFromStmt { Level: 0, Module: { } module } => new[] { module },
+                        _ => [],
+                    };
+                    foreach (string imported in names)
+                    {
+                        if (imported == "ast") sourceBackends.Add("ast");
+                        if (imported is "opcode" or "dis")
+                            sourceBackends.UnionWith(["opcode", "dis", "_opcode_metadata"]);
+                    }
+                }
             if (m.BigIntPragma) project.BigInts = true;
             if (isPackage)
             {
@@ -152,7 +171,7 @@ internal static class CliCompiler
         var runtimePackages = new Dictionary<string, bool>(StringComparer.Ordinal);
         bool IsRuntimePackage(string name)
         {
-            if (pylib == null || !PyLib.ProvidedByTyphon(name, project.BigInts)) return false;
+            if (pylib == null || !ProvidedByTyphon(name)) return false;
             if (runtimePackages.TryGetValue(name, out bool cached)) return cached;
             var (initializer, _) = PyLib.SourceCandidates(pylib, name).First();
             bool exists = File.Exists(initializer);
@@ -170,10 +189,12 @@ internal static class CliCompiler
             var parent = dot < 0 ? null : Discover(parentName);
             IEnumerable<(string Path, bool Package)> choices = PyLib.SourceCandidates(dir, name, TyphonCompiler.FileExtension);
             // A library child may be supplied by source even if its package is provided by the runtime.
-            if (pylib != null && !PyLib.ProvidedByTyphon(name, project.BigInts) &&
+            if (pylib != null && !ProvidedByTyphon(name) &&
                 (dot < 0 || parent?.IsPackage == true && parent.Path.StartsWith(Path.EndsInDirectorySeparator(pylib) ? pylib : pylib + Path.DirectorySeparatorChar, StringComparison.Ordinal) ||
                  parent == null && IsRuntimePackage(parentName)))
                 choices = choices.Concat(PyLib.SourceCandidates(pylib, name));
+            if (!ProvidedByTyphon(name))
+                choices = choices.Concat(PyLib.SourceCandidates(bundledLib, name, TyphonCompiler.FileExtension));
             foreach (var (candidate, package) in choices)
             {
                 if (File.Exists(candidate))

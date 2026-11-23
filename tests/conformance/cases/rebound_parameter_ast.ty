@@ -1,0 +1,11 @@
+import ast
+
+def extract(value):
+    if isinstance(value, str):
+        value = ast.parse(value.lstrip(), mode="eval").body
+    elif isinstance(value, ast.Expression):
+        value = value.body
+    return value.value
+
+print(extract("  42"))
+print(extract(ast.parse("97", mode="eval")))

@@ -50,9 +50,15 @@ namespace Typhon.Compiler.Syntax
         static string Root(Expr d) => Name(d)?.Split('.')[0];
 
         internal static bool IsStringEnumDecorator(Expr expression) =>
+            SimpleEnumBase(expression) is "StrEnum" or "enum.StrEnum";
+
+        internal static bool IsIntegerEnumDecorator(Expr expression) =>
+            SimpleEnumBase(expression) is "IntEnum" or "enum.IntEnum";
+
+        static string SimpleEnumBase(Expr expression) =>
             expression is CallExpr { Args.Count: 1 } decorator &&
-            Name(decorator.Func) is "_simple_enum" or "enum._simple_enum" &&
-            Name(decorator.Args[0].Value) is "StrEnum" or "enum.StrEnum";
+            Name(decorator.Func) is "_simple_enum" or "enum._simple_enum"
+                ? Name(decorator.Args[0].Value) : null;
 
         public static bool IsCachedProperty(Expr decorator, ModuleAst module)
         {
@@ -130,7 +136,7 @@ namespace Typhon.Compiler.Syntax
                         foreach (var nested in c.Body.OfType<ClassDef>()) Rewrite(new List<Stmt> { nested }, names, module);
                         // a class decorator runs where the class is defined, with the class (registries, markers); its result
                         // must be the class itself (Typhon classes are not rebound)
-                        var classPython = c.Decorators.Where(d => !IsStringEnumDecorator(d) && IsPythonDecorator(d, names)).ToList();
+                        var classPython = c.Decorators.Where(d => !IsStringEnumDecorator(d) && !IsIntegerEnumDecorator(d) && IsPythonDecorator(d, names)).ToList();
                         if (classPython.Count > 0)
                         {
                             Expr applied = new NameExpr { Id = c.Name, Line = c.Line, Col = c.Col };

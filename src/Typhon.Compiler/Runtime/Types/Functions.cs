@@ -423,6 +423,11 @@ namespace Typhon.Runtime
         {
             if (TryCustomAllocation(t, args, null, out var allocated)) return allocated;
             Typhon.Stdlib._abc.CheckAbstract(t);
+            if (typeof(PyIntegerEnum).IsAssignableFrom(t))
+            {
+                if (args.Length != 1) throw new InvalidCastException($"{t.Name}() needs one value");
+                return PyIntegerEnum.Lookup(t, args[0]);
+            }
             if (typeof(PyStrEnum).IsAssignableFrom(t))
             {
                 if (args.Length != 1) throw new InvalidCastException($"{t.Name}() expected one value");

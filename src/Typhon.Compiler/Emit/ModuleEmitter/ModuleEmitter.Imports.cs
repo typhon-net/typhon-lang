@@ -347,7 +347,7 @@ namespace Typhon.Compiler.Emit
                     string l = local ?? name.Split('.')[0];
                     // import a.b binds a. The standard library represents b as a nested type.
                     if (local == null && name.Contains(".")) stdlib = StdlibType(l);
-                    BindRuntimeModule(l, stdlib);
+                    BindRuntimeModule(l, stdlib, name == "_ast" ? name : null);
                     continue;
                 }
                 if (_r.TypeExists(name))
@@ -366,8 +366,9 @@ namespace Typhon.Compiler.Emit
         }
 
         readonly HashSet<string> _qualifiedRuntimeModuleImports = new HashSet<string>();
+        readonly Dictionary<string, string> _runtimeModuleAliases = new Dictionary<string, string>();
 
-        void BindRuntimeModule(string name, string metadata)
+        void BindRuntimeModule(string name, string metadata, string importedName = null)
         {
             // A generated namespace or global type can reserve the CLR name of a native import.
             if (_p.Modules.Values.Any(module => module.Namespace == name || module.Namespace.StartsWith(name + ".", StringComparison.Ordinal) ||
@@ -375,11 +376,15 @@ namespace Typhon.Compiler.Emit
                 _qualifiedRuntimeModuleImports.Add(name);
             else _usingLines.Add($"using {Esc(name)} = {CsTypeName(metadata)};");
             _dotnetAliases[name] = metadata;
+            if (importedName != null) _runtimeModuleAliases[name] = importedName;
         }
 
         bool RuntimeExport(string module, string metadata, string name) =>
-            _r.GetMembers(metadata, name).Count > 0 || AnyArity(metadata + "+" + name, out _) ||
-            StdlibType(module + "." + name) != null;
+            module == "_ast"
+                ? name.StartsWith("PyCF_", StringComparison.Ordinal) && _r.GetMembers(metadata, name).Count > 0 ||
+                  name is not ("NodeVisitor" or "NodeTransformer") && AnyArity(metadata + "+" + name, out _)
+                : _r.GetMembers(metadata, name).Count > 0 || AnyArity(metadata + "+" + name, out _) ||
+                  StdlibType(module + "." + name) != null;
 
         ModuleInfo RuntimePackageChild(string package, string metadata, string name) =>
             name != "*" && !RuntimeExport(package, metadata, name) ? _p.FindModule(package + "." + name) : null;
@@ -464,6 +469,11 @@ namespace Typhon.Compiler.Emit
                 _staticTypes.Add(meta);
                 foreach (var a in s.Names)
                 {
+                    if (modName == "_ast" && a.Name != "*" && !RuntimeExport(modName, meta, a.Name))
+                    {
+                        Report(s, "TY0102", Severity.Error, $"cannot import name '{a.Name}' from '{modName}'");
+                        continue;
+                    }
                     if (modName == "_typing" && a.Name == "Union") _typingUnionImports.Add(a.AsName ?? a.Name);
                     if (stdlib != null)
                     {
@@ -474,7 +484,7 @@ namespace Typhon.Compiler.Emit
                             _qualifiedPackageImports.Add(bound);
                             continue;
                         }
-                        if (a.Name == "*") _stdlibStar.Add(meta);
+                        if (a.Name == "*") _stdlibStar.Add((modName, meta));
                         else if (a.AsName == null)
                         {
                             _stdlibImported[a.Name] = meta;
@@ -784,6 +794,7 @@ namespace Typhon.Compiler.Emit
         string StdlibType(string dotted)
         {
             dotted = PublicModule(dotted);
+            if (dotted == "_ast") dotted = "ast";
             var parts = dotted.Split('.');
             foreach (var head in new[] { parts[0], parts[0] + "_" })
             {

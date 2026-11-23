@@ -34,6 +34,18 @@ namespace Typhon.Compiler.Semantics
 
         public bool TypeExists(string metadataName) => Find(metadataName) != null;
 
+        // A sealed CLR type can only match its own type, a base type, or an implemented interface.
+        internal bool? SealedTypeMatches(string actualMetadata, string targetMetadata)
+        {
+            var actual = Find(actualMetadata);
+            var target = Find(targetMetadata);
+            if (actual == null || !actual.IsSealed || target == null) return null;
+            var comparer = SymbolEqualityComparer.Default;
+            for (var ancestor = actual; ancestor != null; ancestor = ancestor.BaseType)
+                if (comparer.Equals(ancestor, target)) return true;
+            return actual.AllInterfaces.Any(implemented => comparer.Equals(implemented, target));
+        }
+
         internal bool AllowsTypeParameterConstraint(string metadataName)
         {
             var type = Find(metadataName);
@@ -153,6 +165,8 @@ namespace Typhon.Compiler.Semantics
                                                   IsDelegateBase = elem.SpecialType == SpecialType.System_Delegate || elem.SpecialType == SpecialType.System_MulticastDelegate,
                                                               IsArray = !p.IsParams && p.Type is IArrayTypeSymbol,
                                                   BigAccepts = bigAccepts, BigNarrowTo = bigNarrow, IsBigInteger = isBig, TakesFunction = takesFunction,
+                                                  HasConcreteCallbackInput = elem is INamedTypeSymbol { DelegateInvokeMethod.Parameters.Length: 1 } callback &&
+                                                      callback.DelegateInvokeMethod.Parameters[0].Type is INamedTypeSymbol { IsGenericType: false },
                                                   GenericType = GenericDisplay(elem) });
             }
             return sig;

@@ -1,0 +1,15 @@
+int
+Assignment expressions are only supported in Python 3.8 and greater
+Unsupported major version: 2
+['Expr', 'Assign', 'ClassDef', 'FunctionDef']
+Name __debug__
+Expr Expr
+['Expr', 'Assign', 'ClassDef', 'FunctionDef']
+Constant False
+Expr Expr
+['Assign', 'ClassDef', 'FunctionDef']
+Constant False
+Pass Pass
+Expr
+Pass 0 4
+True

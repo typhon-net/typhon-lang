@@ -215,7 +215,7 @@ namespace Typhon.Compiler.Emit
             {
                 foreach (var b in c.Bases)
                     if ((b is SubscriptExpr bs ? bs.Target : b) is NameExpr bn && (bn.Id == "list" || bn.Id == "dict" || bn.Id == "set") && !IsShadowed(bn.Id))
-                        return MapType(b, c);
+                        return MapType(b, c, preserveClrType: true);
                 c = c.Bases.Count > 0 && ResolveBase(c.Bases[0], out var py, out _) ? py : null;
             }
             return null;

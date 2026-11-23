@@ -62,6 +62,8 @@ namespace Typhon.Compiler.Semantics
         public bool IsArray;
         /// <summary>The parameter takes a function: a delegate type, an expression tree, or a type parameter (which may bind to one).</summary>
         public bool TakesFunction;
+        /// <summary>A one-argument delegate supplies its concrete input type to a lambda.</summary>
+        public bool HasConcreteCallbackInput;
         /// <summary>The parameter type as C# code with the method's type parameters left in ("List&lt;T&gt;", "IEnumerable&lt;T&gt;").</summary>
         public string GenericType;
         /// <summary>Big-int mode: a System.Numerics.BigInteger converts implicitly (BigInteger, object, a type parameter, ...).</summary>
