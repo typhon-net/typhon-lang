@@ -1,0 +1,12 @@
+"""Start."""
+
+
+def enabled(answer: bool) -> bool:
+    return answer
+
+
+if enabled(True):
+    __doc__ += " more"
+    __doc__ += " end."
+
+print(__doc__)

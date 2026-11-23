@@ -392,9 +392,29 @@ namespace Typhon.Stdlib
     internal static class tempfile
     {
         public static string gettempdir() => System.IO.Path.GetTempPath().TrimEnd(System.IO.Path.DirectorySeparatorChar);
+        static string TemporaryName(string? suffix, string? prefix, string? dir) =>
+            System.IO.Path.Combine(dir ?? gettempdir(), (prefix ?? "tmp") + System.IO.Path.GetRandomFileName().Replace(".", "") + suffix);
+
+        public static dynamic TemporaryFile(string mode = "w+b", long buffering = -1, string? encoding = null,
+            string? newline = null, string? suffix = null, string? prefix = null, string? dir = null, [PyKeywordOnly] string? errors = null)
+        {
+            string path = TemporaryName(suffix, prefix, dir);
+            var opener = new PyClosure("temporary file opener", (args, _) =>
+            {
+                long flags = (long)args[1]! | os_.O_CREAT | os_.O_EXCL | os_.O_TEMPORARY;
+                long descriptor = os_.open(path, flags, 0x180);
+                if (!OperatingSystem.IsWindows())
+                {
+                    try { os_.unlink(path); }
+                    catch { os_.close(descriptor); throw; }
+                }
+                return descriptor;
+            });
+            return io.open(path, mode, buffering, encoding, errors, newline, opener: opener);
+        }
         public static string mkdtemp(string suffix = "", string prefix = "tmp", string? dir = null)
         {
-            string path = System.IO.Path.Combine(dir ?? gettempdir(), prefix + System.IO.Path.GetRandomFileName().Replace(".", "") + suffix);
+            string path = TemporaryName(suffix, prefix, dir);
             System.IO.Directory.CreateDirectory(path);
             return path;
         }
@@ -443,7 +463,7 @@ namespace Typhon.Stdlib
 
         public static (long, string) mkstemp(string suffix = "", string prefix = "tmp", string? dir = null)
         {
-            string path = System.IO.Path.Combine(dir ?? gettempdir(), prefix + System.IO.Path.GetRandomFileName().Replace(".", "") + suffix);
+            string path = TemporaryName(suffix, prefix, dir);
             System.IO.File.WriteAllBytes(path, Array.Empty<byte>());
             return (0, path);
         }

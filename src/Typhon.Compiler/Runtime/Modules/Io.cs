@@ -696,10 +696,7 @@ namespace Typhon.Stdlib
         /// <summary>io.StringIO: an in-memory text stream (the implementation is Typhon.Runtime.StringIO).</summary>
         internal class StringIO : Typhon.Runtime.StringIO
         {
-            // (separate overloads rather than defaults: a Python subclass inherits each, so MyIO() and MyIO("text") both work)
-            public StringIO() : base("", "\n") { }
-            public StringIO(string? initial_value) : base(initial_value ?? "", "\n") { }
-            public StringIO(string? initial_value, string? newline) : base(initial_value ?? "", newline) { }
+            public StringIO(string? initial_value = null, string? newline = "\n") : base(initial_value ?? "", newline) { }
         }
     }
 }

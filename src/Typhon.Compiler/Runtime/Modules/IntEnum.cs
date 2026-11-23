@@ -103,48 +103,27 @@ namespace Typhon.Runtime
         public long __len__() => IterableMembers.LongCount();
     }
 
-    internal abstract class PyIntegerEnum : IPyRepr, IComparable
+    internal abstract class PyIntegerEnum : PyInteger
     {
-        internal BigInteger Integer { get; private set; }
         internal string? _name_ = "";
         internal virtual PyIntEnumType? DynamicEnumType => null;
         internal virtual string EnumName => DynamicEnumType?.Name ?? GetType().Name;
         protected virtual string? EnumReprModule => null;
         public string? name => _name_;
-        public dynamic value => Integer >= long.MinValue && Integer <= long.MaxValue ? (object)(long)Integer : Integer;
+        public dynamic value => PrimitiveValue;
 
         protected PyIntegerEnum() { }
 
-        protected PyIntegerEnum(string? name, BigInteger integer)
-        {
-            _name_ = name;
-            Integer = integer;
-        }
+        protected PyIntegerEnum(string? name, BigInteger integer) : base(integer) => _name_ = name;
 
-        public dynamic __int__() => value;
-        public dynamic __index__() => value;
-        public override string ToString() => Integer.ToString(CultureInfo.InvariantCulture);
-        public string __repr__()
+        public override string __repr__()
         {
             if (EnumReprModule is string module) return $"{module}.{name}";
             string valueText = Integer.ToString(CultureInfo.InvariantCulture);
             return name == null ? $"<{EnumName}: {valueText}>" : $"<{EnumName}.{name}: {valueText}>";
         }
-        public override bool Equals(object? other) => other is PyIntegerEnum member
-            ? Integer == member.Integer : Builtins.eq((object)value, other);
-        public override int GetHashCode() => Builtins.KeyHash((object)value);
-        public int CompareTo(object? other) => Integer.CompareTo(PyIntEnumType.Integer(other));
-
-        public static BigInteger operator +(PyIntegerEnum member, BigInteger offset) => member.Integer + offset;
-        public static BigInteger operator +(BigInteger offset, PyIntegerEnum member) => offset + member.Integer;
-        public static BigInteger operator -(PyIntegerEnum member, BigInteger offset) => member.Integer - offset;
-
-        internal static PyIntegerEnum Allocate(Type type, object? input)
-        {
-            var member = (PyIntegerEnum)RuntimeHelpers.GetUninitializedObject(type);
-            member.Integer = PyIntEnumType.Integer(input);
-            return member;
-        }
+        internal static PyIntegerEnum Allocate(Type type, object? input) =>
+            (PyIntegerEnum)AllocateSubclass(type, PyIntEnumType.Integer(input));
 
         internal static BigInteger NextAutoValue(IEnumerable<BigInteger> values) =>
             values.DefaultIfEmpty(BigInteger.Zero).Max() + BigInteger.One;

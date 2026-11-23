@@ -1,0 +1,16 @@
+import _symtable
+
+sources = (
+    "def f[T](value: T) -> T: return value\nclass D[T](Base[T]): pass",
+    "from __future__ import annotations\nx: A = 3\ndef f(x: B) -> C: return x",
+    "def f():\n    global x\n    x = 1\n",
+)
+
+def dump(table):
+    print(table.name, table.type, table.nested, table.lineno)
+    print(list(table.symbols.items()))
+    for child in table.children:
+        dump(child)
+
+for source in sources:
+    dump(_symtable.symtable(source, "<annotations>", "exec"))

@@ -1,0 +1,4 @@
+#:pylib-source csv
+import csv
+
+print(csv.Sniffer().has_header("name,count\nalpha,10\nbeta,20\n"))

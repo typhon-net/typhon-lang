@@ -1,0 +1,22 @@
+top 2 0 0
+[('f', 4098), ('D', 4098)]
+f 5 0 1
+[('.defaults', 4100), ('T', 21506)]
+__annotate__ 3 1 1
+[('.format', 4116), ('T', 16400)]
+f 0 1 1
+[('value', 4116)]
+D 5 0 2
+[('.type_params', 20498), ('.generic_base', 4114), ('T', 5138), ('Base', 12304)]
+D 1 1 2
+[('__type_params__', 4098), ('.type_params', 16400)]
+top 2 0 0
+[('annotations', 4224), ('x', 4354), ('__conditional_annotations__', 12304), ('f', 4098)]
+f 0 0 3
+[('x', 4116)]
+top 2 0 0
+[('f', 4098), ('x', 8193)]
+__annotate__ 3 0 1
+[('.format', 4116)]
+f 0 0 1
+[('x', 8195)]

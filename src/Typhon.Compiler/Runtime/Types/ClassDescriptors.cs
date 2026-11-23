@@ -230,16 +230,18 @@ namespace Typhon.Runtime
             return callable;
         }
 
-        static object? Invoke(IEnumerable<MethodInfo> methods, string name, object? target, object?[] args, IDictionary<string, object?>? keywords)
+        static object? Invoke(IEnumerable<MethodInfo> methods, string name, object? target, object?[] args,
+            IDictionary<string, object?>? keywords, IDictionary<string, object?>? defaults = null)
         {
-            var method = PyArgs.Best(methods, args, keywords, out var call) ?? throw PyArgs.NoFit(name, keywords, methods);
+            var method = PyArgs.Best(methods, args, keywords, out var call, defaults) ?? throw PyArgs.NoFit(name, keywords, methods);
             return PyBoundMethod.InvokeDeclared(method, target, call);
         }
 
         static object Receiver(string name, object?[] args) => args.Length > 0 && args[0] != null ? args[0]! :
             throw new InvalidCastException($"{name}() requires an instance");
 
-        static PyClosure InstanceFunction(Type type, string name, MethodInfo[] methods, PySourceAttribute? source)
+        static PyClosure InstanceFunction(Type type, string name, MethodInfo[] methods, PySourceAttribute? source,
+            IDictionary<string, object?>? defaults = null)
         {
             var method = methods.FirstOrDefault();
             var unbound = type.GetMethod("__typhon_unbound_" + name, Declared);
@@ -247,8 +249,8 @@ namespace Typhon.Runtime
             {
                 object receiver = Receiver(name, args);
                 return unbound != null && !type.IsInstanceOfType(receiver)
-                    ? Invoke([unbound], name, null, args, keywords)
-                    : Invoke(methods, name, receiver, args[1..], keywords);
+                    ? Invoke([unbound], name, null, args, keywords, defaults)
+                    : Invoke(methods, name, receiver, args[1..], keywords, defaults);
             });
             if (method?.GetCustomAttribute<PyDataclassReprAttribute>() is { } generated &&
                 type.GetMethod(generated.Body, Declared) is MethodInfo implementation)
@@ -262,14 +264,25 @@ namespace Typhon.Runtime
             return callable;
         }
 
-        internal static PyClosure ClassBodyFunction(Type type, string name, string implementation)
+        internal static PyClosure ClassBodyFunction(Type type, string name, string implementation,
+            IDictionary<string, object?>? defaults = null)
         {
             var methods = type.GetMethods(Declared).Where(m => m.Name == implementation).ToArray();
             var method = methods.FirstOrDefault();
             var source = method?.GetCustomAttribute<PySourceAttribute>();
-            return method?.IsStatic == true
-                ? Callable(type, name, source, method, (args, keywords) => Invoke(methods, name, null, args, keywords))
-                : InstanceFunction(type, name, methods, source);
+            var callable = method?.IsStatic == true
+                ? Callable(type, name, source, method, (args, keywords) => Invoke(methods, name, null, args, keywords, defaults))
+                : InstanceFunction(type, name, methods, source, defaults);
+            if (defaults != null && callable._signature is { } signature)
+                callable._signature = () =>
+                {
+                    var selected = signature();
+                    var parameters = selected.Arguments.Select(parameter => defaults.TryGetValue(parameter.name, out var value)
+                        ? new inspect.Parameter(parameter.name, parameter.kind, value, (object?)parameter.annotation)
+                        : parameter);
+                    return new inspect.Signature(parameters, (object?)selected.return_annotation);
+                };
+            return callable;
         }
 
         sealed class ClassNamespace : IDictionary

@@ -9,6 +9,7 @@ namespace Typhon.Runtime
     using System.Runtime.InteropServices;
     using System.Collections;
     using System.Collections.Generic;
+    using System.Linq;
     using Typhon.Stdlib;
 
     internal sealed class ExecutionScope
@@ -145,8 +146,25 @@ namespace Typhon.Runtime
             };
         }
 
-        public static void exec(object? source, object? globals = null, object? locals = null) =>
+        public static void exec(object? source, object? globals = null, object? locals = null, [PyKeywordOnly] object? closure = null)
+        {
+            if (source is types.CodeType code)
+            {
+                int count = code.co_freevars.Count;
+                if (count == 0 && closure != null)
+                    throw new InvalidCastException("cannot use a closure with this code object");
+                if (count != 0)
+                {
+                    if (closure is not System.Runtime.CompilerServices.ITuple cells || cells.Length != count ||
+                        Enumerable.Range(0, count).Any(index => cells[index] is not types.CellType))
+                        throw new InvalidCastException($"code object requires a closure of exactly length {count}");
+                    throw new NotSupportedException("the Typhon runtime cannot execute code objects with free variables");
+                }
+            }
+            else if (closure != null)
+                throw new InvalidCastException("closure can only be used when source is a code object");
             ExecuteCode(source, globals, locals, "exec");
+        }
 
         public static dynamic? eval(object? source, object? globals = null, object? locals = null) =>
             ExecuteCode(source is string text ? text.Trim(' ', '\t') : source, globals, locals, "eval");

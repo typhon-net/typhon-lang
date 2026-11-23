@@ -239,12 +239,11 @@ namespace Typhon.Runtime
         {
             if (of == typeof(object)) return true;
             if (cls == of) return true;
-            if (cls is PyIntEnumType || typeof(PyIntegerEnum).IsAssignableFrom(cls))
-            {
-                if (of == typeof(long) || of == typeof(BigInteger)) return true;
-                if (of == typeof(Typhon.Stdlib.@enum.IntEnum) &&
-                    cls.BaseType != typeof(Typhon.Stdlib.@enum.IntFlag) && !typeof(PyIntegerFlag).IsAssignableFrom(cls)) return true;
-            }
+            if ((of == typeof(long) || of == typeof(BigInteger)) &&
+                (cls is PyIntEnumType || typeof(PyInteger).IsAssignableFrom(cls))) return true;
+            if (of == typeof(Typhon.Stdlib.@enum.IntEnum) &&
+                (cls is PyIntEnumType || typeof(PyIntegerEnum).IsAssignableFrom(cls)) &&
+                cls.BaseType != typeof(Typhon.Stdlib.@enum.IntFlag) && !typeof(PyIntegerFlag).IsAssignableFrom(cls)) return true;
             if (of == typeof(string) && (typeof(PyString).IsAssignableFrom(cls) || typeof(PyStrEnum).IsAssignableFrom(cls))) return true;
             if (of == typeof(Type) && PyMetaclasses.IsMetaclass(cls)) return true;
             if (PyDictViews.Name(cls) is string view && (PyDictViews.Name(of) == view ||

@@ -121,7 +121,11 @@ namespace Typhon.Compiler.Emit
             {
                 string bn = DottedName(b is SubscriptExpr bs ? bs.Target : b);
                 if (IsInterfaceProtocolBase(b, _m)) { isInterface = true; continue; }
-                if (bn == "Enum" || bn == "IntEnum" || bn == "enum.Enum" || bn == "enum.IntEnum") { isEnum = true; continue; }
+                if (IsManagedEnumBase(c, b, "Enum") || IsManagedEnumBase(c, b, "IntEnum"))
+                {
+                    isEnum = true;
+                    continue;
+                }
                 if (bn is "ABC" or "abc.ABC" && (!ResolveBase(b, out var abc, out _) || abc == null))
                 { isAbstract = true; continue; }
                 if (bn == "object" || bn == "Generic" || bn == "typing.Generic" || !_m.IsGdScript && BuiltinTypeBase(b)) continue;
@@ -150,9 +154,8 @@ namespace Typhon.Compiler.Emit
             string vis = Visibility(c.Name, topLevel: true);
             if (vis == "public" && DerivesFromInternalClass(c)) vis = "internal";
             string kind = isInterface ? "partial interface" : (isAbstract ? "abstract partial class" : (ctx.IsSealed ? "sealed partial class" : "partial class"));
-            var baseTypes = bases.Select(b => BuiltinStringBase(b) ? "global::Typhon.Runtime.PyString" :
-                BuiltinTupleBase(b) ? "global::Typhon.Runtime.PyTupleSubclass" :
-                (RuntimeClassBase(b) ?? MappingBaseMetadata(b)) is string runtime ? CsTypeName(runtime) : MapType(b, c, preserveClrType: true)).ToList();
+            var baseTypes = bases.Select(b => (ImmutableBuiltinBase(b) ?? RuntimeClassBase(b) ?? MappingBaseMetadata(b))
+                is string runtime ? CsTypeName(runtime) : MapType(b, c, preserveClrType: true)).ToList();
             if (!_m.IsGdScript && HasMultipleBuiltinExceptionBases(_m, c))
             {
                 _w.Line($"[global::Typhon.Runtime.PyExceptionBases({string.Join(", ", baseTypes.Select(type => $"typeof({type})"))})]");
@@ -332,7 +335,7 @@ namespace Typhon.Compiler.Emit
             return Checked(EmitExpr(new CallExpr { Func = factory, Line = factory.Line, Col = factory.Col }, targetTyped: true));
         }
 
-        static bool IsIntEnum(ClassDef c) => c.Bases.Any(b => DottedName(b) is "IntEnum" or "enum.IntEnum");
+        bool IsIntEnum(ClassDef c) => c.Bases.Any(basis => IsManagedEnumBase(c, basis, "IntEnum"));
 
         /// <summary>Is the C# type a Typhon IntEnum (whose members are ints in arithmetic)?</summary>
         bool IsIntEnumType(string t) => t != null && ClassKeyOfType(t, out _) is string key && ClassDefOfKey(key) is ClassDef cd && IsIntEnum(cd) && !IsObjectIntegerEnum(cd);
@@ -398,6 +401,17 @@ namespace Typhon.Compiler.Emit
             return false;
         }
 
+        string ImmutableBuiltinBase(Expr expression) =>
+            BuiltinStringBase(expression) ? "Typhon.Runtime.PyString" :
+            BuiltinIntegerBase(expression) ? "Typhon.Runtime.PyInteger" :
+            BuiltinTupleBase(expression) ? "Typhon.Runtime.PyTupleSubclass" : null;
+
+        bool BuiltinIntegerBase(Expr expression) => !_m.IsGdScript &&
+            expression is NameExpr { Id: "int" } && !IsShadowed("int");
+
+        bool HasIntegerBase(ClassDef definition, int depth = 0) => depth < 20 &&
+            (definition.Bases.Any(BuiltinIntegerBase) || TyphonBases(definition).Any(parent => HasIntegerBase(parent, depth + 1)));
+
         bool BuiltinStringBase(Expr expression) => !_m.IsGdScript && expression is NameExpr { Id: "str" } && !IsShadowed("str");
         bool BuiltinTupleBase(Expr expression) => !_m.IsGdScript &&
             expression is NameExpr { Id: "tuple" } && !IsShadowed("tuple");
@@ -437,8 +451,7 @@ namespace Typhon.Compiler.Emit
             if (b is SubscriptExpr s) { target = s.Target; arity = s.Index is TupleExpr t ? t.Elts.Count : 1; }
             string dotted = DottedName(target);
             if (dotted == null) return false;
-            if (BuiltinStringBase(b)) { meta = "Typhon.Runtime.PyString"; return true; }
-            if (BuiltinTupleBase(b)) { meta = "Typhon.Runtime.PyTupleSubclass"; return true; }
+            if ((meta = ImmutableBuiltinBase(b)) != null) return true;
             if (arity > 0 && MappingBaseMetadata(b) is string mapping) { meta = mapping; return true; }
             if (arity == 0 && (dotted is "property" or "classmethod" or "staticmethod") && !IsShadowed(dotted))
             {
@@ -545,7 +558,7 @@ namespace Typhon.Compiler.Emit
                     statement.Value is not CallExpr { Func: AttributeExpr { Name: "__new__" } method } call ||
                     call.Args.FirstOrDefault()?.Value is not NameExpr argument || argument.Id != allocator.Params[0].Name)
                     continue;
-                bool builtinAllocation = method.Target is NameExpr { Id: "object" or "dict" or "str" or "tuple" } ||
+                bool builtinAllocation = method.Target is NameExpr { Id: "object" or "dict" or "int" or "str" or "tuple" } ||
                     method.Target is CallExpr { Func: NameExpr { Id: "super" }, Args.Count: 0 };
                 if (builtinAllocation && !AssignsName(allocator.Body.Where(other => other != statement).ToList(), receiver.Id))
                     return receiver.Id;
@@ -561,7 +574,7 @@ namespace Typhon.Compiler.Emit
             // Field declarations come from the class syntax, which is fixed during emission.
             if (_implicitFields.TryGetValue(c, out var cached)) return cached;
             var result = new Dictionary<string, KeyValuePair<Expr, KeyValuePair<FunctionDef, Expr>>>(); // name → (annotation, (method, value))
-            foreach (var f in c.Body.OfType<FunctionDef>())
+            foreach (var f in c.Body.SelectMany(ClassBodyMethods))
             {
                 if (f.Params.Count == 0) continue;
                 string allocated = f.Name == "__new__" ? AllocatedReceiver(f) : null;
@@ -634,10 +647,19 @@ namespace Typhon.Compiler.Emit
             return owner != null && HasConditionalClassMethod(owner, member.Name);
         }
 
+        static bool CapturesClassBodyDefault(Param parameter) =>
+            parameter.Default != null && parameter.Default is not ConstExpr;
+
         FunctionDef ClassBodyImplementation(FunctionDef definition, string name) => new FunctionDef
         {
             Name = name, PyName = definition.Name, Line = definition.Line, Col = definition.Col,
-            Params = definition.Params, Returns = definition.Returns, Body = definition.Body, IsAsync = definition.IsAsync,
+            Params = definition.Params.Select(parameter => CapturesClassBodyDefault(parameter) ? new Param
+            {
+                Name = parameter.Name, Annotation = parameter.Annotation, Kind = parameter.Kind,
+                Line = parameter.Line, Col = parameter.Col, PositionalOnly = parameter.PositionalOnly,
+                KeywordOnly = parameter.KeywordOnly,
+            } : parameter).ToList(),
+            Returns = definition.Returns, Body = definition.Body, IsAsync = definition.IsAsync,
             Decorators = definition.UsedInClassBody ? new List<Expr> { new NameExpr { Id = "staticmethod" } } : new List<Expr>(),
         };
 
@@ -650,7 +672,8 @@ namespace Typhon.Compiler.Emit
             ExprStmt expression => nested || expression.Value is not ConstExpr,
             AssertStmt or RaiseStmt => true,
             FunctionDef method => method.UsedInClassBody ||
-                nested && !reserved.Contains(method.Name) && ClassModel.CanBindClassBodyFunction(method, allowProperty: true),
+                nested && !reserved.Contains(method.Name) &&
+                ClassModel.CanBindClassBodyFunction(method, allowProperty: true, allowCapturedDefaults: true),
             PassStmt or BreakStmt or ContinueStmt => nested,
             IfStmt branch => branch.Body.Concat(branch.OrElse).All(s => IsExecutableClassStatement(s, reserved, nested: true)),
             WhileStmt loop => loop.Body.Concat(loop.OrElse).All(s => IsExecutableClassStatement(s, reserved, nested: true)),
@@ -789,7 +812,7 @@ namespace Typhon.Compiler.Emit
                 definition.TypeParams.Count != 0 || definition.NamedTupleFields != null) return false;
             var allocator = MethodInHierarchy(definition, "__new__");
             if (ClassVariableOwner(definition, "__new__") == null &&
-                (allocator == null ? !HasStringBase(definition) && !HasTupleBase(definition) :
+                (allocator == null ? !HasStringBase(definition) && !HasIntegerBase(definition) && !HasTupleBase(definition) :
                     allocator.TypeParams.Count != 0 || allocator.IsAsync || allocator.Params.Count == 0 ||
                     allocator.Params[0].Kind != ParamKind.Normal ||
                     allocator.Decorators.Count > 0 && !(allocator.Decorators.Count == 1 && HasDecorator(allocator.Decorators, "staticmethod"))))
@@ -857,9 +880,7 @@ namespace Typhon.Compiler.Emit
             if (metaclassBody)
                 _w.Line($"static {Esc(c.Name)}() {{ }}"); // prevent CLR initialization before __prepare__
             var declared = new HashSet<string>();
-            foreach (var property in methods.Where(f => IsCachedProperty(f) || HasDecorator(f.Decorators, "property")))
-                ctx.FieldTypes[property.Name] = IsCachedProperty(property) || property.Returns == null ||
-                    _m.Ast.MethodDecorators.ContainsKey(property) ? "dynamic" : MapType(property.Returns, property);
+            RecordPropertyTypes(methods, ctx);
             foreach (var m in methods)
                 if (m.Returns != null && m.TypeParams.Count == 0 && !AstWalker.ContainsOutsideNestedScopes(m.Body, n => n is YieldExpr))
                     ctx.MethodReturnTypes[m.Name] = AnnotatedCallResult(m);
@@ -1086,7 +1107,7 @@ namespace Typhon.Compiler.Emit
                     string n = FieldName(a), t = ctx.FieldTypes[n];
                     var spec = DataclassField(a);
                     // a default_factory: the parameter is optional (null), the factory makes each instance its own value
-                    if (spec?.Factory != null) return $"{NullableOf(t)} {Esc(n)} = null";
+                    if (spec?.Factory != null) return $"{Nullable(t)} {Esc(n)} = null";
                     var dv = spec != null ? spec.Default : a.Value;
                     return $"{t} {Esc(n)}" + (dv != null ? " = " + EmitExpr(dv, targetTyped: true) : "");
                 }).ToArray();
@@ -1152,13 +1173,7 @@ namespace Typhon.Compiler.Emit
                     _w.Line();
                     continue;
                 }
-                if (IsCachedProperty(f)) { EmitCachedProperty(f, ctx); _w.Line(); continue; }
-                bool isProp = HasDecorator(f.Decorators, "property") || f.Decorators.Any(d => DecoratorName(d)?.EndsWith(".setter") == true);
-                if (isProp)
-                {
-                    if (propertyDone.Add(f.Name)) { EmitProperty(methods.Where(m => m.Name == f.Name).ToList(), ctx, bases); _w.Line(); }
-                    continue;
-                }
+                if (EmitPropertyMember(f, methods, propertyDone, ctx, bases)) continue;
                 EmitMethod(f.Name == "__new__" && UsesCustomAllocation(c) ? StaticAllocator(f) : f, ctx, bases);
                 _w.Line();
             }
@@ -1830,6 +1845,28 @@ namespace Typhon.Compiler.Emit
             if (modifiers.StartsWith("protected internal ") && !overrides)
                 return "internal " + modifiers.Substring("protected internal ".Length);
             return modifiers;
+        }
+
+        void RecordPropertyTypes(IEnumerable<FunctionDef> methods, ClassContext context)
+        {
+            foreach (var property in methods.Where(f => IsCachedProperty(f) || HasDecorator(f.Decorators, "property")))
+                context.FieldTypes[property.Name] = IsCachedProperty(property) || property.Returns == null ||
+                    _m.Ast.MethodDecorators.ContainsKey(property) ? "dynamic" : MapType(property.Returns, property);
+        }
+
+        bool EmitPropertyMember(FunctionDef method, List<FunctionDef> methods, HashSet<string> emitted,
+            ClassContext context, List<Expr> bases)
+        {
+            if (IsCachedProperty(method)) EmitCachedProperty(method, context);
+            else if (HasDecorator(method.Decorators, "property") || method.Decorators.Any(d => DecoratorName(d)?.EndsWith(".setter") == true))
+            {
+                if (!emitted.Add(method.Name)) return true;
+                EmitProperty(methods.Where(candidate => candidate.Name == method.Name).ToList(), context, bases);
+            }
+            else return false;
+
+            _w.Line();
+            return true;
         }
 
         void EmitProperty(List<FunctionDef> defs, ClassContext ctx, List<Expr> bases)

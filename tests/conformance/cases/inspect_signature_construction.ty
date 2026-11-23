@@ -1,0 +1,8 @@
+from inspect import Parameter, Signature
+
+value = Parameter("value", Parameter.POSITIONAL_OR_KEYWORD)
+adjusted = Parameter("offset", Parameter.KEYWORD_ONLY, default=None, annotation=int)
+print(value.default is Parameter.empty, value.annotation is Parameter.empty)
+print(adjusted.default is None, adjusted.annotation is int)
+print(Signature([value, adjusted], return_annotation=None))
+print(Signature())

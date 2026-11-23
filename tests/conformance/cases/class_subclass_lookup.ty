@@ -1,0 +1,33 @@
+class Parent:
+    pass
+
+
+class First(Parent):
+    pass
+
+
+class Second(Parent):
+    pass
+
+
+class Grandchild(First):
+    pass
+
+
+def names(classes) -> list[str]:
+    return [cls.__name__ for cls in classes]
+
+
+print(names(Parent.__subclasses__()))
+print(names(type.__subclasses__(First)))
+
+
+def define() -> None:
+    class Local(Parent):
+        pass
+
+    print(names(Parent.__subclasses__()))
+    assert Local in Parent.__subclasses__()
+
+
+define()

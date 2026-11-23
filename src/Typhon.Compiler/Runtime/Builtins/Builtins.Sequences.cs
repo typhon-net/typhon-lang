@@ -566,7 +566,7 @@ namespace Typhon.Runtime
         public static void Deconstruct<T>(this IList<T> l, out T a, out T b, out T c, out T d) { CheckUnpack(l.Count, 4); a = l[0]; b = l[1]; c = l[2]; d = l[3]; }
 
 
-        public static void append<T>(this List<T> l, T x) => l.Add(x);
+        public static void append<T>(this IList<T> l, T x) => l.Add(x);
         public static void extend<T>(this List<T> l, IEnumerable<T> xs) => l.AddRange(xs);
         public static void extend<T>(this List<T> l, [PyPositionalOnly] object? source)
         {

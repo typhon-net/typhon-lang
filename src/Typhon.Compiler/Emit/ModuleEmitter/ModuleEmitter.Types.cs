@@ -100,6 +100,7 @@ namespace Typhon.Compiler.Emit
         bool IsRuntimeObjectAttribute(AttributeExpr member)
         {
             if (_m.IsGdScript) return false;
+            if (IsConditionalModuleBinding(member.Target)) return true;
             string receiver = InferType(member.Target);
             if (receiver is "object" or "object?" || IsTypeParamType(receiver))
                 return !_r.HasMember("System.Object", member.Name);
@@ -153,6 +154,7 @@ namespace Typhon.Compiler.Emit
                 {
                     var t = KnownType(n.Id);
                     if (t != null) return t;
+                    if (ConditionalStarBinding(n)) return "dynamic";
                     // self as a value (node = self, [self], f(self)) in an instance method or a function nested in one
                     if (n.Id == "self" && _cls != null && SelfInScope()) return _cls.CsSelfType;
                     if (FunctionRef(n, out var fnOwner, out var fnDef)) return FunctionValueType(fnOwner, fnDef.Name);
@@ -172,13 +174,14 @@ namespace Typhon.Compiler.Emit
                     return "dynamic";
                 case CallExpr { Func: AttributeExpr notEqual } when UsesInheritedNotEqual(notEqual):
                     return "dynamic";
-                case AttributeExpr typeCheck when !_m.IsGdScript && IsTypeCheckSlot(typeCheck.Name) &&
+                case AttributeExpr typeCheck when !_m.IsGdScript && IsTypeSlot(typeCheck.Name) &&
                     BuiltinTypeBase(typeCheck.Target): return "dynamic";
                 case AttributeExpr { Name: "__class__" }: return "global::System.Type";
                 case AttributeExpr moduleAttribute when IsRuntimeModuleAttribute(moduleAttribute): return "dynamic";
                 case AttributeExpr objectAttribute when IsRuntimeObjectAttribute(objectAttribute): return "dynamic";
                 case AttributeExpr builtin when ImportedBuiltinTypeValue(builtin) != null: return "global::System.Type";
-                case AttributeExpr trace when IsTypedExceptionTraceback(trace): return ExceptionTracebackType;
+                case AttributeExpr exceptionAttribute when ExceptionAttributeType(exceptionAttribute) is string exceptionType:
+                    return exceptionType;
                 case AttributeExpr reflected when TypeObjectMember(reflected):
                     return "dynamic";
                 case AttributeExpr tupleField when TupleFieldOwner(tupleField) != null:
@@ -309,9 +312,8 @@ namespace Typhon.Compiler.Emit
                     if (o == TypeInference.Pending) return a;
                     if (a != null && a == o) return a;
                     if (a == "dynamic" || o == "dynamic") return "dynamic";
-                    // None or a list: the list type (a reference can be None); an int or a float: a float
-                    if (IsNone(i.Body) && o != null && !IsValueTypeName(o)) return o;
-                    if (IsNone(i.OrElse) && a != null && !IsValueTypeName(a)) return a;
+                    if (IsNone(i.Body)) return OptionalConditionalType(PyType(o));
+                    if (IsNone(i.OrElse)) return OptionalConditionalType(PyType(a));
                     if (MixedWideIntegerAndReal(a, o)) return "dynamic";
                     if (IsNumeric(a) && IsNumeric(o) && (a == "double" || o == "double")) return "double";
                     // different types: late-bound (both branches are emitted as dynamic)
@@ -400,6 +402,8 @@ namespace Typhon.Compiler.Emit
                 default: return null;
             }
         }
+
+        static string OptionalConditionalType(string type) => type != null && IsValueTypeName(type) ? Nullable(type) : type;
 
         /// <summary>The type of a call: a Typhon function, a class, a builtin, a method of a known type, a standard-library function.</summary>
         string CallType(CallExpr call)

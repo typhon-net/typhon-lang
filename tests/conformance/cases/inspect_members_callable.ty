@@ -1,0 +1,26 @@
+import inspect
+
+class Example:
+    wanted = 41
+    unwanted = 23
+
+    def run(self):
+        return "ran"
+
+class MatchValue:
+    def __call__(self, value):
+        return value == 41
+
+def selected(value):
+    return value == 41
+
+def names(value, predicate):
+    return [name for name, member in inspect.getmembers(value, predicate)
+            if name in ["run", "wanted", "unwanted"]]
+
+example = Example()
+print(names(example, MatchValue()))
+print(names(example, selected))
+print(names(example, lambda value: value == 23))
+print([name for name, member in inspect.getmembers(example, inspect.isroutine)
+       if name in ["run", "wanted"]])

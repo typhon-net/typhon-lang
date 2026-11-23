@@ -49,7 +49,8 @@ namespace Typhon.Stdlib
             VAR_KEYWORD,
         }
 
-        internal sealed class Parameter(string name, _ParameterKind kind, object? @default, object? annotation) : IPyRepr
+        internal sealed class Parameter(string name, _ParameterKind kind,
+            [PyKeywordOnly, Optional] object? @default, [PyKeywordOnly, Optional] object? annotation) : IPyRepr
         {
             public static Type empty => typeof(_empty);
             public const _ParameterKind POSITIONAL_ONLY = _ParameterKind.POSITIONAL_ONLY;
@@ -60,8 +61,8 @@ namespace Typhon.Stdlib
 
             public string name { get; } = name;
             public _ParameterKind kind { get; } = kind;
-            public dynamic? @default { get; } = @default;
-            public dynamic? annotation { get; } = annotation;
+            public dynamic? @default { get; } = ReferenceEquals(@default, Type.Missing) ? empty : @default;
+            public dynamic? annotation { get; } = ReferenceEquals(annotation, Type.Missing) ? empty : annotation;
 
             public override string ToString()
             {
@@ -88,12 +89,13 @@ namespace Typhon.Stdlib
             public types.MappingProxyType parameters { get; }
             public dynamic? return_annotation { get; }
 
-            internal Signature(Parameter[] parameters, object? annotation)
+            public Signature([Optional, DefaultParameterValue(null)] IEnumerable<Parameter>? parameters,
+                [PyKeywordOnly, Optional] object? return_annotation)
             {
-                _parameters = parameters;
-                return_annotation = annotation;
+                _parameters = parameters as Parameter[] ?? parameters?.ToArray() ?? [];
+                this.return_annotation = ReferenceEquals(return_annotation, Type.Missing) ? empty : return_annotation;
                 var ordered = new OrderedDictionary();
-                foreach (var parameter in parameters) ordered.Add(parameter.name, parameter);
+                foreach (var parameter in _parameters) ordered.Add(parameter.name, parameter);
                 this.parameters = new types.MappingProxyType(ordered);
             }
 

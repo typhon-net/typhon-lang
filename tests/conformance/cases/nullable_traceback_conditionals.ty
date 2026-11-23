@@ -1,0 +1,18 @@
+import sys
+
+
+def is_missing(traceback, context=1):
+    return traceback is None and context == 1
+
+
+def current() -> bool:
+    error = sys.exception()
+    traceback = None if error is None else error.__traceback__
+    return is_missing(traceback)
+
+
+print(current())
+try:
+    raise ValueError("raised")
+except ValueError:
+    print(current())

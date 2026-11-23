@@ -360,21 +360,20 @@ namespace Typhon.Compiler.Emit
                 if (body[i] is AssignStmt a && a.Targets.Count == 1 && a.Targets[0] is NameExpr target && IsNamedTupleCall(a.Value, factories) &&
                     NamedTupleFieldsOf((CallExpr)a.Value, known) is List<string> fields)
                 {
-                    var factory = (CallExpr)a.Value;
-                    var typeName = factory.Args.FirstOrDefault(x => x.Name == "typename") ??
-                        factory.Args.FirstOrDefault(x => x.Name == null && !x.Star && !x.DoubleStar);
-                    var cls = new ClassDef
-                    {
-                        Name = target.Id, Line = a.Line, Col = a.Col,
-                        PyName = typeName?.Value is ConstExpr { Kind: ConstKind.Str } name ? name.Str : null,
-                    };
-                    MakeNamedTuple(cls, fields, factory.Args.FirstOrDefault(x => x.Name == "defaults")?.Value, annotated: null);
+                    var cls = NamedTupleFactoryClass(target.Id, a, fields);
                     body[i] = cls;
                     m.Classes[cls.Name] = cls;
                     m.Globals.Remove(cls.Name);
                     factories.Remove(cls.Name);
                     known[cls.Name] = fields;
                     continue;
+                }
+                if (body[i] is IfStmt or TryStmt)
+                {
+                    var declarations = new List<ClassDef>();
+                    LowerNamedTupleBranches(body[i], declarations);
+                    body.InsertRange(i, declarations);
+                    i += declarations.Count;
                 }
                 if (body[i] is ClassDef c && c.NamedTupleFields == null)
                 {
@@ -409,11 +408,59 @@ namespace Typhon.Compiler.Emit
                 else if (body[i] is FunctionDef function) Forget(function.Name);
             }
 
+            void LowerNamedTupleBranches(Stmt statement, List<ClassDef> declarations)
+            {
+                void Scan(List<Stmt> block)
+                {
+                    foreach (var item in block)
+                    {
+                        if (item is AssignStmt { Targets.Count: 1, Value: CallExpr factory } assignment &&
+                            assignment.Targets[0] is NameExpr && IsNamedTupleCall(factory, factories) &&
+                            factory.Args.All(arg => !arg.Star && !arg.DoubleStar && arg.Name is null or "typename" or "field_names") &&
+                            NamedTupleFieldsOf(factory, known) is List<string> fields)
+                        {
+                            int suffix = m.Classes.Count;
+                            string name = "__typhon_namedtuple_" + suffix;
+                            while (m.Classes.ContainsKey(name)) name = "__typhon_namedtuple_" + ++suffix;
+                            ClassDef definition = NamedTupleFactoryClass(name, assignment, fields);
+                            if (definition.PyName == null) continue;
+                            declarations.Add(definition);
+                            m.Classes.Add(name, definition);
+                            assignment.Value = new NameExpr { Id = name, Line = factory.Line, Col = factory.Col };
+                        }
+                        else LowerNamedTupleBranches(item, declarations);
+                    }
+                }
+
+                if (statement is IfStmt conditional) { Scan(conditional.Body); Scan(conditional.OrElse); }
+                else if (statement is TryStmt attempt)
+                {
+                    Scan(attempt.Body);
+                    foreach (var handler in attempt.Handlers) Scan(handler.Body);
+                    Scan(attempt.OrElse);
+                    Scan(attempt.FinalBody);
+                }
+            }
+
             void Forget(string name)
             {
                 known.Remove(name);
                 factories.Remove(name);
             }
+        }
+
+        static ClassDef NamedTupleFactoryClass(string binding, AssignStmt assignment, List<string> fields)
+        {
+            var factory = (CallExpr)assignment.Value;
+            var typeName = factory.Args.FirstOrDefault(arg => arg.Name == "typename") ??
+                factory.Args.FirstOrDefault(arg => arg.Name == null && !arg.Star && !arg.DoubleStar);
+            var definition = new ClassDef
+            {
+                Name = binding, Line = assignment.Line, Col = assignment.Col,
+                PyName = typeName?.Value is ConstExpr { Kind: ConstKind.Str } name ? name.Str : null,
+            };
+            MakeNamedTuple(definition, fields, factory.Args.FirstOrDefault(arg => arg.Name == "defaults")?.Value, annotated: null);
+            return definition;
         }
 
         static void MakeNamedTuple(ClassDef c, List<string> fields, Expr defaults, List<AnnAssignStmt> annotated)
@@ -665,10 +712,11 @@ namespace Typhon.Compiler.Emit
             foreach (var nested in c.Body.OfType<ClassDef>()) NormalizeSelfNames(nested);
         }
 
-        internal static bool CanBindClassBodyFunction(FunctionDef definition, bool allowProperty = false) =>
+        internal static bool CanBindClassBodyFunction(FunctionDef definition, bool allowProperty = false,
+            bool allowCapturedDefaults = false) =>
             (definition.Decorators.Count == 0 || allowProperty && definition.Decorators.Count == 1 &&
                 definition.Decorators[0] is NameExpr { Id: "property" }) && definition.TypeParams.Count == 0 && definition.Params.Count > 0 &&
-            definition.Params.All(parameter => parameter.Default == null || parameter.Default is ConstExpr) &&
+            (allowCapturedDefaults || definition.Params.All(parameter => parameter.Default == null || parameter.Default is ConstExpr)) &&
             definition.Name is not ("__init__" or "__new__");
 
         /// <summary>__rmul__ = __mul__ in a class body: a method of the new name with the same parameters and body.</summary>

@@ -1,0 +1,4 @@
+['class', 'default']
+('class', 'default')
+('override', None)
+(self, value='class', *, other='default')

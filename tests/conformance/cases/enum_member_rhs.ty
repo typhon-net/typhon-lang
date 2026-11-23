@@ -1,0 +1,25 @@
+from enum import IntEnum, IntFlag
+
+
+class Access(IntFlag):
+    READ = 1
+    WRITE = 1 << 1
+    BOTH = READ | WRITE
+    ALL = BOTH
+
+
+class Rank(IntEnum):
+    FIRST = 1, "first"
+    SECOND = FIRST[0] + 1, "second"
+    ALIAS = FIRST
+
+    def __new__(cls, rank: int, label: str):
+        member = int.__new__(cls, rank)
+        member._value_ = rank
+        member.label = label
+        return member
+
+
+print(Access.BOTH.value, Access.BOTH is Access.ALL)
+print(Rank.FIRST.label, Rank.SECOND.label, Rank.SECOND.value)
+print(Rank.FIRST is Rank.ALIAS)

@@ -52,6 +52,12 @@ namespace Typhon.Runtime
             : e.Data.Contains("__args__") && e.Data["__args__"] is object?[] kept ? new PyTuple<object?>(kept)
             : new PyTuple<object?>(e.Message.Length == 0 ? Array.Empty<object?>() : new object?[] { e.Message });
 
+        public static object? Initialize(Exception error, object?[] args)
+        {
+            error.Data["__args__"] = Norm(args);
+            return null;
+        }
+
         /// <summary>str(e): '' without args, str(arg) for one, the args tuple's repr for several.</summary>
         public static string Text(object?[] args) => args.Length switch
         {

@@ -1,0 +1,21 @@
+def next_pager(text: str) -> None:
+    print("next", text)
+
+
+def get_pager():
+    return next_pager
+
+
+def set_pager(value):
+    return value
+
+
+def pager(text: str) -> None:
+    global pager
+    pager = get_pager()
+    print("first", set_pager(text))
+
+
+pager("once")
+pager("twice")
+print(get_pager.__name__, set_pager.__name__)

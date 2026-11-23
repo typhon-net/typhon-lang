@@ -1,0 +1,12 @@
+import io
+import tokenize
+
+def positions(line):
+    first = last = (-1, -1)
+    for token in tokenize.generate_tokens(io.StringIO(line).readline):
+        kind, spelling, start, end, source_line = token
+        if spelling == "sample":
+            first, last = start, end
+    print(first[0], first[1], last[0], last[1])
+
+positions("a + sample")

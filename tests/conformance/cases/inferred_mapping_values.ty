@@ -1,0 +1,8 @@
+def record(names: list[str], values: list[str]):
+    fields = dict(zip(names, values))
+    if len(values) > len(names):
+        fields["extra"] = values[len(names):]
+    return fields
+
+print(record(["name"], ["sample", "more"]))
+print(record(["name"], ["sample"]))

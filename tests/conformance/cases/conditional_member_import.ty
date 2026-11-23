@@ -1,0 +1,11 @@
+import sys
+
+if sys.platform == "typhon-impossible-fixture-platform":
+    from sys import getsizeof as operation
+else:
+    from math import floor as operation
+
+def apply(value):
+    return operation(value)
+
+print(apply(2.7))

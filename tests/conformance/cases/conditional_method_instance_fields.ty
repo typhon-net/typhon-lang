@@ -1,0 +1,18 @@
+def enabled(answer: bool) -> bool:
+    return answer
+
+
+class Cell:
+    if enabled(True):
+        def store(self, value):
+            self.data = value
+    else:
+        def store(self, value):
+            self.data = None
+
+
+cell = Cell()
+cell.store("stored")
+print(cell.data)
+cell.store(3)
+print(cell.data)

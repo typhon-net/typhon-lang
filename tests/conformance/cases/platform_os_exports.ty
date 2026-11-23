@@ -1,0 +1,14 @@
+import os
+import sys
+
+available = os.name == 'posix'
+names = ('getuid', 'geteuid', 'getgid', 'getegid')
+print(all(hasattr(os, name) == available for name in names))
+print(all((name in dir(os)) == available for name in names))
+print(all((getattr(os, name, None) is not None) == available for name in names))
+print(hasattr(sys, 'winver') == (sys.platform == 'win32'))
+if sys.platform == 'win32':
+    version = str(sys.version_info.major) + '.' + str(sys.version_info.minor)
+    print(sys.winver == version)
+else:
+    print('winver' not in dir(sys))

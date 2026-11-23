@@ -1,0 +1,7 @@
+import io
+import traceback
+
+for color in (False, True):
+    output = io.StringIO()
+    traceback.print_exception(ValueError("sample"), file=output, colorize=color)
+    print(repr(output.getvalue()))

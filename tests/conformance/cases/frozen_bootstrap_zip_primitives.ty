@@ -1,0 +1,18 @@
+import _imp
+import _frozen_importlib as bootstrap
+import _frozen_importlib_external as external
+
+data = b"\x01\x02\x03\x04\x05\x06\x07\x08"
+print(external._unpack_uint16(data[:2]), external._unpack_uint32(data[:4]))
+print(external._unpack_uint64(data))
+print(_imp.source_hash(0, b"abc").hex())
+print(_imp.source_hash(1000, bytes(range(27))).hex())
+directory, file = external._path_split(external._path_join("typhon", "sample.py"))
+print(directory, file)
+
+class Loader:
+    def is_package(self, fullname):
+        return True
+
+spec = bootstrap.spec_from_loader("sample", Loader())
+print(spec.name, spec.submodule_search_locations)

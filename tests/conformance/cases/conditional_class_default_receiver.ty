@@ -1,0 +1,22 @@
+def enabled(answer: bool) -> bool:
+    return answer
+
+
+if enabled(True):
+    if enabled(True):
+        class Values:
+            convert = int
+            code = 7
+    else:
+        class Values:
+            convert = str
+            code = 6
+
+class Reporter:
+    if enabled(True):
+        def report(self, values=Values) -> None:
+            print(values.convert("12"), values.code)
+            print(values.convert is int)
+
+
+Reporter().report()

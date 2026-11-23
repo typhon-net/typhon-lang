@@ -1,0 +1,20 @@
+import os
+import sys
+import tempfile
+
+if os.name == "posix":
+    from posix import *
+else:
+    from nt import *
+
+print(os.name in sys.builtin_module_names)
+with tempfile.TemporaryDirectory() as location:
+    src = os.path.join(location, "src")
+    dest = os.path.join(location, "dest")
+    mkdir(src)
+    rename(src, dest)
+    with scandir(location) as entries:
+        print(tuple(entry.name for entry in entries))
+    rmdir(dest)
+    with scandir(location) as entries:
+        print(list(entries))

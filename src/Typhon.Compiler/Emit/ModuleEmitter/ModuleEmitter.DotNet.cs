@@ -263,9 +263,12 @@ namespace Typhon.Compiler.Emit
         }
 
         /// <summary>Result type of a .NET property, field or method call when it is a special type all candidates agree on.</summary>
-        string DotNetResultType(Expr receiver, string name, CallExpr call)
+        string DotNetResultType(Expr receiver, string name, CallExpr call) =>
+            MemberResultType(DotNetMembers(receiver, name).Where(member => member.IsMethod == (call != null)), call);
+
+        string MemberResultType(IEnumerable<Semantics.MemberSig> candidates, CallExpr call)
         {
-            var ms = DotNetMembers(receiver, name).Where(m => m.IsMethod == (call != null)).ToList();
+            var ms = candidates.ToList();
             if (call != null)
             {
                 int positional = call.Args.Count(x => x.Name == null && !x.Star && !x.DoubleStar);

@@ -1,0 +1,4 @@
+True True
+True True
+(value, *, offset: int = None) -> None
+()

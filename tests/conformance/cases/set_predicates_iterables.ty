@@ -1,0 +1,15 @@
+from typing import Any
+
+
+class Symbols:
+    separator = {".", "-"}
+
+
+def compare(value: Any) -> tuple[bool, bool]:
+    return Symbols.separator.isdisjoint(value), Symbols.separator.issuperset(value)
+
+
+print(compare("word"))
+print(compare("some-word"))
+print(compare("--."))
+print(compare(iter(["."])))

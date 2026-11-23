@@ -91,12 +91,8 @@ namespace Typhon.Compiler.Emit
             bool untypedLambdaParameter = targetType == null && s.Target is NameExpr parameter &&
                 _lambdaParams.Any(scope => scope.ContainsKey(parameter.Id));
             bool lateResult = LateSubscriptTarget(s.Target, targetType, store);
-            bool untypedModuleField = targetType == null && s.Target is AttributeExpr member &&
-                DottedName(member.Target) is string moduleName && ModuleRef(moduleName) is ModuleInfo module &&
-                ProjectExport(module, member.Name) is var exported && exported.Member != null &&
-                exported.Owner?.Globals.Contains(exported.Member) == true;
             bool lateContainer = targetType is "global::System.Type" or "System.Type" ||
-                untypedModuleField || UsesRuntimeSubscriptReceiver(s.Target, targetType);
+                UsesRuntimeSubscriptReceiver(s.Target, targetType);
             if ((lateContainer || lateResult || untypedLambdaParameter ||
                 targetType == null && InferType(s.Index) == "dynamic") && !(s.Index is TupleExpr))
                 return $"{Rt("__getitem")}((object?){target}, (object?){Paren(ModuleOrClassValue(s.Index) ?? EmitExpr(s.Index))})";
@@ -138,8 +134,8 @@ namespace Typhon.Compiler.Emit
                 return $"{target}[{EmitExpr(new TupleExpr { Elts = tk.Elts, Parenthesized = true, Line = tk.Line, Col = tk.Col })}]";
             if (s.Index is TupleExpr t && !t.Parenthesized)
                 return $"{target}[{string.Join(", ", t.Elts.Select(x => x is SliceExpr xs ? EmitRange(xs, targetType) : EmitPosition(x, targetType)))}]";
-            // A ref-returning call must bind statically when it becomes an assignment target.
-            string RefReceiver() => store ? $"(({targetType}){Paren(target)})" : target;
+            // Bind a ref-returning call statically, even when a CLR iterator exposes the inferred list as dynamic.
+            string RefReceiver() => $"(({targetType}){Paren(target)})";
             // xs[i] with a late-bound i: a Python int converted, the position checked like any other (an int indexer does not
             // take a boxed long at run time)
             if (targetType != null && (targetType.StartsWith("List<") || targetType.EndsWith("[]")) && InferType(s.Index) == "dynamic")
@@ -337,7 +333,11 @@ namespace Typhon.Compiler.Emit
 
         bool UsesRuntimeSubscriptReceiver(Expr receiver, string type) =>
             type is "dynamic" or "object" or "object?" ||
-            type == null && (receiver is SubscriptExpr || receiver is NameExpr name && IsLocal(name.Id));
+            type == null && (receiver is SubscriptExpr || receiver is NameExpr name && IsLocal(name.Id) ||
+                receiver is AttributeExpr member && DottedName(member.Target) is string moduleName &&
+                    ModuleRef(moduleName) is ModuleInfo module &&
+                    ProjectExport(module, member.Name) is var exported && exported.Member != null &&
+                    exported.Owner?.Globals.Contains(exported.Member) == true);
 
         bool IsPositional(string t)
         {

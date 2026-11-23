@@ -208,6 +208,10 @@ namespace Typhon.Compiler.Emit
                 if (types[i] == null && IsParamAlias(t.Def, ps[i])) { types[i] = TypeInference.Declared; continue; }
                 if (types[i] == null) types[i] = ps[i].Default != null ? (PyType(InferType(ps[i].Default)) ?? TypeInference.Unknown) : null;
                 if (types[i] == null) return null;
+                // Nullable reference annotations do not distinguish CLR overloads.
+                if (types[i].EndsWith("?") && DotNetMeta(types[i].TrimEnd('?')) is string metadata &&
+                    (_r is RoslynTypeResolver resolver ? resolver.IsInstanceType(metadata) : IsNativePythonClass(metadata)))
+                    types[i] = types[i].TrimEnd('?');
                 // a type written in another module's terms might not resolve there: only portable types cross modules
                 if (t.Module != _m && !IsPortableType(types[i])) types[i] = TypeInference.Unknown;
             }
@@ -288,10 +292,9 @@ namespace Typhon.Compiler.Emit
         /// <summary>Typhon class key for a C# type name visible in this module (same module, or imported by name).</summary>
         ClassDef ClassDefOfKey(string key)
         {
-            foreach (var m in _p.Modules.Values)
-                foreach (var c in m.Classes.Values)
-                    if (TypeInference.ClassKey(m, c.Name) == key) return c;
-            return null;
+            int separator = key?.LastIndexOf('.') ?? -1;
+            if (separator < 0 || _p.FindModule(key.Substring(0, separator)) is not ModuleInfo owner) return null;
+            return owner.Classes.TryGetValue(key.Substring(separator + 1), out var definition) ? definition : null;
         }
 
         string ClassKeyOfType(string csType, out bool sameModule)

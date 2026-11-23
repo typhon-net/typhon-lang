@@ -1,0 +1,13 @@
+import os
+import tempfile
+
+with tempfile.TemporaryDirectory() as directory:
+    with tempfile.TemporaryFile(dir=directory) as binary:
+        print(binary.write(b'temporary bytes'))
+        binary.seek(0)
+        print(binary.read())
+    with tempfile.TemporaryFile(mode='w+t', encoding='utf-8', dir=directory) as text:
+        text.write('temporary text')
+        text.seek(0)
+        print(text.read())
+    print(os.listdir(directory))

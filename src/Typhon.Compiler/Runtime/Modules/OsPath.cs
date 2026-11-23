@@ -605,6 +605,7 @@ namespace Typhon.Stdlib
             public static string basename(string p) => Win ? NtPath.basename(p) : PosixPath.basename(p);
             public static PyBytes basename(PyBytes p) => split(p).Item2;
             public static string dirname(string p) => Win ? NtPath.dirname(p) : PosixPath.dirname(p);
+            public static PyBytes dirname(PyBytes p) => split(p).Item1;
             public static string normpath(string p) => Win ? NtPath.normpath(p) : PosixPath.normpath(p);
             public static string abspath(string p) => Win ? NtPath.abspath(p) : PosixPath.abspath(p);
             public static PyBytes abspath(PyBytes p)

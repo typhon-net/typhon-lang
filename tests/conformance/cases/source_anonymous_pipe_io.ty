@@ -1,0 +1,15 @@
+#:pylib-source os
+import os
+
+reader, writer = os.pipe()
+try:
+    print(os.write(writer, b"hello"))
+    os.close(writer)
+    writer = -1
+    print(os.read(reader, 3))
+    print(os.read(reader, 3))
+    print(os.read(reader, 3))
+finally:
+    os.close(reader)
+    if writer != -1:
+        os.close(writer)

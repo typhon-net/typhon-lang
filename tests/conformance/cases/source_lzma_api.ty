@@ -1,0 +1,45 @@
+#:pylib-source lzma
+import io
+import lzma
+import sys
+
+print(lzma.FORMAT_AUTO, lzma.FORMAT_XZ, lzma.FORMAT_ALONE, lzma.FORMAT_RAW)
+print(lzma.CHECK_NONE, lzma.CHECK_CRC32, lzma.CHECK_CRC64, lzma.CHECK_SHA256)
+print(lzma.FILTER_LZMA1, lzma.FILTER_LZMA2, lzma.PRESET_DEFAULT)
+
+
+if len(sys.argv) > 1:
+    data = b"Typhon xz\n" * 253
+    packed = lzma.compress(data)
+    print(packed[:6], lzma.decompress(packed) == data)
+    print(lzma.decompress(packed + packed + b"trailing") == data * 2)
+    alone = lzma.compress(data, format=lzma.FORMAT_ALONE, preset=1)
+    print(lzma.decompress(alone) == data)
+    filters = [
+        {"id": lzma.FILTER_DELTA, "dist": 2},
+        {"id": lzma.FILTER_LZMA2, "dict_size": 1 << 16},
+    ]
+    raw = lzma.compress(data, format=lzma.FORMAT_RAW, filters=filters)
+    print(lzma.decompress(raw, format=lzma.FORMAT_RAW, filters=filters) == data)
+
+    decoder = lzma.LZMADecompressor()
+    print(decoder.check, decoder.needs_input, decoder.eof)
+    first = decoder.decompress(packed + b"tail", max_length=11)
+    print(len(first), decoder.check, decoder.needs_input, decoder.eof)
+    print(first + decoder.decompress(b"") == data, decoder.eof, decoder.unused_data)
+    for invalid in (b"invalid" * 5, packed[:-10]):
+        try:
+            lzma.decompress(invalid)
+        except lzma.LZMAError as exc:
+            print(type(exc).__name__, str(exc))
+    print(lzma._encode_filter_properties(filters[0]).hex())
+    print(lzma._decode_filter_properties(lzma.FILTER_LZMA2, b"\x08"))
+
+    target = io.BytesIO()
+    with lzma.open(target, "wt", encoding="utf-8") as writer:
+        writer.write("LZMA file\n")
+    print(target.closed, target.getvalue()[:6])
+    target.seek(0)
+    with lzma.open(target, "rt", encoding="utf-8") as reader:
+        print(repr(reader.readline()))
+    print(target.closed)

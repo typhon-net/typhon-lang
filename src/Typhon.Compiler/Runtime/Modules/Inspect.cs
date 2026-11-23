@@ -317,13 +317,13 @@ namespace Typhon.Stdlib
             return null;
         }
 
-        public static List<(string, dynamic?)> getmembers(object @object, Func<dynamic, bool>? predicate = null)
+        public static List<(string, dynamic?)> getmembers(object @object, object? predicate = null)
         {
             var result = new List<(string, dynamic?)>();
             foreach (string name in Builtins.dir(@object))
             {
                 object? value = Builtins.getattr(@object, name, Missing);
-                if (!ReferenceEquals(value, Missing) && (predicate == null || predicate(value!)))
+                if (!ReferenceEquals(value, Missing) && (predicate == null || Builtins.truthy(Builtins.__invoke(predicate, [value]))))
                     result.Add((name, value));
             }
             return result;

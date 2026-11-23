@@ -1,0 +1,27 @@
+class Record:
+    @property
+    def missing(self):
+        raise AttributeError("no value")
+
+    @property
+    def invalid(self):
+        raise RuntimeError("bad value")
+
+
+class Fallback(Record):
+    def __getattr__(self, name: str):
+        return "fallback:" + name
+
+
+record = Record()
+print(hasattr(record, "missing"))
+print(getattr(record, "missing", "default"))
+try:
+    getattr(record, "missing")
+except AttributeError as error:
+    print(str(error))
+try:
+    hasattr(record, "invalid")
+except RuntimeError as error:
+    print(str(error))
+print(hasattr(Fallback(), "missing"), getattr(Fallback(), "missing", None))

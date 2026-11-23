@@ -1,0 +1,20 @@
+#:pylib-source symtable
+import symtable
+
+source = """import math
+def outer(x):
+    result = x
+    def inner(a, b=0):
+        nonlocal result
+        result += a
+        return (math.floor(result) + b + x)
+    return inner
+"""
+table = symtable.symtable(source, "<sample>", "exec")
+outer = table.lookup("outer").get_namespace()
+inner = outer.lookup("inner").get_namespace()
+print(str(table.get_type()), str(outer.get_type()), str(inner.get_type()))
+print(outer.get_parameters(), outer.get_cells())
+print(inner.get_parameters(), inner.get_nonlocals(), inner.get_frees(), inner.get_globals())
+print(inner.lookup("result").is_nonlocal(), table.lookup("math").is_imported())
+print(inner is outer.lookup("inner").get_namespace())

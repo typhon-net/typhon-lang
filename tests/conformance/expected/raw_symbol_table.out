@@ -1,0 +1,17 @@
+top 2 0 0
+[('os', 4224), ('constant', 4224), ('g', 8211), ('outer', 4098), ('Demo', 4098)]
+__annotate__ 3 0 5
+[('.format', 4116)]
+outer 0 0 5
+[('x', 20484), ('y', 4100), ('local', 20482), ('inner', 4114)]
+__annotate__ 3 1 7
+[('.format', 4116)]
+inner 0 1 7
+[('a', 4116), ('local', 16410), ('g', 8209), ('x', 16400), ('unknown', 12304)]
+Demo 1 0 13
+[('count', 4098), ('constant', 12304)]
+__annotate__ 3 0 14
+[('.format', 4116), ('__classdict__', 16400)]
+count 0 0 14
+[('self', 4100), ('arg', 4116), ('super', 12304), ('__class__', 16400)]
+no binding for nonlocal 'absent' found

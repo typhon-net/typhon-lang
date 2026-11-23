@@ -37,9 +37,9 @@ namespace Typhon.Runtime
             return AsInt(value, out integer) && integer is >= -5 and <= 256;
         }
 
-        static object? IntegerEnumValue(object? value) => value switch
+        static object? IntegerValue(object? value) => value switch
         {
-            PyIntegerEnum member => (object)member.value,
+            PyInteger integer => integer.PrimitiveValue,
             Enum member when Enum.GetUnderlyingType(member.GetType()) == typeof(long) => Convert.ToInt64(member, Inv),
             _ => value,
         };
@@ -47,8 +47,8 @@ namespace Typhon.Runtime
         /// <summary>Python's ==: numbers by value (1 == 1.0 == True), str by characters, containers element by element.</summary>
         public static bool eq(object? a, object? b)
         {
-            a = IntegerEnumValue(a);
-            b = IntegerEnumValue(b);
+            a = IntegerValue(a);
+            b = IntegerValue(b);
             if (ReferenceEquals(a, b)) return true;
             if (b is PyApprox) return b.Equals(a); // (Python tries the right operand's __eq__ when the left one has none for it)
             if (a is null || b is null) return false;
@@ -232,28 +232,28 @@ namespace Typhon.Runtime
             MixedNumbers(a, b, out int? __c) ? __c < 0 : PyOrdered(a) || PyOrdered(b) ?
                 (IsSet(a!) ? SetLe(a, b) && !eq(a, b) : compare(a, b) < 0) :
             TryRichComparison(a, b, "__lt__", "__gt__", "<", out var result) ? result! :
-            TryIntegerEnumOrder(a, b, out var order) ? order < 0 : (dynamic)a! < (dynamic)b!;
+            TryIntegerOrder(a, b, out var order) ? order < 0 : (dynamic)a! < (dynamic)b!;
         public static dynamic le(object? a, object? b) => CompareDictSetViews(a, b, "<=") is bool view ? view :
             MixedNumbers(a, b, out int? __c) ? __c <= 0 : PyOrdered(a) || PyOrdered(b) ?
                 (IsSet(a!) ? SetLe(a, b) : compare(a, b) <= 0) :
             TryRichComparison(a, b, "__le__", "__ge__", "<=", out var result) ? result! :
-            TryIntegerEnumOrder(a, b, out var order) ? order <= 0 : (dynamic)a! <= (dynamic)b!;
+            TryIntegerOrder(a, b, out var order) ? order <= 0 : (dynamic)a! <= (dynamic)b!;
         public static dynamic gt(object? a, object? b) => CompareDictSetViews(a, b, ">") is bool view ? view :
             MixedNumbers(a, b, out int? __c) ? __c > 0 : PyOrdered(a) || PyOrdered(b) ?
                 (IsSet(a!) ? SetLe(b, a) && !eq(a, b) : compare(a, b) > 0) :
             TryRichComparison(a, b, "__gt__", "__lt__", ">", out var result) ? result! :
-            TryIntegerEnumOrder(a, b, out var order) ? order > 0 : (dynamic)a! > (dynamic)b!;
+            TryIntegerOrder(a, b, out var order) ? order > 0 : (dynamic)a! > (dynamic)b!;
         public static dynamic ge(object? a, object? b) => CompareDictSetViews(a, b, ">=") is bool view ? view :
             MixedNumbers(a, b, out int? __c) ? __c >= 0 : PyOrdered(a) || PyOrdered(b) ?
                 (IsSet(a!) ? SetLe(b, a) : compare(a, b) >= 0) :
             TryRichComparison(a, b, "__ge__", "__le__", ">=", out var result) ? result! :
-            TryIntegerEnumOrder(a, b, out var order) ? order >= 0 : (dynamic)a! >= (dynamic)b!;
+            TryIntegerOrder(a, b, out var order) ? order >= 0 : (dynamic)a! >= (dynamic)b!;
 
-        static bool TryIntegerEnumOrder(object? left, object? right, out int? order)
+        static bool TryIntegerOrder(object? left, object? right, out int? order)
         {
-            if (left is PyIntegerEnum leftInteger)
+            if (left is PyInteger leftInteger)
                 return OrderInteger(leftInteger.Integer, right, out order);
-            if (right is PyIntegerEnum rightInteger && OrderInteger(rightInteger.Integer, left, out order))
+            if (right is PyInteger rightInteger && OrderInteger(rightInteger.Integer, left, out order))
             {
                 order = -order;
                 return true;
@@ -264,7 +264,7 @@ namespace Typhon.Runtime
 
         static bool OrderInteger(BigInteger integer, object? other, out int? order)
         {
-            if (other is PyIntegerEnum member) { order = integer.CompareTo(member.Integer); return true; }
+            if (other is PyInteger member) { order = integer.CompareTo(member.Integer); return true; }
             if (other is BigInteger wide) { order = integer.CompareTo(wide); return true; }
             if (IntLike(other!, out long small)) { order = integer.CompareTo(small); return true; }
             if (other is decimal exact)

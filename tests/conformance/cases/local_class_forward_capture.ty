@@ -1,0 +1,15 @@
+def run() -> None:
+    class Value:
+        def read(self):
+            return observe()
+
+    value = Value()
+    label = "ready"
+
+    def observe():
+        return label
+
+    print(value.read())
+
+
+run()

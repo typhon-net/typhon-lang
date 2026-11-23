@@ -25,6 +25,7 @@ namespace Typhon.Runtime
         sealed record Definition(Type Meta, Type Storage, Type[] Bases, Type[] MethodOrder, OrderedDictionary<string, object?> Namespace, string QualName);
         sealed record Creation(Type Target, Type Storage, Type Meta, string Name, Type[] Bases, IDictionary Namespace);
         static readonly ConditionalWeakTable<Type, Definition> Definitions = new();
+        static readonly ConditionalWeakTable<Type, List<WeakReference<Type>>> Subclasses = new();
         [ThreadStatic] static Creation? _creating;
 
         internal static bool IsMetaclass(Type type) =>
@@ -157,10 +158,40 @@ namespace Typhon.Runtime
             return Builtins.DirectSubclass(candidate, target);
         });
 
-        internal static PyClosure? TypeCheckSlot(string name) => name switch
+        internal static void RegisterSubclass(Type type)
+        {
+            foreach (Type parent in Bases(type))
+            {
+                var children = Subclasses.GetOrCreateValue(parent);
+                lock (children)
+                {
+                    children.RemoveAll(reference => !reference.TryGetTarget(out _));
+                    if (!children.Any(reference => reference.TryGetTarget(out Type? child) && ReferenceEquals(child, type)))
+                        children.Add(new WeakReference<Type>(type));
+                }
+            }
+        }
+
+        static readonly PyClosure SubclassList = new("__subclasses__", (args, kwargs) =>
+        {
+            if (args.Length != 1 || args[0] is not Type target || kwargs?.Count > 0)
+                throw new InvalidCastException("type.__subclasses__ requires a type");
+            var result = new List<Type>();
+            if (Subclasses.TryGetValue(target, out var children))
+            {
+                lock (children)
+                    foreach (var reference in children)
+                        if (reference.TryGetTarget(out Type? child))
+                            result.Add(child);
+            }
+            return result;
+        });
+
+        internal static PyClosure? TypeSlot(string name) => name switch
         {
             "__instancecheck__" => InstanceCheck,
             "__subclasscheck__" => SubclassCheck,
+            "__subclasses__" => SubclassList,
             _ => null,
         };
 

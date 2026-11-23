@@ -493,6 +493,9 @@ namespace Typhon.Stdlib
         public static void _exit(long n) => Environment.Exit(checked((int)n));
         public static long getpid() => Environment.ProcessId;
         public static long getppid() => OsNative.GetPpid();
+        internal static bool IsExported(string name) =>
+            !Win || name is not ("getuid" or "geteuid" or "getgid" or "getegid" or "chown" or "lchown");
+
         public static long getuid() => Posix("getuid", OsNative.GetUid);
         public static long geteuid() => Posix("geteuid", OsNative.GetEuid);
         public static long getgid() => Posix("getgid", OsNative.GetGid);
@@ -1326,6 +1329,14 @@ namespace Typhon.Stdlib
 
         /// <summary>scandir(path='.'): the entries of a directory as DirEntry objects (in the directory's order).</summary>
         public static ScandirIterator scandir(string path = ".") => new ScandirIterator(path, listdir(path));
+
+        internal static object ScandirPath(object? path) => path switch
+        {
+            null => scandir(),
+            PyBytes bytes => scandir(bytes),
+            long fd => scandir(fd),
+            _ => scandir(__path(path)),
+        };
         public static BytesScandirIterator scandir(PyBytes path) => new BytesScandirIterator(path, scandir(fsdecode(path)));
         public static ScandirIterator scandir(long fd)
         {

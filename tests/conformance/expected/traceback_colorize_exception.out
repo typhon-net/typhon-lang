@@ -1,0 +1,2 @@
+'ValueError: sample\n'
+'\x1b[1;35mValueError\x1b[0m: \x1b[35msample\x1b[0m\n'

@@ -97,6 +97,8 @@ namespace Typhon.Stdlib
             Environment.OSVersion.Platform.ToString().ToLowerInvariant();
         /// <summary>The language version Typhon implements (CPython 3.15's library and semantics).</summary>
         public static readonly version_info_t version_info = new version_info_t(3, 15, 0, "final", 0);
+        public static string winver => $"{version_info.major}.{version_info.minor}";
+        internal static bool IsExported(string name) => name != nameof(winver) || OperatingSystem.IsWindows();
         public static readonly string version = "3.15.0 (Typhon) [.NET " + Environment.Version + "]";
         public const long hexversion = 0x030F00F0;
         public const long api_version = 1013;
@@ -114,7 +116,7 @@ namespace Typhon.Stdlib
         public static readonly int_info_t int_info = new int_info_t();
         public static readonly hash_info_t hash_info = new hash_info_t();
         /// <summary>The C modules CPython compiles into itself that Typhon's runtime also provides.</summary>
-        public static readonly PyTuple<string> builtin_module_names = new PyTuple<string>(new[] { "_ast", "_signal", "array", "binascii", "builtins", "itertools", "math", "sys", "time" });
+        public static readonly PyTuple<string> builtin_module_names = new PyTuple<string>(new[] { "_ast", "_signal", "array", "binascii", "builtins", "itertools", "math", "sys", "time", OperatingSystem.IsWindows() ? "nt" : "posix" });
         public static bool dont_write_bytecode = false;
         public static readonly List<string> warnoptions = new List<string>();
         public static readonly OrderedDictionary<string, object?> _xoptions = new OrderedDictionary<string, object?>();
@@ -413,6 +415,11 @@ namespace Typhon.Runtime
         internal dynamic? ReadGlobal(string name) =>
             __dict__.TryGetValue(name, out var value) ? value : Builtins.__unbound_import(name);
 
+        internal dynamic? ReadStarGlobal(string name) =>
+            __dict__.TryGetValue(name, out var value) ||
+                Of(typeof(Typhon.Stdlib.builtins), "builtins").__dict__.TryGetValue(name, out value)
+                ? value : Builtins.__unbound_import(name);
+
         readonly Type? _type;
         readonly PySourceAttribute? _source;
         readonly Func<string, bool>? _exports;
@@ -451,7 +458,9 @@ namespace Typhon.Runtime
             // os.path is the native path module, including its filesystem operations.
             if (type == NativePathModule || type == typeof(Typhon.Stdlib.os_.path))
                 return _of.GetOrAdd(typeof(Typhon.Stdlib.os_.path), t => new PyModule(NativePathModule.Name, t));
-            return _of.GetOrAdd(type, t => new PyModule(name, t));
+            return _of.GetOrAdd(type, t => new PyModule(name, t,
+                t == typeof(Typhon.Stdlib.os_) ? Typhon.Stdlib.os_.IsExported :
+                t == typeof(Typhon.Stdlib.sys_) ? Typhon.Stdlib.sys_.IsExported : null));
         }
         public static object? Import(Type type, string name)
         {

@@ -1,0 +1,25 @@
+import inspect
+
+observed: list[str] = []
+
+def record(value: str) -> str:
+    observed.append(value)
+    return value
+
+enabled = True
+
+class Sample:
+    if enabled:
+        label = record("class")
+
+        def lookup(self, value=label, *, other=record("default")):
+            return value, other
+    else:
+        def lookup(self, value=record("unchosen"), *, other=None):
+            return value, other
+
+sample = Sample()
+print(observed)
+print(sample.lookup())
+print(sample.lookup("override", other=None))
+print(inspect.signature(Sample.lookup))

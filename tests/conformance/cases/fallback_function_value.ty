@@ -1,0 +1,13 @@
+try:
+    from __typhon_missing_for_fallback_fixture import choose, format_line
+except ModuleNotFoundError:
+    def format_line(text: str, suffix: str = "!") -> str:
+        return text + suffix
+
+    def choose():
+        return format_line
+
+    format_alias = format_line
+
+print(choose()("word"))
+print(format_alias("other", suffix="?"))

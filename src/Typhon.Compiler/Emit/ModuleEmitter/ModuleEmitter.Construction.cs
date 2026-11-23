@@ -106,10 +106,27 @@ namespace Typhon.Compiler.Emit
                         _w.Line();
                         if (!emitFallback) return;
                     }
+                    if (init.Params.Skip(1).Any(parameter => parameter.Kind != ParamKind.Normal))
+                    {
+                        var previousBindings = parentResolver._inheritedTypeBindings;
+                        parentResolver._inheritedTypeBindings = parentBindings;
+                        try
+                        {
+                            var signature = parentResolver.BuildSignature(init, dropFirst: true, forOverrideSlot: true);
+                            string visibility = SurfaceVisibility("public", signature.Params);
+                            _w.Line($"{visibility} {Esc(ctx.Name)}({signature.Params}) : base({signature.ForwardedConstructorArguments}) {{ }}");
+                            _w.Line();
+                        }
+                        finally
+                        {
+                            parentResolver._inheritedTypeBindings = previousBindings;
+                        }
+                        return;
+                    }
+
                     var ps = new List<string>(); var names = new List<string>(); var baseDefaults = new List<string>();
                     foreach (var p in init.Params.Skip(1))
                     {
-                        if (p.Kind != ParamKind.Normal) return; // *args/**kwargs: no faithful C# mirror, write an __init__
                         string type = p.Annotation != null ? ParameterType(p) : "dynamic";
                         // (a late-bound parameter with a number/bool/str default: C# allows only null as a dynamic parameter's
                         // default, but honours [Optional, DefaultParameterValue(...)])
@@ -315,6 +332,10 @@ namespace Typhon.Compiler.Emit
 
         Dictionary<string, string> _baseInitializerArguments;
 
+        bool HasNativeExceptionBase(ClassDef definition) => definition.Bases.Any(basis =>
+            ResolveBase(basis, out var source, out var metadata) && source == null &&
+            metadata != null && !metadata.StartsWith("Typhon.") && ExceptionMetaMap.ContainsValue(metadata));
+
         void EmitConstructorCore(FunctionDef f, ClassContext ctx, List<Expr> bases, string[] paramTypes)
         {
             string key = TypeInference.FuncKey(_m, ctx.Def, f.Name);
@@ -329,6 +350,8 @@ namespace Typhon.Compiler.Emit
             {
                 // allocate with the base's allocation-only constructor; super().__init__(...) runs where the body has it
                 string alloc = NearestInitAncestor(ctx.Def) != null ? $" : base(default({NoInitType}))" : "";
+                if (HasNativeExceptionBase(ctx.Def))
+                    sig.Prologue.Insert(0, "global::Typhon.Runtime.PyExc.Initialize(this, []);");
                 EmitDocComment(f.Body);
                 LineDirective(f);
                 EmitAttributes(f.Decorators);

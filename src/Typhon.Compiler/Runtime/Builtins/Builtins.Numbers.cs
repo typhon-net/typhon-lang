@@ -43,6 +43,7 @@ namespace Typhon.Runtime
             decimal m => m != 0,
             IPyBool pb => pb.__bool__(),
             IPyLen pl => pl.__len__() != 0,
+            object value when TryPythonLength(value, out long length) => length != 0,
             ITuple tuple => tuple.Length != 0,
             ICollection c => c.Count > 0,
             IEnumerable e => EnumerableIsTruthy(e),
@@ -629,7 +630,7 @@ namespace Typhon.Runtime
         public static List<T> __repeat<T>(BigInteger n, List<T> l) => __repeat(l, n);
 
 
-        static object? NumericOperand(object? value) => value is bool bit ? (bit ? 1L : 0L) : IntegerEnumValue(value);
+        static object? NumericOperand(object? value) => value is bool bit ? (bit ? 1L : 0L) : IntegerValue(value);
 
         /// <summary>A boxed integer as a long (late-bound arithmetic keeps Python's integer semantics).</summary>
         static bool AsInt(object? o, out long v)

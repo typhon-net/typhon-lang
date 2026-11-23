@@ -37,12 +37,27 @@ namespace Typhon.Compiler.Emit
             // likewise an optional value known to be there (if x is not None:)
             bool guarding = nonNegativeUntilAssigned != null && _nonNegative.Add(nonNegativeUntilAssigned);
             bool narrowing = narrowed != null && _narrowed.Add(narrowed);
+            List<string> survivingGuards = null;
             foreach (var s in stmts)
             {
                 if (guarding && BindsName(s, nonNegativeUntilAssigned)) { _nonNegative.Remove(nonNegativeUntilAssigned); guarding = false; }
                 if (narrowing && BindsName(s, narrowed)) { _narrowed.Remove(narrowed); narrowing = false; }
+                if (survivingGuards != null)
+                    for (int index = survivingGuards.Count - 1; index >= 0; index--)
+                    {
+                        string name = survivingGuards[index];
+                        if (!BindsName(s, name)) continue;
+                        _narrowed.Remove(name);
+                        survivingGuards.RemoveAt(index);
+                    }
                 EmitStmt(s);
+                if (s is IfStmt { OrElse.Count: 0 } guard &&
+                    NarrowedBy(guard.Test, whenTrue: false) is string nonNull && !CanFallThrough(guard.Body) &&
+                    _narrowed.Add(nonNull))
+                    (survivingGuards ??= new List<string>()).Add(nonNull);
             }
+            if (survivingGuards != null)
+                foreach (string name in survivingGuards) _narrowed.Remove(name);
             if (guarding) _nonNegative.Remove(nonNegativeUntilAssigned);
             if (narrowing) _narrowed.Remove(narrowed);
             _blocks.Pop();
@@ -124,8 +139,11 @@ namespace Typhon.Compiler.Emit
                 case TryStmt t: EmitTry(t); break;
                 case WithStmt w: EmitWith(w); break;
                 case FunctionDef f when _classFieldInitializer && _cls.ClassBodyImplementations.TryGetValue(f, out string implementation):
+                    var capturedDefaults = f.Params.Where(CapturesClassBodyDefault)
+                        .Select(parameter => new Arg { Name = parameter.Name, Value = parameter.Default }).ToList();
+                    string defaults = capturedDefaults.Count > 0 ? ", " + KeywordArgs(capturedDefaults) : "";
                     string classFunction = $"global::Typhon.Runtime.PyClassDescriptors.ClassBodyFunction(" +
-                        $"typeof({_cls.CsSelfType}), {CsString(f.Name)}, {CsString(implementation)})";
+                        $"typeof({_cls.CsSelfType}), {CsString(f.Name)}, {CsString(implementation)}{defaults})";
                     if (f.Decorators.Count == 1)
                         classFunction = $"{Rt("__invoke")}((object?){Paren(EmitValue(f.Decorators[0]))}, [{classFunction}])";
                     _w.Line($"{Esc(f.Name)} = {classFunction};");
@@ -135,7 +153,9 @@ namespace Typhon.Compiler.Emit
                     EmitClassInitialization(initialization.Definition);
                     break;
                 case ConditionalClassBinding binding:
-                    if (RunsClassBodyAtDefinition(binding.Definition) || CapturesClassModuleName)
+                    if (_conditionalClassDefaults.TryGetValue(binding.Definition, out var initializers))
+                        foreach (var initialize in initializers) EmitStmt(initialize);
+                    if (!_m.IsGdScript)
                         EmitClassInitialization(binding.Definition);
                     _w.Line($"{ClassActivation(binding.Definition)} = true;");
                     if (_m.RuntimeCodeMode != null)
@@ -214,7 +234,7 @@ namespace Typhon.Compiler.Emit
 
         bool KnownNoneResult(CallExpr call)
         {
-            if (TryTypeExpr(call.Func, out _)) return false;
+            if (ConditionalClassReference(call.Func) || TryTypeExpr(call.Func, out _)) return false;
             if (TryBaseQualifiedMember(call, out var member, out var targetClass, out var targetMeta, out bool directBase) &&
                 directBase && call.Args.All(argument => !argument.Star && !argument.DoubleStar) &&
                 BaseQualifiedNativeOverloads(targetClass, targetMeta, member.Name) is { Count: > 0 } inheritedOverloads)
@@ -449,17 +469,23 @@ namespace Typhon.Compiler.Emit
                 if (isElif) _w.Close();
                 return;
             }
-            // if isinstance(x, C): in the block, x is a C (a pattern variable of that type)
-            if (IsInstanceNarrowing(i.Test, i.Body, out var nn, out var ncls))
+            // A final isinstance test also narrows the receiver after the earlier conditions pass.
+            Expr narrowingTest = i.Test is BoolOpExpr { Op: "and" } and ? and.Values.Last() : i.Test;
+            if (IsInstanceNarrowing(narrowingTest, i.Body, out var nn, out var ncls))
             {
+                string original = $"(object?){Paren(EmitName(nn))}";
                 string pv = NewTmp(nn.Id + "_");
-                _w.Line($"{(isElif ? "else if" : "if")} ((object?){Paren(EmitName(nn))} is {ncls} {pv})");
+                bool pattern = narrowingTest == i.Test && narrowingTest is CallExpr instance &&
+                    !ConditionalClassReference(instance.Args[1].Value);
+                string condition = pattern ? $"{original} is {ncls} {pv}" : Cond(i.Test);
+                string prologue = pattern ? null : $"{ncls} {pv} = ({ncls}){original};";
+                _w.Line($"{(isElif ? "else if" : "if")} ({condition})");
                 bool hadRename = _renames.TryGetValue(nn.Id, out var oldRename);
                 bool hadType = _scope.Types.TryGetValue(nn.Id, out var oldType);
                 _renames[nn.Id] = pv;
                 _scope.Types[nn.Id] = ncls;
                 _narrowedInstanceVariables.Add(pv);
-                try { EmitBlock(i.Body); }
+                try { EmitBlock(i.Body, prologue); }
                 finally
                 {
                     _narrowedInstanceVariables.Remove(pv);

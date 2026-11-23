@@ -1,0 +1,19 @@
+class Number(int):
+    def label(self) -> str:
+        return "number"
+
+class Count(Number):
+    def __new__(cls, raw: str):
+        return int.__new__(cls, raw)
+
+    def __init__(self, raw: str):
+        self.raw = raw
+
+plain = Number("5")
+zero = Number()
+count = Count("17")
+print(plain.label(), count.label(), count.raw)
+print(isinstance(count, int), issubclass(Count, Number), type(count) is Count)
+print(bool(zero), bool(plain), count == 17, count > 16.5)
+print(int(count), repr(count), count + 1, 1 + count, count * 2)
+print(hash(count) == hash(17))

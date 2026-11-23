@@ -195,8 +195,9 @@ namespace Typhon.Compiler.Emit
             bool usesGlobals = false;
             AstWalker.VisitAll(body, n => { if (n is NameExpr { Id: "globals" }) usesGlobals = true; });
             bool exposesGlobals = usesGlobals || _m.WritesModuleGlobals || isEntryModule && _p.Modules.Values.Any(source => ReadsModuleRegistry(source.Ast.Body));
-            _nativeImportsInNamespace = !runtimeCode && !_m.IsGdScript && exposesGlobals &&
-                (_m.ConditionalImportBindings.Count > 0 || body.Any(statement => NativeNamespaceImports(statement).Any()));
+            _nativeImportsInNamespace = !runtimeCode && !_m.IsGdScript &&
+                (_conditionalNativeStars.Count > 0 || exposesGlobals &&
+                    (_m.ConditionalImportBindings.Count > 0 || body.Any(statement => NativeNamespaceImports(statement).Any())));
             if (exposesGlobals)
                 foreach (var s in body)
                     if (s is AssignStmt ga) foreach (var t in ga.Targets) foreach (var nm in NamesIn(t)) usedInDefs.Add(nm);
@@ -236,7 +237,13 @@ namespace Typhon.Compiler.Emit
             {
                 // defaults Python evaluates when the def / class statement runs: fields assigned at this position
                 if (s is FunctionDef fdef) RegisterDefaultFields(fdef, null, fields, execStmts);
-                if (s is ClassDef cdef) foreach (var m in cdef.Body.OfType<FunctionDef>()) RegisterDefaultFields(m, cdef.Name, fields, execStmts);
+                if (s is ClassDef cdef)
+                {
+                    var classDefaults = cdef.ConditionalModuleDefinition ? new List<Stmt>() : execStmts;
+                    foreach (var method in cdef.Body.OfType<FunctionDef>()) RegisterDefaultFields(method, cdef.Name, fields, classDefaults);
+                    if (cdef.ConditionalModuleDefinition && classDefaults.Count > 0)
+                        _conditionalClassDefaults[cdef] = classDefaults;
+                }
                 if (s is ImportStmt || s is ImportFromStmt)
                 {
                     bool HasLateBinding(string name) => _lateModuleFields.Contains(name) || _m.ConditionalGlobals.Contains(name);
@@ -250,7 +257,7 @@ namespace Typhon.Compiler.Emit
                 if (s is FunctionDef || s is ClassDef)
                 {
                     if (s is ClassDef definition && !definition.ConditionalModuleDefinition &&
-                        definition != GdScriptClass && (RunsClassBodyAtDefinition(definition) || CapturesClassModuleName))
+                        !_m.IsGdScript && definition != GdScriptClass)
                         execStmts.Add(new ClassBodyInitialization { Definition = definition, Line = definition.Line, Col = definition.Col });
                     if (runtimeCode && s is not ClassDef { ConditionalModuleDefinition: true })
                     {
@@ -439,15 +446,11 @@ namespace Typhon.Compiler.Emit
 
         void EmitLateModuleField(string name, Dictionary<string, string> fields)
         {
-            const string moduleType = "global::Typhon.Runtime.PyModule";
-            string storage = "__typhon_" + NewTmp("module");
             fields.Add(name, "dynamic");
             _moduleFieldTypes[name] = "dynamic";
             _lateModuleFields.Add(name);
-            _w.Line($"private static object? {storage} = {moduleType}.Unbound;");
-            _w.Line("[global::Typhon.Runtime.PyLateAttribute]");
-            _w.Line($"{(name.StartsWith("_") ? "internal" : "public")} static dynamic? {Esc(name)} " +
-                $"{{ get => {moduleType}.ReadLateGlobal({storage}, {CsString(name)}); set => {storage} = value; }}");
+            _w.Line("[global::Typhon.Runtime.PyOptionalModuleMember]");
+            _w.Line($"{(name.StartsWith("_") ? "internal" : "public")} static dynamic? {Esc(name)} = global::Typhon.Runtime.PyModule.Unbound;");
         }
 
         string RegisterAbcMixins()

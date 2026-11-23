@@ -1,0 +1,19 @@
+class Value:
+    def describe(self) -> str:
+        return "matched"
+
+def show(enabled: bool, value: object):
+    if enabled and isinstance(value, Value):
+        print(value.describe())
+    else:
+        print("no")
+
+show(True, Value())
+show(True, 3)
+show(False, Value())
+
+try:
+    raise ImportError("missing", name="fixture")
+except BaseException as error:
+    if isinstance(error, ImportError) and error.name == "fixture":
+        print(error.name)

@@ -1,0 +1,19 @@
+#:pylib-source zipimport
+import os
+import tempfile
+import zipfile
+import zipimport
+
+with tempfile.TemporaryDirectory() as directory:
+    archive = os.path.join(directory, "modules.zip")
+    with zipfile.ZipFile(archive, "w") as writer:
+        writer.writestr("sample/__init__.py", "value = 3\n")
+        writer.writestr("sample/data.txt", b"data")
+    reader = zipimport.zipimporter(archive)
+    print(reader.is_package("sample"))
+    print(repr(reader.get_source("sample")))
+    print(reader.get_data(os.path.join(archive, "sample", "data.txt")))
+    print(reader.find_spec("sample").name)
+    namespace = {}
+    exec(reader.get_code("sample"), namespace)
+    print(namespace["value"])

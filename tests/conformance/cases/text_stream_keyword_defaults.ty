@@ -1,0 +1,19 @@
+from io import StringIO
+
+
+class Stream(StringIO):
+    pass
+
+
+def contents(stream: StringIO) -> None:
+    stream.write("first\r\nsecond\rthird\n")
+    stream.seek(0)
+    print(repr(stream.read()))
+
+
+contents(StringIO(newline=""))
+contents(StringIO(newline=None))
+contents(Stream(newline=None))
+print(repr(Stream().getvalue()))
+print(repr(Stream("initial").getvalue()))
+print(repr(Stream(newline="\r", initial_value="one\ntwo").getvalue()))

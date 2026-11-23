@@ -101,7 +101,9 @@ namespace Typhon.Compiler.Emit
         System.Text.RegularExpressions.Regex _internalClassNames;
         System.Text.RegularExpressions.Regex BuildInternalClassNames()
         {
-            var names = AllClasses().Where(c => Visibility(c.Name, topLevel: true) != "public" || DerivesFromInternalClass(c)).Select(c => c.Name).Distinct().ToList();
+            var names = AllClasses().Where(c => Visibility(c.Name, topLevel: true) != "public" ||
+                    IsStringEnum(c) || IsObjectIntegerEnum(c) || IsPlainObjectEnum(c) || DerivesFromInternalClass(c))
+                .Select(c => c.Name).Distinct().ToList();
             // a type position: after a dot, a bracket, a comma or the start, followed by a non-identifier character or the end
             return names.Count == 0 ? new System.Text.RegularExpressions.Regex("(?!)")
                 : new System.Text.RegularExpressions.Regex(@"(^|[.<(,\s])(" + string.Join("|", names.Select(System.Text.RegularExpressions.Regex.Escape)) + @")(?=[>),?\[\s]|$)");
@@ -235,6 +237,7 @@ namespace Typhon.Compiler.Emit
         }
 
         readonly HashSet<AttributeExpr> _privateClassDefaultReads = new HashSet<AttributeExpr>();
+        readonly Dictionary<ClassDef, List<Stmt>> _conditionalClassDefaults = new Dictionary<ClassDef, List<Stmt>>();
 
         /// <summary>Declares fields for f's definition-time defaults and queues their assignment at the def's position.</summary>
         void RegisterDefaultFields(FunctionDef f, string owner, Dictionary<string, string> fields, List<Stmt> execStmts)
@@ -264,8 +267,6 @@ namespace Typhon.Compiler.Emit
             }
         }
 
-        static string NullableOf(string t) => t == "dynamic" || t == "object" || t.EndsWith("?") ? t : t + "?";
-
         bool UsesMissingDefinitionDefault(string type) => !_m.IsGdScript && type is "dynamic" or "object" or "object?";
 
         string DefinitionDefaultParameter(string type, string name, out string defaultCode)
@@ -273,7 +274,7 @@ namespace Typhon.Compiler.Emit
             bool useMissing = UsesMissingDefinitionDefault(type);
             defaultCode = useMissing ? "" : "null";
             return useMissing ? $"[global::System.Runtime.InteropServices.Optional] {type} {name}"
-                : $"{NullableOf(type)} {name}";
+                : $"{Nullable(type)} {name}";
         }
 
         /// <summary>Emits a function-like body with its signature's prologue and renames in effect.</summary>
@@ -428,13 +429,15 @@ namespace Typhon.Compiler.Emit
             string[] baseTypes = baseMethod?.Parameters.Select(x => x.GenericType).ToArray();
             bool inferredMethod = dropFirst && f.Name != "__init__" && _cls?.Def.Body.Contains(f) == true &&
                 (paramTypes != null || _ctxFallbackKey != null);
+            var classBodyDefinition = _cls?.ClassBodyImplementations.FirstOrDefault(binding => binding.Value == f.Name).Key;
             for (int i = 0; i < f.Params.Count; i++)
             {
                 var p = f.Params[i];
                 if (i == 0 && dropFirst) continue;
                 scope.Params.Add(p.Name);
-                if (!_m.IsGdScript && p.Default is NameExpr or AttributeExpr &&
-                    (IsRuntimeTypeValue(p.Default) || TryTypeExpr(p.Default, out _)))
+                Expr definitionDefault = p.Default ?? classBodyDefinition?.Params[i].Default;
+                if (!_m.IsGdScript && definitionDefault is NameExpr or AttributeExpr &&
+                    (IsRuntimeTypeValue(definitionDefault) || TryTypeExpr(definitionDefault, out _) || IsConditionalModuleBinding(definitionDefault)))
                     (scope.ClassDefaultParameters ??= new HashSet<string>()).Add(p.Name);
                 if (p.Kind == ParamKind.KwArgs)
                 {

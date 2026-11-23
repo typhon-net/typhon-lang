@@ -49,8 +49,20 @@ namespace Typhon.Runtime
                 Type type => $"type object '{PyTypeName(type)}' has no attribute '{name}'",
                 _ => $"'{(receiver == null ? "NoneType" : PyTypeName(receiver.GetType()))}' object has no attribute '{name}'",
             })], name, receiver);
-        public static dynamic? getattr(object? o, string name, object? @default) => TryGetAttr(o, name, out var v) ? v : @default;
-        public static bool hasattr(object? o, string name) => TryGetAttr(o, name, out _);
+        public static dynamic? getattr(object? o, string name, object? @default) =>
+            TryGetOptionalAttr(o, name, out var value) ? value : @default;
+        public static bool hasattr(object? o, string name) => TryGetOptionalAttr(o, name, out _);
+
+        static bool TryGetOptionalAttr(object? receiver, string name, out object? value)
+        {
+            try { return TryGetAttr(receiver, name, out value); }
+            catch (MissingMemberException)
+            {
+                if (receiver != null && TryFallbackAttribute(receiver, name, out value)) return true;
+                value = null;
+                return false;
+            }
+        }
 
         public static dynamic __unbound_import(string name) => throw new NameError($"name '{name}' is not defined", name: name);
 
@@ -94,7 +106,7 @@ namespace Typhon.Runtime
             if (o is PyPlainEnumType plainEnum && plainEnum.TryRead(name, out value)) return true;
             if (o is Type t)
             {
-                if (t == typeof(Type) && PyMetaclasses.TypeCheckSlot(name) is PyClosure typeCheck) { value = typeCheck; return true; }
+                if (t == typeof(Type) && PyMetaclasses.TypeSlot(name) is PyClosure typeCheck) { value = typeCheck; return true; }
                 if (name == "__name__") { value = PyTypeName(t); return true; }
                 if (name == "__class__") { value = PyMetaclasses.Of(t); return true; }
                 if (name == "__qualname__") { value = PyMetaclasses.QualifiedName(t); return true; }
@@ -117,6 +129,7 @@ namespace Typhon.Runtime
                         return true;
                     }
                     if (name == "__doc__") return true;
+                    if (name == "__subclasses__") { value = new Typhon.Stdlib.types.MethodType(PyMetaclasses.TypeSlot(name), local); return true; }
                     return TryGetAttr(local.BaseType, name, out value, allowFallback);
                 }
                 if (name == "__doc__") { value = ClassDocumentation(t); return true; }
@@ -165,6 +178,7 @@ namespace Typhon.Runtime
                 if (FindNestedType(t, name) is Type nested) { value = nested; return true; }
                 if (TryBuiltinClassMethod(t, name, out value)) return true;
                 if (PyMetaclasses.TryBindMember(t, name, out value)) return true;
+                if (name == "__subclasses__") { value = new Typhon.Stdlib.types.MethodType(PyMetaclasses.TypeSlot(name), t); return true; }
                 // CLR reflection consumers may also read members of the Type object itself.
             }
             if (o is PyBoundMethod { IsBuiltinModuleFunction: true } builtin &&
@@ -548,6 +562,10 @@ namespace Typhon.Runtime
 
         public static dynamic __int_enum_new(Type cls, params object?[] args) =>
             PyIntegerEnum.Allocate(cls, ConstructBigInt(args, null));
+
+        public static dynamic __int_subclass_new(Type cls, params object?[] args) =>
+            cls == typeof(long) ? (object)checked((long)ConstructBigInt(args, null)) :
+            cls == typeof(BigInteger) ? ConstructBigInt(args, null) : PyInteger.__new__(cls, args);
 
         static void RequireIntClass(Type cls)
         {

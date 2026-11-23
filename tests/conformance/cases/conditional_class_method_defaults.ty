@@ -1,0 +1,27 @@
+events: list[str] = []
+
+
+def enabled(result: bool) -> bool:
+    return result
+
+
+def make(label: str) -> list[str]:
+    events.append(label)
+    return []
+
+
+if enabled(False):
+    class Skipped:
+        def read(self, items=make("skipped")):
+            return items
+
+
+if enabled(True):
+    class Selected:
+        def read(self, items=make("selected")):
+            return items
+
+
+first = Selected().read()
+print(events)
+print(first is Selected().read(), Selected().read(None) is None)

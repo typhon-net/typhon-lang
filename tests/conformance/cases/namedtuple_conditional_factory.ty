@@ -1,0 +1,11 @@
+import collections
+import os
+
+if os.name:
+    Row = collections.namedtuple('Row', 'left right')
+else:
+    Row = collections.namedtuple('Alternative', 'source target')
+
+item = Row('val', 12)
+print(item, item.left, item.right, item[0])
+print(type(item).__name__, isinstance(item, tuple))

@@ -194,7 +194,20 @@ namespace Typhon.Compiler.Emit
                         continue;
                     if (mro.TakeWhile(x => !Equals(x, k)).OfType<ClassDef>().Any(x => DefinesAttribute(x, target))) continue;
                     if (primaryMro.OfType<ClassDef>().Any(x => DefinesAttribute(x, target))) continue;
-                    added.Add(AstClone.Clone(s));
+                    Stmt copy = AstClone.Clone(s);
+                    if (cx.Owner[k] != m && !target.StartsWith("__"))
+                    {
+                        // Inherit the initialized value so its expression runs in the defining module.
+                        var source = bases.FirstOrDefault(basis => Equals(basis.Node, k) ||
+                            basis.Node is ClassDef owner && cx.Mro.TryGetValue(owner, out var ancestors) && ancestors.Contains(k));
+                        if (source.Expr != null)
+                        {
+                            var value = new AttributeExpr { Target = AstClone.Clone(source.Expr), Name = target, Line = s.Line, Col = s.Col };
+                            if (copy is AssignStmt assignment) assignment.Value = value;
+                            if (copy is AnnAssignStmt { Value: not null } annotation) annotation.Value = value;
+                        }
+                    }
+                    added.Add(copy);
                 }
                 if (!cx.Project.MixedInto.TryGetValue(k, out var list)) cx.Project.MixedInto[k] = list = new List<(ClassDef, ModuleInfo)>();
                 list.Add((c, m));
@@ -206,7 +219,7 @@ namespace Typhon.Compiler.Emit
             {
                 object context = f.Name.StartsWith("__mro_") ? flattened.FirstOrDefault(k => f.Name.StartsWith("__mro_" + k.Name + "_")) ?? (object)c
                                : added.Contains(f) ? flattened.FirstOrDefault(k => Defines(k, f.Name)) ?? (object)c : c;
-                RewriteSuperCalls(f, context, mro, flattened, primaryMro, c);
+                RewriteSuperCalls(f, context, mro, flattened, primaryMro, c, cx, m);
             }
             RunMixinInits(c, flattened, mro, cx, primary.Node);
             CooperativeHooks(c, flattened, mro, primaryMro, cx);
@@ -340,7 +353,7 @@ namespace Typhon.Compiler.Emit
         static bool IsSuperCall(Expr e, string self) =>
             e is CallExpr sc && sc.Func is NameExpr sn && sn.Id == "super" && (sc.Args.Count == 0 || sc.Args.Count == 2 && sc.Args[1].Value is NameExpr si && si.Id == self);
 
-        static void RewriteSuperCalls(FunctionDef f, object context, List<object> mro, List<ClassDef> flattened, List<object> primaryMro, ClassDef into)
+        static void RewriteSuperCalls(FunctionDef f, object context, List<object> mro, List<ClassDef> flattened, List<object> primaryMro, ClassDef into, Context cx, ModuleInfo module)
         {
             if (f.Params.Count == 0) return;
             string self = f.Params[0].Name;
@@ -375,8 +388,8 @@ namespace Typhon.Compiler.Emit
                     return;
                 }
                 // Class.m(self, ...) with Class copied into this class: its hidden copy
-                if (a.Target is NameExpr cn && call.Args.Count >= 1 && call.Args[0].Name == null && call.Args[0].Value is NameExpr a0 && a0.Id == self &&
-                    flattened.FirstOrDefault(k => k.Name == cn.Id) is ClassDef named && Defines(named, a.Name))
+                if (call.Args.Count >= 1 && call.Args[0].Name == null && call.Args[0].Value is NameExpr a0 && a0.Id == self &&
+                    ResolveClass(cx, module, a.Target) is ClassDef named && flattened.Contains(named) && Defines(named, a.Name))
                 {
                     a.Target = new NameExpr { Id = self, Line = a.Line, Col = a.Col };
                     a.Name = Hidden(named, a.Name);

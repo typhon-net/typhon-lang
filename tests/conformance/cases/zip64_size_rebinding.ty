@@ -1,0 +1,15 @@
+import struct
+from _frozen_importlib_external import _unpack_uint32
+
+def size(raw: bytes, extra: bytes):
+    value = _unpack_uint32(raw)
+    while extra:
+        if value == 4294967295:
+            count = len(extra) // 8
+            values = list(struct.unpack_from(f"<{count}Q", extra))
+            value = values.pop(0)
+        break
+    return value
+
+print(size(b"\xff\xff\xff\xff", b"\x01\x00\x00\x00\x01\x00\x00\x00"))
+print(size(b"\x03\x00\x00\x00", b""))

@@ -53,6 +53,7 @@ namespace Typhon.Compiler
         internal readonly HashSet<string> ConditionalGlobals = new HashSet<string>();
         internal readonly HashSet<string> ConditionalFunctions = new HashSet<string>();
         internal readonly HashSet<string> ConditionalImportBindings = new HashSet<string>();
+        internal readonly List<ImportFromStmt> ConditionalStarImports = new List<ImportFromStmt>();
         internal readonly HashSet<string> ReboundFunctions = new HashSet<string>();
         internal readonly HashSet<string> ReboundClasses = new HashSet<string>();
         internal readonly List<FunctionDef> ReboundImplementations = new List<FunctionDef>();
@@ -437,8 +438,12 @@ namespace Typhon.Compiler
             if (!runtimeCode && !info.IsGdScript)
                 AstWalker.VisitAll(info.Ast.Body.Where(statement => statement is not (ImportStmt or ImportFromStmt)), node =>
                 {
-                    if (node is ImportFromStmt from)
-                        info.ConditionalImportBindings.UnionWith(from.Names.Where(alias => alias.Name != "*").Select(alias => alias.AsName ?? alias.Name));
+                    if (node is not ImportFromStmt from) return;
+                    foreach (var alias in from.Names)
+                    {
+                        if (alias.Name == "*") info.ConditionalStarImports.Add(from);
+                        else info.ConditionalImportBindings.Add(alias.AsName ?? alias.Name);
+                    }
                 }, includeNestedScopes: false);
 
             var branches = info.Ast.Body.Where(statement =>
@@ -630,7 +635,7 @@ namespace Typhon.Compiler
                 GdScriptLowering.Run(project);
                 foreach (var source in project.Modules.Values)
                     if (source.Ast != null && source.ParseDiagnostics.Count == 0)
-                        new ModuleEmitter(source, project, diagnostics).PrepareImportClassBindings();
+                        new ModuleEmitter(source, project, diagnostics).PrepareImportBindings();
                 ClassModel.Complete(project);
                 TypeInference.Run(project);
             }

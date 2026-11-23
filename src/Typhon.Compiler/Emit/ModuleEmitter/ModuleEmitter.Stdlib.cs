@@ -42,7 +42,7 @@ namespace Typhon.Compiler.Emit
 
         /// <summary>
         /// Result types of standard-library functions whose C# signatures are generic (the element type follows the argument):
-        /// permutations(xs) → tuples of xs's elements, product(a, b) → (A, B) pairs, Counter(xs) → a Counter of xs's elements, ...
+        /// permutations(xs) → tuples of xs's elements, Counter(xs) → a Counter of xs's elements, ...
         /// </summary>
         bool IsTypeAccumulator(Expr expression) =>
             expression is NameExpr name && BuiltinTypeValue(name) != null ||
@@ -69,10 +69,7 @@ namespace Typhon.Compiler.Emit
                 case "Typhon.Stdlib.itertools.combinations_with_replacement": case "Typhon.Stdlib.itertools.batched":
                     return Wrap(Elem(0), "IEnumerable<global::Typhon.Runtime.PyTuple<{0}>>");
                 case "Typhon.Stdlib.itertools.product":
-                    if (call.Args.Any(a => a.Star || a.DoubleStar || a.Name != null)) return "dynamic";
-                    if (pos.Count > 3) return Wrap(Elem(0), "IEnumerable<global::Typhon.Runtime.PyTuple<{0}>>");
-                    var es = Enumerable.Range(0, pos.Count).Select(Elem).ToList();
-                    return es.Count >= 2 && es.All(e => e != null && e != TypeInference.Pending) ? $"IEnumerable<({string.Join(", ", es)})>" : es.Contains(TypeInference.Pending) ? TypeInference.Pending : null;
+                    return $"global::Typhon.Runtime.PyIterator<{PyTuplePrefix}dynamic>>";
                 case "Typhon.Stdlib.itertools.count":
                     return call.Args.Any(argument => InferType(argument.Value) == "double") ? "IEnumerable<double>" : $"IEnumerable<{IntT}>";
                 case "Typhon.Stdlib.itertools.chain":
@@ -121,9 +118,9 @@ namespace Typhon.Compiler.Emit
                 case "Typhon.Stdlib.pathlib.Path": return "global::Typhon.Runtime.Path";
             }
             if (GenericStdlibCallType(module, name, call) is string generic) return generic;
-            // a function declared to return dynamic (json.loads): late-bound to C# as well
-            var plain = _r.GetMembers(module, name).Where(m => m.IsMethod && m.IsStatic).ToList();
-            return plain.Count > 0 && plain.All(m => m.ReturnsDynamic) ? "dynamic" : null;
+            var methods = _r.GetMembers(module, name).Where(member => member.IsMethod && member.IsStatic).ToList();
+            if (methods.Count > 0 && methods.All(member => member.ReturnsDynamic)) return "dynamic";
+            return MemberResultType(methods, call);
         }
 
         static string PathSequenceType(string type, int elements) => type is "string" or PyBytesType

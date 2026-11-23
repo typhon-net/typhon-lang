@@ -1,0 +1,15 @@
+import enum
+
+class Enum:
+    def value(self) -> str:
+        return "ordinary class"
+
+class Label(Enum):
+    def show(self) -> str:
+        return self.value()
+
+class Color(enum.Enum):
+    BLUE = 7
+
+print(Label().show())
+print(Color.BLUE.value)

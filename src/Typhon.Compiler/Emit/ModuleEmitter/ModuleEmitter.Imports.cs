@@ -46,7 +46,7 @@ namespace Typhon.Compiler.Emit
 
         bool UsesRuntimeProjectMember(ModuleInfo module, string name) =>
             module.MayReplaceModule || ConditionalModuleClass(module, name) || module.ConditionalImportBindings.Contains(name) ||
-            (module.WritesModuleGlobals || HasModuleAttributeFallback(module)) &&
+            (module.WritesModuleGlobals || HasModuleAttributeFallback(module) || ConditionalStarExports(module, name)) &&
             ProjectExport(module, name).Owner == null && RuntimeReExport(module, name).Module == null;
 
         bool ConditionalClassReference(Expr reference) => reference switch
@@ -215,7 +215,7 @@ namespace Typhon.Compiler.Emit
             return Enumerable.Empty<ModuleInfo>();
         }
 
-        static bool IsPlatformModule(string name) => name is "termios" or "msvcrt" or "posix" or "nt" or "_winapi";
+        static bool IsPlatformModule(string name) => name is "termios" or "msvcrt" or "posix" or "nt" or "_winapi" or "_posixsubprocess";
 
         IEnumerable<string> PlatformModules(Stmt statement)
         {
@@ -395,6 +395,7 @@ namespace Typhon.Compiler.Emit
 
         void ProcessImportFrom(ImportFromStmt s, bool resolveRuntimeMember = false)
         {
+            if (_conditionalNativeStars.Contains(s)) return;
             string modName = _m.ResolveImport(s.Module, s.Level);
             if (modName == null) { Report(s, "TY0101", Severity.Error, "attempted relative import beyond the current package"); return; }
             string publicModule = PublicModule(modName);
@@ -448,7 +449,7 @@ namespace Typhon.Compiler.Emit
                                 Module = export.Module, Line = s.Line, Col = s.Col,
                                 Names = { new ImportAlias { Name = export.Member, AsName = bound } },
                             });
-                        else if (mod.WritesModuleGlobals || HasModuleAttributeFallback(mod))
+                        else if (mod.WritesModuleGlobals || HasModuleAttributeFallback(mod) || ConditionalStarExports(mod, a.Name))
                             _runtimeProjectBindings[bound] = (mod, a.Name, "__typhon_" + NewTmp("import"));
                         else Report(s, "TY0102", Severity.Error, $"cannot import name '{a.Name}' from '{modName}'");
                         continue;
@@ -575,7 +576,7 @@ namespace Typhon.Compiler.Emit
             ["_json"] = "json", ["_statistics"] = "statistics", ["_string"] = "string", ["_csv"] = "csv",
             ["_collections"] = "collections", ["_contextvars"] = "contextvars",
             ["_md5"] = "hashlib", ["_sha1"] = "hashlib", ["_pydecimal"] = "decimal",
-            ["_codecs"] = "codecs", ["_decimal"] = "decimal", ["_bz2"] = "bz2", ["_lzma"] = "lzma", ["_locale"] = "locale",
+            ["_codecs"] = "codecs", ["_decimal"] = "decimal", ["_bz2"] = "bz2", ["_locale"] = "locale",
             ["_stat"] = "stat", ["_warnings"] = "warnings", ["_py_warnings"] = "warnings", ["_queue"] = "queue", ["_socket"] = "socket",
         };
 
@@ -604,7 +605,7 @@ namespace Typhon.Compiler.Emit
 
             bool AvailableProjectExport(ModuleInfo owner, string member)
             {
-                if (owner.ConditionalImportBindings.Contains(member)) return true;
+                if (owner.ConditionalImportBindings.Contains(member) || ConditionalStarExports(owner, member)) return true;
                 if (ProjectExport(owner, member).Owner == null) return false;
                 if (owner != _m || !_m.IsPackage || !_m.ConditionalGlobals.Contains(member) ||
                     _p.FindModule(owner.Name + "." + member) != null) return true;
@@ -662,22 +663,55 @@ namespace Typhon.Compiler.Emit
             };
         }
 
-        // The selected class must enter the project class model before consumers resolve its bases and metaclass.
-        internal void PrepareImportClassBindings()
+        List<Stmt> ResolvedImportSuite(TryStmt statement, out Stmt unavailable)
+        {
+            unavailable = null;
+            if (statement.FinalBody.Count != 0) return null;
+            int failing = statement.Body.FindIndex(s => s is ImportStmt import && import.Names.Any(alias => !ModuleExists(alias.Name)) ||
+                                                        s is ImportFromStmt from && !ImportFromResolves(from));
+            if (failing < 0)
+                return HasOnlyResolvedImports(statement) ? statement.Body.Concat(statement.OrElse).ToList() : null;
+
+            var handler = statement.Handlers.FirstOrDefault(HandlesMissingImport);
+            if (handler == null || handler.Name != null ||
+                statement.Body.Take(failing).Any(s => s is ImportStmt or ImportFromStmt or FunctionDef or ClassDef))
+                return null;
+
+            unavailable = statement.Body[failing];
+            return statement.Body.Take(failing).Concat(handler.Body).ToList();
+        }
+
+        // The selected declarations must be visible to the project class and function models.
+        internal void PrepareImportBindings()
         {
             if (_m.RuntimeCodeMode != null) return;
             var body = _m.Ast.Body;
             for (int i = 0; i < body.Count; i++)
             {
-                if (body[i] is not TryStmt branch || !branch.OrElse.OfType<ClassDef>().Any() ||
-                    !HasOnlyResolvedImports(branch)) continue;
-                var selected = branch.Body.Concat(branch.OrElse).ToList();
+                if (body[i] is not TryStmt branch || ResolvedImportSuite(branch, out var unavailable) is not { } selected ||
+                    !selected.Any(s => s is ClassDef or FunctionDef)) continue;
+
+                if (unavailable != null) RememberUnavailableBindings(unavailable);
                 body.RemoveAt(i);
                 body.InsertRange(i, selected);
-                foreach (var definition in branch.OrElse.OfType<ClassDef>())
+                foreach (var declaration in selected)
                 {
-                    _m.Classes[definition.Name] = definition;
-                    if (_m.ConditionalGlobals.Remove(definition.Name)) _m.Globals.Remove(definition.Name);
+                    string name;
+                    if (declaration is ClassDef cls)
+                    {
+                        name = cls.Name;
+                        _m.Classes[name] = cls;
+                    }
+                    else if (declaration is FunctionDef function)
+                    {
+                        name = function.Name;
+                        _m.Functions.Add(name);
+                        _m.ConditionalFunctions.Remove(name);
+                    }
+                    else continue;
+
+                    if (_m.ConditionalGlobals.Remove(name)) _m.Globals.Remove(name);
+                    _m.Ast.FailedModuleImports.Remove(name);
                 }
             }
         }
@@ -690,32 +724,22 @@ namespace Typhon.Compiler.Emit
                 {
                     case TryStmt t when t.FinalBody.Count == 0:
                     {
-                        var handler = t.Handlers.FirstOrDefault(HandlesMissingImport);
-                        int failing = t.Body.FindIndex(st => st is ImportStmt im && im.Names.Any(a => !ModuleExists(a.Name)) ||
-                                                             st is ImportFromStmt imf && !ImportFromResolves(imf));
-                        // try: from _queue import Empty / except ImportError: class Empty...: the imports all succeed, so
-                        // the handler never runs (Typhon resolves imports when it compiles)
-                        if (failing < 0 && HasOnlyResolvedImports(t))
+                        if (ResolvedImportSuite(t, out var unavailable) is { } selected)
                         {
-                            var kept = t.Body.Concat(t.OrElse).ToList();
+                            if (moduleScope && unavailable != null) RememberUnavailableBindings(unavailable);
                             body.RemoveAt(i);
-                            body.InsertRange(i, kept);
-                            i += kept.Count - 1;
-                            continue;
-                        }
-                        if (handler != null && failing >= 0 && handler.Name == null &&
-                            !t.Body.Take(failing).Any(st => st is ImportStmt || st is ImportFromStmt || st is FunctionDef || st is ClassDef))
-                        {
-                            if (moduleScope) RememberUnavailableBindings(t.Body[failing]);
-                            var replacement = t.Body.Take(failing).Concat(handler.Body).ToList();
-                            body.RemoveAt(i);
-                            body.InsertRange(i, replacement);
-                            if (replacement.LastOrDefault() is ReturnStmt or RaiseStmt)
-                                body.RemoveRange(i + replacement.Count, body.Count - i - replacement.Count);
+                            body.InsertRange(i, selected);
+                            if (unavailable == null)
+                            {
+                                i += selected.Count - 1;
+                                continue;
+                            }
+                            if (selected.LastOrDefault() is ReturnStmt or RaiseStmt)
+                                body.RemoveRange(i + selected.Count, body.Count - i - selected.Count);
                             i--;
                             continue;
                         }
-                        ResolveFailingImports(t.Body, moduleScope, optional || handler != null);
+                        ResolveFailingImports(t.Body, moduleScope, optional || t.Handlers.Any(HandlesMissingImport));
                         foreach (var h in t.Handlers) ResolveFailingImports(h.Body, moduleScope, optional);
                         ResolveFailingImports(t.OrElse, moduleScope, optional);
                         break;
@@ -828,6 +852,7 @@ namespace Typhon.Compiler.Emit
         {
             dotted = PublicModule(dotted);
             if (dotted == "_ast") dotted = "ast";
+            if (dotted == "importlib.readers") dotted = "importlib.resources.readers";
             var parts = dotted.Split('.');
             foreach (var head in new[] { parts[0], parts[0] + "_" })
             {

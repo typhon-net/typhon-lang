@@ -88,7 +88,7 @@ namespace Typhon.Stdlib
                             return true;
                         }
                         if (owner == typeof(object) && __self__ is Type checkTarget && PyMetaclasses.IsMetaclass(__thisclass__) &&
-                            PyMetaclasses.TypeCheckSlot(name) is PyClosure typeCheck)
+                            PyMetaclasses.TypeSlot(name) is PyClosure typeCheck)
                         {
                             result = new types.MethodType(typeCheck, checkTarget);
                             return true;
@@ -243,8 +243,11 @@ namespace Typhon.Runtime
 
     internal static partial class Builtins
     {
+        public static void __register_subclass(Type type) => PyMetaclasses.RegisterSubclass(type);
+
         public static void __initialize_subclass(Type type, IDictionary<string, object?>? keywords)
         {
+            __register_subclass(type);
             var inherited = new Typhon.Stdlib.builtins.super(type, type);
             if (inherited.TryResolve("__init_subclass__", out var hook)) __invoke_kw(hook, [], keywords);
         }

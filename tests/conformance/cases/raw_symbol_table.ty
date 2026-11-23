@@ -1,0 +1,30 @@
+import _symtable
+
+source = """import os.path
+from math import pi as constant
+global g
+g = 1
+def outer(x, y=g):
+    local = 2
+    def inner(a):
+        nonlocal local
+        global g
+        local += a
+        return local + x + g + unknown
+    return inner
+class Demo:
+    def count(self, arg=constant):
+        return super().count() + arg
+"""
+
+def dump(table):
+    print(table.name, table.type, table.nested, table.lineno)
+    print(list(table.symbols.items()))
+    for child in table.children:
+        dump(child)
+
+dump(_symtable.symtable(source, "<sample>", "exec"))
+try:
+    _symtable.symtable("def f():\n    nonlocal absent\n", "<sample>", "exec")
+except SyntaxError as error:
+    print(error.msg)

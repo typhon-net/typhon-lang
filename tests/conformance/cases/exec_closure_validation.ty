@@ -1,0 +1,10 @@
+source = compile("value = 7", "<test>", "exec")
+scope = {}
+exec(source, scope, closure=None)
+print(scope["value"])
+
+for item in (source, "value = 8"):
+    try:
+        exec(item, scope, closure=())
+    except TypeError as error:
+        print(str(error))

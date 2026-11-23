@@ -1,0 +1,11 @@
+import sys
+
+if sys.version_info.major >= 3:
+    class Options:
+        def __init__(self, *, limit: int = 1):
+            self.limit = limit
+
+        def copy(self):
+            return Options(limit=self.limit)
+
+print(Options(limit=7).copy().limit)

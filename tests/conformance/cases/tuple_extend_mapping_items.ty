@@ -1,0 +1,8 @@
+from typing import Any
+
+def entries(mapping: Any):
+    result = [("first", 1)]
+    result.extend(item for item in mapping.items())
+    return result
+
+print(entries({"second": 2, "third": 3}))

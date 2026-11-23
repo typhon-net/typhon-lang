@@ -97,7 +97,7 @@ namespace Typhon.Compiler.Emit
                 case NameExpr rm when !Receivers.Contains(rm) && RuntimeModuleValue(rm) is string runtimeModule: return runtimeModule;
                 case NameExpr printer when IsBuiltinPrintValue(printer):
                     return $"(dynamic){Rt("__print_value")}()";
-                case NameExpr n: return EmitName(n);
+                case NameExpr n: return EmitNameRead(n);
                 case FStringExpr f: return EmitFString(f);
                 // one of the runtime's classes as a value ({weakref.ref: ...}, cls is collections.deque): its type object
                 case AttributeExpr ca when !Receivers.Contains(ca) && ModuleOrClassValue(ca) is string classValue: return classValue;
@@ -133,8 +133,7 @@ namespace Typhon.Compiler.Emit
                     return code;
                 }
                 case CompareExpr c: return EmitCompare(c);
-                case IfExpr i when ConditionalNeedsDynamic(i, targetTyped): return $"({Cond(i.Test)} ? (dynamic?){Paren(EmitLooseValue(i.Body))} : (dynamic?){Paren(EmitLooseValue(i.OrElse))})";
-                case IfExpr i: return $"({Cond(i.Test)} ? {EmitExpr(i.Body, targetTyped)} : {EmitExpr(i.OrElse, targetTyped)})";
+                case IfExpr i: return EmitConditional(i, targetTyped, asValue: false);
                 case LambdaExpr l when l.RequiresArgumentBinding || IsGeneratorLambda(l): return EmitRuntimeLambda(l);
                 case LambdaExpr l:
                 {
@@ -218,8 +217,7 @@ namespace Typhon.Compiler.Emit
                 case AttributeExpr a when !Receivers.Contains(a) && NativeModuleMethodValue(a) is string nativeMethod: return nativeMethod;
                 case ConstExpr c when c.Kind == ConstKind.Int: return IntLiteral(EmitConst(c));
                 case UnaryExpr u when u.Op == "-" && u.Operand is ConstExpr uc && uc.Kind == ConstKind.Int: return "-" + IntLiteral(EmitConst(uc));
-                case IfExpr i when ConditionalNeedsDynamic(i, targetTyped): return EmitExpr(i, targetTyped);
-                case IfExpr i: return $"({Cond(i.Test)} ? {EmitValue(i.Body, targetTyped)} : {EmitValue(i.OrElse, targetTyped)})";
+                case IfExpr i: return EmitConditional(i, targetTyped, asValue: true);
                 default: return EmitExpr(e, targetTyped);
             }
         }
@@ -728,7 +726,8 @@ namespace Typhon.Compiler.Emit
             attr.Target is NameExpr { Id: "dict" } && !IsShadowed("dict") && attr.Name is ("__new__" or "__eq__")
                 ? (attr.Name == "__new__" ? "__dict_new" : "__dict_eq") :
             attr is { Target: NameExpr { Id: "int" }, Name: "__new__" } && !IsShadowed("int") ?
-                (_cls != null && IsObjectIntegerEnum(_cls.Def) ? "__int_enum_new" : _big ? "__bigint_new" : "__int_new") :
+                (_cls != null && IsObjectIntegerEnum(_cls.Def) ? "__int_enum_new" :
+                 _cls != null && HasIntegerBase(_cls.Def) ? "__int_subclass_new" : _big ? "__bigint_new" : "__int_new") :
             attr is { Target: NameExpr { Id: "str" }, Name: "__new__" } && !IsShadowed("str") ? "__str_new" :
             attr is { Target: NameExpr { Id: "tuple" }, Name: "__new__" } && !IsShadowed("tuple") ? "__tuple_new" :
             attr.Target is NameExpr { Id: "object" } && !IsShadowed("object") ? attr.Name switch
@@ -749,23 +748,24 @@ namespace Typhon.Compiler.Emit
         {
             switch (attribute.Name)
             {
-                case "name": case "obj":
-                    return InferType(attribute.Target)?.Replace("global::", "").TrimEnd('?') == "System.MissingMemberException";
                 case "__cause__": case "__context__": case "__suppress_context__": case "__traceback__": case "with_traceback": case "__notes__":
                     string type = InferType(attribute.Target);
                     return IsUnknownType(type) || IsExceptionType(type);
                 case "errno": case "strerror": case "filename2": case "winerror":
                 case "filename": case "lineno": case "offset": case "text":
                 case "end_lineno": case "end_offset": case "msg": case "print_file_and_line":
+                case "name": case "path": case "obj": case "exceptions":
                     return IsExceptionType(InferType(attribute.Target));
                 default: return false;
             }
         }
 
-        const string ExceptionTracebackType = "global::Typhon.Stdlib.types.TracebackType?";
-
-        bool IsTypedExceptionTraceback(AttributeExpr attribute) =>
-            !_m.IsGdScript && attribute.Name == "__traceback__" && IsExceptionType(InferType(attribute.Target));
+        string ExceptionAttributeType(AttributeExpr attribute)
+        {
+            if (_m.IsGdScript || attribute.Name is not ("__traceback__" or "__cause__" or "__context__") ||
+                !IsExceptionType(InferType(attribute.Target))) return null;
+            return attribute.Name == "__traceback__" ? "global::Typhon.Stdlib.types.TracebackType?" : "global::System.Exception?";
+        }
 
         const string ComplexType = "global::System.Numerics.Complex";
         static bool IsComplexType(string type) => type is ComplexType or "System.Numerics.Complex";
@@ -804,13 +804,15 @@ namespace Typhon.Compiler.Emit
         {
             if (_privateClassDefaultReads.Contains(a) && TryTypeExpr(a.Target, out var declaringClass))
                 return $"{Rt("getattr")}(typeof({declaringClass}), {CsString(a.Name)})";
-            if (!_m.IsGdScript && IsTypeCheckSlot(a.Name) && BuiltinTypeBase(a.Target)) return EmitBuiltinTypeSlot(a);
+            if (!_m.IsGdScript && IsTypeSlot(a.Name) && BuiltinTypeBase(a.Target)) return EmitBuiltinTypeSlot(a);
+            if (!_m.IsGdScript && a.Name == "__subclasses__" && !IsAttributeStore(a))
+                return $"{Rt("getattr")}((object?){Paren(SubclassLookupReceiver(a.Target))}, {CsString(a.Name)})";
             // A native class already owns this static attribute. Its CLR type is not an object-valued receiver.
             if (DotNetStaticMeta(a.Target) is string nativeStaticOwner &&
                 nativeStaticOwner.StartsWith("Typhon.Stdlib.") && IsRuntimeClassMeta(nativeStaticOwner) &&
                 _r.GetMembers(nativeStaticOwner, a.Name).Any(member => member.IsStatic && !member.IsMethod))
                 return $"{CsTypeName(nativeStaticOwner)}.{Esc(a.Name)}";
-            if (IsRuntimeModuleAttribute(a) || IsRuntimeObjectAttribute(a))
+            if (IsRuntimeModuleAttribute(a) || IsRuntimeObjectAttribute(a) || ClassDefaultReceiver(a.Target))
             {
                 string receiver = EmitValue(a.Target);
                 return IsAttributeStore(a) ? $"((dynamic){Paren(receiver)}).{Esc(a.Name)}" :
@@ -876,7 +878,7 @@ namespace Typhon.Compiler.Emit
             if (!_m.IsGdScript && !IsAttributeStore(a) && UsesExceptionAttribute(a))
             {
                 string lookup = $"{Rt("getattr")}((object?){Paren(EmitValue(a.Target))}, {CsString(a.Name)})";
-                return IsTypedExceptionTraceback(a) ? $"(({ExceptionTracebackType}){lookup})" : lookup;
+                return ExceptionAttributeType(a) is string type ? $"(({type}){lookup})" : lookup;
             }
             if (DottedName(a.Target) is string exportOwner && ModuleRef(exportOwner) is ModuleInfo source &&
                 RuntimeReExport(source, a.Name) is var export && export.Module != null && StdlibType(export.Module) is string exportMeta)
@@ -895,7 +897,12 @@ namespace Typhon.Compiler.Emit
                 if (a.Name == "__package__") return CsString(projectModule.PackageName);
                 if (a.Name == "__file__") return CsString(System.IO.Path.GetFullPath(projectModule.Path));
                 if (!IsAttributeStore(a) && UsesRuntimeProjectMember(projectModule, a.Name)) return RuntimeProjectMember(projectModule, a.Name);
-                if (ProjectModuleMember(prefix + "." + a.Name) is string member) return member;
+                if (ProjectModuleMember(prefix + "." + a.Name) is string member)
+                {
+                    var (exportedOwner, binding) = ProjectExport(projectModule, a.Name);
+                    return !IsAttributeStore(a) && binding != null && HasLateModuleBinding(exportedOwner, binding)
+                        ? RuntimeProjectMember(projectModule, a.Name) : member;
+                }
             }
             if (a.Name == "itemsize" && !IsAttributeStore(a) &&
                 InferType(a.Target)?.StartsWith("List<", StringComparison.Ordinal) == true)
@@ -1075,6 +1082,22 @@ namespace Typhon.Compiler.Emit
         static bool MixedWideIntegerAndReal(string left, string right) =>
             left == TypeInference.BigInt && right is ("float" or "double" or "decimal") ||
             right == TypeInference.BigInt && left is ("float" or "double" or "decimal");
+
+        string EmitConditional(IfExpr conditional, bool targetTyped, bool asValue)
+        {
+            string test = Cond(conditional.Test);
+            if (ConditionalNeedsDynamic(conditional, targetTyped))
+                return $"({test} ? (dynamic?){Paren(EmitLooseValue(conditional.Body))} : (dynamic?){Paren(EmitLooseValue(conditional.OrElse))})";
+
+            string Arm(Expr value, Expr other)
+            {
+                if (!targetTyped && IsNone(value) && PyType(InferType(other)) is string type && IsValueTypeName(type))
+                    return $"({OptionalConditionalType(type)})null";
+                return asValue ? EmitValue(value, targetTyped) : EmitExpr(value, targetTyped);
+            }
+
+            return $"({test} ? {Arm(conditional.Body, conditional.OrElse)} : {Arm(conditional.OrElse, conditional.Body)})";
+        }
 
         bool ConditionalNeedsDynamic(IfExpr i, bool targetTyped = false)
         {

@@ -1,0 +1,8 @@
+#:pylib-source http
+from http import HTTPMethod, HTTPStatus
+
+print(HTTPStatus.OK.value, HTTPStatus.OK.phrase)
+print(HTTPStatus(200) is HTTPStatus.OK)
+print(HTTPStatus.NOT_FOUND.is_client_error, HTTPStatus.NOT_FOUND.is_success)
+print(HTTPMethod.GET.value, HTTPMethod.GET.description)
+print(HTTPMethod("GET") is HTTPMethod.GET)

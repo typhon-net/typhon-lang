@@ -213,7 +213,8 @@ namespace Typhon.Compiler.Emit
         bool AtRuntimeModuleScope => _scopeKey == RuntimeCodeScopeKey && _scope?.Parent == null;
 
         bool MayReadComputedGlobal(NameExpr expression) =>
-            _m.RebindsUnknownGlobals && _m.RuntimeCodeMode == null && IsUnresolvedSourceName(expression);
+            (_m.RebindsUnknownGlobals || _conditionalNativeStars.Count > 0) &&
+            _m.RuntimeCodeMode == null && IsUnresolvedSourceName(expression);
 
         bool MayReadRuntimeGlobal(NameExpr expression) =>
             _m.RuntimeCodeMode != null && IsUnresolvedSourceName(expression);
@@ -231,6 +232,18 @@ namespace Typhon.Compiler.Emit
             KnownType(name) == null && IsSourceNameRead(expression);
         }
 
+        string EmitNameRead(NameExpr name)
+        {
+            string value = EmitName(name);
+            if (IsLocal(name.Id) || _renames.ContainsKey(name.Id)) return value;
+            if (_lateModuleFields.Contains(name.Id))
+                return $"global::Typhon.Runtime.PyModule.ReadLateGlobal((object?){Paren(value)}, {CsString(name.Id)})";
+            if (_importedFromModules.TryGetValue(name.Id, out var imported) && HasLateModuleBinding(imported.Key, imported.Value))
+                return RuntimeProjectMember(imported.Key, imported.Value);
+            var wildcard = _wildcardModules.FirstOrDefault(module => HasLateModuleBinding(module, name.Id));
+            return wildcard == null ? value : RuntimeProjectMember(wildcard, name.Id);
+        }
+
         string EmitName(NameExpr n)
         {
             string id = n.Id;
@@ -241,6 +254,7 @@ namespace Typhon.Compiler.Emit
             if (IsLocal(id)) return Esc(id);
             if (_m.RuntimeCodeMode != null && _m.RuntimeBindings.Contains(id))
                 return $"__typhon_execution.{(AtRuntimeModuleScope ? "Local" : "Global")}[{CsString(id)}]";
+            if (ConditionalStarBinding(n)) return $"{ModuleObject(_m)}.ReadStarGlobal({CsString(id)})";
             if (ImportAlias(n) is Expr imported) return EmitExpr(imported);
             if (id == "self" && HasSelfInScope()) return "this";
             if (id == "__debug__") return "true";

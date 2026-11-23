@@ -1,0 +1,11 @@
+def show(name: str):
+    width = 80 - len(name) if name != "<lambda>" else None
+    active = None if name == "<lambda>" else True
+    if width is not None:
+        print(width + 1)
+    else:
+        print(width)
+    print(active)
+
+show("label")
+show("<lambda>")

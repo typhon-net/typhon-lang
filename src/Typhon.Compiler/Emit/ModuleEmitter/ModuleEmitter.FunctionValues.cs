@@ -455,7 +455,7 @@ namespace Typhon.Compiler.Emit
             foreach (var s in body)
                 if (s is AssignStmt a && a.Targets.Count == 1 && a.Targets[0] is NameExpr n && !_m.Functions.Contains(n.Id) &&
                     !_m.Classes.ContainsKey(n.Id) && !_m.ReboundFunctions.Contains(n.Id) &&
-                    IsFunctionReference(a.Value) && OnlyCalled(body, n.Id, a))
+                    !_m.ConditionalGlobals.Contains(n.Id) && IsFunctionReference(a.Value) && OnlyCalled(body, n.Id, a))
                 {
                     _functionAliases[n.Id] = a.Value;
                     _aliasTargetNodes.Add(a.Value);

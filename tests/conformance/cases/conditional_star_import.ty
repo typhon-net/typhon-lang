@@ -1,0 +1,14 @@
+import math
+import sys
+
+if sys.platform == "typhon-impossible-fixture-platform":
+    from math import *
+else:
+    from errno import *
+
+print("pi" in globals(), "ENOENT" in globals())
+print(isinstance(ENOENT, int))
+try:
+    print(pi)
+except NameError as error:
+    print(error.name)

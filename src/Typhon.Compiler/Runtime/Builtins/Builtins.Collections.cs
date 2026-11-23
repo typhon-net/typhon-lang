@@ -79,6 +79,7 @@ namespace Typhon.Runtime
         {
             if (o is string s) return len(s);
             if (o is IPyLen pl) return pl.__len__();
+            if (TryPythonLength(o, out long length)) return length;
             if (o is ICollection c) return c.Count;
             if (o is ITuple tuple) return tuple.Length;
             var t = o.GetType();
@@ -88,6 +89,18 @@ namespace Typhon.Runtime
             if (m != null) return Convert.ToInt64(m.Invoke(o, null), Inv);
             if (o is IEnumerable e) return e.Cast<object>().Count();
             throw new InvalidCastException($"object of type '{t.Name}' has no len()");
+        }
+
+        static bool TryPythonLength(object value, out long length)
+        {
+            var method = LookupSourceSpecialMethod(value, "__len__");
+            if (method.Owner == null)
+            {
+                length = 0;
+                return false;
+            }
+            length = __length_result(__invoke(method.Value, []));
+            return true;
         }
 
         public static long __length_result(object? value)
@@ -239,7 +252,7 @@ namespace Typhon.Runtime
 
         internal static BigInteger RangeIndex(object? value)
         {
-            value = IntegerEnumValue(value);
+            value = IntegerValue(value);
             if (value is BigInteger wide) return wide;
             if (value is bool flag) return flag ? 1 : 0;
             if (value is byte or sbyte or short or ushort or int or uint or long or ulong)
@@ -624,10 +637,19 @@ namespace Typhon.Runtime
         public static HashSet<T> symmetric_difference<T>(this HashSet<T> s, IEnumerable<T> other) { var r = new HashSet<T>(s); r.SymmetricExceptWith(other); return r; }
         public static bool issubset<T>(this HashSet<T> s, IEnumerable<T> other) => s.IsSubsetOf(other);
         public static bool issuperset<T>(this HashSet<T> s, IEnumerable<T> other) => s.IsSupersetOf(other);
-        public static bool issuperset<T>(this HashSet<T> s, object other) =>
-            __iter_dyn(other).All(item => item is T value ? s.Contains(value) :
-                item is null && default(T) is null && s.Contains(default!));
+        public static bool issuperset<T>(this HashSet<T> s, object? other) =>
+            __iter_dyn(other).Cast<object?>().All(item => SetContainsItem(s, item));
         public static bool isdisjoint<T>(this HashSet<T> s, IEnumerable<T> other) => !s.Overlaps(other);
+        public static bool isdisjoint<T>(this HashSet<T> s, object? other) =>
+            !__iter_dyn(other).Cast<object?>().Any(item => SetContainsItem(s, item));
+
+        static bool SetContainsItem<T>(HashSet<T> set, object? item)
+        {
+            if (item is T value) return set.Contains(value);
+            if (item == null) return default(T) is null && set.Contains(default!);
+            _ = KeyHash(item);
+            return set.Any(member => eq(member, item));
+        }
     }
 
     // d.get(key) without a default returns None when the key is missing. For an int value that is int? (Nullable<int>),

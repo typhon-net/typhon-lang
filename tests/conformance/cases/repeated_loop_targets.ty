@@ -1,0 +1,18 @@
+from collections.abc import Iterator
+
+def look_at_list():
+    rows = [("first", 5, 10)]
+    for label, last, last in rows:
+        print(label, last)
+        if len(rows) == 1:
+            rows.append(("added", 20, 30))
+
+def generate() -> Iterator[tuple[str, int, int]]:
+    yield ("generated", 40, 50)
+
+def look_at_generator():
+    for label, last, last in generate():
+        print(label, last)
+
+look_at_list()
+look_at_generator()

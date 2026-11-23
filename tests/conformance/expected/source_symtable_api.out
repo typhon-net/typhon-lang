@@ -1,0 +1,5 @@
+module function function
+('x',) ('x', 'result')
+('a', 'b') ('result',) ('result', 'x') ('math',)
+True True
+True

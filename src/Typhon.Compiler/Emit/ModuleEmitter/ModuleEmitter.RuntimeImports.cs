@@ -11,24 +11,56 @@ namespace Typhon.Compiler.Emit
     internal sealed partial class ModuleEmitter
     {
         HashSet<string> _conditionedImportAliases;
+        readonly HashSet<ImportFromStmt> _conditionalNativeStars = new HashSet<ImportFromStmt>();
 
         void FindConditionalImportAliases(List<Stmt> body)
         {
+            foreach (var import in _m.ConditionalStarImports)
+                if (NativeStarSource(_m, import).Metadata != null)
+                    _conditionalNativeStars.Add(import);
             var modules = new Dictionary<string, string>();
             _conditionedImportAliases = new HashSet<string>();
+            void Record(string alias, string source)
+            {
+                if (modules.TryGetValue(alias, out string previous) && previous != source)
+                    _conditionedImportAliases.Add(alias);
+                else
+                    modules[alias] = source;
+            }
+
             AstWalker.VisitAll(body, node =>
             {
-                if (node is not ImportStmt import) return;
-                foreach (var alias in import.Names)
-                {
-                    if (alias.AsName == null || ResolvePsModule(alias.Name) == null && StdlibType(alias.Name) == null) continue;
-                    if (modules.TryGetValue(alias.AsName, out string previous) && previous != alias.Name)
-                        _conditionedImportAliases.Add(alias.AsName);
-                    else
-                        modules[alias.AsName] = alias.Name;
-                }
+                if (node is ImportStmt import)
+                    foreach (var alias in import.Names)
+                    {
+                        if (alias.AsName == null || ResolvePsModule(alias.Name) == null && StdlibType(alias.Name) == null) continue;
+                        Record(alias.AsName, alias.Name);
+                    }
+                if (node is ImportFromStmt from && _m.ResolveImport(from.Module, from.Level) is string module &&
+                    (ResolvePsModule(module) != null || StdlibType(module) != null))
+                    foreach (var alias in from.Names)
+                        if (alias.Name != "*") Record(alias.AsName ?? alias.Name, module + ":" + alias.Name);
             }, includeNestedScopes: false);
         }
+
+        (string Module, string Metadata) NativeStarSource(ModuleInfo owner, ImportFromStmt import)
+        {
+            string name = owner.ResolveImport(import.Module, import.Level);
+            if (name == null || _p.FindModule(name) != null ||
+                owner.PackageName.Length > 0 && _p.FindModule(owner.PackageName + "." + name) != null)
+                return default;
+            return (name, StdlibType(name));
+        }
+
+        bool ConditionalStarExports(ModuleInfo owner, string name) =>
+            !name.StartsWith("_", System.StringComparison.Ordinal) &&
+            owner.ConditionalStarImports.Any(import =>
+                NativeStarSource(owner, import) is (string module, string metadata) &&
+                RuntimeExport(module, metadata, name));
+
+        bool ConditionalStarBinding(NameExpr name) =>
+            _conditionalNativeStars.Count > 0 && !_m.Globals.Contains(name.Id) && !IsShadowed(name.Id) &&
+            IsSourceNameRead(name) && ConditionalStarExports(_m, name.Id);
 
         bool IsConditionalImportAlias(ImportAlias alias, bool moduleScope) =>
             moduleScope && alias.AsName != null && _conditionedImportAliases?.Contains(alias.AsName) == true &&
@@ -42,9 +74,14 @@ namespace Typhon.Compiler.Emit
                 List<Stmt> replacements = null;
                 switch (original)
                 {
-                    case ImportFromStmt from when allowImports && (_m.RuntimeCodeMode != null && from.Level > 0 || !ImportFromResolves(from)) &&
-                        from.Names.All(n => n.Name != "*"):
-                        replacements = from.Names.Select(n => (Stmt)RuntimeImportBinding(from, from.Module, from.Level, n.Name, n.AsName ?? n.Name, false)).ToList();
+                    case ImportFromStmt from when from.Names.All(alias => alias.Name != "*") &&
+                        (allowImports && (_m.RuntimeCodeMode != null && from.Level > 0 || !ImportFromResolves(from)) ||
+                         moduleScope && from.Names.Any(alias => _conditionedImportAliases?.Contains(alias.AsName ?? alias.Name) == true)):
+                        bool unresolved = allowImports && (_m.RuntimeCodeMode != null && from.Level > 0 || !ImportFromResolves(from));
+                        replacements = from.Names.Select(alias => unresolved ||
+                            _conditionedImportAliases?.Contains(alias.AsName ?? alias.Name) == true
+                            ? (Stmt)RuntimeImportBinding(from, from.Module, from.Level, alias.Name, alias.AsName ?? alias.Name, false)
+                            : new ImportFromStmt { Module = from.Module, Level = from.Level, Line = from.Line, Col = from.Col, Names = { alias } }).ToList();
                         break;
                     case ImportStmt import when import.Names.Any(alias =>
                         IsConditionalImportAlias(alias, moduleScope) || allowImports && !ModuleExists(alias.Name)):

@@ -1,0 +1,28 @@
+#:pylib-source os
+import os
+from os import O_RDONLY, close, open as open_fd
+import sys
+import tempfile
+
+print(os.name in sys.builtin_module_names)
+print(os.path is sys.modules["os.path"])
+with tempfile.TemporaryDirectory() as location:
+    leaf = os.path.join(location, "branch", "leaf")
+    os.makedirs(leaf)
+    print(sorted((os.path.basename(root), sorted(dirs), sorted(files))
+                 for root, dirs, files in os.walk(os.path.join(location, "branch"))))
+    filename = os.path.join(location, "example.txt")
+    with open(filename, "w") as stream:
+        stream.write("example")
+    close(open_fd(filename, O_RDONLY))
+    print(os.stat(filename).st_size)
+    print(os.O_RDONLY == O_RDONLY)
+    os.removedirs(leaf)
+    print(os.path.exists(leaf))
+key = "TYPHON_PORTABLE_OS_PROBE"
+try:
+    os.environ[key] = "value"
+    print(os.getenv(key))
+finally:
+    del os.environ[key]
+print(os.getenv(key, "default"))

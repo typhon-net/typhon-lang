@@ -1,0 +1,16 @@
+#:pylib-source subprocess
+import sys
+
+
+if sys.platform == "linux":
+    import subprocess
+    completed = subprocess.run(
+        ["/bin/sh", "-c", 'printf "%s" "$TYTHON_CHILD_VALUE"; exit 4'],
+        capture_output=True,
+        env={"TYTHON_CHILD_VALUE": "child"},
+    )
+    assert completed.stdout == b"child"
+    assert completed.stderr == b""
+    assert completed.returncode == 4
+
+print("subprocess capture passed")

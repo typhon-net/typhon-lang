@@ -1,0 +1,22 @@
+from enum import IntEnum, _simple_enum
+
+calls: list[str] = []
+
+
+@_simple_enum(IntEnum)
+class Status:
+    def __new__(cls, number, label):
+        calls.append(label)
+        member = int.__new__(cls, number)
+        member._value_ = number
+        member.label = label
+        return member
+
+    FIRST = 1, "first"
+    ALIAS = FIRST
+    OTHER = 1, "other"
+
+
+print(calls)
+print(Status.ALIAS is Status.FIRST, Status.OTHER is Status.FIRST)
+print(Status.FIRST.label)

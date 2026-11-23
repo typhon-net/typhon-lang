@@ -1,0 +1,22 @@
+def jobs(error: BaseException) -> list[tuple[BaseException, BaseException]]:
+    queue: list[tuple[BaseException, BaseException]] = []
+    if error.__cause__ is not None:
+        queue.append((error, error.__cause__))
+    return queue
+
+
+cause = ValueError("inner")
+outer = RuntimeError("outer")
+outer.__cause__ = cause
+print(jobs(outer)[0][1] is cause)
+
+
+def describe(error: BaseException) -> None:
+    if hasattr(error, "obj"):
+        print("object", error.obj)
+    if isinstance(error, BaseExceptionGroup):
+        print("members", len(error.exceptions))
+
+
+describe(AttributeError("missing", name="attribute", obj="value"))
+describe(ExceptionGroup("group", [cause, outer]))

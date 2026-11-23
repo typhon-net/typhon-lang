@@ -222,6 +222,11 @@ namespace Typhon.Compiler.Emit
                 else
                 {
                     var tup0 = (TupleExpr)f.Target;
+                    if (HasRepeatedUnpackTarget(tup0.Elts))
+                    {
+                        EmitUnpackedLoopBody(f, tup0, item);
+                        return;
+                    }
                     bool inl = tup0.Elts.All(e => IsInline(f, ((NameExpr)e).Id));
                     prologue = inl ? $"var {DeconstructionPattern(tup0)} = {item};" : $"{DeconstructionTarget(tup0, f)} = {item};";
                     var parts0 = UnpackPartTypes(ElementTypeOf(iterType), tup0.Elts.Count);
@@ -268,17 +273,15 @@ namespace Typhon.Compiler.Emit
                 // (also a call dispatched dynamically, enumerate(u) with u late-bound: its C# type is dynamic, whatever it returns)
                 string loopElem = IterElementType(IterableType(f.Iter));
                 // (also when the loop iterates late-bound itself, for bit, char in table with table an object: __iter_dyn(table))
-                if ((lateAsync || tup.Elts.Count < 2 || HasLateNestedUnpack(tup.Elts, loopElem) || loopElem == "dynamic" || IsDynamicallyDispatched(f.Iter) || IsUnknownType(IterableType(f.Iter)) && !(f.Iter is NameExpr) ||
+                if ((lateAsync || tup.Elts.Count < 2 || HasRepeatedUnpackTarget(tup.Elts) ||
+                     HasLateNestedUnpack(tup.Elts, loopElem) || loopElem == "dynamic" || IsDynamicallyDispatched(f.Iter) || IsUnknownType(IterableType(f.Iter)) && !(f.Iter is NameExpr) ||
                      lateItems || NeedsLateUnpackRebinding(tup.Elts, loopElem, f) ||
                      (loopElem == null || loopElem == "object") && f.Iter is CallExpr && UnpackPartTypes(loopElem, tup.Elts.Count) == null) &&
                     !tup.Elts.Any(e => e is StarredExpr))
                 {
                     string item = NewTmp("x");
                     _w.Line($"{kw} (var {item} in {iter})");
-                    _w.Open();
-                    EmitUnpackedItems(tup.Elts, f, $"{Rt("__iter_dyn")}((object?){item})", "dynamic");
-                    EmitBlockStatements(f.Body);
-                    _w.Close();
+                    EmitUnpackedLoopBody(f, tup, item);
                     return;
                 }
                 if (allInline)
@@ -309,6 +312,14 @@ namespace Typhon.Compiler.Emit
                 return;
             }
             Unsupported(f.Target, "this loop target");
+        }
+
+        void EmitUnpackedLoopBody(ForStmt loop, TupleExpr target, string item)
+        {
+            _w.Open();
+            EmitUnpackedItems(target.Elts, loop, $"{Rt("__iter_dyn")}((object?){item})", "dynamic");
+            EmitBlockStatements(loop.Body);
+            _w.Close();
         }
 
         // C# tuple deconstruction does not apply dynamic conversions to existing typed names.

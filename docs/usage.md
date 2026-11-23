@@ -109,8 +109,9 @@ print(list(ts.static_order()), colorsys.rgb_to_hsv(0.2, 0.4, 0.4))
 
 Use `#:pylib-source gzip` to select the CPython source for a named module while
 keeping the same Python import. Multiple module names can be separated by spaces
-or commas. A separate `#:pylib DIR` line selects the installation's library
-directory and enables fallback to that library for other missing modules.
+or commas. Typhon prefers its pinned CPython copy when one is bundled. Set
+`TYPHON_PYLIB` or add `#:pylib DIR` to select a specific installation. The
+`#:pylib DIR` directive also enables fallback to that library for other missing modules.
 
 
 The module is compiled like a module of the program: its functions get typed versions for the program's calls, and the

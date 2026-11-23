@@ -92,7 +92,13 @@ namespace Typhon.Compiler.Emit
             string type = ClassTypeValue(Esc(definition.Name), definition);
             if (CapturesClassModuleName)
                 _w.Line($"{Rt("__remember_class_module")}({type}, (object?)__name__);");
-            if (!RunsClassBodyAtDefinition(definition)) return;
+            if (!RunsClassBodyAtDefinition(definition))
+            {
+                if (definition.TypeParams.Count == 0 && (IsStringEnum(definition) || IsObjectIntegerEnum(definition) || IsPlainObjectEnum(definition)))
+                    _w.Line($"global::System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor({type}.TypeHandle);");
+                _w.Line($"{Rt("__register_subclass")}({type});");
+                return;
+            }
             if (!HasUserMetaclass(definition))
             {
                 _w.Line($"global::System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor({type}.TypeHandle);");
@@ -101,6 +107,7 @@ namespace Typhon.Compiler.Emit
                     string arguments = definition.ClassKeywords.Count == 0 ? "null" : KeywordArgs(definition.ClassKeywords);
                     _w.Line($"{Rt("__initialize_subclass")}({type}, {arguments});");
                 }
+                else _w.Line($"{Rt("__register_subclass")}({type});");
                 return;
             }
             string metaclass = definition.Metaclass == null ? "null" : $"(global::System.Type){Paren(EmitValue(definition.Metaclass))}";
@@ -133,10 +140,15 @@ namespace Typhon.Compiler.Emit
             $"{Rt("__class_namespace_read")}(typeof({_cls.CsSelfType}), {CsString(name)}, " +
             $"typeof({ModuleClassName(_m)}), {CsString(PythonModuleName)})";
 
-        static bool IsTypeCheckSlot(string name) => name is "__instancecheck__" or "__subclasscheck__";
+        static bool IsTypeSlot(string name) => name is "__instancecheck__" or "__subclasscheck__" or "__subclasses__";
 
         string EmitBuiltinTypeSlot(AttributeExpr member) =>
             $"{Rt("getattr")}(typeof(global::System.Type), {CsString(member.Name)})";
+
+        string SubclassLookupReceiver(Expr receiver) =>
+            (receiver is NameExpr builtin ? BuiltinTypeValue(builtin) : null) ??
+            ModuleOrClassValue(receiver) ??
+            (TryTypeExpr(receiver, out string type) ? $"typeof({type})" : EmitValue(receiver));
 
         string EmitTypeSlotCall(CallExpr call)
         {
@@ -144,9 +156,11 @@ namespace Typhon.Compiler.Emit
             if (_scope?.ClassArgument != null && _cls != null &&
                 member.Target is CallExpr { Func: NameExpr { Id: "super" }, Args.Count: 0 } && !IsShadowed("super") &&
                 (member.Name == "__new__" && (IsUserMetaclass(_cls.Def) || HasStringBase(_cls.Def)) ||
-                 (member.Name == "__repr__" || IsTypeCheckSlot(member.Name)) && IsUserMetaclass(_cls.Def)))
+                 (member.Name == "__repr__" || IsTypeSlot(member.Name)) && IsUserMetaclass(_cls.Def)))
                 return InvokeLogicalMethod(member, $"(object?){Paren(EmitExpr(member.Target))}", call.Args);
-            if (member.Name != "__new__" && !IsTypeCheckSlot(member.Name) || !BuiltinTypeBase(member.Target)) return null;
+            if (member.Name == "__subclasses__" && !BuiltinTypeBase(member.Target))
+                return InvokeLogicalMethod(member, SubclassLookupReceiver(member.Target), call.Args);
+            if (member.Name != "__new__" && !IsTypeSlot(member.Name) || !BuiltinTypeBase(member.Target)) return null;
             string callable = EmitBuiltinTypeSlot(member);
             var arguments = call.Args.Where(a => a.Name == null && !a.DoubleStar)
                 .Select(a => a.Star ? $".. {Rt("__iter_dyn")}((object?){Paren(EmitExpr(a.Value))})" : $"(object?){Paren(EmitLooseValue(a.Value))}");

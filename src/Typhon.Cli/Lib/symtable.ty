@@ -1,0 +1,734 @@
+# Source: CPython 3.15.2, Lib/symtable.py
+# https://github.com/python/cpython/blob/v3.15.2/Lib/symtable.py
+# The original source follows the license below without changes.
+#
+# A. HISTORY OF THE SOFTWARE
+# ==========================
+#
+# Python was created in the early 1990s by Guido van Rossum at Stichting
+# Mathematisch Centrum (CWI, see https://www.cwi.nl) in the Netherlands
+# as a successor of a language called ABC.  Guido remains Python's
+# principal author, although it includes many contributions from others.
+#
+# In 1995, Guido continued his work on Python at the Corporation for
+# National Research Initiatives (CNRI, see https://www.cnri.reston.va.us)
+# in Reston, Virginia where he released several versions of the
+# software.
+#
+# In May 2000, Guido and the Python core development team moved to
+# BeOpen.com to form the BeOpen PythonLabs team.  In October of the same
+# year, the PythonLabs team moved to Digital Creations, which became
+# Zope Corporation.  In 2001, the Python Software Foundation (PSF, see
+# https://www.python.org/psf/) was formed, a non-profit organization
+# created specifically to own Python-related Intellectual Property.
+# Zope Corporation was a sponsoring member of the PSF.
+#
+# All Python releases are Open Source (see https://opensource.org for
+# the Open Source Definition).  Historically, most, but not all, Python
+# releases have also been GPL-compatible; the table below summarizes
+# the various releases.
+#
+#     Release         Derived     Year        Owner       GPL-
+#                     from                                compatible? (1)
+#
+#     0.9.0 thru 1.2              1991-1995   CWI         yes
+#     1.3 thru 1.5.2  1.2         1995-1999   CNRI        yes
+#     1.6             1.5.2       2000        CNRI        no
+#     2.0             1.6         2000        BeOpen.com  no
+#     1.6.1           1.6         2001        CNRI        yes (2)
+#     2.1             2.0+1.6.1   2001        PSF         no
+#     2.0.1           2.0+1.6.1   2001        PSF         yes
+#     2.1.1           2.1+2.0.1   2001        PSF         yes
+#     2.1.2           2.1.1       2002        PSF         yes
+#     2.1.3           2.1.2       2002        PSF         yes
+#     2.2 and above   2.1.1       2001-now    PSF         yes
+#
+# Footnotes:
+#
+# (1) GPL-compatible doesn't mean that we're distributing Python under
+#     the GPL.  All Python licenses, unlike the GPL, let you distribute
+#     a modified version without making your changes open source.  The
+#     GPL-compatible licenses make it possible to combine Python with
+#     other software that is released under the GPL; the others don't.
+#
+# (2) According to Richard Stallman, 1.6.1 is not GPL-compatible,
+#     because its license has a choice of law clause.  According to
+#     CNRI, however, Stallman's lawyer has told CNRI's lawyer that 1.6.1
+#     is "not incompatible" with the GPL.
+#
+# Thanks to the many outside volunteers who have worked under Guido's
+# direction to make these releases possible.
+#
+#
+# B. TERMS AND CONDITIONS FOR ACCESSING OR OTHERWISE USING PYTHON
+# ===============================================================
+#
+# Python software and documentation are licensed under the
+# Python Software Foundation License Version 2.
+#
+# Starting with Python 3.8.6, examples, recipes, and other code in
+# the documentation are dual licensed under the PSF License Version 2
+# and the Zero-Clause BSD license.
+#
+# Some software incorporated into Python is under different licenses.
+# The licenses are listed with code falling under that license.
+#
+#
+# PYTHON SOFTWARE FOUNDATION LICENSE VERSION 2
+# --------------------------------------------
+#
+# 1. This LICENSE AGREEMENT is between the Python Software Foundation
+# ("PSF"), and the Individual or Organization ("Licensee") accessing and
+# otherwise using this software ("Python") in source or binary form and
+# its associated documentation.
+#
+# 2. Subject to the terms and conditions of this License Agreement, PSF hereby
+# grants Licensee a nonexclusive, royalty-free, world-wide license to reproduce,
+# analyze, test, perform and/or display publicly, prepare derivative works,
+# distribute, and otherwise use Python alone or in any derivative version,
+# provided, however, that PSF's License Agreement and PSF's notice of copyright,
+# i.e., "Copyright (c) 2001 Python Software Foundation; All Rights Reserved"
+# are retained in Python alone or in any derivative version prepared by Licensee.
+#
+# 3. In the event Licensee prepares a derivative work that is based on
+# or incorporates Python or any part thereof, and wants to make
+# the derivative work available to others as provided herein, then
+# Licensee hereby agrees to include in any such work a brief summary of
+# the changes made to Python.
+#
+# 4. PSF is making Python available to Licensee on an "AS IS"
+# basis.  PSF MAKES NO REPRESENTATIONS OR WARRANTIES, EXPRESS OR
+# IMPLIED.  BY WAY OF EXAMPLE, BUT NOT LIMITATION, PSF MAKES NO AND
+# DISCLAIMS ANY REPRESENTATION OR WARRANTY OF MERCHANTABILITY OR FITNESS
+# FOR ANY PARTICULAR PURPOSE OR THAT THE USE OF PYTHON WILL NOT
+# INFRINGE ANY THIRD PARTY RIGHTS.
+#
+# 5. PSF SHALL NOT BE LIABLE TO LICENSEE OR ANY OTHER USERS OF PYTHON
+# FOR ANY INCIDENTAL, SPECIAL, OR CONSEQUENTIAL DAMAGES OR LOSS AS
+# A RESULT OF MODIFYING, DISTRIBUTING, OR OTHERWISE USING PYTHON,
+# OR ANY DERIVATIVE THEREOF, EVEN IF ADVISED OF THE POSSIBILITY THEREOF.
+#
+# 6. This License Agreement will automatically terminate upon a material
+# breach of its terms and conditions.
+#
+# 7. Nothing in this License Agreement shall be deemed to create any
+# relationship of agency, partnership, or joint venture between PSF and
+# Licensee.  This License Agreement does not grant permission to use PSF
+# trademarks or trade name in a trademark sense to endorse or promote
+# products or services of Licensee, or any third party.
+#
+# 8. By copying, installing or otherwise using Python, Licensee
+# agrees to be bound by the terms and conditions of this License
+# Agreement.
+#
+#
+# BEOPEN.COM LICENSE AGREEMENT FOR PYTHON 2.0
+# -------------------------------------------
+#
+# BEOPEN PYTHON OPEN SOURCE LICENSE AGREEMENT VERSION 1
+#
+# 1. This LICENSE AGREEMENT is between BeOpen.com ("BeOpen"), having an
+# office at 160 Saratoga Avenue, Santa Clara, CA 95051, and the
+# Individual or Organization ("Licensee") accessing and otherwise using
+# this software in source or binary form and its associated
+# documentation ("the Software").
+#
+# 2. Subject to the terms and conditions of this BeOpen Python License
+# Agreement, BeOpen hereby grants Licensee a non-exclusive,
+# royalty-free, world-wide license to reproduce, analyze, test, perform
+# and/or display publicly, prepare derivative works, distribute, and
+# otherwise use the Software alone or in any derivative version,
+# provided, however, that the BeOpen Python License is retained in the
+# Software, alone or in any derivative version prepared by Licensee.
+#
+# 3. BeOpen is making the Software available to Licensee on an "AS IS"
+# basis.  BEOPEN MAKES NO REPRESENTATIONS OR WARRANTIES, EXPRESS OR
+# IMPLIED.  BY WAY OF EXAMPLE, BUT NOT LIMITATION, BEOPEN MAKES NO AND
+# DISCLAIMS ANY REPRESENTATION OR WARRANTY OF MERCHANTABILITY OR FITNESS
+# FOR ANY PARTICULAR PURPOSE OR THAT THE USE OF THE SOFTWARE WILL NOT
+# INFRINGE ANY THIRD PARTY RIGHTS.
+#
+# 4. BEOPEN SHALL NOT BE LIABLE TO LICENSEE OR ANY OTHER USERS OF THE
+# SOFTWARE FOR ANY INCIDENTAL, SPECIAL, OR CONSEQUENTIAL DAMAGES OR LOSS
+# AS A RESULT OF USING, MODIFYING OR DISTRIBUTING THE SOFTWARE, OR ANY
+# DERIVATIVE THEREOF, EVEN IF ADVISED OF THE POSSIBILITY THEREOF.
+#
+# 5. This License Agreement will automatically terminate upon a material
+# breach of its terms and conditions.
+#
+# 6. This License Agreement shall be governed by and interpreted in all
+# respects by the law of the State of California, excluding conflict of
+# law provisions.  Nothing in this License Agreement shall be deemed to
+# create any relationship of agency, partnership, or joint venture
+# between BeOpen and Licensee.  This License Agreement does not grant
+# permission to use BeOpen trademarks or trade names in a trademark
+# sense to endorse or promote products or services of Licensee, or any
+# third party.  As an exception, the "BeOpen Python" logos available at
+# http://www.pythonlabs.com/logos.html may be used according to the
+# permissions granted on that web page.
+#
+# 7. By copying, installing or otherwise using the software, Licensee
+# agrees to be bound by the terms and conditions of this License
+# Agreement.
+#
+#
+# CNRI LICENSE AGREEMENT FOR PYTHON 1.6.1
+# ---------------------------------------
+#
+# 1. This LICENSE AGREEMENT is between the Corporation for National
+# Research Initiatives, having an office at 1895 Preston White Drive,
+# Reston, VA 20191 ("CNRI"), and the Individual or Organization
+# ("Licensee") accessing and otherwise using Python 1.6.1 software in
+# source or binary form and its associated documentation.
+#
+# 2. Subject to the terms and conditions of this License Agreement, CNRI
+# hereby grants Licensee a nonexclusive, royalty-free, world-wide
+# license to reproduce, analyze, test, perform and/or display publicly,
+# prepare derivative works, distribute, and otherwise use Python 1.6.1
+# alone or in any derivative version, provided, however, that CNRI's
+# License Agreement and CNRI's notice of copyright, i.e., "Copyright (c)
+# 1995-2001 Corporation for National Research Initiatives; All Rights
+# Reserved" are retained in Python 1.6.1 alone or in any derivative
+# version prepared by Licensee.  Alternately, in lieu of CNRI's License
+# Agreement, Licensee may substitute the following text (omitting the
+# quotes): "Python 1.6.1 is made available subject to the terms and
+# conditions in CNRI's License Agreement.  This Agreement together with
+# Python 1.6.1 may be located on the internet using the following
+# unique, persistent identifier (known as a handle): 1895.22/1013.  This
+# Agreement may also be obtained from a proxy server on the internet
+# using the following URL: http://hdl.handle.net/1895.22/1013".
+#
+# 3. In the event Licensee prepares a derivative work that is based on
+# or incorporates Python 1.6.1 or any part thereof, and wants to make
+# the derivative work available to others as provided herein, then
+# Licensee hereby agrees to include in any such work a brief summary of
+# the changes made to Python 1.6.1.
+#
+# 4. CNRI is making Python 1.6.1 available to Licensee on an "AS IS"
+# basis.  CNRI MAKES NO REPRESENTATIONS OR WARRANTIES, EXPRESS OR
+# IMPLIED.  BY WAY OF EXAMPLE, BUT NOT LIMITATION, CNRI MAKES NO AND
+# DISCLAIMS ANY REPRESENTATION OR WARRANTY OF MERCHANTABILITY OR FITNESS
+# FOR ANY PARTICULAR PURPOSE OR THAT THE USE OF PYTHON 1.6.1 WILL NOT
+# INFRINGE ANY THIRD PARTY RIGHTS.
+#
+# 5. CNRI SHALL NOT BE LIABLE TO LICENSEE OR ANY OTHER USERS OF PYTHON
+# 1.6.1 FOR ANY INCIDENTAL, SPECIAL, OR CONSEQUENTIAL DAMAGES OR LOSS AS
+# A RESULT OF MODIFYING, DISTRIBUTING, OR OTHERWISE USING PYTHON 1.6.1,
+# OR ANY DERIVATIVE THEREOF, EVEN IF ADVISED OF THE POSSIBILITY THEREOF.
+#
+# 6. This License Agreement will automatically terminate upon a material
+# breach of its terms and conditions.
+#
+# 7. This License Agreement shall be governed by the federal
+# intellectual property law of the United States, including without
+# limitation the federal copyright law, and, to the extent such
+# U.S. federal law does not apply, by the law of the Commonwealth of
+# Virginia, excluding Virginia's conflict of law provisions.
+# Notwithstanding the foregoing, with regard to derivative works based
+# on Python 1.6.1 that incorporate non-separable material that was
+# previously distributed under the GNU General Public License (GPL), the
+# law of the Commonwealth of Virginia shall govern this License
+# Agreement only as to issues arising under or with respect to
+# Paragraphs 4, 5, and 7 of this License Agreement.  Nothing in this
+# License Agreement shall be deemed to create any relationship of
+# agency, partnership, or joint venture between CNRI and Licensee.  This
+# License Agreement does not grant permission to use CNRI trademarks or
+# trade name in a trademark sense to endorse or promote products or
+# services of Licensee, or any third party.
+#
+# 8. By clicking on the "ACCEPT" button where indicated, or by copying,
+# installing or otherwise using Python 1.6.1, Licensee agrees to be
+# bound by the terms and conditions of this License Agreement.
+#
+#         ACCEPT
+#
+#
+# CWI LICENSE AGREEMENT FOR PYTHON 0.9.0 THROUGH 1.2
+# --------------------------------------------------
+#
+# Copyright (c) 1991 - 1995, Stichting Mathematisch Centrum Amsterdam,
+# The Netherlands.  All rights reserved.
+#
+# Permission to use, copy, modify, and distribute this software and its
+# documentation for any purpose and without fee is hereby granted,
+# provided that the above copyright notice appear in all copies and that
+# both that copyright notice and this permission notice appear in
+# supporting documentation, and that the name of Stichting Mathematisch
+# Centrum or CWI not be used in advertising or publicity pertaining to
+# distribution of the software without specific, written prior
+# permission.
+#
+# STICHTING MATHEMATISCH CENTRUM DISCLAIMS ALL WARRANTIES WITH REGARD TO
+# THIS SOFTWARE, INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+# FITNESS, IN NO EVENT SHALL STICHTING MATHEMATISCH CENTRUM BE LIABLE
+# FOR ANY SPECIAL, INDIRECT OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+# ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT
+# OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+#
+# ZERO-CLAUSE BSD LICENSE FOR CODE IN THE PYTHON DOCUMENTATION
+# ----------------------------------------------------------------------
+#
+# Permission to use, copy, modify, and/or distribute this software for any
+# purpose with or without fee is hereby granted.
+#
+# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+# REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY
+# AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+# INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM
+# LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR
+# OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+# PERFORMANCE OF THIS SOFTWARE.
+
+"""Interface to the compiler's internal symbol tables"""
+
+import _symtable
+from _symtable import (
+    USE,
+    DEF_GLOBAL,  # noqa: F401
+    DEF_NONLOCAL, DEF_LOCAL,
+    DEF_PARAM, DEF_TYPE_PARAM, DEF_FREE_CLASS,
+    DEF_IMPORT, DEF_BOUND, DEF_ANNOT,
+    DEF_COMP_ITER, DEF_COMP_CELL,
+    SCOPE_OFF, SCOPE_MASK,
+    FREE, LOCAL, GLOBAL_IMPLICIT, GLOBAL_EXPLICIT, CELL
+)
+
+import weakref
+from enum import StrEnum
+
+__all__ = ["symtable", "SymbolTableType", "SymbolTable", "Class", "Function", "Symbol"]
+
+def symtable(code, filename, compile_type, *, module=None):
+    """ Return the toplevel *SymbolTable* for the source code.
+
+    *filename* is the name of the file with the code
+    and *compile_type* is the *compile()* mode argument.
+    """
+    top = _symtable.symtable(code, filename, compile_type, module=module)
+    return _newSymbolTable(top, filename)
+
+class SymbolTableFactory:
+    def __init__(self):
+        self.__memo = weakref.WeakValueDictionary()
+
+    def new(self, table, filename):
+        if table.type == _symtable.TYPE_FUNCTION:
+            return Function(table, filename)
+        if table.type == _symtable.TYPE_CLASS:
+            return Class(table, filename)
+        return SymbolTable(table, filename)
+
+    def __call__(self, table, filename):
+        key = table, filename
+        obj = self.__memo.get(key, None)
+        if obj is None:
+            obj = self.__memo[key] = self.new(table, filename)
+        return obj
+
+_newSymbolTable = SymbolTableFactory()
+
+
+class SymbolTableType(StrEnum):
+    MODULE = "module"
+    FUNCTION = "function"
+    CLASS = "class"
+    ANNOTATION = "annotation"
+    TYPE_ALIAS = "type alias"
+    TYPE_PARAMETERS = "type parameters"
+    TYPE_VARIABLE = "type variable"
+
+
+class SymbolTable:
+
+    def __init__(self, raw_table, filename):
+        self._table = raw_table
+        self._filename = filename
+        self._symbols = {}
+
+    def __repr__(self):
+        if self.__class__ == SymbolTable:
+            kind = ""
+        else:
+            kind = "%s " % self.__class__.__name__
+
+        if self._table.name == "top":
+            return "<{0}SymbolTable for module {1}>".format(kind, self._filename)
+        else:
+            return "<{0}SymbolTable for {1} in {2}>".format(kind,
+                                                            self._table.name,
+                                                            self._filename)
+
+    def get_type(self):
+        """Return the type of the symbol table.
+
+        The value returned is one of the values in
+        the ``SymbolTableType`` enumeration.
+        """
+        if self._table.type == _symtable.TYPE_MODULE:
+            return SymbolTableType.MODULE
+        if self._table.type == _symtable.TYPE_FUNCTION:
+            return SymbolTableType.FUNCTION
+        if self._table.type == _symtable.TYPE_CLASS:
+            return SymbolTableType.CLASS
+        if self._table.type == _symtable.TYPE_ANNOTATION:
+            return SymbolTableType.ANNOTATION
+        if self._table.type == _symtable.TYPE_TYPE_ALIAS:
+            return SymbolTableType.TYPE_ALIAS
+        if self._table.type == _symtable.TYPE_TYPE_PARAMETERS:
+            return SymbolTableType.TYPE_PARAMETERS
+        if self._table.type == _symtable.TYPE_TYPE_VARIABLE:
+            return SymbolTableType.TYPE_VARIABLE
+        assert False, f"unexpected type: {self._table.type}"
+
+    def get_id(self):
+        """Return an identifier for the table.
+        """
+        return self._table.id
+
+    def get_name(self):
+        """Return the table's name.
+
+        This corresponds to the name of the class, function
+        or 'top' if the table is for a class, function or
+        global respectively.
+        """
+        return self._table.name
+
+    def get_lineno(self):
+        """Return the number of the first line in the
+        block for the table.
+        """
+        return self._table.lineno
+
+    def is_optimized(self):
+        """Return *True* if the locals in the table
+        are optimizable.
+        """
+        return bool(self._table.type == _symtable.TYPE_FUNCTION)
+
+    def is_nested(self):
+        """Return *True* if the block is a nested class
+        or function."""
+        return bool(self._table.nested)
+
+    def has_children(self):
+        """Return *True* if the block has nested namespaces.
+        """
+        return bool(self._table.children)
+
+    def get_identifiers(self):
+        """Return a view object containing the names of symbols in the table.
+        """
+        return self._table.symbols.keys()
+
+    def lookup(self, name):
+        """Lookup a *name* in the table.
+
+        Returns a *Symbol* instance.
+        """
+        sym = self._symbols.get(name)
+        if sym is None:
+            flags = self._table.symbols[name]
+            namespaces = self.__check_children(name)
+            module_scope = (self._table.name == "top")
+            sym = self._symbols[name] = Symbol(name, flags, namespaces,
+                                               module_scope=module_scope)
+        return sym
+
+    def get_symbols(self):
+        """Return a list of *Symbol* instances for
+        names in the table.
+        """
+        return [self.lookup(ident) for ident in self.get_identifiers()]
+
+    def __check_children(self, name):
+        return [_newSymbolTable(st, self._filename)
+                for st in self._table.children
+                if st.name == name]
+
+    def get_children(self):
+        """Return a list of the nested symbol tables.
+        """
+        return [_newSymbolTable(st, self._filename)
+                for st in self._table.children]
+
+
+def _get_scope(flags):  # like _PyST_GetScope()
+    return (flags >> SCOPE_OFF) & SCOPE_MASK
+
+
+class Function(SymbolTable):
+
+    # Default values for instance variables
+    __params = None
+    __locals = None
+    __frees = None
+    __globals = None
+    __nonlocals = None
+    __cells = None
+
+    def __idents_matching(self, test_func):
+        return tuple(ident for ident in self.get_identifiers()
+                     if test_func(self._table.symbols[ident]))
+
+    def get_parameters(self):
+        """Return a tuple of parameters to the function.
+        """
+        if self.__params is None:
+            self.__params = self.__idents_matching(lambda x:x & DEF_PARAM)
+        return self.__params
+
+    def get_locals(self):
+        """Return a tuple of locals in the function.
+        """
+        if self.__locals is None:
+            locs = (LOCAL, CELL)
+            test = lambda x: _get_scope(x) in locs
+            self.__locals = self.__idents_matching(test)
+        return self.__locals
+
+    def get_globals(self):
+        """Return a tuple of globals in the function.
+        """
+        if self.__globals is None:
+            glob = (GLOBAL_IMPLICIT, GLOBAL_EXPLICIT)
+            test = lambda x: _get_scope(x) in glob
+            self.__globals = self.__idents_matching(test)
+        return self.__globals
+
+    def get_nonlocals(self):
+        """Return a tuple of nonlocals in the function.
+        """
+        if self.__nonlocals is None:
+            self.__nonlocals = self.__idents_matching(lambda x:x & DEF_NONLOCAL)
+        return self.__nonlocals
+
+    def get_frees(self):
+        """Return a tuple of free variables in the function.
+        """
+        if self.__frees is None:
+            is_free = lambda x: _get_scope(x) == FREE
+            self.__frees = self.__idents_matching(is_free)
+        return self.__frees
+
+    def get_cells(self):
+        """Return a tuple of cell variables in the function.
+        """
+        if self.__cells is None:
+            is_cell = lambda x: _get_scope(x) == CELL
+            self.__cells = self.__idents_matching(is_cell)
+        return self.__cells
+
+
+class Class(SymbolTable):
+
+    __methods = None
+
+    def get_methods(self):
+        """Return a tuple of methods declared in the class.
+        """
+        import warnings
+        typename = f'{self.__class__.__module__}.{self.__class__.__name__}'
+        warnings.warn(f'{typename}.get_methods() is deprecated '
+                      f'and will be removed in Python 3.16.',
+                      DeprecationWarning, stacklevel=2)
+
+        if self.__methods is None:
+            d = {}
+
+            def is_local_symbol(ident):
+                flags = self._table.symbols.get(ident, 0)
+                return ((flags >> SCOPE_OFF) & SCOPE_MASK) == LOCAL
+
+            for st in self._table.children:
+                # pick the function-like symbols that are local identifiers
+                if is_local_symbol(st.name):
+                    match st.type:
+                        case _symtable.TYPE_FUNCTION:
+                            d[st.name] = 1
+                        case _symtable.TYPE_TYPE_PARAMETERS:
+                            # Get the function-def block in the annotation
+                            # scope 'st' with the same identifier, if any.
+                            scope_name = st.name
+                            for c in st.children:
+                                if c.name == scope_name and c.type == _symtable.TYPE_FUNCTION:
+                                    d[scope_name] = 1
+                                    break
+            self.__methods = tuple(d)
+        return self.__methods
+
+
+class Symbol:
+
+    def __init__(self, name, flags, namespaces=None, *, module_scope=False):
+        self.__name = name
+        self.__flags = flags
+        self.__scope = _get_scope(flags)
+        self.__namespaces = namespaces or ()
+        self.__module_scope = module_scope
+
+    def __repr__(self):
+        flags_str = '|'.join(self._flags_str())
+        return f'<symbol {self.__name!r}: {self._scope_str()}, {flags_str}>'
+
+    def _scope_str(self):
+        return _scopes_value_to_name.get(self.__scope) or str(self.__scope)
+
+    def _flags_str(self):
+        for flagname, flagvalue in _flags:
+            if self.__flags & flagvalue == flagvalue:
+                yield flagname
+
+    def get_name(self):
+        """Return a name of a symbol.
+        """
+        return self.__name
+
+    def is_referenced(self):
+        """Return *True* if the symbol is used in
+        its block.
+        """
+        return bool(self.__flags & USE)
+
+    def is_parameter(self):
+        """Return *True* if the symbol is a parameter.
+        """
+        return bool(self.__flags & DEF_PARAM)
+
+    def is_type_parameter(self):
+        """Return *True* if the symbol is a type parameter.
+        """
+        return bool(self.__flags & DEF_TYPE_PARAM)
+
+    def is_global(self):
+        """Return *True* if the symbol is global.
+        """
+        return bool(self.__scope in (GLOBAL_IMPLICIT, GLOBAL_EXPLICIT)
+                    or (self.__module_scope and self.__flags & DEF_BOUND))
+
+    def is_nonlocal(self):
+        """Return *True* if the symbol is nonlocal."""
+        return bool(self.__flags & DEF_NONLOCAL)
+
+    def is_declared_global(self):
+        """Return *True* if the symbol is declared global
+        with a global statement."""
+        return bool(self.__scope == GLOBAL_EXPLICIT)
+
+    def is_local(self):
+        """Return *True* if the symbol is local.
+        """
+        return bool(self.__scope in (LOCAL, CELL)
+                    or (self.__module_scope and self.__flags & DEF_BOUND))
+
+    def is_annotated(self):
+        """Return *True* if the symbol is annotated.
+        """
+        return bool(self.__flags & DEF_ANNOT)
+
+    def is_free(self):
+        """Return *True* if a referenced symbol is
+        not assigned to.
+        """
+        return bool(self.__scope == FREE)
+
+    def is_cell(self):
+        """Return *True* if the symbol is a cell variable."""
+        return bool(self.__scope == CELL)
+
+    def is_free_class(self):
+        """Return *True* if a class-scoped symbol is free from
+        the perspective of a method."""
+        return bool(self.__flags & DEF_FREE_CLASS)
+
+    def is_imported(self):
+        """Return *True* if the symbol is created from
+        an import statement.
+        """
+        return bool(self.__flags & DEF_IMPORT)
+
+    def is_assigned(self):
+        """Return *True* if a symbol is assigned to."""
+        return bool(self.__flags & DEF_LOCAL)
+
+    def is_comp_iter(self):
+        """Return *True* if the symbol is a comprehension iteration variable.
+        """
+        return bool(self.__flags & DEF_COMP_ITER)
+
+    def is_comp_cell(self):
+        """Return *True* if the symbol is a cell in an inlined comprehension.
+        """
+        return bool(self.__flags & DEF_COMP_CELL)
+
+    def is_namespace(self):
+        """Returns *True* if name binding introduces new namespace.
+
+        If the name is used as the target of a function or class
+        statement, this will be true.
+
+        Note that a single name can be bound to multiple objects.  If
+        is_namespace() is true, the name may also be bound to other
+        objects, like an int or list, that does not introduce a new
+        namespace.
+        """
+        return bool(self.__namespaces)
+
+    def get_namespaces(self):
+        """Return a list of namespaces bound to this name"""
+        return self.__namespaces
+
+    def get_namespace(self):
+        """Return the single namespace bound to this name.
+
+        Raises ValueError if the name is bound to multiple namespaces
+        or no namespace.
+        """
+        if len(self.__namespaces) == 0:
+            raise ValueError("name is not bound to any namespaces")
+        elif len(self.__namespaces) > 1:
+            raise ValueError("name is bound to multiple namespaces")
+        else:
+            return self.__namespaces[0]
+
+
+_flags = [('USE', USE)]
+_flags.extend(kv for kv in globals().items() if kv[0].startswith('DEF_'))
+_scopes_names = ('FREE', 'LOCAL', 'GLOBAL_IMPLICIT', 'GLOBAL_EXPLICIT', 'CELL')
+_scopes_value_to_name = frozendict({globals()[n]: n for n in _scopes_names})
+
+
+def main(args):
+    import sys
+    def print_symbols(table, level=0):
+        indent = '    ' * level
+        nested = "nested " if table.is_nested() else ""
+        if table.get_type() == 'module':
+            what = f'from file {table._filename!r}'
+        else:
+            what = f'{table.get_name()!r}'
+        print(f'{indent}symbol table for {nested}{table.get_type()} {what}:')
+        for ident in table.get_identifiers():
+            symbol = table.lookup(ident)
+            flags = ', '.join(symbol._flags_str()).lower()
+            print(f'    {indent}{symbol._scope_str().lower()} symbol {symbol.get_name()!r}: {flags}')
+        print()
+
+        for table2 in table.get_children():
+            print_symbols(table2, level + 1)
+
+    for filename in args or ['-']:
+        if filename == '-':
+            src = sys.stdin.read()
+            filename = '<stdin>'
+        else:
+            with open(filename, 'rb') as f:
+                src = f.read()
+        mod = symtable(src, filename, 'exec')
+        print_symbols(mod)
+
+
+if __name__ == "__main__":
+    import sys
+    main(sys.argv[1:])

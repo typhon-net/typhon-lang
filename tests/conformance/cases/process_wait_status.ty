@@ -1,0 +1,20 @@
+#:pylib-source os
+import os
+
+print(os.waitstatus_to_exitcode(0))
+print(os.waitstatus_to_exitcode(7 << 8))
+
+if os.name == "posix":
+    stopped = (19 << 8) | 127
+    assert getattr(os, "WIFSTOPPED")(stopped)
+    assert getattr(os, "WSTOPSIG")(stopped) == 19
+    assert os.waitstatus_to_exitcode(15) == -15
+    assert getattr(os, "WNOHANG") == 1
+    try:
+        os.waitstatus_to_exitcode(stopped)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("a stopped process has no exit code")
+
+print("status checks passed")

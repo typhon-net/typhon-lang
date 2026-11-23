@@ -124,6 +124,7 @@ internal static class CliCompiler
         // #:pylib: modules neither the folder nor the runtime has come from CPython's standard library source
         string? pylib = null;
         bool useSourceFallback = false;
+        bool preferPinnedSource = false;
         string bundledLib = Path.Combine(AppContext.BaseDirectory, "Lib");
         var sourceBackends = new HashSet<string>(StringComparer.Ordinal);
         bool ProvidedByTyphon(string name) => PyLib.ProvidedByTyphon(name, project.BigInts, sourceBackends.Contains(name));
@@ -137,6 +138,7 @@ internal static class CliCompiler
             {
                 sourceBackends.UnionWith(PyLib.SelectedSources(source));
                 useSourceFallback = PyLib.Requested(source, dir, out var givenLib);
+                preferPinnedSource = givenLib == null && Environment.GetEnvironmentVariable("TYPHON_PYLIB") is not { Length: > 0 };
                 if (useSourceFallback || sourceBackends.Count > 0)
                 {
                     pylib = PyLib.Resolve(givenLib);
@@ -195,19 +197,21 @@ internal static class CliCompiler
             string parentName = dot < 0 ? "" : name[..dot];
             var parent = dot < 0 ? null : Discover(parentName);
             var bundled = PyLib.SourceCandidates(bundledLib, name, TyphonCompiler.FileExtension);
-            IEnumerable<(string Path, bool Package)> ManagedBundle()
+            IEnumerable<(string Path, bool Package)> MarkedBundle(string marker)
             {
                 foreach (var candidate in bundled)
                 {
                     if (!File.Exists(candidate.Path))
                         output.Probes.Add(new SourceProbe(candidate.Path, null));
-                    else if (ReadSource(candidate.Path, output.Probes).StartsWith("#:stdlib-managed", StringComparison.Ordinal))
+                    else if (ReadSource(candidate.Path, output.Probes).StartsWith(marker, StringComparison.Ordinal))
                         yield return candidate;
                 }
             }
             IEnumerable<(string Path, bool Package)> choices = PyLib.SourceCandidates(dir, name, TyphonCompiler.FileExtension);
+            if (preferPinnedSource && sourceBackends.Contains(name))
+                choices = choices.Concat(MarkedBundle("# Source: CPython "));
             if (pylib != null && !sourceBackends.Contains(name) && !ProvidedByTyphon(name))
-                choices = choices.Concat(ManagedBundle());
+                choices = choices.Concat(MarkedBundle("#:stdlib-managed"));
             // Keep submodules with the library package they belong to. Named selections
             // only reach the installed library for the named modules and their children.
             bool sourcePackage = pylib != null && parent?.IsPackage == true &&

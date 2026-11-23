@@ -1,0 +1,30 @@
+#:pylib-source os
+import os
+
+
+def check_posix() -> None:
+    spawn = getattr(os, "posix_spawn")
+    wait = getattr(os, "waitpid")
+    close = getattr(os, "POSIX_SPAWN_CLOSE")
+    dup2 = getattr(os, "POSIX_SPAWN_DUP2")
+    reader, writer = os.pipe()
+    try:
+        actions = [(close, reader), (dup2, writer, 1), (close, writer)]
+        program = "/bin/sh"
+        args = ["sh", "-c", 'printf "%s" "$TYPHON_SPAWN_TEST"; exit 7']
+        pid = spawn(program, args, {"TYPHON_SPAWN_TEST": "child"}, file_actions=actions)
+        os.close(writer)
+        writer = -1
+        assert os.read(reader, 64) == b"child"
+        assert os.read(reader, 64) == b""
+        child, status = wait(pid, 0)
+        assert child == pid and os.waitstatus_to_exitcode(status) == 7
+    finally:
+        os.close(reader)
+        if writer != -1:
+            os.close(writer)
+
+
+if os.name == "posix":
+    check_posix()
+print("process file actions passed")

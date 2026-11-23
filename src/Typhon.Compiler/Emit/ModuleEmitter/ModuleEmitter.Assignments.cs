@@ -246,6 +246,23 @@ namespace Typhon.Compiler.Emit
             return null;
         }
 
+        bool IsFreshMapping(Expr value) => value is DictExpr or ComprehensionExpr { Kind: ComprehensionKind.Dict } ||
+            value is CallExpr { Func: NameExpr { Id: "dict" } } && !IsShadowed("dict");
+
+        void ObserveMappingValue(Expr target, Expr value, string receiverType)
+        {
+            if (Obs == null || value == null || target is not NameExpr name || _scope.Locals == null ||
+                _scope.Params.Contains(name.Id) || _scope.Locals.Annotations.ContainsKey(name.Id) ||
+                receiverType?.StartsWith("OrderedDictionary<", StringComparison.Ordinal) != true ||
+                DictTypes(receiverType) is not List<string> types || IsUnknownType(types[1])) return;
+
+            string item = PyType(InferType(value));
+            if (!(IsNone(value) && IsValueTypeName(types[1]) || Incompatible(types[1], item))) return;
+            if (_scope.Locals.InlineDecl.Any(binding => binding.Value.Contains(name.Id) &&
+                binding.Key is AssignStmt assignment && IsFreshMapping(assignment.Value)))
+                Obs.AddConflict(_scopeKey + "|" + name.Id, $"OrderedDictionary<{types[0]}, dynamic>");
+        }
+
         void EmitAssignToName(NameExpr n, Expr value, Stmt stmt, string rawValue)
         {
             // f = obj.method of a .NET object: a callable bound method (a method group has no type C# can store here)
@@ -272,6 +289,14 @@ namespace Typhon.Compiler.Emit
                         Declared(n.Id);
                         if (declType != null)
                         {
+                            if (rawValue == null && ConflictType(n.Id) == declType && IsFreshMapping(value) &&
+                                DictTypes(declType) is List<string> mapping)
+                                rawValue = value switch
+                                {
+                                    DictExpr literal => EmitDict(literal, targetTyped: true, expectedType: declType),
+                                    ComprehensionExpr comprehension => EmitComprehension(comprehension, declType),
+                                    _ => $"{Rt("__dict_merge_as")}<{mapping[0]}, {mapping[1]}>((object?){Paren(EmitValue(value))})",
+                                };
                             _w.Line($"{declType} {Esc(name)} = {rawValue ?? EmitExpr(value, targetTyped: declType != "dynamic")};");
                             SetType(n.Id, declType);
                         }
@@ -415,7 +440,8 @@ namespace Typhon.Compiler.Emit
                             !_scope.Params.Contains(n.Id) && _scope.Locals?.Annotations.ContainsKey(n.Id) != true &&
                             known != null && IsValueTypeName(known.TrimEnd('?')) &&
                             value is CallExpr or NameExpr or AttributeExpr or SubscriptExpr &&
-                            (valueType == "dynamic" || IsUnknownType(valueType) && MaybeLateBound(value));
+                            (valueType is "dynamic" or "object" or "object?" ||
+                             IsUnknownType(valueType) && MaybeLateBound(value));
                         if (unknownLoopResult) valueType = "dynamic";
                         if (Obs != null && valueType != null && known != null && !sameBlock &&
                             (Incompatible(known, valueType) || incompatibleClass || differentFunction || extractsItem || convertsToString ||
@@ -478,7 +504,8 @@ namespace Typhon.Compiler.Emit
                     // a late-bound value (C# cannot deconstruct dynamic) or any other iterable (a, b = range(2) / xs / "ab"):
                     // its items by position, checked for the count
                     string unpackedType = rawValue == null && !(value is TupleExpr) ? InferType(value) : null;
-                    if (rawValue == null && value is TupleExpr literal && HasLateNestedUnpack(elts, InferType(literal)))
+                    if (rawValue == null && value is TupleExpr literal &&
+                        (HasLateNestedUnpack(elts, InferType(literal)) || NeedsLateUnpackRebinding(elts, InferType(literal), stmt)))
                         unpackedType = "dynamic";
                     if (rawValue == null && !(value is TupleExpr) &&
                         (IsDynamicallyDispatched(value) || value is SubscriptExpr sub && (LateBoundArg(sub.Target) || LateBoundArg(sub.Index))))
@@ -490,7 +517,7 @@ namespace Typhon.Compiler.Emit
                         unpackedType = "dynamic";
                     // Python allows a target to be assigned twice in one unpacking; C# does not declare it twice.
                     if (unpackedType == null && elts.Count < 2 ||
-                        elts.OfType<NameExpr>().GroupBy(n => n.Id).Any(group => group.Count() > 1))
+                        HasRepeatedUnpackTarget(elts))
                         unpackedType = "dynamic";
                     if (unpackedType != null && NeedsLateUnpackRebinding(elts, unpackedType, stmt))
                         unpackedType = "dynamic";
@@ -559,6 +586,9 @@ namespace Typhon.Compiler.Emit
             }
         }
 
+        static bool HasRepeatedUnpackTarget(List<Expr> targets) =>
+            targets.SelectMany(NamesIn).GroupBy(name => name).Any(group => group.Count() > 1);
+
         void EmitUnpackedItems(List<Expr> targets, Stmt stmt, string items, string itemType, HashSet<string> bound = null)
         {
             bound ??= new HashSet<string>();
@@ -575,8 +605,14 @@ namespace Typhon.Compiler.Emit
                     _w.Line($"{EmitName(repeated)} = {value};");
                 else
                 {
+                    bool inline = target is NameExpr name && IsInline(stmt, name.Id);
+                    bool late = IsUnknownType(itemType) || itemType == "object?";
+                    if (inline && late) value = $"(dynamic){Paren(value)}";
+                    if (late && !inline && target is NameExpr slot &&
+                        KnownType(slot.Id) is string type && TupleElementTypes(type) != null)
+                        value = $"({type})global::Typhon.Runtime.PyArgs.ConvertArgument((object?){Paren(value)}, typeof({type}))!";
                     EmitAssignTo(target, null, stmt, value);
-                    if (target is NameExpr name && IsInline(stmt, name.Id)) SetType(name.Id, itemType);
+                    if (inline) SetType(((NameExpr)target).Id, late ? "dynamic" : itemType);
                 }
             }
         }
@@ -703,6 +739,7 @@ namespace Typhon.Compiler.Emit
                         et.StartsWith("List<") && !et.Contains("dynamic") && !et.Contains(TypeInference.Pending) && InferType(value) != et)
                         rawValue = $"new {et} {{ {string.Join(", ", sle.Elts.Select(x => EmitElementAs(x, GenericArg(et))))} }}";
                     string receiverType = InferType(sub.Target);
+                    ObserveMappingValue(sub.Target, value, receiverType);
                     bool lateTarget = UsesRuntimeSubscriptReceiver(sub.Target, receiverType);
                     if (InferType(sub.Index) == "global::Typhon.Runtime.PySlice" ||
                         (lateTarget || receiverType == null && InferType(sub.Index) == "dynamic") &&
@@ -848,11 +885,23 @@ namespace Typhon.Compiler.Emit
                 _w.Line($"{Rt("__setitem")}({c}, {k}, (object?){Paren(combined)});");
                 return;
             }
-            string lateName = (a.Target as NameExpr)?.Id;
-            string lateStorage = lateName == null ? null : LateClassSlot(lateName);
-            string target = lateStorage != null ? NewTmp("updated") : EmitExpr(a.Target);
-            if (lateStorage != null)
-                _w.Line($"dynamic? {target} = {EmitLateClassName(lateName, lateStorage)};");
+            string lateRead = null, lateWrite = null;
+            if (a.Target is NameExpr nameTarget)
+            {
+                if (LateClassSlot(nameTarget.Id) is string classStorage)
+                {
+                    lateRead = EmitLateClassName(nameTarget.Id, classStorage);
+                    lateWrite = Esc(nameTarget.Id);
+                }
+                else if (!IsLocal(nameTarget.Id) && _lateModuleFields.Contains(nameTarget.Id))
+                {
+                    lateRead = EmitNameRead(nameTarget);
+                    lateWrite = EmitName(nameTarget);
+                }
+            }
+            string target = lateRead == null ? EmitExpr(a.Target) : NewTmp("updated");
+            if (lateRead != null)
+                _w.Line($"dynamic? {target} = {lateRead};");
             string value = EmitExpr(a.Value);
             string tt = InferType(a.Target), vt = InferType(a.Value);
             if (Obs != null && _cls != null && a.Target is AttributeExpr { Target: NameExpr { Id: "self" } } field &&
@@ -917,7 +966,7 @@ namespace Typhon.Compiler.Emit
                 (tt == "dynamic" && vt == "string" || tt == "string" && (IsIntegral(vt) || vt == "dynamic")))
                 _w.Line($"{target} = {Rt("mul")}({target}, {value});");
             else _w.Line($"{target} {a.Op}= {value};");
-            if (lateStorage != null) _w.Line($"{Esc(lateName)} = {target};");
+            if (lateWrite != null) _w.Line($"{lateWrite} = {target};");
         }
 
         void EmitAnnAssign(AnnAssignStmt a)

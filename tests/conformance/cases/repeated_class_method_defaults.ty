@@ -1,0 +1,12 @@
+class Versions:
+    for number in [1, 2]:
+        def read(self, captured=number):
+            return captured
+        if number == 1:
+            first = read
+        else:
+            second = read
+
+versions = Versions()
+print(versions.first(), versions.second())
+print(versions.first(3), versions.second(None))

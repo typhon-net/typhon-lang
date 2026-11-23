@@ -272,12 +272,13 @@ namespace Typhon.Runtime
     /// </summary>
     internal static class PyArgs
     {
-        public static T? Best<T>(IEnumerable<T> candidates, object?[] args, IDictionary<string, object?>? kw, out object?[] call) where T : System.Reflection.MethodBase
+        public static T? Best<T>(IEnumerable<T> candidates, object?[] args, IDictionary<string, object?>? kw,
+            out object?[] call, IDictionary<string, object?>? defaults = null) where T : System.Reflection.MethodBase
         {
             T? best = null; int bestScore = -1; call = Array.Empty<object?>();
             foreach (var m in candidates)
             {
-                int score = Bind(m.GetParameters(), args, kw, out var c);
+                int score = Bind(m.GetParameters(), args, kw, out var c, defaults);
                 if (score > bestScore) { best = m; bestScore = score; call = c; }
             }
             return best;
@@ -308,7 +309,8 @@ namespace Typhon.Runtime
         }
 
         /// <summary>The arguments of a call to a method with these parameters, and how well they fit (-1: they do not).</summary>
-        public static int Bind(System.Reflection.ParameterInfo[] ps, object?[] args, IDictionary<string, object?>? kw, out object?[] call)
+        public static int Bind(System.Reflection.ParameterInfo[] ps, object?[] args, IDictionary<string, object?>? kw,
+            out object?[] call, IDictionary<string, object?>? defaults = null)
         {
             call = new object?[ps.Length];
             if (ps.Any(p => p.ParameterType.IsByRef || p.ParameterType == typeof(NoInit))) return -1;
@@ -329,7 +331,7 @@ namespace Typhon.Runtime
                     v = args[i];
                 }
                 else if (kw != null && p.Name != null && !IsPositionalOnly(p) && kw.TryGetValue(p.Name, out v)) byName++;
-                else
+                else if (p.Name == null || defaults == null || !defaults.TryGetValue(p.Name, out v))
                 {
                     if (!p.IsOptional) return -1;
                     call[i] = p.HasDefaultValue ? p.DefaultValue : Type.Missing;
@@ -773,7 +775,7 @@ namespace Typhon.Runtime
             ? new PyBoundMethod(typeof(Builtins), nameof(bytes)) : type == typeof(PyByteArray)
             ? new PyBoundMethod(typeof(Builtins), nameof(bytearray)) : null;
 
-        static BigInteger ConstructBigInt(object?[] args, IDictionary<string, object?>? keywords)
+        internal static BigInteger ConstructBigInt(object?[] args, IDictionary<string, object?>? keywords)
         {
             if (keywords?.Count > 0)
             {

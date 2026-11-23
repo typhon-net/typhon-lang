@@ -1,0 +1,7 @@
+#:pylib-source csv
+import csv
+
+rows = csv.DictReader(["name,value\n", "sample,base,extra\n", "missing\n"],
+                      restkey="extras", restval="empty")
+print(next(rows))
+print(next(rows))

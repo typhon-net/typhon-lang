@@ -360,8 +360,15 @@ namespace Typhon.Stdlib
             return new TracebackException(e, limit: limit).format(chain).ToList();
         }
 
-        public static void print_exception(object? exc, object? value = null, object? tb = null, object? limit = null, object? file = null, bool chain = true) =>
-            Write(file, string.Concat(format_exception(exc, value, tb, limit, chain)));
+        public static void print_exception(object? exc, object? value = null, object? tb = null, object? limit = null, object? file = null,
+                                           bool chain = true, bool colorize = false)
+        {
+            var error = value as Exception ?? exc as Exception;
+            var lines = colorize && error != null
+                ? new TracebackException(error, limit: limit).format(chain, colorize: true)
+                : format_exception(exc, value, tb, limit, chain);
+            Write(file, string.Concat(lines));
+        }
 
         /// <summary>format_exc(): the traceback of the exception being handled (the last one raised on this thread).</summary>
         public static string format_exc(object? limit = null, bool chain = true) =>

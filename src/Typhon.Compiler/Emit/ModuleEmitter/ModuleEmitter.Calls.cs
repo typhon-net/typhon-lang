@@ -564,7 +564,7 @@ namespace Typhon.Compiler.Emit
         {
             if (value is NameExpr name && !IsLocal(name.Id))
             {
-                if (HasLateModuleBinding(_m, name.Id) || _runtimeProjectBindings.ContainsKey(name.Id)) return true;
+                if (HasLateModuleBinding(_m, name.Id) || _runtimeProjectBindings.ContainsKey(name.Id) || ConditionalStarBinding(name)) return true;
                 if (_importedFromModules.TryGetValue(name.Id, out var imported))
                     return HasLateModuleBinding(imported.Key, imported.Value);
                 return _wildcardModules.Any(m => HasLateModuleBinding(m, name.Id));
@@ -597,6 +597,8 @@ namespace Typhon.Compiler.Emit
 
         string EmitCall(CallExpr c, bool targetTyped)
         {
+            if (!_m.IsGdScript && ConditionalClassReference(c.Func))
+                return InvokePythonValue($"(object?){Paren(EmitLooseValue(c.Func))}", c.Args);
             if (!_m.IsGdScript && c.Func is NameExpr exception &&
                 (exception.Id == "OverflowError" && c.Args.Count > 0 ||
                     exception.Id is "TypeError" or "ValueError" or "RuntimeError" or "Exception" or "BaseException" && c.Args.Count > 1) &&
@@ -923,6 +925,12 @@ namespace Typhon.Compiler.Emit
             if (c.Func is AttributeExpr si && si.Name == "__init__" && si.Target is CallExpr ssc && ssc.Func is NameExpr ssn && ssn.Id == "super" && _cls != null)
             {
                 var initOwner = NearestInitAncestor(_cls.Def);
+                if (initOwner == null && HasNativeExceptionBase(_cls.Def) &&
+                    c.Args.All(argument => argument.Name == null && !argument.Star && !argument.DoubleStar))
+                {
+                    var args = c.Args.Select(argument => $"(object?){Paren(EmitLooseValue(argument.Value))}");
+                    return $"global::Typhon.Runtime.PyExc.Initialize(this, [{string.Join(", ", args)}])";
+                }
                 if (initOwner == null)
                     return BaseHasMember(_cls.Def.Bases, "__init__", requireOverridable: false)
                         ? $"base.__init__({string.Join(", ", c.Args.Select(a => (a.Name != null ? Esc(a.Name) + ": " : "") + $"(object?){Paren(EmitValue(a.Value))}"))})" : "";
@@ -1455,8 +1463,6 @@ namespace Typhon.Compiler.Emit
 
         string NativeUnpackCall(CallExpr call)
         {
-            bool unpack = call.Args.Any(argument => argument.Star || argument.DoubleStar);
-            if (!unpack && !call.Args.Any(argument => argument.Name != null)) return null;
             if (StdlibModuleOf(call, out string name) is not string owner) return null;
             var members = _r.GetMembers(owner, name).Where(member => member.IsStatic).ToList();
             bool packed = members.Any(member => member.Parameters.Any(parameter => parameter.IsPackedArguments));
@@ -1472,16 +1478,21 @@ namespace Typhon.Compiler.Emit
             var positional = call.Args.Where(a => a.Name == null && !a.DoubleStar)
                 .Select(a => a.Star ? $".. {Rt("__iter_dyn")}((object?){Paren(EmitExpr(a.Value))})"
                                    : $"(object?){Paren(EmitLooseValue(a.Value))}");
-            string packedBinding = packed ? ", packedOnly: true" : "";
-            string bound = $"new global::Typhon.Runtime.PyBoundMethod(typeof({CsTypeName(owner)}), {CsString(name)}{packedBinding})";
             string args = $"[{string.Join(", ", positional)}]";
             bool keywords = call.Args.Any(a => a.Name != null || a.DoubleStar);
+            if (!keywords && members.Count == 1 && members[0].Parameters.Count == 1 && members[0].Parameters[0].IsPackedArguments)
+                return $"{CsTypeName(owner)}.{Esc(name)}({args})";
+
+            string packedBinding = packed ? ", packedOnly: true" : "";
+            string bound = $"new global::Typhon.Runtime.PyBoundMethod(typeof({CsTypeName(owner)}), {CsString(name)}{packedBinding})";
             if (value)
             {
                 string callee = $"(object?){Paren(EmitExpr(call.Func))}";
                 return keywords ? $"{Rt("__invoke_kw")}({callee}, {args}, {KeywordArgs(call.Args)})" : $"{Rt("__invoke")}({callee}, {args})";
             }
-            return keywords ? $"{bound}.__call_kw__({args}, {KeywordArgs(call.Args)})" : $"{bound}.__call__({args})";
+            string invocation = keywords ? $"{bound}.__call_kw__({args}, {KeywordArgs(call.Args)})" : $"{bound}.__call__({args})";
+            string type = packed && call != _statementCall ? InferType(call) : null;
+            return !IsUnknownType(type) && type is not ("void" or "object?") ? $"(({type}){invocation})" : invocation;
         }
 
         string StringFormatCall(CallExpr call)
@@ -1824,9 +1835,11 @@ namespace Typhon.Compiler.Emit
             return $"new {PyTuplePrefix}object?>(new object?[] {{ {string.Join(", ", types)} }})";
         }
 
-        string InvokeLogicalMethod(AttributeExpr method, string receiver, List<Arg> args)
+        string InvokeLogicalMethod(AttributeExpr method, string receiver, List<Arg> args) =>
+            InvokePythonValue($"(object?){Rt("getattr")}({receiver}, {CsString(method.Name)})", args);
+
+        string InvokePythonValue(string callable, List<Arg> args)
         {
-            string callable = $"(object?){Rt("getattr")}({receiver}, {CsString(method.Name)})";
             var positional = args.Where(a => a.Name == null && !a.DoubleStar)
                 .Select(a => a.Star ? $".. {Rt("__iter_dyn")}((object?){Paren(EmitExpr(a.Value))})" : $"(object?){Paren(EmitLooseValue(a.Value))}");
             string values = $"[{string.Join(", ", positional)}]";
@@ -1890,9 +1903,13 @@ namespace Typhon.Compiler.Emit
         bool LateRuntimeMethodReceiver(Expr receiver, List<Arg> arguments, bool statement = false)
         {
             if (LatePythonMethodReceiver(receiver, statement)) return true;
-            // C# still knows a local's initializer type, but a late argument disables extension binding.
-            return receiver is NameExpr local && IsLocal(local.Id) && InferType(receiver) == null &&
-                arguments.Any(argument => LateBoundArg(argument.Value));
+            // C# can know the type of a binding even when its Python inference is pending.
+            // A late argument still disables C# extension binding.
+            if (InferType(receiver) != null || !arguments.Any(argument => LateBoundArg(argument.Value))) return false;
+            return receiver is NameExpr local && IsLocal(local.Id) ||
+                receiver is AttributeExpr member && !TryTypeExpr(member, out _) &&
+                    (DottedName(member) is string qualified && ProjectModuleMember(qualified) != null ||
+                     TryTypeExpr(member.Target, out _));
         }
 
         bool LatePythonMethodReceiver(Expr receiver, bool statement = false)

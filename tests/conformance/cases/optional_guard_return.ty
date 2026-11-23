@@ -1,0 +1,10 @@
+def checked(value: bool | None) -> bool:
+    if value is None:
+        raise ValueError("missing")
+    return value
+
+print(checked(True), checked(False))
+try:
+    checked(None)
+except ValueError as error:
+    print(str(error))

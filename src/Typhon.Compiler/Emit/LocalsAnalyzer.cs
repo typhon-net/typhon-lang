@@ -175,17 +175,9 @@ namespace Typhon.Compiler.Emit
                     }
                     break;
                 case FunctionDef fd:
-                    _r.LocalFunctions.Add(fd.Name);
-                    foreach (var p in fd.Params) Loads(p.Default, path);
+                    if (!_excluded.Contains(fd.Name)) _r.LocalFunctions.Add(fd.Name);
                     Add(fd.Name, path, Kind.FunctionStore, fd);
-                    foreach (var d in fd.Decorators) Loads(d, path);
-                    // free variables of the nested function count as uses at the definition site
-                    var inner = Analyze(fd.Body, fd.Params.Select(p => p.Name), null);
-                    var innerBound = new HashSet<string>(inner.AllLocals);
-                    innerBound.UnionWith(fd.Params.Select(p => p.Name));
-                    innerBound.UnionWith(inner.LocalFunctions);
-                    foreach (var name in FreeNames(fd.Body))
-                        if (!innerBound.Contains(name) || inner.Globals.Contains(name)) Add(name, path, Kind.Load, fd);
+                    WalkFunctionLoads(fd, path);
                     break;
                 case ImportStmt _:
                 case ImportFromStmt _:
@@ -196,9 +188,25 @@ namespace Typhon.Compiler.Emit
                 case ClassDef cls:
                     foreach (var parent in cls.Bases) Loads(parent, path);
                     foreach (var field in cls.Body.OfType<AssignStmt>()) Loads(field.Value, path);
+                    foreach (var method in cls.Body.OfType<FunctionDef>()) WalkFunctionLoads(method, path);
                     Add(cls.Name, path, Kind.DeclStore, cls);
                     break;
             }
+        }
+
+        void WalkFunctionLoads(FunctionDef function, List<object> path)
+        {
+            foreach (var parameter in function.Params) Loads(parameter.Default, path);
+            foreach (var decorator in function.Decorators) Loads(decorator, path);
+
+            // C# needs the captured variables in scope where the function is referenced.
+            var parameterNames = function.Params.Select(parameter => parameter.Name);
+            var inner = Analyze(function.Body, parameterNames, null);
+            var bound = new HashSet<string>(inner.AllLocals);
+            bound.UnionWith(parameterNames);
+            bound.UnionWith(inner.LocalFunctions);
+            foreach (var name in FreeNames(function.Body))
+                if (!bound.Contains(name) || inner.Globals.Contains(name)) Add(name, path, Kind.Load, function);
         }
 
         /// <summary>The names a pattern binds, each with an expression for its value (for typing; null when unknown).</summary>
@@ -340,6 +348,7 @@ namespace Typhon.Compiler.Emit
                 if (!byName.TryGetValue(o.Name, out var list)) byName[o.Name] = list = new List<Occ>();
                 list.Add(o);
             }
+            PropagateForwardCaptures(byName);
             foreach (var kv in byName)
             {
                 string name = kv.Key;
@@ -387,6 +396,44 @@ namespace Typhon.Compiler.Emit
                                                      pa.Targets.All(t => t is NameExpr tn && tn.Id == name)))
                         _r.HoistedPlain.Add(name);
                 }
+            }
+        }
+
+        void PropagateForwardCaptures(Dictionary<string, List<Occ>> byName)
+        {
+            if (_r.LocalFunctions.Count == 0) return;
+            var definitions = new Dictionary<string, Occ>();
+            foreach (var name in _r.LocalFunctions)
+            {
+                if (_excluded.Contains(name) || _r.Globals.Contains(name) || !byName.TryGetValue(name, out var uses))
+                    continue;
+                var stores = uses.Where(use => use.Kind != Kind.Load).Take(2).ToList();
+                if (stores.Count == 1 && stores[0] is { Kind: Kind.FunctionStore, Path.Count: 1 })
+                    definitions.Add(name, stores[0]);
+            }
+            if (definitions.Count == 0) return;
+            var captures = _occs.Where(occ => occ.Kind == Kind.Load && occ.Stmt is FunctionDef)
+                .ToLookup(occ => occ.Stmt);
+
+            // Materializing a method can reference a local function whose own captures
+            // are only recorded at its later definition. Move their use to that site.
+            foreach (var reference in _occs.Where(occ => occ.Kind == Kind.Load && definitions.ContainsKey(occ.Name)))
+            {
+                var seen = new HashSet<string>();
+                void IncludeCaptures(string name)
+                {
+                    if (!definitions.TryGetValue(name, out var definition) || definition.Order <= reference.Order || !seen.Add(name))
+                        return;
+                    foreach (var capture in captures[definition.Stmt])
+                    {
+                        var uses = byName[capture.Name];
+                        if (uses.Any(use => use.Kind != Kind.Load && use.Order > reference.Order))
+                            uses.Add(new Occ { Name = capture.Name, Path = reference.Path, Kind = Kind.Load, Order = reference.Order });
+                        IncludeCaptures(capture.Name);
+                    }
+                }
+
+                IncludeCaptures(reference.Name);
             }
         }
 

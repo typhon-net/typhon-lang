@@ -10,6 +10,7 @@ namespace Typhon.Stdlib
     using System.Collections;
     using System.Collections.Generic;
     using System.IO;
+    using System.Numerics;
     using System.Runtime.InteropServices;
     using Microsoft.Win32.SafeHandles;
     using Typhon.Runtime;
@@ -200,6 +201,15 @@ namespace Typhon.Stdlib
         static extern int LibcOpenPty(out int master, out int slave, IntPtr name, IntPtr attributes, IntPtr size);
         [DllImport("libutil.so.1", EntryPoint = "openpty", SetLastError = true)]
         static extern int LibutilOpenPty(out int master, out int slave, IntPtr name, IntPtr attributes, IntPtr size);
+        [DllImport("libc", EntryPoint = "pipe", SetLastError = true)]
+        static extern int NativePipe([Out] int[] descriptors);
+        [DllImport("libc", EntryPoint = "pipe2", SetLastError = true)]
+        static extern int NativePipeWithFlags([Out] int[] descriptors, int flags);
+        [DllImport("kernel32.dll", EntryPoint = "CreatePipe", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        static extern bool CreateWindowsPipe(out SafeFileHandle read, out SafeFileHandle write,
+            IntPtr securityAttributes, uint bufferSize);
+
         [DllImport("libc", EntryPoint = "fcntl", SetLastError = true)]
         static extern int ConfigureDescriptor(int descriptor, int command, int value);
         [DllImport("libc", EntryPoint = "isatty", SetLastError = true)]
@@ -210,6 +220,48 @@ namespace Typhon.Stdlib
         static extern nint NativeRead(int descriptor, [Out] byte[] buffer, nuint count);
         [DllImport("libc", EntryPoint = "write", SetLastError = true)]
         static extern nint NativeWrite(int descriptor, byte[] buffer, nuint count);
+
+        public const long WNOHANG = 1;
+
+        static BigInteger WaitStatusIndex(object? status)
+        {
+            object index = Builtins.__index_value(status);
+            return index is BigInteger wide ? wide : new BigInteger((long)index);
+        }
+
+        static int UnixWaitStatus(object? status)
+        {
+            BigInteger integer = WaitStatusIndex(status);
+            if (integer < int.MinValue || integer > int.MaxValue)
+                throw new OverflowException("Python int too large to convert to C int");
+            return (int)integer;
+        }
+
+        static bool IsStopped(int status) => (status & 0xff) == 0x7f;
+        static int StatusCode(int status) => (status & 0xff00) >> 8;
+        public static bool WIFSTOPPED(object? status) => IsStopped(UnixWaitStatus(status));
+        public static long WSTOPSIG(object? status) => StatusCode(UnixWaitStatus(status));
+
+        public static long waitstatus_to_exitcode(object? status)
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                BigInteger windowsStatus = WaitStatusIndex(status);
+                if (windowsStatus < 0 || windowsStatus > ulong.MaxValue)
+                    throw new OverflowException("Python int too large to convert to C unsigned long long");
+                ulong exit = (ulong)windowsStatus >> 8;
+                if (exit > uint.MaxValue) throw new ArgumentException($"invalid exit code: {exit}");
+                return (long)exit;
+            }
+
+            int unixStatus = UnixWaitStatus(status);
+            int signal = unixStatus & 0x7f;
+            if (signal == 0) return StatusCode(unixStatus);
+            if (signal < 0x7f) return -signal;
+            if (IsStopped(unixStatus))
+                throw new ArgumentException($"process stopped by delivery of signal {StatusCode(unixStatus)}");
+            throw new ArgumentException($"invalid wait status: {unixStatus}");
+        }
 
         public static (long, long) waitpid(long pid, long options)
         {
@@ -280,11 +332,16 @@ namespace Typhon.Stdlib
             return WithUnixDescriptor(descriptor, stream, native => DuplicateLinuxFile(native, access), OsErrors.BadFd);
         }
 
-        static FileStream DuplicateLinuxFile(int descriptor, FileAccess access)
+        internal static SafeFileHandle DuplicateLinuxHandle(int descriptor)
         {
             int duplicate = ConfigureDescriptor(descriptor, LinuxDuplicateCloseOnExec, 3);
             if (duplicate < 0) throw OsErrors.Errno(Marshal.GetLastPInvokeError());
-            var handle = new SafeFileHandle((IntPtr)duplicate, ownsHandle: true);
+            return new SafeFileHandle((IntPtr)duplicate, ownsHandle: true);
+        }
+
+        static FileStream DuplicateLinuxFile(int descriptor, FileAccess access)
+        {
+            var handle = DuplicateLinuxHandle(descriptor);
             try { return new FileStream(handle, access, bufferSize: 1); }
             catch { handle.Dispose(); throw; }
         }
@@ -299,24 +356,65 @@ namespace Typhon.Stdlib
             catch (EntryPointNotFoundException) { result = LibutilOpenPty(out master, out slave, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero); }
             if (result < 0) throw OsErrors.Errno(Marshal.GetLastPInvokeError());
 
-            var masterHandle = new SafeFileHandle((IntPtr)master, ownsHandle: true);
-            var slaveHandle = new SafeFileHandle((IntPtr)slave, ownsHandle: true);
-            FileStream? masterFile = null;
-            FileStream? slaveFile = null;
+            return RegisterUnixFilePair(master, FileAccess.ReadWrite, slave, FileAccess.ReadWrite, closeOnExec: false);
+        }
+
+        public static (long, long) pipe()
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                if (!CreateWindowsPipe(out var read, out var write, IntPtr.Zero, 0))
+                {
+                    int error = Marshal.GetLastPInvokeError();
+                    read?.Dispose();
+                    write?.Dispose();
+                    throw OsErrors.WinError(error, new System.ComponentModel.Win32Exception(error).Message, filename: null);
+                }
+                return RegisterFilePair(read, FileAccess.Read, write, FileAccess.Write);
+            }
+
+            var descriptors = new int[2];
+            bool closeOnExec = OperatingSystem.IsLinux();
+            int result = closeOnExec ? NativePipeWithFlags(descriptors, (int)O_CLOEXEC) : NativePipe(descriptors);
+            if (result < 0) throw OsErrors.Errno(Marshal.GetLastPInvokeError());
+            return RegisterUnixFilePair(descriptors[0], FileAccess.Read, descriptors[1], FileAccess.Write, closeOnExec);
+        }
+
+        static (long, long) RegisterUnixFilePair(int first, FileAccess firstAccess, int second, FileAccess secondAccess, bool closeOnExec)
+        {
+            var firstHandle = new SafeFileHandle((IntPtr)first, ownsHandle: true);
+            var secondHandle = new SafeFileHandle((IntPtr)second, ownsHandle: true);
+            // F_SETFD with FD_CLOEXEC keeps the descriptors out of spawned processes.
+            if (!closeOnExec && (ConfigureDescriptor(first, 2, 1) < 0 || ConfigureDescriptor(second, 2, 1) < 0))
+            {
+                int error = Marshal.GetLastPInvokeError();
+                firstHandle.Dispose();
+                secondHandle.Dispose();
+                throw OsErrors.Errno(error);
+            }
+            return RegisterFilePair(firstHandle, firstAccess, secondHandle, secondAccess);
+        }
+
+        static (long, long) RegisterFilePair(SafeFileHandle firstHandle, FileAccess firstAccess,
+            SafeFileHandle secondHandle, FileAccess secondAccess)
+        {
+            FileStream? first = null;
+            FileStream? second = null;
+            long? descriptor = null;
             try
             {
-                // F_SETFD with FD_CLOEXEC keeps both descriptors out of spawned processes.
-                if (ConfigureDescriptor(master, 2, 1) < 0 || ConfigureDescriptor(slave, 2, 1) < 0)
-                    throw OsErrors.Errno(Marshal.GetLastPInvokeError());
-                masterFile = new FileStream(masterHandle, FileAccess.ReadWrite, bufferSize: 1);
-                slaveFile = new FileStream(slaveHandle, FileAccess.ReadWrite, bufferSize: 1);
-                long masterDescriptor = __register(masterFile);
-                return (masterDescriptor, __register(slaveFile));
+                first = new FileStream(firstHandle, firstAccess, bufferSize: 1);
+                second = new FileStream(secondHandle, secondAccess, bufferSize: 1);
+                descriptor = __register(first);
+                return (descriptor.Value, __register(second));
             }
             catch
             {
-                if (masterFile != null) masterFile.Dispose(); else masterHandle.Dispose();
-                if (slaveFile != null) slaveFile.Dispose(); else slaveHandle.Dispose();
+                if (descriptor is long fd) close(fd);
+                else first?.Dispose();
+                second?.Dispose();
+                firstHandle.Dispose();
+                secondHandle.Dispose();
                 throw;
             }
         }
@@ -334,6 +432,7 @@ namespace Typhon.Runtime
                 "termios" => Typhon.Stdlib.termios.Available,
                 "msvcrt" or "nt" or "_winapi" => System.OperatingSystem.IsWindows(),
                 "posix" => !System.OperatingSystem.IsWindows(),
+                "_posixsubprocess" => System.OperatingSystem.IsLinux(),
                 _ => true,
             };
             if (!available) throw new ModuleNotFoundError($"No module named '{name}'");
