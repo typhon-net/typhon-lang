@@ -116,13 +116,48 @@ namespace Typhon.Stdlib
             public static readonly List<string> SOURCE_SUFFIXES = OperatingSystem.IsWindows() ? new() { ".py", ".pyw" } : new() { ".py" };
             public static readonly List<string> BYTECODE_SUFFIXES = new() { ".pyc" };
 
+            internal static class BuiltinImporter
+            {
+                internal static bool IsBuiltin(string name) => sys_.builtin_module_names.Contains(name);
+
+                public static ModuleSpec? find_spec(string fullname, object? path = null, object? target = null) =>
+                    IsBuiltin(fullname) ? new ModuleSpec(fullname, typeof(BuiltinImporter), origin: "built-in") : null;
+
+                public static PyModule create_module(ModuleSpec spec)
+                {
+                    RequireBuiltin(spec.name);
+                    var stdlib = typeof(sys_).Assembly;
+                    string name = "Typhon.Stdlib." + spec.name;
+                    Type type = stdlib.GetType(name) ?? stdlib.GetType(name + "_") ??
+                        throw new ImportError($"No built-in module named '{spec.name}'", name: spec.name);
+                    return PyModule.Of(type, spec.name);
+                }
+
+                public static object? exec_module(object? module)
+                {
+                    if (module is PyModule { SourceType: Type type })
+                        System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(type.TypeHandle);
+                    return null;
+                }
+
+                public static object? get_code(string fullname) { RequireBuiltin(fullname); return null; }
+                public static string? get_source(string fullname) { RequireBuiltin(fullname); return null; }
+                public static bool is_package(string fullname) { RequireBuiltin(fullname); return false; }
+
+                static void RequireBuiltin(string fullname)
+                {
+                    if (!IsBuiltin(fullname))
+                        throw new ImportError($"'{fullname}' is not a built-in module", name: fullname);
+                }
+            }
+
             internal sealed class ModuleSpec : IPyRepr, IEquatable<ModuleSpec>
             {
                 public string name;
                 public dynamic? loader;
                 public object? loader_state;
                 public string? origin;
-                public List<string>? submodule_search_locations;
+                public IList<string>? submodule_search_locations;
                 string? _cached;
 
                 public ModuleSpec(string name, object? loader, string? origin = null, object? loader_state = null, bool? is_package = null)
@@ -227,7 +262,7 @@ namespace Typhon.Stdlib
                     if (find != null && (object?)Builtins.__invoke(find, new object?[] { name, path, null }) is machinery.ModuleSpec spec)
                         return spec;
                 }
-                return SourceImport.Find(name, path == null ? sys_.path : Builtins.__iter_dyn(path).OfType<string>());
+                return machinery.PathFinder.find_spec(name, path);
             }
 
             public static machinery.ModuleSpec? spec_from_file_location(

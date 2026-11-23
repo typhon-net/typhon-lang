@@ -561,7 +561,9 @@ namespace Typhon.Compiler.Emit
                 ModuleRef(dotted) is ModuleInfo module)
             {
                 var (owner, binding) = ProjectExport(module, member.Name);
-                return binding != null && owner?.ConditionalGlobals.Contains(binding) == true || UsesRuntimeProjectMember(module, member.Name);
+                return UsesRuntimeProjectMember(module, member.Name) || binding != null &&
+                    (owner?.ConditionalGlobals.Contains(binding) == true ||
+                     owner?.Globals.Contains(binding) == true && !owner.Functions.Contains(binding) && InferType(member) == "dynamic");
             }
             return false;
         }
@@ -594,8 +596,8 @@ namespace Typhon.Compiler.Emit
             if (c.Func is AttributeExpr notEqual && UsesInheritedNotEqual(notEqual))
                 return InvokeLogicalMethod(notEqual, $"(object?){Paren(EmitValue(notEqual.Target))}", c.Args);
             if (c.Func is AttributeExpr member && (UsesRuntimeIteratorMember(member) ||
-                IsRuntimeObjectAttribute(member) || UsesBuiltinStringComparison(member)))
-                return InvokeLogicalMethod(member, $"(object?){Paren(EmitExpr(member.Target))}", c.Args);
+                IsRuntimeObjectAttribute(member) || IsRuntimeModuleAttribute(member) || UsesBuiltinStringComparison(member)))
+                return InvokeLogicalMethod(member, $"(object?){Paren(EmitValue(member.Target))}", c.Args);
             if (StdlibModuleOf(c, out string chainName) == "Typhon.Stdlib.itertools" && chainName == "chain" &&
                 c.Args.All(a => a.Name == null && !a.Star && !a.DoubleStar))
             {

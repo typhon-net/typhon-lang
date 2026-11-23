@@ -787,8 +787,11 @@ namespace Typhon.Compiler.Emit
                 _r.GetMembers(nativeStaticOwner, a.Name).Any(member => member.IsStatic && !member.IsMethod))
                 return $"{CsTypeName(nativeStaticOwner)}.{Esc(a.Name)}";
             if (IsRuntimeModuleAttribute(a) || IsRuntimeObjectAttribute(a))
-                return IsAttributeStore(a) ? $"((dynamic){Paren(EmitExpr(a.Target))}).{Esc(a.Name)}" :
-                    $"{Rt("getattr")}((object?){Paren(EmitExpr(a.Target))}, {CsString(a.Name)})";
+            {
+                string receiver = EmitValue(a.Target);
+                return IsAttributeStore(a) ? $"((dynamic){Paren(receiver)}).{Esc(a.Name)}" :
+                    $"{Rt("getattr")}((object?){Paren(receiver)}, {CsString(a.Name)})";
+            }
             if (!_m.IsGdScript && !allowMethodGroup && !IsAttributeStore(a) && a.Name == "__next__")
                 return $"{Rt("getattr")}((object?){Paren(EmitValue(a.Target))}, {CsString(a.Name)})";
             if (!allowMethodGroup && !Receivers.Contains(a) && !IsAttributeStore(a) &&

@@ -40,6 +40,8 @@ namespace Typhon.Runtime
         /// <summary>Python's ==: numbers by value (1 == 1.0 == True), str by characters, containers element by element.</summary>
         public static bool eq(object? a, object? b)
         {
+            if (a is PyIntEnumMember leftIntegerEnum) a = leftIntegerEnum.value;
+            if (b is PyIntEnumMember rightIntegerEnum) b = rightIntegerEnum.value;
             if (ReferenceEquals(a, b)) return true;
             if (b is PyApprox) return b.Equals(a); // (Python tries the right operand's __eq__ when the left one has none for it)
             if (a is null || b is null) return false;

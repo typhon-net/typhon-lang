@@ -1,0 +1,9 @@
+import math as math_module
+from math import pi as circle
+from operator import *
+
+symbols = globals()
+print(symbols["math_module"] is math_module)
+print(symbols["circle"] == circle)
+print(symbols["add"](3, 4), add(6, 8))
+print("_private" in symbols)

@@ -34,7 +34,7 @@ namespace Typhon.Compiler.Emit
 
         bool MayHaveVirtualSubclasses(string meta, ClassDef c) =>
             c != null ? HasVirtualSubclasses(c) :
-                meta is MappingMeta or MutableMappingMeta or "Typhon.Stdlib.os_+PathLike" or
+                meta is "Typhon.Stdlib.enum+IntEnum" or MappingMeta or MutableMappingMeta or "Typhon.Stdlib.os_+PathLike" or
                     "Typhon.Stdlib.types+MethodType" or
                     "Typhon.Stdlib.collections+abc+Sequence" or "Typhon.Stdlib.collections+abc+MutableSequence" or
                     "Typhon.Stdlib.collections+abc+Generator" or "Typhon.Stdlib.collections+abc+Coroutine" or

@@ -90,6 +90,7 @@ namespace Typhon.Runtime
                 if (name == "value") { value = Convert.ToInt64(member, Inv); return true; }
             }
             if (o is PyLocalClassInstance instance) return instance.TryRead(name, out value);
+            if (o is PyIntEnumType intEnum && intEnum.TryRead(name, out value)) return true;
             if (o is Type t)
             {
                 if (t == typeof(Type) && PyMetaclasses.TypeCheckSlot(name) is PyClosure typeCheck) { value = typeCheck; return true; }

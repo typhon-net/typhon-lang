@@ -1,0 +1,54 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import _signal as signal
+
+def handler(number, frame):
+    print("handler", number == signal.SIGINT, frame is not None)
+
+old = signal.getsignal(signal.SIGINT)
+print(callable(old), old is signal.default_int_handler)
+print(signal.SIGINT in signal.valid_signals())
+try:
+    signal.raise_signal(signal.SIGINT)
+except KeyboardInterrupt:
+    print("interrupt")
+
+print(signal.signal(signal.SIGINT, handler) is old)
+try:
+    print(signal.getsignal(signal.SIGINT) is handler)
+    signal.raise_signal(signal.SIGINT)
+    print(signal.signal(signal.SIGINT, signal.SIG_IGN) is handler)
+    signal.raise_signal(signal.SIGINT)
+    print(signal.getsignal(signal.SIGINT) == signal.SIG_IGN)
+finally:
+    signal.signal(signal.SIGINT, old)
+
+class NotAHandler:
+    def __eq__(self, other):
+        print("handler comparison was called")
+        return True
+
+for bad_handler in [1.0, True, NotAHandler()]:
+    try:
+        signal.signal(signal.SIGINT, bad_handler)
+    except TypeError:
+        print("invalid handler")
+
+try:
+    signal.getsignal(10**10)
+except OverflowError:
+    print("signal does not fit")
+
+seen = []
+def nested(number, frame):
+    seen.append("enter")
+    if len(seen) == 1:
+        signal.raise_signal(number)
+    seen.append("exit")
+
+signal.signal(signal.SIGINT, nested)
+try:
+    print(signal.raise_signal(signal.SIGINT), seen)
+finally:
+    signal.signal(signal.SIGINT, old)

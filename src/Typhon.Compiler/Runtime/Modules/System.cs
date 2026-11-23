@@ -114,7 +114,7 @@ namespace Typhon.Stdlib
         public static readonly int_info_t int_info = new int_info_t();
         public static readonly hash_info_t hash_info = new hash_info_t();
         /// <summary>The C modules CPython compiles into itself that Typhon's runtime also provides.</summary>
-        public static readonly PyTuple<string> builtin_module_names = new PyTuple<string>(new[] { "array", "binascii", "builtins", "itertools", "math", "sys", "time" });
+        public static readonly PyTuple<string> builtin_module_names = new PyTuple<string>(new[] { "_signal", "array", "binascii", "builtins", "itertools", "math", "sys", "time" });
         public static bool dont_write_bytecode = false;
         public static readonly List<string> warnoptions = new List<string>();
         public static readonly OrderedDictionary<string, object?> _xoptions = new OrderedDictionary<string, object?>();
@@ -125,7 +125,8 @@ namespace Typhon.Stdlib
         public static readonly string prefix = AppContext.BaseDirectory.TrimEnd('/', '\\'), exec_prefix = prefix, base_prefix = prefix, base_exec_prefix = prefix;
         /// <summary>The module search path: the script's directory (imports are resolved when compiling).</summary>
         public static List<string> path = new List<string>();
-        public static readonly List<dynamic?> meta_path = new(), path_hooks = pkgutil.DefaultPathHooks();
+        public static readonly List<dynamic?> meta_path = new() { typeof(importlib.machinery.BuiltinImporter) };
+        public static readonly List<dynamic?> path_hooks = pkgutil.DefaultPathHooks();
         public static readonly OrderedDictionary<string, object?> path_importer_cache = new OrderedDictionary<string, object?>();
 
         public static readonly PyTextStream __stdout__ = new PyTextStream(0), __stderr__ = new PyTextStream(1), __stdin__ = new PyTextStream(2);
@@ -434,6 +435,15 @@ namespace Typhon.Runtime
         readonly Type? _type;
         readonly PySourceAttribute? _source;
         bool _registeredSource;
+        Typhon.Stdlib.importlib.machinery.ModuleSpec? _builtinSpec;
+
+        Typhon.Stdlib.importlib.machinery.ModuleSpec? BuiltinSpec()
+        {
+            if (_source != null || _type == null) return null;
+            if (_builtinSpec is { } known) return known;
+            var spec = Typhon.Stdlib.importlib.machinery.BuiltinImporter.find_spec(_name);
+            return spec == null ? null : System.Threading.Interlocked.CompareExchange(ref _builtinSpec, spec, null) ?? spec;
+        }
         readonly System.Collections.Concurrent.ConcurrentDictionary<string, PyBoundMethod> _methodValues = new();
         internal Type? SourceType => _type;
         public PyModule(string name, Type? type)
@@ -501,6 +511,14 @@ namespace Typhon.Runtime
             set => __dict__["__doc__"] = value;
         }
         public PyAttrDict __dict__ { get; }
+
+        internal void ImportNamespaceNames(PyModule source)
+        {
+            IEnumerable<string> names = source.__dict__.TryGetValue("__all__", out object? exported)
+                ? Builtins.__iter_dyn(exported).Select(name => (string)name)
+                : source.__dict__.Keys.Where(name => !name.StartsWith("_", StringComparison.Ordinal));
+            foreach (string name in names.ToArray()) __dict__[name] = source.ImportAttribute(name);
+        }
         internal bool TryReadAttribute(string name, out object? value, bool allowFallback = true)
         {
             if (__dict__.TryGetValue(name, out value)) return true;
@@ -549,6 +567,8 @@ namespace Typhon.Runtime
                         name == "__name__" ? _name : _source?.DocString;
                     return true;
                 case "__file__" when __file__ != null: result = __file__; return true;
+                case "__spec__" when BuiltinSpec() is { } spec: result = spec; return true;
+                case "__loader__" when BuiltinSpec() is { } builtIn: result = builtIn.loader; return true;
             }
             result = null;
             if (_type == null || !IsModuleName(name)) return false;
@@ -618,6 +638,11 @@ namespace Typhon.Runtime
             yield return "__doc__";
             if (__file__ != null) yield return "__file__";
             if (_type == null) yield break;
+            if (BuiltinSpec() != null)
+            {
+                yield return "__spec__";
+                yield return "__loader__";
+            }
             if (_type == typeof(Typhon.Stdlib.builtins))
                 foreach (string name in Typhon.Stdlib.builtins.RuntimeClasses.Keys) yield return name;
             foreach (var member in _type.GetMembers(Members))

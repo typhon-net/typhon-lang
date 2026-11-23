@@ -1,0 +1,17 @@
+# typhon: int=bigint
+from itertools import islice
+from typing import Any
+
+def sliced(source: Any, index: Any) -> Any:
+    return list(islice(source, index, None))
+
+class Offset:
+    def __index__(self):
+        return 2
+
+print(sliced(iter([10, 20, 30, 40]), 1))
+print(sliced(iter([10, 20, 30, 40]), Offset()))
+try:
+    sliced(iter([1, 2]), 10**50)
+except ValueError:
+    print("index too large")

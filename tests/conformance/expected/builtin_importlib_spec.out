@@ -1,0 +1,9 @@
+builtins built-in False True None
+sys built-in False True None
+sys.optional None
+not_a_builtin None
+None None False
+True True
+True True
+True True
+not_a_builtin 'not_a_builtin' is not a built-in module

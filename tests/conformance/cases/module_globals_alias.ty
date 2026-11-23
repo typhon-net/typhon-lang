@@ -1,0 +1,11 @@
+word = "before"
+namespace = globals()
+alias = namespace
+
+def current():
+    return word
+
+print(alias is globals(), current())
+alias["word"] = 42
+alias["published"] = "ready"
+print(current(), published, globals()["word"])

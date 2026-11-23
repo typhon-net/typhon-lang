@@ -1,0 +1,15 @@
+from enum import IntEnum
+
+LEVEL_LOW = 1
+LEVEL_ALIAS = 1
+LEVEL_HIGH = 2
+namespace = globals()
+Level = IntEnum._convert_("Level", __name__, lambda name: name.startswith("LEVEL_"))
+print(Level.LEVEL_HIGH.name, Level.LEVEL_HIGH.value, int(Level.LEVEL_HIGH))
+print(Level(1).name, Level(1) is Level.LEVEL_LOW)
+print(namespace["LEVEL_HIGH"] is Level.LEVEL_HIGH, isinstance(Level.LEVEL_HIGH, IntEnum))
+print([member.name for member in Level])
+try:
+    Level(8)
+except ValueError:
+    print("unknown value")

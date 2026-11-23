@@ -570,9 +570,25 @@ namespace Typhon.Stdlib
             for (long i = 0; i < times; i++) yield return obj;
         }
         public static IEnumerable<T> islice<T>(IEnumerable<T> iterable, long? stop) => islice(iterable, 0, stop, 1);
-        public static IEnumerable<dynamic> islice(object? iterable, long? stop) => islice(Builtins.__iter_dyn(iterable), stop);
-        public static IEnumerable<dynamic> islice(object? iterable, long? start, long? stop, long? step = 1) =>
-            islice(Builtins.__iter_dyn(iterable), start, stop, step);
+        public static IEnumerable<dynamic> islice(object? iterable, object? stop) =>
+            islice(Builtins.__iter_dyn(iterable), IsliceIndex(stop));
+        public static IEnumerable<dynamic> islice(object? iterable, object? start, object? stop, object? step = null) =>
+            islice(Builtins.__iter_dyn(iterable), IsliceIndex(start), IsliceIndex(stop), IsliceIndex(step));
+
+        static long? IsliceIndex(object? value)
+        {
+            if (value == null) return null;
+            try
+            {
+                object index = Builtins.__index_value(value);
+                return index is BigInteger wide ? (long)wide : (long)index;
+            }
+            catch (Exception error) when (error is OverflowException or InvalidCastException)
+            {
+                throw new ArgumentException("Indices for islice() must be None or an integer: 0 <= x <= sys.maxsize.");
+            }
+        }
+
         public static IEnumerable<T> islice<T>(IEnumerable<T> iterable, long? start, long? stop, long? step = 1)
         {
             long s = start ?? 0, st = step ?? 1;

@@ -1,0 +1,30 @@
+from importlib.machinery import NamespacePath, PathFinder
+import os
+import sys
+import tempfile
+
+def portion_name(path):
+    return os.path.basename(os.path.dirname(path))
+
+with tempfile.TemporaryDirectory() as root:
+    name = "typhon_import_namespace_fixture"
+    first = os.path.join(root, "first")
+    second = os.path.join(root, "second")
+    first_portion = os.path.join(first, name)
+    os.makedirs(first_portion)
+    os.makedirs(os.path.join(second, name))
+    sys.path.insert(0, first)
+    try:
+        found = PathFinder.find_spec(name)
+        paths = found.submodule_search_locations
+        print(found.loader is None, isinstance(paths, NamespacePath), len(paths))
+        print([portion_name(path) for path in paths], first_portion in paths)
+        sys.path.insert(0, second)
+        try:
+            print([portion_name(path) for path in paths], portion_name(paths[-1]))
+        finally:
+            sys.path.remove(second)
+        PathFinder.invalidate_caches()
+        print(len(paths), portion_name(paths[0]))
+    finally:
+        sys.path.remove(first)

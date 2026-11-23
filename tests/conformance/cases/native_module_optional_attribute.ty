@@ -1,0 +1,22 @@
+import math
+
+
+if hasattr(math, "optional_source_probe"):
+    print(math.optional_source_probe())
+else:
+    print("missing")
+
+try:
+    math.optional_source_probe()
+except AttributeError:
+    print("attribute error")
+
+
+def answer():
+    return 42
+
+
+math.optional_source_probe = answer
+print(math.optional_source_probe(), math.optional_source_probe is answer)
+del math.optional_source_probe
+print(hasattr(math, "optional_source_probe"))

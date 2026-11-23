@@ -81,10 +81,17 @@ namespace Typhon.Compiler.Emit
             return false;
         }
 
-        bool IsRuntimeModuleAttribute(AttributeExpr member) =>
-            (member.Target is not NameExpr alias || RuntimeModuleValue(alias) == null) &&
-            InferType(member.Target) is "global::Typhon.Runtime.PyModule" or "Typhon.Runtime.PyModule" &&
-            !_r.HasMember("Typhon.Runtime.PyModule", member.Name);
+        bool IsRuntimeModuleAttribute(AttributeExpr member)
+        {
+            if (RuntimeModuleValue(member.Target) != null && DotNetStaticMeta(member.Target) is string owner)
+            {
+                // Platform-specific and dynamically set members use Python's lookup on the module object.
+                string module = RuntimeModuleName(owner);
+                return !RuntimeExport(module, owner, member.Name);
+            }
+            return InferType(member.Target) is "global::Typhon.Runtime.PyModule" or "Typhon.Runtime.PyModule" &&
+                !_r.HasMember("Typhon.Runtime.PyModule", member.Name);
+        }
 
         bool IsRuntimeObjectAttribute(AttributeExpr member) =>
             !_m.IsGdScript && (InferType(member.Target) is "object" or "object?" ||
@@ -383,7 +390,8 @@ namespace Typhon.Compiler.Emit
             if (DottedName(call.Func) is string lbt && !IsShadowed(lbt.Split('.')[0]) && IsLateBoundDotNetType(lbt)) return "dynamic";
             if (IsDataclassReplace(call)) { string rt0 = InferType(call.Args[0].Value); return rt0 == TypeInference.Pending ? rt0 : rt0 ?? "dynamic"; }
             if (call.Func is NameExpr gtn && gtn.Id == "globals" && call.Args.Count == 0 && !IsShadowed("globals"))
-                return _m.RuntimeCodeMode != null || _lateModuleFields.Count != 0 ? "dynamic" : "OrderedDictionary<string, object?>";
+                return _m.RuntimeCodeMode != null || _m.WritesModuleGlobals || _nativeImportsInNamespace || _lateModuleFields.Count != 0
+                    ? "dynamic" : "OrderedDictionary<string, object?>";
             if (_m.RuntimeCodeMode != null && AtRuntimeModuleScope && call.Func is NameExpr { Id: "locals" } &&
                 call.Args.Count == 0 && !IsShadowed("locals")) return "dynamic";
             if (call.Func is NameExpr dfn && IsLocal(dfn.Id) && KnownType(dfn.Id) is string dft && dft.StartsWith("global::System.Func<") && dft.EndsWith(">"))
@@ -421,7 +429,8 @@ namespace Typhon.Compiler.Emit
                 if (MathCall(mc) is string mathType) return mathType;
                 var ot = InferType(mc.Target);
                 if (ot == TypeInference.Pending) return TypeInference.Pending;
-                if (ot == "dynamic" || TypeObjectMember(mc) || IsRuntimeObjectAttribute(mc)) return "dynamic";
+                if (ot == "dynamic" || TypeObjectMember(mc) || IsRuntimeObjectAttribute(mc) ||
+                    IsRuntimeModuleAttribute(mc)) return "dynamic";
                 if (ot != null && MemberType(ot, mc.Name, method: true) is string objRet) return objRet;
                 if (DotNetResultType(mc.Target, mc.Name, call) is string netRet) return netRet;
                 if (PythonMethodType(ot, mc.Name, call) is string pyRet) return pyRet;

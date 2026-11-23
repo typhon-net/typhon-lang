@@ -189,7 +189,9 @@ namespace Typhon.Compiler.Emit
             // globals() reads module names by string: every module-level name is a field then
             bool usesGlobals = false;
             AstWalker.VisitAll(body, n => { if (n is NameExpr { Id: "globals" }) usesGlobals = true; });
-            bool exposesGlobals = usesGlobals || isEntryModule && _p.Modules.Values.Any(source => ReadsModuleRegistry(source.Ast.Body));
+            bool exposesGlobals = usesGlobals || _m.WritesModuleGlobals || isEntryModule && _p.Modules.Values.Any(source => ReadsModuleRegistry(source.Ast.Body));
+            _nativeImportsInNamespace = !runtimeCode && !_m.IsGdScript && exposesGlobals &&
+                body.Any(statement => NativeNamespaceImports(statement).Any());
             if (exposesGlobals)
                 foreach (var s in body)
                     if (s is AssignStmt ga) foreach (var t in ga.Targets) foreach (var nm in NamesIn(t)) usedInDefs.Add(nm);
@@ -234,6 +236,7 @@ namespace Typhon.Compiler.Emit
                 {
                     bool HasLateBinding(string name) => _lateModuleFields.Contains(name) || _m.ConditionalGlobals.Contains(name);
                     if (ProjectImports(s).Any() || PlatformModules(s).Any() ||
+                        _nativeImportsInNamespace && NativeNamespaceImports(s).Any() ||
                         s is ImportStmt import && import.Names.Any(alias => HasLateBinding(alias.AsName ?? alias.Name.Split('.')[0])) ||
                         s is ImportFromStmt from && from.Names.Any(alias => HasLateBinding(alias.AsName ?? alias.Name)))
                         execStmts.Add(s);
@@ -302,8 +305,8 @@ namespace Typhon.Compiler.Emit
                         if (emptyType != null && (emptyType.Contains("dynamic") || emptyType.Contains(TypeInference.Pending) && !_dry)) emptyType = null;
                     }
                     string type = ann != null ? MapType(ann, s) : emptyType ?? (PyType(InferType(value)) ?? ImplicitDynamic(s, $"module variable '{fieldName}'"));
-                    if (ann == null && type != "dynamic" && moduleAssignments[fieldName].Any(statement =>
-                        statement != s && ModuleAssignmentChangesType(statement.Value, type)))
+                    if (ann == null && type != "dynamic" && (_m.GlobalsReboundThroughNamespace.Contains(fieldName) ||
+                        moduleAssignments[fieldName].Any(statement => statement != s && ModuleAssignmentChangesType(statement.Value, type))))
                         type = "dynamic";
                     fields[fieldName] = type;
                     _moduleFieldTypes[fieldName] = type;
@@ -509,7 +512,7 @@ namespace Typhon.Compiler.Emit
         string EmitGlobals()
         {
             if (_m.RuntimeCodeMode != null) return "((dynamic)__typhon_execution.Globals)";
-            if (_m.WritesModuleGlobals || _lateModuleFields.Count != 0)
+            if (_m.WritesModuleGlobals || _nativeImportsInNamespace || _lateModuleFields.Count != 0)
                 return $"((dynamic)global::Typhon.Runtime.PyModule.Of(typeof({ModuleClassName(_m)}), {CsString(_m.Name)}).__dict__)";
             var entries = new List<string>();
             var fields = _globalsBeforeFieldInitializer ?? _moduleFieldNames.OrderBy(x => x, StringComparer.Ordinal);

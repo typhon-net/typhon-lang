@@ -152,7 +152,7 @@ namespace Typhon.Compiler.Emit
         // A source module can expose a runtime member through the modules it imports.
         (string Module, string Member) RuntimeReExport(ModuleInfo module, string name, HashSet<(ModuleInfo, string)> seen = null)
         {
-            if (module.Functions.Contains(name) || module.Classes.ContainsKey(name) || module.Globals.Contains(name)) return default;
+            if (module.RebindsUnknownGlobals || module.Functions.Contains(name) || module.Classes.ContainsKey(name) || module.Globals.Contains(name)) return default;
             seen ??= new HashSet<(ModuleInfo, string)>();
             if (!seen.Add((module, name))) return default;
             foreach (var import in module.Ast.Body.OfType<ImportFromStmt>())
@@ -224,12 +224,47 @@ namespace Typhon.Compiler.Emit
             return Enumerable.Empty<string>();
         }
 
+        bool _nativeImportsInNamespace;
+
+        IEnumerable<(string Module, string Metadata, string Member, string Binding)> NativeNamespaceImports(Stmt statement)
+        {
+            if (statement is ImportStmt direct)
+                foreach (var alias in direct.Names)
+                {
+                    string name = alias.AsName == null ? alias.Name.Split('.')[0] : alias.Name;
+                    if (ResolvePsModule(name) == null && StdlibType(name) is string metadata)
+                        yield return (name, metadata, null, alias.AsName ?? name);
+                }
+            if (statement is ImportFromStmt from && _m.ResolveImport(from.Module, from.Level) is string module &&
+                ResolvePsModule(module) == null && StdlibType(module) is string owner)
+                foreach (var alias in from.Names)
+                    if (RuntimePackageChild(module, owner, alias.Name) == null &&
+                        (alias.Name == "*" || RuntimeExport(module, owner, alias.Name)))
+                        yield return (module, owner, alias.Name, alias.AsName ?? alias.Name);
+        }
+
         void EmitProjectImports(Stmt stmt)
         {
             foreach (var module in PlatformModules(stmt))
                 _w.Line($"global::Typhon.Runtime.Builtins.__import_platform_module({CsString(module)});");
             foreach (var module in ProjectImports(stmt))
                 _w.Line($"_ = {ImportModule(module)};");
+            if (_nativeImportsInNamespace && (_scopeKey == TypeInference.FuncKey(_m, null, "<main>") ||
+                _scopeKey == TypeInference.FuncKey(_m, null, "<module>")))
+            {
+                string module = ModuleObject(_m);
+                foreach (var binding in NativeNamespaceImports(stmt))
+                {
+                    string source = $"global::Typhon.Runtime.PyModule.Of(typeof({CsTypeName(binding.Metadata)}), {CsString(PublicModule(binding.Module))})";
+                    if (binding.Member == "*")
+                        _w.Line($"{module}.ImportNamespaceNames({source});");
+                    else if (!_lateModuleFields.Contains(binding.Binding))
+                    {
+                        string value = binding.Member == null ? source : $"{source}.ImportAttribute({CsString(binding.Member)})";
+                        _w.Line($"{module}.__dict__[{CsString(binding.Binding)}] = {value};");
+                    }
+                }
+            }
             if (stmt is ImportFromStmt from && _m.ResolveImport(from.Module, from.Level) is string absolute)
             {
                 var importedSource = ResolvePsModule(absolute);
@@ -286,7 +321,7 @@ namespace Typhon.Compiler.Emit
                     BindRuntimeModule(bound, local == null && name == "collections.abc" ? "Typhon.Stdlib.collections" : "Typhon.Stdlib.collections+abc");
                     continue;
                 }
-                if (mod == null && name != "__future__" && IgnoredModules.Contains(PublicModule(name))) { _typingOnlyNames.Add(local ?? name.Split('.')[0]); continue; }
+                if (mod == null && name is not ("__future__" or "enum") && IgnoredModules.Contains(PublicModule(name))) { _typingOnlyNames.Add(local ?? name.Split('.')[0]); continue; }
                 if (mod != null)
                 {
                     _moduleAliases[local ?? name] = mod;
@@ -334,8 +369,9 @@ namespace Typhon.Compiler.Emit
 
         void BindRuntimeModule(string name, string metadata)
         {
-            // A source package child can put the same package name in the generated CLR namespace.
-            if (_p.Modules.Values.Any(module => module.Namespace == name || module.Namespace.StartsWith(name + ".", StringComparison.Ordinal)))
+            // A generated namespace or global type can reserve the CLR name of a native import.
+            if (_p.Modules.Values.Any(module => module.Namespace == name || module.Namespace.StartsWith(name + ".", StringComparison.Ordinal) ||
+                string.IsNullOrEmpty(module.Namespace) && module.ClassName == name))
                 _qualifiedRuntimeModuleImports.Add(name);
             else _usingLines.Add($"using {Esc(name)} = {CsTypeName(metadata)};");
             _dotnetAliases[name] = metadata;
@@ -357,7 +393,7 @@ namespace Typhon.Compiler.Emit
             if (mod == null && !resolveRuntimeMember && IgnoredModules.Contains(publicModule))
             {
                 string runtimeModule = modName == "typing" ? "_typing" : modName;
-                string runtime = publicModule is ("collections.abc" or "typing") ? StdlibType(runtimeModule) : null;
+                string runtime = publicModule is ("collections.abc" or "typing" or "enum") ? StdlibType(runtimeModule) : null;
                 foreach (var a in s.Names)
                 {
                     if (runtime != null && (_r.GetMembers(runtime, a.Name).Any(member => member.IsStatic && member.IsMethod) ||

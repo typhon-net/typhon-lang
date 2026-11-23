@@ -65,8 +65,14 @@ namespace Typhon.Stdlib
                 public static ModuleSpec? find_spec(string fullname, object? path = null, object? target = null)
                 {
                     var entries = path == null ? sys_.path : Builtins.__iter_dyn(path).OfType<string>();
-                    return SourceImport.Find(fullname, entries.Select(entry => entry.Length == 0 ? Directory.GetCurrentDirectory() : entry), target);
+                    var spec = FindOnPaths(fullname, entries, target);
+                    if (spec is { loader: null, submodule_search_locations: { Count: > 0 } portions })
+                        spec.submodule_search_locations = new NamespacePath(fullname, portions, (name, paths) => FindOnPaths(name, paths, null));
+                    return spec;
                 }
+
+                static ModuleSpec? FindOnPaths(string fullname, IEnumerable<string> entries, object? target) =>
+                    SourceImport.Find(fullname, entries.Select(entry => entry.Length == 0 ? Directory.GetCurrentDirectory() : entry), target);
 
                 public static void invalidate_caches()
                 {
@@ -77,6 +83,7 @@ namespace Typhon.Stdlib
                         else if (Builtins.getattr(entry.Value, "invalidate_caches", null) is object invalidate)
                             Builtins.__invoke(invalidate, []);
                     }
+                    NamespacePath.Invalidate();
                 }
             }
 
@@ -284,7 +291,8 @@ namespace Typhon.Stdlib
                     continue;
                 if (spec.loader != null || spec.submodule_search_locations == null) return spec;
                 portions ??= new importlib.machinery.ModuleSpec(fullname, null, is_package: true);
-                portions.submodule_search_locations!.AddRange(spec.submodule_search_locations!);
+                foreach (string portion in spec.submodule_search_locations)
+                    portions.submodule_search_locations!.Add(portion);
             }
             return portions;
         }

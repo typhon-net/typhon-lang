@@ -478,6 +478,108 @@ public sealed class ConformanceTests(ITestOutputHelper output)
         finally { Directory.Delete(dir, recursive: true); }
     }
 
+    /// <summary>Compile CPython's signal wrapper over Typhon's low-level signal module.</summary>
+    [Fact]
+    public void PyLibSignalSource()
+    {
+        string? python = Suite.FindPython(out string why);
+        if (python == null) { Console.WriteLine($"PyLibSignalSource skipped: {why}"); return; }
+        var oracle = Suite.Run(python,
+            ["-c", "import sys, sysconfig; print(sysconfig.get_path('stdlib') if sys.version_info[:2] == (3, 15) else '')"],
+            TimeSpan.FromSeconds(30));
+        Assert.True(oracle.ExitCode == 0, oracle.StdErr);
+        string lib = oracle.StdOut.Trim();
+        if (lib.Length == 0) { Console.WriteLine("PyLibSignalSource requires the CPython 3.15 library"); return; }
+
+        string dir = Directory.CreateTempSubdirectory("typhon-signal-source-").FullName;
+        try
+        {
+            string script = Path.Combine(dir, "probe.ty");
+            File.WriteAllText(script, $"#:pylib {lib}\n" + """
+                import signal
+
+                def handler(number, frame):
+                    print("handler", number == signal.SIGINT, frame is not None)
+
+                old = signal.getsignal(signal.SIGINT)
+                print(old is signal.default_int_handler)
+                print(signal.SIGINT in signal.valid_signals())
+                print(signal.SIGINT.name, isinstance(signal.SIGINT, int))
+                print(isinstance(signal.SIGINT, signal.Signals))
+                print(isinstance(signal.getsignal(signal.SIGTERM), signal.Handlers))
+                try:
+                    print(signal.signal(signal.SIGINT, handler) is old)
+                    signal.raise_signal(signal.SIGINT)
+                    print(signal.signal(signal.SIGINT, signal.SIG_IGN) is handler)
+                    signal.raise_signal(signal.SIGINT)
+                    print(signal.getsignal(signal.SIGINT) is signal.SIG_IGN)
+                finally:
+                    signal.signal(signal.SIGINT, old)
+                """);
+            var expected = Suite.Run(python, [script], TimeSpan.FromMinutes(1));
+            Assert.True(expected.ExitCode == 0, $"CPython exit code {expected.ExitCode}\n{expected.StdErr}");
+            var run = Suite.Run("dotnet", [Suite.Cli, "run", script, "--no-cache", "--no-server"], TimeSpan.FromMinutes(3));
+            Assert.True(run.ExitCode == 0, $"exit code {run.ExitCode}\n{run.StdErr}");
+            Assert.Equal(Suite.Normalize(expected.StdOut), Suite.Normalize(run.StdOut));
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    /// <summary>Run the original unittest package with the original signal wrapper.</summary>
+    [Fact]
+    public void PyLibUnittestSource()
+    {
+        string? python = Suite.FindPython(out string why);
+        if (python == null) { Console.WriteLine($"PyLibUnittestSource skipped: {why}"); return; }
+        var oracle = Suite.Run(python,
+            ["-c", "import sys, sysconfig; print(sysconfig.get_path('stdlib') if sys.version_info[:2] == (3, 15) else '')"],
+            TimeSpan.FromSeconds(30));
+        Assert.True(oracle.ExitCode == 0, oracle.StdErr);
+        string lib = oracle.StdOut.Trim();
+        if (lib.Length == 0) { Console.WriteLine("PyLibUnittestSource requires the CPython 3.15 library"); return; }
+
+        string dir = Directory.CreateTempSubdirectory("typhon-unittest-source-").FullName;
+        try
+        {
+            // Stage the installed source as project input to select it over the native unittest backend.
+            string package = Path.Combine(dir, "unittest");
+            Directory.CreateDirectory(package);
+            foreach (string source in Directory.EnumerateFiles(Path.Combine(lib, "unittest"), "*.py"))
+                File.Copy(source, Path.Combine(package, Path.GetFileNameWithoutExtension(source) + ".ty"));
+
+            string script = Path.Combine(dir, "probe.ty");
+            File.WriteAllText(script, $"#:pylib {lib}\n" + """
+                # typhon: int=bigint
+                import signal
+                import unittest
+
+                class Example(unittest.TestCase):
+                    def test_count(self):
+                        self.assertEqual(len([1, 2]), 2)
+
+                    @unittest.expectedFailure
+                    def test_failure(self):
+                        self.assertEqual(1, 2)
+
+                suite = unittest.defaultTestLoader.loadTestsFromTestCase(Example)
+                result = unittest.TestResult()
+                suite.run(result)
+                print(result.testsRun, result.wasSuccessful(), len(result.expectedFailures))
+                old = signal.getsignal(signal.SIGINT)
+                unittest.installHandler()
+                print(signal.getsignal(signal.SIGINT) is old)
+                unittest.removeHandler()
+                print(signal.getsignal(signal.SIGINT) is old)
+                """);
+            var expected = Suite.Run(python, [script], TimeSpan.FromMinutes(1));
+            Assert.True(expected.ExitCode == 0, $"CPython exit code {expected.ExitCode}\n{expected.StdErr}");
+            var run = Suite.Run("dotnet", [Suite.Cli, "run", script, "--no-cache", "--no-server"], TimeSpan.FromMinutes(6));
+            Assert.True(run.ExitCode == 0, $"exit code {run.ExitCode}\n{run.StdErr}");
+            Assert.Equal(Suite.Normalize(expected.StdOut), Suite.Normalize(run.StdOut));
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
     /// <summary>Check the original pkgutil source against real package files.</summary>
     [Fact]
     public void PyLibPkgutilSource()

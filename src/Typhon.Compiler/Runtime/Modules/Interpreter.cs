@@ -130,7 +130,8 @@ namespace Typhon.Stdlib
             {
                 case Type t:
                     if (t == typeof(types.MethodType) && obj is PyBoundMethod method) return inspect.ismethod(method);
-                    Type actual = obj is Type cls ? PyMetaclasses.Of(cls) : obj?.GetType() ?? typeof(types.NoneType);
+                    Type actual = obj is PyIntEnumMember member ? member.Owner :
+                        obj is Type cls ? PyMetaclasses.Of(cls) : obj?.GetType() ?? typeof(types.NoneType);
                     if (actual == t || Builtins.__type_of(obj) == t) return true;
                     if (PyMetaclasses.TryBindMember(t, "__instancecheck__", out var check))
                         return Builtins.truthy((object?)Builtins.__invoke(check, [obj]));

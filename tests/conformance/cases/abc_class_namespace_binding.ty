@@ -1,0 +1,13 @@
+from abc import ABC
+
+class ByteKind(ABC):
+    pass
+
+ByteKind.register(bytes)
+print(issubclass(bytes, ByteKind))
+
+def expose():
+    globals()["ByteKind"] = ByteKind
+
+expose()
+print(globals()["ByteKind"] is ByteKind)

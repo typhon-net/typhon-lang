@@ -56,6 +56,8 @@ namespace Typhon.Compiler
         internal readonly List<FunctionDef> ReboundImplementations = new List<FunctionDef>();
         /// <summary>The source changes its module namespace through globals()[key].</summary>
         internal bool WritesModuleGlobals;
+        internal bool RebindsUnknownGlobals;
+        internal readonly HashSet<string> GlobalsReboundThroughNamespace = new HashSet<string>();
         internal bool MayReplaceModule;
         /// <summary>Module-level type aliases: EdgeT = tuple[int, int], Matrix = list[list[float]], X: TypeAlias = ...</summary>
         public readonly Dictionary<string, Expr> TypeAliases = new Dictionary<string, Expr>();
@@ -112,6 +114,19 @@ namespace Typhon.Compiler
         bool? _emitsTraceEvents;
         public bool TraceRuntimeCode;
         internal bool EmitsTraceEvents => TraceRuntimeCode || (_emitsTraceEvents ??= Modules.Values.Any(UsesTracing));
+
+        bool? _emitsSignalChecks;
+        internal bool EmitsSignalChecks => _emitsSignalChecks ??= Modules.Values.Any(module =>
+        {
+            if (module.Ast == null) return false;
+            bool found = false;
+            AstWalker.VisitAll(module.Ast.Body, node =>
+            {
+                found |= node is ImportStmt direct && direct.Names.Any(name => name.Name is "signal" or "_signal") ||
+                         node is ImportFromStmt { Level: 0, Module: "signal" or "_signal" };
+            });
+            return found;
+        });
 
         static bool UsesTracing(ModuleInfo module)
         {
@@ -348,15 +363,56 @@ namespace Typhon.Compiler
                 }
                 info.Globals.UnionWith(info.ConditionalGlobals);
             }
-            bool WritesGlobals(Expr target) => target is SubscriptExpr
-                { Target: CallExpr { Func: NameExpr { Id: "globals" }, Args.Count: 0 } };
+            var namespaceAliases = new HashSet<string>();
+            bool IsModuleNamespace(Expr expression) =>
+                expression is CallExpr { Func: NameExpr { Id: "globals" }, Args.Count: 0 } ||
+                expression is NameExpr name && namespaceAliases.Contains(name.Id);
+            foreach (var assignment in info.Ast.Body.OfType<AssignStmt>())
+                foreach (var target in assignment.Targets.OfType<NameExpr>())
+                {
+                    if (IsModuleNamespace(assignment.Value)) namespaceAliases.Add(target.Id);
+                }
+            void NoteNamespaceWrite(Expr target)
+            {
+                if (target is not SubscriptExpr item || !IsModuleNamespace(item.Target)) return;
+                info.WritesModuleGlobals = true;
+                if (item.Index is not ConstExpr { Kind: ConstKind.Str } key)
+                {
+                    info.RebindsUnknownGlobals = true;
+                    return;
+                }
+                if (string.IsNullOrEmpty(key.Str) ||
+                    !(char.IsLetter(key.Str[0]) || key.Str[0] == '_') ||
+                    key.Str.Any(character => !char.IsLetterOrDigit(character) && character != '_')) return;
+                info.GlobalsReboundThroughNamespace.Add(key.Str);
+                // The namespace exposes these declared objects directly. A dictionary
+                // write does not turn their declarations into module fields.
+                if (info.Functions.Contains(key.Str) || info.Classes.ContainsKey(key.Str)) return;
+                if (info.Globals.Add(key.Str)) info.ConditionalGlobals.Add(key.Str);
+            }
+            var intEnumImports = new HashSet<string>(info.Ast.Body.OfType<ImportFromStmt>()
+                .Where(statement => statement.Level == 0 && statement.Module == "enum")
+                .SelectMany(statement => statement.Names).Where(alias => alias.Name == "IntEnum")
+                .Select(alias => alias.AsName ?? alias.Name));
             AstWalker.VisitAll(info.Ast.Body, statement =>
             {
-                if (statement is AssignStmt assign && assign.Targets.Any(WritesGlobals) ||
-                    statement is AnnAssignStmt ann && WritesGlobals(ann.Target) ||
-                    statement is AugAssignStmt aug && WritesGlobals(aug.Target) ||
-                    statement is DelStmt del && del.Targets.Any(WritesGlobals))
+                if (statement is CallExpr { Func: AttributeExpr { Name: "_convert_", Target: NameExpr enumName } } conversion &&
+                    intEnumImports.Contains(enumName.Id) && conversion.Args.Count >= 2 &&
+                    conversion.Args[0].Value is ConstExpr { Kind: ConstKind.Str } className &&
+                    conversion.Args[1].Value is NameExpr { Id: "__name__" })
+                {
                     info.WritesModuleGlobals = true;
+                    info.RebindsUnknownGlobals = true;
+                    info.GlobalsReboundThroughNamespace.UnionWith(info.Globals);
+                    info.ConditionalGlobals.Add(className.Str);
+                    info.Globals.Add(className.Str);
+                }
+                if (statement is AssignStmt assign)
+                    foreach (var target in assign.Targets) NoteNamespaceWrite(target);
+                else if (statement is AnnAssignStmt ann) NoteNamespaceWrite(ann.Target);
+                else if (statement is AugAssignStmt aug) NoteNamespaceWrite(aug.Target);
+                else if (statement is DelStmt del)
+                    foreach (var target in del.Targets) NoteNamespaceWrite(target);
             });
             info.MayReplaceModule = ReplacesModule(info.Ast.Body);
             return info;

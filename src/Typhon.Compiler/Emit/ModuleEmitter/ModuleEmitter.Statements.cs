@@ -81,6 +81,8 @@ namespace Typhon.Compiler.Emit
         void EmitStmt(Stmt s)
         {
             LineDirective(s);
+            if (!_dry && _p.EmitsSignalChecks && s is not GlobalStmt && s.Line > 0)
+                _w.Line("global::Typhon.Stdlib._signal.Poll();");
             if (_scope?.TraceToken is string trace && s is not GlobalStmt && s.Line > 0)
                 _w.Line($"{trace}.Line({s.Line});");
             switch (s)

@@ -17,6 +17,8 @@ print(sys.modules[module_name] is protocols, sys.modules[module_name].__name__)
 del sys.modules[module_name]
 print(protocols.__name__, public_protocols is collections.abc)
 print(getattr(collections, 'abc') is sys.modules['collections.abc'])
+namespace = globals()
+print(namespace['protocols'] is protocols, namespace['public_protocols'] is public_protocols)
 
 class Reader:
     __sentinel = object()
