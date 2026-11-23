@@ -212,6 +212,19 @@ internal static class CliCompiler
                 if (aspNetReason == null && SharedFrameworks.IsAspNetCoreNamespace(name)) aspNetReason = $"{Path.GetFileName(m.Path)} imports {name}";
                 return Discover(name);
             }
+            foreach (string name in TyphonCompiler.LiteralImportNames(m))
+            {
+                var available = PyLib.SourceCandidates(dir, name, TyphonCompiler.FileExtension)
+                    .Concat(PyLib.SourceCandidates(bundledLib, name, TyphonCompiler.FileExtension));
+                if (!available.Any(candidate => File.Exists(candidate.Path)) || Import(name) is not { } imported) continue;
+                imported.UsedByDynamicImport = true;
+                string parent = name;
+                while (parent.LastIndexOf('.') is int separator && separator >= 0)
+                {
+                    parent = parent[..separator];
+                    if (project.FindModule(parent) is { } package) package.UsedByDynamicImport = true;
+                }
+            }
             foreach (var stmt in TyphonCompiler.Imports(m))
             {
                 if (stmt is ImportStmt direct)

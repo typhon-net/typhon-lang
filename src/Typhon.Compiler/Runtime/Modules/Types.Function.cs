@@ -29,7 +29,7 @@ namespace Typhon.Stdlib
             protected FunctionType() : base("<lambda>") { }
 
             public FunctionType(object? code, object? globals, string? name = null, object? argdefs = null,
-                object? closure = null, object? kwdefaults = null) : base(name ?? (code as sys_.code)?.co_name ?? "<function>")
+                object? closure = null, object? kwdefaults = null) : base(name ?? (code as types.CodeType)?.co_name ?? "<function>")
             {
                 _code = code as RuntimeFunctionCode ?? throw new InvalidCastException("function() requires a Typhon function code object");
                 __globals__ = globals as IDictionary ?? throw new InvalidCastException("function() argument 'globals' must be dict");

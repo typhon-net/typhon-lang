@@ -106,7 +106,26 @@ namespace Typhon.Runtime
             finally { _dispatching = wasDispatching; }
         }
 
-        internal sealed class TraceCode : sys_.code
+        // The source statement reports the first header event. Report subsequent checks as iteration resumes.
+        public static IEnumerable<T> Iterate<T>(IEnumerable<T> source, Scope scope, long line)
+        {
+            if (source is IList<T> list)
+            {
+                for (int index = 0; index < list.Count; index++)
+                {
+                    yield return list[index];
+                    scope.Line(line);
+                }
+                yield break;
+            }
+            foreach (T value in source)
+            {
+                yield return value;
+                scope.Line(line);
+            }
+        }
+
+        internal sealed class TraceCode : types.CodeType
         {
             readonly int[] _lines;
 

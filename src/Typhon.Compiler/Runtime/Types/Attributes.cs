@@ -492,6 +492,9 @@ namespace Typhon.Runtime
             return ConstructBigInt(args, null);
         }
 
+        public static dynamic __int_enum_new(Type cls, params object?[] args) =>
+            PyIntegerEnum.Allocate(cls, ConstructBigInt(args, null));
+
         static void RequireIntClass(Type cls)
         {
             if (cls != typeof(long)) throw new InvalidCastException("int.__new__() requires the int type");

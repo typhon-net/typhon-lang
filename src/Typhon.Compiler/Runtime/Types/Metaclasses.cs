@@ -44,15 +44,20 @@ namespace Typhon.Runtime
 
         internal static Type[] Bases(Type type) => Definitions.TryGetValue(type, out var definition)
             ? definition.Bases.Length == 0 ? [typeof(object)] : definition.Bases
-            : type.BaseType is Type parent ? [parent] : [];
+            : PyExc.DeclaredBases(type) ?? ((PyExc.BuiltinParent(type) ?? type.BaseType) is Type parent ? [parent] : []);
 
         internal static IEnumerable<Type> MethodOrder(Type type)
         {
-            for (Type? owner = type; owner != null; owner = owner.BaseType)
+            for (Type? owner = type; owner != null; owner = PyExc.BuiltinParent(owner) ?? owner.BaseType)
             {
                 if (Definitions.TryGetValue(owner, out var definition))
                 {
                     foreach (Type member in definition.MethodOrder) yield return member;
+                    yield break;
+                }
+                if (PyExc.DeclaredBases(owner) is Type[] exceptionBases)
+                {
+                    foreach (var member in ComputeMethodOrder(owner, exceptionBases)) yield return member;
                     yield break;
                 }
                 yield return owner;
@@ -60,9 +65,10 @@ namespace Typhon.Runtime
         }
 
         internal static bool HasDeclaredAncestor(Type target, Type ancestor) =>
-            Definitions.TryGetValue(target, out var definition) && definition.MethodOrder.Contains(ancestor);
+            Definitions.TryGetValue(target, out var definition) && definition.MethodOrder.Contains(ancestor) ||
+            PyExc.HasDeclaredBase(target, ancestor);
 
-        static void Remember(Type type, Type storage, Type metaclass, Type[] bases, OrderedDictionary<string, object?> members, string qualifiedName)
+        static Type[] ComputeMethodOrder(Type type, Type[] bases)
         {
             Type[] parents = bases.Length == 0 ? [typeof(object)] : bases;
             var pending = parents.Select(parent => new Queue<Type>(MethodOrder(parent)))
@@ -77,8 +83,11 @@ namespace Typhon.Runtime
                 foreach (var sequence in pending)
                     if (sequence.TryPeek(out Type? head) && head == next) sequence.Dequeue();
             }
-            Definitions.Add(type, new Definition(metaclass, storage, bases, order.ToArray(), members, qualifiedName));
+            return order.ToArray();
         }
+
+        static void Remember(Type type, Type storage, Type metaclass, Type[] bases, OrderedDictionary<string, object?> members, string qualifiedName) =>
+            Definitions.Add(type, new Definition(metaclass, storage, bases, ComputeMethodOrder(type, bases), members, qualifiedName));
 
         internal static bool TryBindMember(Type target, string name, out object? value)
         {

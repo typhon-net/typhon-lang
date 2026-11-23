@@ -1,0 +1,45 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+"""Installation paths for the .NET-hosted Python runtime."""
+
+import os
+import sys
+from System.IO import Path
+
+
+def get_paths() -> dict[str, str]:
+    library = Path.Combine(sys.base_prefix, "Lib")
+    platform_library = Path.Combine(sys.base_exec_prefix, "Lib")
+    packages = Path.Combine(sys.prefix, "Lib", "site-packages")
+    platform_packages = Path.Combine(sys.exec_prefix, "Lib", "site-packages")
+    return {
+        "stdlib": library,
+        "platstdlib": platform_library,
+        "purelib": packages,
+        "platlib": platform_packages,
+        "include": Path.Combine(sys.base_prefix, "include"),
+        "platinclude": Path.Combine(sys.base_exec_prefix, "include"),
+        "scripts": Path.Combine(sys.prefix, "Scripts" if os.name == "nt" else "bin"),
+        "data": sys.prefix,
+    }
+
+
+def get_path(name: str) -> str:
+    return get_paths()[name]
+
+
+def get_path_names() -> tuple[str, ...]:
+    return tuple(get_paths())
+
+
+def get_config_var(name: str):
+    if name == "srcdir":
+        return sys.base_prefix
+    if name == "py_version_short":
+        return f"{sys.version_info.major}.{sys.version_info.minor}"
+    return None
+
+
+def is_python_build() -> bool:
+    return False

@@ -10,6 +10,23 @@ namespace Typhon.Stdlib
 
     internal static class dis_
     {
+        // Python 3.15 code flags, in the order exposed by Lib/dis.py. See CPython-LICENSE.txt.
+        public static readonly OrderedDictionary<long, string> COMPILER_FLAG_NAMES = new()
+        {
+            [0x1] = "OPTIMIZED",
+            [0x2] = "NEWLOCALS",
+            [0x4] = "VARARGS",
+            [0x8] = "VARKEYWORDS",
+            [0x10] = "NESTED",
+            [0x20] = "GENERATOR",
+            [0x40] = "NOFREE",
+            [0x80] = "COROUTINE",
+            [0x100] = "ITERABLE_COROUTINE",
+            [0x200] = "ASYNC_GENERATOR",
+            [0x4000000] = "HAS_DOCSTRING",
+            [0x8000000] = "METHOD",
+        };
+
         public static IEnumerable<(object?, object?)> findlinestarts(object code)
         {
             object? previous = false;

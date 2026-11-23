@@ -79,6 +79,16 @@ namespace Typhon.Compiler.Emit
                 _w.Line($"[global::Typhon.Runtime.PyConditionalModuleClass({CsString(ClassActivation(definition))})]");
         }
 
+        static bool HasMultipleBuiltinExceptionBases(ModuleInfo owner, ClassDef definition) =>
+            definition.Bases.Count > 1 && definition.Bases.All(basis =>
+                basis is NameExpr name && ExceptionMap.ContainsKey(name.Id) &&
+                !owner.Globals.Contains(name.Id) && !owner.Classes.ContainsKey(name.Id) && !owner.Functions.Contains(name.Id));
+
+        bool? _hasMultipleBuiltinExceptionBases;
+        bool ProjectHasMultipleBuiltinExceptionBases =>
+            _hasMultipleBuiltinExceptionBases ??= _p.Modules.Values.Any(module =>
+                module.Classes.Values.Any(definition => HasMultipleBuiltinExceptionBases(module, definition)));
+
         void EmitClass(ClassDef c)
         {
             if (!_m.IsGdScript && IsStringEnum(c)) { EmitObjectEnum(c, integer: false); return; }
@@ -120,6 +130,11 @@ namespace Typhon.Compiler.Emit
             string kind = isInterface ? "partial interface" : (isAbstract ? "abstract partial class" : (ctx.IsSealed ? "sealed partial class" : "partial class"));
             var baseTypes = bases.Select(b => BuiltinStringBase(b) ? "global::Typhon.Runtime.PyString" :
                 (RuntimeClassBase(b) ?? MappingBaseMetadata(b)) is string runtime ? CsTypeName(runtime) : MapType(b, c, preserveClrType: true)).ToList();
+            if (!_m.IsGdScript && HasMultipleBuiltinExceptionBases(_m, c))
+            {
+                _w.Line($"[global::Typhon.Runtime.PyExceptionBases({string.Join(", ", baseTypes.Select(type => $"typeof({type})"))})]");
+                baseTypes.RemoveRange(1, baseTypes.Count - 1);
+            }
             vis = SurfaceVisibility(vis, baseTypes.ToArray());
             if (!isInterface) baseTypes.AddRange(StructuralProtocols(c, bases));
             if (!_m.IsGdScript && !isInterface && DefinesInHierarchy(c, "__getattr__"))
@@ -199,7 +214,9 @@ namespace Typhon.Compiler.Emit
             if (IsProtocol(protocol)) return true;
             var resolver = ClassDeclarationResolver(protocol);
             return protocol.Bases.Any(parent => resolver.ResolveBase(parent, out var declaration, out _) &&
-                declaration?.Name == "Protocol" && _p.DeclaringModule(declaration)?.Name == "typing");
+                declaration != null && declaration.Body.OfType<AssignStmt>().Any(assignment =>
+                    assignment.Targets.Any(target => target is NameExpr { Id: "_is_protocol" }) &&
+                    assignment.Value is ConstExpr { Kind: ConstKind.Bool, Raw: "True" }));
         }
 
         /// <summary>
@@ -295,7 +312,7 @@ namespace Typhon.Compiler.Emit
         static bool IsIntEnum(ClassDef c) => c.Bases.Any(b => DottedName(b) is "IntEnum" or "enum.IntEnum");
 
         /// <summary>Is the C# type a Typhon IntEnum (whose members are ints in arithmetic)?</summary>
-        bool IsIntEnumType(string t) => t != null && ClassKeyOfType(t, out _) is string key && ClassDefOfKey(key) is ClassDef cd && IsIntEnum(cd);
+        bool IsIntEnumType(string t) => t != null && ClassKeyOfType(t, out _) is string key && ClassDefOfKey(key) is ClassDef cd && IsIntEnum(cd) && !IsObjectIntegerEnum(cd);
 
         void EmitInterfaceBody(ClassDef c)
         {

@@ -1,0 +1,9 @@
+(x: int, y: 'int' = 3) -> list[int]
+<class 'int'>
+(x: int, y: 'int' = 3) -> list[int]
+<class 'int'>
+(x: 'int', y: 'int' = 3) -> 'list[int]'
+'int'
+The VALUE_WITH_FAKE_GLOBALS format is for internal use only
+Unsupported format None
+Unsupported format 8

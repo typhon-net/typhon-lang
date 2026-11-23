@@ -1,0 +1,8 @@
+class Marker:
+    pass
+
+def includes(value):
+    return isinstance(value, (str, int, float, bytes, bool, type(None), Marker))
+
+for value in [None, b"a", "x", 1, 0.5, True, Marker(), [], 2j]:
+    print(includes(value))

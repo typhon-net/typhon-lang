@@ -363,7 +363,7 @@ namespace Typhon.Stdlib
         public static object get_executor(object? code, object? offset)
         {
             _ = IntArgument(offset);
-            if (code is not sys_.code)
+            if (code is not types.CodeType)
                 throw new InvalidCastException($"expected a code object, not '{Builtins.PyTypeName(Builtins.__type_of(code))}'");
             throw new ArgumentException("no executor at given byte offset");
         }

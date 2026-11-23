@@ -1,0 +1,23 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+from abc import ABC
+
+
+class Counter(ABC):
+    count = 0
+
+    def __init__(self) -> None:
+        Counter.count += 1
+
+    @classmethod
+    def value(cls) -> int:
+        return cls.count
+
+
+Counter()
+Counter()
+print(Counter.count, Counter.value(), getattr(Counter, "count"))
+Counter.count: int = 10
+Counter.count -= 3
+print(Counter.count, Counter.value(), getattr(Counter, "count"))

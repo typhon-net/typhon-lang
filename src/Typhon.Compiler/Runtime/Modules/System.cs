@@ -323,18 +323,18 @@ namespace Typhon.Stdlib
             readonly List<frame>? _stack;
             readonly int _index;
             readonly frame? _caller;
-            public readonly code f_code;
+            public readonly types.CodeType f_code;
             public long f_lineno { get; internal set; }
             public long f_lasti { get; internal set; }
             public readonly OrderedDictionary<string, object?> f_globals, f_locals = new OrderedDictionary<string, object?>(), f_builtins = new OrderedDictionary<string, object?>();
             public dynamic? f_trace = null;
             public bool f_trace_lines = true, f_trace_opcodes = false;
-            frame(List<frame> stack, int index, code c, long line, string module)
+            frame(List<frame> stack, int index, types.CodeType c, long line, string module)
             {
                 _stack = stack; _index = index; f_code = c; f_lineno = line;
                 f_globals = new OrderedDictionary<string, object?> { ["__name__"] = module, ["__file__"] = c.co_filename };
             }
-            internal frame(code c, string module, frame? caller)
+            internal frame(types.CodeType c, string module, frame? caller)
             {
                 f_code = c;
                 f_lineno = c.co_firstlineno;
@@ -355,13 +355,13 @@ namespace Typhon.Stdlib
                 {
                     if (PyExcInfo.Caller(f) is not var (file, line, func)) continue;
                     string module = f.GetMethod()?.DeclaringType is Type t ? ModuleOf(t) : "__main__";
-                    result.Add(new frame(result, result.Count, new code(func, file, line), line, module));
+                    result.Add(new frame(result, result.Count, new types.CodeType(func, file, line), line, module));
                 }
                 if (result.Count == 0)
                 {
                     // no line information (Native AOT, or no PDB): the program as one frame
                     string file = argv.Count > 0 ? argv[0] : "";
-                    result.Add(new frame(result, 0, new code("<module>", file, 0), 0, "__main__"));
+                    result.Add(new frame(result, 0, new types.CodeType("<module>", file, 0), 0, "__main__"));
                 }
                 return result;
             }
@@ -373,30 +373,6 @@ namespace Typhon.Stdlib
             }
         }
 
-        /// <summary>A frame's code object: co_name, co_qualname, co_filename, co_firstlineno.</summary>
-        internal class code : IPyRepr
-        {
-            public readonly string co_name, co_qualname, co_filename;
-            public readonly long co_firstlineno, co_flags;
-            public virtual PyTuple<string> co_freevars { get; } = new PyTuple<string>(Array.Empty<string>());
-            public code(string name, string file, long line, long flags = 0, string? qualname = null)
-            { co_name = name; co_qualname = qualname ?? name; co_filename = file; co_firstlineno = line; co_flags = flags; }
-            // A managed frame without tracing has the one source position captured from the stack.
-            public virtual IEnumerable<(long, long, long?)> co_lines()
-            {
-                long? line = co_firstlineno > 0 ? co_firstlineno : null;
-                yield return (0L, 1L, line);
-            }
-
-            public virtual PyIterator<(long?, long?, long?, long?)> co_positions()
-            {
-                long? line = co_firstlineno > 0 ? co_firstlineno : null;
-                return Builtins.iter<(long?, long?, long?, long?)>([(line, line, null, null)]);
-            }
-
-            public string __repr__() => $"<code object {co_name} at 0x{System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(this):x}, file {Builtins.repr(co_filename)}, line {co_firstlineno}>";
-            public override string ToString() => __repr__();
-        }
     }
 }
 
@@ -432,6 +408,9 @@ namespace Typhon.Runtime
         internal static dynamic? ReadLateGlobal(object? value, string name) =>
             ReferenceEquals(value, Unbound) ? Builtins.__unbound_import(name) : value;
 
+        internal dynamic? ReadGlobal(string name) =>
+            __dict__.TryGetValue(name, out var value) ? value : Builtins.__unbound_import(name);
+
         readonly Type? _type;
         readonly PySourceAttribute? _source;
         readonly Func<string, bool>? _exports;
@@ -456,6 +435,10 @@ namespace Typhon.Runtime
             __dict__ = new PyAttrDict(this);
         }
         static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, PyModule> _of = new();
+        static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Type> CompiledModules = new(StringComparer.Ordinal);
+        public static void RegisterCompiled(string name, Type module) => CompiledModules[name] = module;
+        internal static Type? CompiledType(string name) => CompiledModules.TryGetValue(name, out var type) ? type : null;
+
         static readonly Lazy<PyModule> AstPrimitives = new(() =>
             new PyModule("_ast", typeof(Typhon.Stdlib.ast), Typhon.Stdlib.ast.IsPrimitiveExport));
         static readonly Type NativePathModule = OperatingSystem.IsWindows() ? typeof(Typhon.Stdlib.ntpath) : typeof(Typhon.Stdlib.posixpath);

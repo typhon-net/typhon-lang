@@ -1,0 +1,14 @@
+from typing import NamedTuple
+
+class Pair(NamedTuple):
+    code: int
+    name: str
+
+pair = Pair(3, "two")
+print((1,) + pair, pair + (False,))
+print(pair + Pair(4, "last"), type(pair + pair).__name__)
+
+class TaggedPair(Pair):
+    pass
+
+print((True,) + TaggedPair(5, "derived"))

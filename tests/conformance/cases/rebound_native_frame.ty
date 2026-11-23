@@ -1,0 +1,14 @@
+import sys
+
+def filename(value):
+    if hasattr(value, "__file__"):
+        return value.__file__
+    if hasattr(value, "f_code"):
+        value = value.f_code
+    return value.co_filename
+
+def check():
+    frame = sys._getframe()
+    return filename(frame) == __file__
+
+print(check())

@@ -51,7 +51,7 @@ namespace Typhon.Runtime
         public string __name__ => BuiltinOwner != null ? "__new__" : _name;
         public string? __doc__ => Source?.DocString;
         public string __module__ => Source?.Module ?? Builtins.__module_of(_target as Type ?? _target.GetType());
-        public Typhon.Stdlib.sys_.code? __code__ => Source is { } source ? new Typhon.Stdlib.sys_.code(_name, source.Filename, source.Line) : null;
+        public Typhon.Stdlib.types.CodeType? __code__ => Source is { } source ? new Typhon.Stdlib.types.CodeType(_name, source.Filename, source.Line) : null;
 
         public dynamic? __call__(object?[] args)
         {
@@ -531,6 +531,8 @@ namespace Typhon.Runtime
             if (t == typeof(Typhon.Stdlib.types.UnionType)) return "typing";
             if (t.DeclaringType == typeof(Typhon.Stdlib._typing) && t != typeof(Typhon.Stdlib._typing.NoDefaultType)) return "typing";
             if (t == typeof(PyPartial)) return "functools";
+            if (t.DeclaringType == typeof(Typhon.Stdlib.collections.abc)) return "collections.abc";
+            if (t.DeclaringType == typeof(Typhon.Stdlib.@operator)) return "operator";
             if (t is PyLocalDataClass local) return local.PythonModule;
             var definitionType = t.IsGenericType ? t.GetGenericTypeDefinition() : t;
             if (ClassModuleNames.TryGetValue(definitionType, out var capturedName)) return capturedName;
@@ -574,6 +576,7 @@ namespace Typhon.Runtime
             if (t == typeof(PySlice)) return "slice";
             if (t == typeof(ITuple)) return "tuple";
             if (t == typeof(Typhon.Stdlib.types.FunctionType)) return "function";
+            if (t == typeof(Typhon.Stdlib.types.CodeType)) return "code";
             if (t == typeof(Typhon.Stdlib.types.CellType)) return "cell";
             if (t == typeof(PyPartial)) return "partial";
             if (t == typeof(Typhon.Stdlib.types.MethodType)) return "method";
@@ -845,10 +848,10 @@ namespace Typhon.Runtime
         public string __module__ = "__main__";
         public string __qualname__;
         internal Func<Typhon.Stdlib.inspect.Signature>? _signature;
-        internal Typhon.Stdlib.sys_.code? _code;
-        public Typhon.Stdlib.sys_.code? __code__ =>
+        internal Typhon.Stdlib.types.CodeType? _code;
+        public Typhon.Stdlib.types.CodeType? __code__ =>
             _code ?? (GetType().GetCustomAttributes(typeof(PySourceAttribute), false).FirstOrDefault() is PySourceAttribute { Line: > 0 } source
-                ? new Typhon.Stdlib.sys_.code(__name__, source.Filename, source.Line) : null);
+                ? new Typhon.Stdlib.types.CodeType(__name__, source.Filename, source.Line) : null);
         public virtual IDictionary? __globals__ => GetType().DeclaringType is Type owner ? PyModule.Of(owner, __module__).__dict__ : null;
         public IDictionary __builtins__ => PyModule.Of(typeof(Typhon.Stdlib.builtins), "builtins").__dict__;
         public virtual ITuple? __defaults__

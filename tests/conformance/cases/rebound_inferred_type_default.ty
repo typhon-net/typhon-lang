@@ -1,0 +1,13 @@
+from typing import Any
+
+class Missing:
+    pass
+
+def argument(defaults: Any):
+    default = Missing
+    if defaults is not None:
+        default = defaults.get("enabled", Missing)
+    return default
+
+print(argument({"enabled": True}), argument({"enabled": 7}))
+print(argument({}) is Missing, argument(None) is Missing)

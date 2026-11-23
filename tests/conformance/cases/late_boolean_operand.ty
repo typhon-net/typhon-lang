@@ -1,0 +1,16 @@
+from typing import Any
+
+def leap(year):
+    return year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
+
+def calculations(year: Any, month: int):
+    comparison = month == 2
+    return (
+        28 + (comparison and leap(year)),
+        29 - (comparison and leap(year)),
+        28 * (comparison and leap(year)),
+    )
+
+print(calculations(2024, 2))
+print(calculations(1900, 2))
+print(calculations(2024, 3))

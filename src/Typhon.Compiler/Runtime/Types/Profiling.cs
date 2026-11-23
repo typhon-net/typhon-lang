@@ -43,7 +43,7 @@ namespace Typhon.Runtime
         {
             if (_dispatching || !Active) return null;
             var parent = _current;
-            var frame = new sys_.frame(new sys_.code(name, path, line, qualname: qualifier), module, parent?.Frame);
+            var frame = new sys_.frame(new types.CodeType(name, path, line, qualname: qualifier), module, parent?.Frame);
             var scope = new Scope(frame, parent, Observer);
             _current = scope;
             try { Dispatch(scope, entering: true); return scope; }

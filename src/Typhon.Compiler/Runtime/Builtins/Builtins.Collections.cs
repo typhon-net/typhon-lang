@@ -232,6 +232,7 @@ namespace Typhon.Runtime
 
         internal static BigInteger RangeIndex(object? value)
         {
+            value = IntegerEnumValue(value);
             if (value is BigInteger wide) return wide;
             if (value is bool flag) return flag ? 1 : 0;
             if (value is byte or sbyte or short or ushort or int or uint or long or ulong)
@@ -241,6 +242,13 @@ namespace Typhon.Runtime
             string name = value == null ? "NoneType" : PyTypeName(value.GetType());
             throw new InvalidCastException($"'{name}' object cannot be interpreted as an integer");
         }
+
+        static long SmallRangeBound(object? value) => checked((long)RangeIndex(value));
+
+        public static PyRange __range_small(object? stop) => range(SmallRangeBound(stop));
+        public static PyRange __range_small(object? start, object? stop) => range(SmallRangeBound(start), SmallRangeBound(stop));
+        public static PyRange __range_small(object? start, object? stop, object? step) =>
+            range(SmallRangeBound(start), SmallRangeBound(stop), SmallRangeBound(step));
 
         public static PyRange range(long stop) => new PyRange(0, stop, 1);
         public static PyRange range(long start, long stop, long step = 1) => new PyRange(start, stop, step);
@@ -360,8 +368,8 @@ namespace Typhon.Runtime
         {
             if (TryClassBinaryOp((object?)a, (object?)b, "sub", "-", out var result)) return result!;
             if (IsSet((object)a)) return SetOp((object)a, (object)b, '-');
-            if (a is bool left) a = left ? 1L : 0L;
-            if (b is bool right) b = right ? 1L : 0L;
+            a = NumericOperand((object?)a)!;
+            b = NumericOperand((object?)b)!;
             return checked(a - b);
         }
         public static dynamic __key_difference(object? mapping, object? other)

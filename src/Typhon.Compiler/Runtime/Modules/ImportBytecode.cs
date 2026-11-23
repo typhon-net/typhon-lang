@@ -56,11 +56,11 @@ namespace Typhon.Stdlib
                 public bool is_package(string target) => System.IO.Path.GetFileName(get_filename(target)) == "__init__.pyc";
                 public object? get_source(string target) => null;
 
-                public sys_.code get_code(string target)
+                public types.CodeType get_code(string target)
                 {
                     byte[] data = get_data(get_filename(target)).Data;
                     _bootstrap_external.Classify(data, target);
-                    return (object?)marshal.loads(new PyBytes(data[16..])) as sys_.code
+                    return (object?)marshal.loads(new PyBytes(data[16..])) as types.CodeType
                         ?? throw new ImportError("non-code object in bytecode file", fullname);
                 }
 

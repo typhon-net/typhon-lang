@@ -140,11 +140,17 @@ namespace Typhon.Compiler.Emit
             EmitBlock(f.Body, prologue);
         }
 
+        bool IsClrRangeBound(Expr argument) =>
+            InferType(argument) is string type && IsIntegral(type) && type != TypeInference.BigInt &&
+            !IsDynamicallyDispatched(argument);
+
         void EmitForLoop(ForStmt f)
         {
+            bool traced = _scope?.TraceToken != null && !f.IsAsync;
 
             // Fast path: for i in range(...) → a plain counting loop (no enumerator allocation).
-            if (!f.IsAsync && f.Target is NameExpr tn && IsBuiltinRange(f.Iter, out var args))
+            if (!traced && !f.IsAsync && f.Target is NameExpr tn && IsBuiltinRange(f.Iter, out var args) &&
+                (_big || args.All(IsClrRangeBound)))
             {
                 if (_big)
                 {
@@ -160,7 +166,7 @@ namespace Typhon.Compiler.Emit
                 string end = NewTmp("end");
                 string cond, incr;
                 var stepConst = args.Count == 3 ? ConstIntValue(args[2]) : 1;
-                if (stepConst.HasValue)
+                if (stepConst is > 0 or < 0)
                 {
                     cond = stepConst.Value > 0 ? $"{iv} < {end}" : $"{iv} > {end}";
                     incr = stepConst.Value == 1 ? $"{iv}++" : stepConst.Value == -1 ? $"{iv}--" : $"{iv} += {step}";
@@ -168,9 +174,9 @@ namespace Typhon.Compiler.Emit
                 else
                 {
                     // unknown step sign: precompute the trip count like Python's range does, keeping the loop test trivial
-                    string st = NewTmp("step"), first = NewTmp("start"), k = NewTmp("k");
-                    _w.Line($"long {first} = {start}, {st} = {step};");
-                    _w.Line($"for (long {k} = 0, {end} = {Rt("range_len")}({first}, {stop}, {st}), {iv} = {first}; {k} < {end}; {k}++, {iv} += {st})");
+                    string st = NewTmp("step"), first = NewTmp("start"), limit = NewTmp("stop"), k = NewTmp("k");
+                    _w.Line($"long {first} = {start}, {limit} = {stop}, {st} = {step};");
+                    _w.Line($"for (long {k} = 0, {end} = {Rt("range_len")}({first}, {limit}, {st}), {iv} = {first}; {k} < {end}; {k}++, {iv} += {st})");
                     cond = null; incr = null;
                 }
                 // Python ints are longs: the loop variable is too (indexing narrows it, see EmitPosition)
@@ -192,7 +198,7 @@ namespace Typhon.Compiler.Emit
             // a list iterates by position, like Python's list iterator: the body may append to it or assign its items
             string iterType = f.IsAsync ? null : InferType(f.Iter);
             // (items unpacked into names: only items C# can deconstruct, not late-bound ones)
-            if (iterType != null && iterType.StartsWith("List<") &&
+            if (!traced && iterType != null && iterType.StartsWith("List<") &&
                 (f.Target is NameExpr || f.Target is TupleExpr tt0 && tt0.Elts.Count >= 2 &&
                  tt0.Elts.All(e => e is NameExpr) && !IsUnknownType(ElementTypeOf(iterType)) &&
                  !NeedsLateUnpackRebinding(tt0.Elts, ElementTypeOf(iterType), f)))
@@ -225,13 +231,16 @@ namespace Typhon.Compiler.Emit
                 return;
             }
             string iter = EmitIterationSource(f.Iter, f.IsAsync, out bool lateAsync);
+            bool lateItems = iter.StartsWith(Rt("__iter_dyn") + "(");
+            if (traced)
+                iter = $"global::Typhon.Runtime.PyTracing.Iterate({iter}, {_scope.TraceToken}, {f.Line})";
             string kw = f.IsAsync ? "await foreach" : "foreach";
             if (f.Target is NameExpr n)
             {
                 // the body rebinds the loop variable (case = case.strip(), an inner `for _ in`): a C# foreach variable is
                 // read-only, so the item goes into an ordinary variable
                 // (an iterable of unknown type is iterated through __iter_dyn: its items are late-bound)
-                string loopType = lateAsync || IsDynamicallyDispatched(f.Iter) || iter.StartsWith(Rt("__iter_dyn") + "(")
+                string loopType = lateAsync || IsDynamicallyDispatched(f.Iter) || lateItems
                     ? "dynamic" : IterElementType(IterableType(f.Iter));
                 if (IsInline(f, n.Id) && AssignsName(f.Body, n.Id))
                 {
@@ -258,7 +267,7 @@ namespace Typhon.Compiler.Emit
                 string loopElem = IterElementType(IterableType(f.Iter));
                 // (also when the loop iterates late-bound itself, for bit, char in table with table an object: __iter_dyn(table))
                 if ((lateAsync || tup.Elts.Count < 2 || HasLateNestedUnpack(tup.Elts, loopElem) || loopElem == "dynamic" || IsDynamicallyDispatched(f.Iter) || IsUnknownType(IterableType(f.Iter)) && !(f.Iter is NameExpr) ||
-                     iter.StartsWith(Rt("__iter_dyn") + "(") || NeedsLateUnpackRebinding(tup.Elts, loopElem, f) ||
+                     lateItems || NeedsLateUnpackRebinding(tup.Elts, loopElem, f) ||
                      (loopElem == null || loopElem == "object") && f.Iter is CallExpr && UnpackPartTypes(loopElem, tup.Elts.Count) == null) &&
                     !tup.Elts.Any(e => e is StarredExpr))
                 {

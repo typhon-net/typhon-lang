@@ -1,0 +1,16 @@
+from enum import IntEnum, global_enum
+from typing import Any
+
+@global_enum
+class Number(IntEnum):
+    THREE = 3
+
+def compute(first: Any, second: Any):
+    return (
+        first + second, first - second, first * second, first / second,
+        first // second, first % second, first ** second, first << second,
+    )
+
+print(compute(8, THREE))
+print(compute(THREE, 2))
+print(8 - THREE, THREE * 2, THREE / 2, THREE ** 2, 1 << THREE)

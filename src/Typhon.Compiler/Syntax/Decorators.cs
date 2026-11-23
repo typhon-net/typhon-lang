@@ -70,6 +70,14 @@ namespace Typhon.Compiler.Syntax
                     (imported.AsName ?? imported.Name) == owner.Id));
         }
 
+        static bool IsGlobalEnumDecorator(Expr decorator, ModuleAst module) =>
+            decorator is NameExpr name
+                ? module.Body.OfType<ImportFromStmt>().Any(statement => statement.Level == 0 && statement.Module == "enum" &&
+                    statement.Names.Any(binding => binding.Name == "global_enum" && (binding.AsName ?? binding.Name) == name.Id))
+                : decorator is AttributeExpr { Name: "global_enum", Target: NameExpr owner } &&
+                    module.Body.OfType<ImportStmt>().Any(statement => statement.Names.Any(binding =>
+                        binding.Name == "enum" && (binding.AsName ?? "enum") == owner.Id));
+
         static bool IsPythonDecorator(Expr d, HashSet<string> names)
         {
             string name = Name(d);
@@ -111,6 +119,9 @@ namespace Typhon.Compiler.Syntax
                     case ClassDef c:
                     {
                         DescriptorAssignments(c, module);
+                        if (c.Bases.Any(basis => Name(basis) is "IntEnum" or "enum.IntEnum") &&
+                            c.Decorators.RemoveAll(decorator => IsGlobalEnumDecorator(decorator, module)) != 0)
+                            c.ExportsIntegerEnumMembers = true;
                         if (c.Decorators.Any(d => Name(d) is "total_ordering" or "functools.total_ordering"))
                         {
                             TotalOrdering(c);
@@ -146,6 +157,21 @@ namespace Typhon.Compiler.Syntax
                             body.Insert(i + 1, new ExprStmt { Value = applied, Line = c.Line, Col = c.Col });
                             i++;
                         }
+                        if (c.ExportsIntegerEnumMembers)
+                            foreach (var assignment in c.Body.OfType<AssignStmt>())
+                            {
+                                if (assignment.Targets.Count != 1 || assignment.Targets[0] is not NameExpr member) continue;
+                                body.Insert(++i, new AssignStmt
+                                {
+                                    Line = c.Line, Col = c.Col,
+                                    Targets = { AstClone.Clone(member) },
+                                    Value = new AttributeExpr
+                                    {
+                                        Line = c.Line, Col = c.Col, Name = member.Id,
+                                        Target = new NameExpr { Line = c.Line, Col = c.Col, Id = c.Name },
+                                    },
+                                });
+                            }
                         break;
                     }
                     case IfStmt s: Rewrite(s.Body, names, module); Rewrite(s.OrElse, names, module); break;

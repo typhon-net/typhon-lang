@@ -1,0 +1,18 @@
+from enum import IntEnum
+
+class Slot(IntEnum):
+    FIRST = "first item"
+    SECOND = "second item"
+
+    def __new__(cls, description):
+        member = int.__new__(cls, len(cls.__members__))
+        member._value_ = int(member)
+        member.description = description
+        return member
+
+    def __str__(self):
+        return self.name
+
+print(str(Slot.FIRST), Slot.FIRST.value, Slot.FIRST.description, repr(Slot.FIRST))
+print(str(Slot.SECOND), Slot.SECOND.value, Slot.SECOND.description, repr(Slot.SECOND))
+print(list(Slot.__members__), Slot(1) is Slot.SECOND, Slot.SECOND > Slot.FIRST)

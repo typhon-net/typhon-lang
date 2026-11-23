@@ -1,0 +1,12 @@
+class RuntimeAnnotation:
+    def __init__(self, callback):
+        self.callback = callback
+
+@RuntimeAnnotation
+def Marker():
+    pass
+
+def identity(value: Marker) -> Marker:
+    return value
+
+print(identity("typed at runtime"), identity(5))

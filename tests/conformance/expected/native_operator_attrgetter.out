@@ -1,0 +1,7 @@
+attrgetter ('root', 'leaf') operator.attrgetter('name', 'child.name')
+leaf
+a
+attribute name must be a string
+attribute name must be a string
+attribute name must be a string
+attrgetter expected 1 argument, got 0

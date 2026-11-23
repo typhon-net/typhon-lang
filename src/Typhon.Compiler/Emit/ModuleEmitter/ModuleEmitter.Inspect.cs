@@ -3,6 +3,7 @@
 
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using Typhon.Compiler.Syntax;
 
 namespace Typhon.Compiler.Emit
@@ -20,7 +21,52 @@ namespace Typhon.Compiler.Emit
         void EmitSignatureAttribute(FunctionDef function, string provider = null) =>
             _w.Line($"[global::Typhon.Runtime.PySignature({CsString(provider ?? SignatureProviderName(function))})]");
 
-        string RuntimeAnnotation(Expr expression) => expression switch
+        const long FutureAnnotationsFlag = 0x1000000;
+        bool? _futureAnnotations;
+        bool HasFutureAnnotations => _futureAnnotations ??= _m.Ast.Body.OfType<ImportFromStmt>().Any(
+            import => import.Level == 0 && import.Module == "__future__" && import.Names.Any(name => name.Name == "annotations"));
+
+        static string AnnotationStringLiteral(string text)
+        {
+            char quote = text.Contains("'") && !text.Contains("\"") ? '"' : '\'';
+            var code = new StringBuilder().Append(quote);
+            foreach (char character in text)
+            {
+                if (character == '\\' || character == quote) code.Append('\\').Append(character);
+                else if (character == '\n') code.Append("\\n");
+                else if (character == '\r') code.Append("\\r");
+                else if (character == '\t') code.Append("\\t");
+                else if (char.IsControl(character)) code.Append("\\x").Append(((int)character).ToString("x2"));
+                else code.Append(character);
+            }
+            return code.Append(quote).ToString();
+        }
+
+        string AnnotationText(Expr expression) => expression switch
+        {
+            NameExpr name => name.Id,
+            AttributeExpr attribute => AnnotationText(attribute.Target) + "." + attribute.Name,
+            SubscriptExpr { Index: TupleExpr arguments } subscript =>
+                AnnotationText(subscript.Target) + "[" + AnnotationArguments(arguments) + "]",
+            SubscriptExpr subscript => AnnotationText(subscript.Target) + "[" + AnnotationText(subscript.Index) + "]",
+            BinOpExpr { Op: "|" } union => AnnotationText(union.Left) + " | " + AnnotationText(union.Right),
+            TupleExpr tuple => "(" + AnnotationArguments(tuple) + ")",
+            ListExpr list => "[" + string.Join(", ", list.Elts.Select(AnnotationText)) + "]",
+            ConstExpr { Kind: ConstKind.Str } text => AnnotationStringLiteral(text.Str),
+            ConstExpr { Kind: ConstKind.None } => "None",
+            ConstExpr { Kind: ConstKind.Ellipsis } => "...",
+            _ when expression.EndOffset > expression.StartOffset && expression.EndOffset <= _m.SourceText?.Length =>
+                _m.SourceText.Substring(expression.StartOffset, expression.EndOffset - expression.StartOffset),
+            ConstExpr constant => constant.Raw,
+            _ => null,
+        };
+
+        string AnnotationArguments(TupleExpr tuple) => tuple.Elts.Count == 0 ? "()" :
+            string.Join(", ", tuple.Elts.Select(AnnotationText)) + (tuple.Elts.Count == 1 ? "," : "");
+
+        string RuntimeAnnotation(Expr expression) => expression == null ? null : HasFutureAnnotations
+            ? CsString(AnnotationText(expression) ?? "")
+            : expression switch
         {
             NameExpr name when BuiltinTypeValues.TryGetValue(name.Id, out var builtin) && !IsShadowed(name.Id) => $"typeof({builtin})",
             ConstExpr { Kind: ConstKind.Str } forward => CsString(forward.Str),
@@ -71,7 +117,7 @@ namespace Typhon.Compiler.Emit
                 .Where(entry => entry.Value != null).Select(entry => $"[{CsString(entry.Name)}] = {entry.Value}").ToList();
             if (assignments.Count == 0) return;
             _w.Line("private static object? __typhon_annotations;");
-            _w.Line("private static object __annotations__ { get => __typhon_annotations ??= new OrderedDictionary<string, object?> { " +
+            _w.Line("internal static object __annotations__ { get => __typhon_annotations ??= new OrderedDictionary<string, object?> { " +
                 string.Join(", ", assignments) + " }; set => __typhon_annotations = value; }");
         }
 

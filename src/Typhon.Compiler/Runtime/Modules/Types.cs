@@ -301,10 +301,47 @@ namespace Typhon.Stdlib
             public DynamicClassAttribute deleter(object? fdel) => new DynamicClassAttribute(fget, fset, fdel, __doc__);
         }
 
+        /// <summary>The Python code object shared by functions, frames, and compiled source.</summary>
+        internal class CodeType : IPyRepr
+        {
+            public readonly string co_name, co_qualname, co_filename;
+            static readonly PyTuple<string> EmptyVariableNames = new(Array.Empty<string>());
+            public readonly long co_firstlineno, co_flags;
+            public readonly long co_argcount, co_posonlyargcount, co_kwonlyargcount;
+            public readonly PyTuple<string> co_varnames;
+            public long co_nlocals => co_varnames.Count;
+            public virtual PyTuple<string> co_freevars { get; } = new PyTuple<string>(Array.Empty<string>());
+            internal CodeType(string name, string file, long line, long flags = 0, string? qualname = null,
+                (long Positional, long PositionalOnly, long KeywordOnly)? arity = null, PyTuple<string>? variables = null)
+            {
+                co_name = name;
+                co_qualname = qualname ?? name;
+                co_filename = file;
+                co_firstlineno = line;
+                co_flags = flags;
+                (co_argcount, co_posonlyargcount, co_kwonlyargcount) = arity ?? (0L, 0L, 0L);
+                co_varnames = variables ?? EmptyVariableNames;
+            }
+            // A managed frame without tracing has the one source position captured from the stack.
+            public virtual IEnumerable<(long, long, long?)> co_lines()
+            {
+                long? line = co_firstlineno > 0 ? co_firstlineno : null;
+                yield return (0L, 1L, line);
+            }
+
+            public virtual PyIterator<(long?, long?, long?, long?)> co_positions()
+            {
+                long? line = co_firstlineno > 0 ? co_firstlineno : null;
+                return Builtins.iter<(long?, long?, long?, long?)>([(line, line, null, null)]);
+            }
+
+            public string __repr__() => $"<code object {co_name} at 0x{System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(this):x}, file {Builtins.repr(co_filename)}, line {co_firstlineno}>";
+            public override string ToString() => __repr__();
+        }
+
         // ── the interpreter's own types: names only (no Typhon value is an instance of these) ──
 
         internal sealed class LambdaType : FunctionType { LambdaType() { } }
-        internal sealed class CodeType { CodeType() { } }
         internal sealed class CellType
         {
             object? _value;

@@ -1,0 +1,11 @@
+from typing import Any
+
+def probe(item: Any):
+    try:
+        print(range(3, 10, 2).index(item))
+    except ValueError:
+        print("missing")
+
+for item in [3, 9.0, 6, "7"]:
+    probe(item)
+print(range(9, 0, -2).index(5), range(2).index(True))

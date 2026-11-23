@@ -46,7 +46,7 @@ namespace Typhon.Runtime
         }
     }
 
-    internal sealed class RuntimeCode : sys_.code
+    internal sealed class RuntimeCode : types.CodeType
     {
         public string Source { get; }
         public string Mode { get; }
@@ -57,8 +57,9 @@ namespace Typhon.Runtime
         }
     }
 
-    internal sealed class RuntimeFunctionCode(string name, string filename, long line, string source, bool bigInts)
-        : sys_.code(name, filename, line)
+    internal sealed class RuntimeFunctionCode(string name, string filename, long line, string source, bool bigInts,
+        long flags, (long Positional, long PositionalOnly, long KeywordOnly) arity, string[] variables)
+        : types.CodeType(name, filename, line, flags, arity: arity, variables: new PyTuple<string>(variables))
     {
         internal PyFunction Bind(IDictionary globals)
         {

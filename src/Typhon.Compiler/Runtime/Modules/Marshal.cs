@@ -56,11 +56,9 @@ namespace Typhon.Stdlib
             int arguments, int positional, int keywordOnly, int stackSize,
             PyBytes bytecode, PyTuple<object?> constants, PyTuple<object?> names,
             PyTuple<object?> localNames, PyBytes localKinds, PyBytes lines, PyBytes exceptions)
-            : sys_.code(name, filename, firstLine, flags, qualifiedName)
+            : types.CodeType(name, filename, firstLine, flags, qualifiedName,
+                (arguments, positional, keywordOnly), NamesWithKind(localNames, localKinds, 0x20))
         {
-            public readonly long co_argcount = arguments;
-            public readonly long co_posonlyargcount = positional;
-            public readonly long co_kwonlyargcount = keywordOnly;
             public readonly long co_stacksize = stackSize;
             public readonly PyBytes co_code = bytecode;
             public readonly PyTuple<object?> co_consts = constants;
@@ -69,10 +67,8 @@ namespace Typhon.Stdlib
             public readonly PyBytes co_exceptiontable = exceptions;
             internal readonly PyTuple<object?> LocalNames = localNames;
             internal readonly PyBytes LocalKinds = localKinds;
-            public readonly PyTuple<string> co_varnames = NamesWithKind(localNames, localKinds, 0x20);
             public readonly PyTuple<string> co_cellvars = NamesWithKind(localNames, localKinds, 0x40);
             public override PyTuple<string> co_freevars { get; } = NamesWithKind(localNames, localKinds, 0x80);
-            public long co_nlocals => co_varnames.Count;
 
             // CPython location table encoding
             // https://github.com/python/cpython/blob/main/InternalDocs/code_objects.md#format-of-the-locations-table
@@ -430,7 +426,7 @@ namespace Typhon.Stdlib
                     Item(slice.stop);
                     Item(slice.step);
                     break;
-                case sys_.code when !allowCode: throw new ArgumentException("marshalling code objects is disallowed");
+                case types.CodeType when !allowCode: throw new ArgumentException("marshalling code objects is disallowed");
                 case MarshalledCode code:
                     Type('c');
                     writer.Write((int)code.co_argcount);

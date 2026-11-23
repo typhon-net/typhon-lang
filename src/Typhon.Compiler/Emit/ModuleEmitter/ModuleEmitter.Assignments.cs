@@ -366,11 +366,16 @@ namespace Typhon.Compiler.Emit
                             !known.EndsWith("?") && IsValueTypeName(known) && IsLocal(n.Id) &&
                             !_scope.Params.Contains(n.Id) && _scope.Locals?.Annotations.ContainsKey(n.Id) != true)
                             Obs.AddConflict(_scopeKey + "|" + n.Id, "dynamic");
-                        bool incompatibleClass = known != valueType && ClassKeyOfType(known, out _) != null &&
-                            ClassKeyOfType(valueType, out _) != null && !DerivesFromType(valueType, known);
+                        bool incompatibleClass = known != valueType &&
+                            (ClassKeyOfType(known, out _) != null && ClassKeyOfType(valueType, out _) != null &&
+                                 !DerivesFromType(valueType, known) ||
+                             IsLocal(n.Id) && _scope.Locals?.Annotations.ContainsKey(n.Id) != true &&
+                                 IncompatibleNativeClass(known, valueType));
                         bool CallableValue(string type) => type is "global::System.Type" or "System.Type" ||
                             FunctionOfType(type, out _, out _);
-                        bool differentFunction = known != valueType && CallableValue(known) && CallableValue(valueType);
+                        bool inferredLocal = IsLocal(n.Id) && _scope.Locals?.Annotations.ContainsKey(n.Id) != true;
+                        bool differentFunction = known != valueType && CallableValue(known) &&
+                            (CallableValue(valueType) || inferredLocal && !IsUnknownType(valueType));
                         bool extractsItem = valueType == "dynamic" && IsPythonContainer(known) &&
                             value is SubscriptExpr { Target: NameExpr source, Index: not SliceExpr } && source.Id == n.Id;
                         bool convertsToString = known is not (null or "dynamic" or "object" or "string") && valueType == "string" &&
@@ -405,7 +410,9 @@ namespace Typhon.Compiler.Emit
                         else if (Obs != null && known != null &&
                             (ClassKeyOfType(known, out _) != null && (valueType == "dynamic" ||
                                  valueType == null && value is BinOpExpr arithmetic && ArithmeticOps.Contains(arithmetic.Op)) ||
-                             IsBytesType(known) && (valueType == "dynamic" || IsUnknownType(valueType) && MaybeLateBound(value)) ||
+                             (IsBytesType(known) || CallableValue(known) && inferredLocal) &&
+                                 (valueType is "dynamic" or "object" or "object?" || IsUnknownType(valueType) &&
+                                     (MaybeLateBound(value) || CallableValue(known) && value is AttributeExpr or SubscriptExpr)) ||
                              known == "string" && _scope?.Params.Contains(n.Id) == true &&
                                  value is CallExpr or AttributeExpr or SubscriptExpr &&
                                  (IsUnknownType(valueType) || valueType is "dynamic" or "object" or "object?")))
@@ -590,6 +597,16 @@ namespace Typhon.Compiler.Emit
                     }
                     string ft = null;
                     if (at.Target is NameExpr tn && tn.Id == "self" && _cls != null) ft = InferType(at);
+                    if (rawValue == null && value is ListExpr spread && spread.Elts.Any(item => item is StarredExpr) &&
+                        DotNetStaticMeta(at.Target) != null && InferType(at) is string memberType &&
+                        memberType.StartsWith("List<") && memberType.EndsWith(">"))
+                    {
+                        string element = GenericArg(memberType);
+                        var parts = spread.Elts.Select(item => item is StarredExpr star
+                            ? $".. global::System.Linq.Enumerable.Cast<{element}>({EmitIterable(star.Value)})"
+                            : EmitElementAs(item, element));
+                        rawValue = $"[{string.Join(", ", parts)}]";
+                    }
                     if (rawValue == null && ft?.StartsWith("global::Typhon.Runtime.deque<") == true &&
                         value is CallExpr deque && deque.Args.All(a => a.Name == "maxlen" && !a.Star && !a.DoubleStar) &&
                         StdlibModuleOf(deque, out string factory) == "Typhon.Stdlib.collections" && factory == "deque")
@@ -683,6 +700,11 @@ namespace Typhon.Compiler.Emit
             }
         }
 
+        bool IncompatibleNativeClass(string target, string value) =>
+            DotNetMeta(target) is string targetMeta && IsNativePythonClass(targetMeta) &&
+            DotNetMeta(value) is string valueMeta && IsNativePythonClass(valueMeta) &&
+            _r is RoslynTypeResolver resolver && resolver.RuntimeTypeMatches(valueMeta, targetMeta, requireSealed: false) == false;
+
         bool HasSourceItemSetter(Expr expression) =>
             ClassKeyOfType(InferType(expression), out _) is string key &&
             ClassDefOfKey(key) is ClassDef owner && DefinesInHierarchy(owner, "__setitem__");
@@ -764,10 +786,10 @@ namespace Typhon.Compiler.Emit
         {
             if (a.Target is AttributeExpr member &&
                 (member.Target is NameExpr owner && IsClassArgument(owner.Id) || IsInstanceClassDefault(member) ||
-                    !_m.IsGdScript && TypeObjectMember(member)))
+                    !_m.IsGdScript && (TypeObjectMember(member) || MetaclassMember(member, out _))))
             {
                 string receiver = NewTmp("receiver"), name = CsString(member.Name);
-                _w.Line($"object? {receiver} = {EmitExpr(member.Target)};");
+                _w.Line($"object? {receiver} = {EmitValue(member.Target)};");
                 string current = $"{Rt("getattr")}({receiver}, {name})", right = EmitExpr(a.Value);
                 string combined = a.Op == "+" ? $"{Rt("__iadd")}({current}, {right})" : a.Op == "*" ? $"{Rt("mul")}({current}, {right})"
                     : AugHelpers.TryGetValue(a.Op, out var operation) ? $"{Rt(operation)}({current}, {right})" : $"({current} {a.Op} {Paren(right)})";
@@ -877,7 +899,8 @@ namespace Typhon.Compiler.Emit
                 if (a.Value != null)
                 {
                     if (at.Target is NameExpr owner && IsClassArgument(owner.Id) || IsInstanceClassDefault(at) ||
-                        !_m.IsGdScript && (UsesExceptionAttribute(at) || TypeObjectMember(at))) EmitAssignTo(at, a.Value, a);
+                        !_m.IsGdScript && (UsesExceptionAttribute(at) || TypeObjectMember(at) || MetaclassMember(at, out _)))
+                        EmitAssignTo(at, a.Value, a);
                     else _w.Line($"{EmitExpr(at)} = {EmitExpr(a.Value, targetTyped: true)};");
                 }
                 return;

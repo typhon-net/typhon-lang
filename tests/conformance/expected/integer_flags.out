@@ -1,0 +1,8 @@
+True True
+1 2 4
+<Access.READ_WRITE: 3> True
+<Access.READ|OWNER: 5> <Access.READ|8: 9> <Access: 16>
+<Access.WRITE: 2> <Access.WRITE: 2>
+True 7 1
+True False
+['READ', 'WRITE'] 2 False

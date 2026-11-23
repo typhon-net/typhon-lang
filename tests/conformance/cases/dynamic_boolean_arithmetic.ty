@@ -1,0 +1,10 @@
+from typing import Any
+
+def compute(x: Any, y: Any):
+    return x+y, x-y, x*y, x//y, x%y, x**y, x<<y
+
+print(compute(7, True))
+print(compute(True, 2))
+def format_value(value: Any):
+    return "%s" % value
+print(format_value(True))

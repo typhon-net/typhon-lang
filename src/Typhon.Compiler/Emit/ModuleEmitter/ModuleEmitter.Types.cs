@@ -93,6 +93,10 @@ namespace Typhon.Compiler.Emit
                 !_r.HasMember("Typhon.Runtime.PyModule", member.Name);
         }
 
+        bool IsNativePythonClass(string metadata) =>
+            metadata.StartsWith("Typhon.Stdlib.", StringComparison.Ordinal) &&
+            (_r is RoslynTypeResolver resolver ? resolver.IsInstanceType(metadata) : IsRuntimeClassMeta(metadata));
+
         bool IsRuntimeObjectAttribute(AttributeExpr member)
         {
             if (_m.IsGdScript) return false;
@@ -103,14 +107,17 @@ namespace Typhon.Compiler.Emit
             if (ClassKeyOfType(receiver, out _) is string key && ClassDefOfKey(key) is ClassDef definition)
             {
                 var resolver = ClassDeclarationResolver(definition);
-                return resolver.HasRuntimeBaseMember(definition, "TryGetMember", instanceMethod: true) &&
+                bool openAttributes = IsObjectIntegerEnum(definition) ||
+                    resolver.HasRuntimeBaseMember(definition, "TryGetMember", instanceMethod: true);
+                return openAttributes &&
                     ImplicitFieldOwner(definition, member.Name) == null &&
                     ClassVariableOwner(definition, member.Name) == null &&
                     MethodInHierarchy(definition, member.Name) == null &&
-                    !resolver.HasRuntimeBaseMember(definition, member.Name);
+                    !resolver.HasRuntimeBaseMember(definition, member.Name) &&
+                    (!IsObjectIntegerEnum(definition) || !_r.HasMember("Typhon.Runtime.PyIntegerEnum", member.Name));
             }
-            return DotNetMeta(receiver) is string metadata && _r.HasMember(metadata, "TryGetMember") &&
-                !_r.HasMember(metadata, member.Name);
+            return DotNetMeta(receiver) is string metadata && !_r.HasMember(metadata, member.Name) &&
+                (_r.HasMember(metadata, "TryGetMember") || IsNativePythonClass(metadata));
         }
 
         string InferType(Expr e)
@@ -153,7 +160,7 @@ namespace Typhon.Compiler.Emit
                     if (!IsLocal(n.Id) && _runtimeProjectBindings.TryGetValue(n.Id, out var imported))
                         return ConditionalModuleClass(imported.Owner, imported.Name) ? "global::System.Type" : "dynamic";
                     if (!IsLocal(n.Id) && ConditionalModuleClass(_m, n.Id)) return "global::System.Type";
-                    return null;
+                    return MayReadComputedGlobal(n) ? "dynamic" : null;
                 }
                 case AttributeExpr component when UsesComplexComponent(component): return "double";
                 case AttributeExpr comparator when UsesBuiltinStringComparison(comparator) || UsesInheritedNotEqual(comparator):
@@ -593,6 +600,9 @@ namespace Typhon.Compiler.Emit
         string BinOpType(BinOpExpr b)
         {
             string l = InferType(b.Left), r = InferType(b.Right);
+            if (b.Op == "+" && (IsNamedTupleType(l) && (IsNamedTupleType(r) || TupleItemOrMixed(r) != null) ||
+                                IsNamedTupleType(r) && TupleItemOrMixed(l) != null))
+                return PyTuplePrefix + "dynamic>";
             if (ArithmeticOps.Contains(b.Op)) { if (IsIntEnumType(l)) l = "long"; if (IsIntEnumType(r)) r = "long"; }
             // a recursive call whose type is still being inferred contributes no information (optimistic inference)
             if (l == TypeInference.Pending || r == TypeInference.Pending)

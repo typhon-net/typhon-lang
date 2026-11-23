@@ -1,0 +1,633 @@
+# Source: CPython 3.15.2, Lib/shlex.py
+# https://github.com/python/cpython/blob/v3.15.2/Lib/shlex.py
+# The original source follows the license below without changes.
+#
+# A. HISTORY OF THE SOFTWARE
+# ==========================
+#
+# Python was created in the early 1990s by Guido van Rossum at Stichting
+# Mathematisch Centrum (CWI, see https://www.cwi.nl) in the Netherlands
+# as a successor of a language called ABC.  Guido remains Python's
+# principal author, although it includes many contributions from others.
+#
+# In 1995, Guido continued his work on Python at the Corporation for
+# National Research Initiatives (CNRI, see https://www.cnri.reston.va.us)
+# in Reston, Virginia where he released several versions of the
+# software.
+#
+# In May 2000, Guido and the Python core development team moved to
+# BeOpen.com to form the BeOpen PythonLabs team.  In October of the same
+# year, the PythonLabs team moved to Digital Creations, which became
+# Zope Corporation.  In 2001, the Python Software Foundation (PSF, see
+# https://www.python.org/psf/) was formed, a non-profit organization
+# created specifically to own Python-related Intellectual Property.
+# Zope Corporation was a sponsoring member of the PSF.
+#
+# All Python releases are Open Source (see https://opensource.org for
+# the Open Source Definition).  Historically, most, but not all, Python
+# releases have also been GPL-compatible; the table below summarizes
+# the various releases.
+#
+#     Release         Derived     Year        Owner       GPL-
+#                     from                                compatible? (1)
+#
+#     0.9.0 thru 1.2              1991-1995   CWI         yes
+#     1.3 thru 1.5.2  1.2         1995-1999   CNRI        yes
+#     1.6             1.5.2       2000        CNRI        no
+#     2.0             1.6         2000        BeOpen.com  no
+#     1.6.1           1.6         2001        CNRI        yes (2)
+#     2.1             2.0+1.6.1   2001        PSF         no
+#     2.0.1           2.0+1.6.1   2001        PSF         yes
+#     2.1.1           2.1+2.0.1   2001        PSF         yes
+#     2.1.2           2.1.1       2002        PSF         yes
+#     2.1.3           2.1.2       2002        PSF         yes
+#     2.2 and above   2.1.1       2001-now    PSF         yes
+#
+# Footnotes:
+#
+# (1) GPL-compatible doesn't mean that we're distributing Python under
+#     the GPL.  All Python licenses, unlike the GPL, let you distribute
+#     a modified version without making your changes open source.  The
+#     GPL-compatible licenses make it possible to combine Python with
+#     other software that is released under the GPL; the others don't.
+#
+# (2) According to Richard Stallman, 1.6.1 is not GPL-compatible,
+#     because its license has a choice of law clause.  According to
+#     CNRI, however, Stallman's lawyer has told CNRI's lawyer that 1.6.1
+#     is "not incompatible" with the GPL.
+#
+# Thanks to the many outside volunteers who have worked under Guido's
+# direction to make these releases possible.
+#
+#
+# B. TERMS AND CONDITIONS FOR ACCESSING OR OTHERWISE USING PYTHON
+# ===============================================================
+#
+# Python software and documentation are licensed under the
+# Python Software Foundation License Version 2.
+#
+# Starting with Python 3.8.6, examples, recipes, and other code in
+# the documentation are dual licensed under the PSF License Version 2
+# and the Zero-Clause BSD license.
+#
+# Some software incorporated into Python is under different licenses.
+# The licenses are listed with code falling under that license.
+#
+#
+# PYTHON SOFTWARE FOUNDATION LICENSE VERSION 2
+# --------------------------------------------
+#
+# 1. This LICENSE AGREEMENT is between the Python Software Foundation
+# ("PSF"), and the Individual or Organization ("Licensee") accessing and
+# otherwise using this software ("Python") in source or binary form and
+# its associated documentation.
+#
+# 2. Subject to the terms and conditions of this License Agreement, PSF hereby
+# grants Licensee a nonexclusive, royalty-free, world-wide license to reproduce,
+# analyze, test, perform and/or display publicly, prepare derivative works,
+# distribute, and otherwise use Python alone or in any derivative version,
+# provided, however, that PSF's License Agreement and PSF's notice of copyright,
+# i.e., "Copyright (c) 2001 Python Software Foundation; All Rights Reserved"
+# are retained in Python alone or in any derivative version prepared by Licensee.
+#
+# 3. In the event Licensee prepares a derivative work that is based on
+# or incorporates Python or any part thereof, and wants to make
+# the derivative work available to others as provided herein, then
+# Licensee hereby agrees to include in any such work a brief summary of
+# the changes made to Python.
+#
+# 4. PSF is making Python available to Licensee on an "AS IS"
+# basis.  PSF MAKES NO REPRESENTATIONS OR WARRANTIES, EXPRESS OR
+# IMPLIED.  BY WAY OF EXAMPLE, BUT NOT LIMITATION, PSF MAKES NO AND
+# DISCLAIMS ANY REPRESENTATION OR WARRANTY OF MERCHANTABILITY OR FITNESS
+# FOR ANY PARTICULAR PURPOSE OR THAT THE USE OF PYTHON WILL NOT
+# INFRINGE ANY THIRD PARTY RIGHTS.
+#
+# 5. PSF SHALL NOT BE LIABLE TO LICENSEE OR ANY OTHER USERS OF PYTHON
+# FOR ANY INCIDENTAL, SPECIAL, OR CONSEQUENTIAL DAMAGES OR LOSS AS
+# A RESULT OF MODIFYING, DISTRIBUTING, OR OTHERWISE USING PYTHON,
+# OR ANY DERIVATIVE THEREOF, EVEN IF ADVISED OF THE POSSIBILITY THEREOF.
+#
+# 6. This License Agreement will automatically terminate upon a material
+# breach of its terms and conditions.
+#
+# 7. Nothing in this License Agreement shall be deemed to create any
+# relationship of agency, partnership, or joint venture between PSF and
+# Licensee.  This License Agreement does not grant permission to use PSF
+# trademarks or trade name in a trademark sense to endorse or promote
+# products or services of Licensee, or any third party.
+#
+# 8. By copying, installing or otherwise using Python, Licensee
+# agrees to be bound by the terms and conditions of this License
+# Agreement.
+#
+#
+# BEOPEN.COM LICENSE AGREEMENT FOR PYTHON 2.0
+# -------------------------------------------
+#
+# BEOPEN PYTHON OPEN SOURCE LICENSE AGREEMENT VERSION 1
+#
+# 1. This LICENSE AGREEMENT is between BeOpen.com ("BeOpen"), having an
+# office at 160 Saratoga Avenue, Santa Clara, CA 95051, and the
+# Individual or Organization ("Licensee") accessing and otherwise using
+# this software in source or binary form and its associated
+# documentation ("the Software").
+#
+# 2. Subject to the terms and conditions of this BeOpen Python License
+# Agreement, BeOpen hereby grants Licensee a non-exclusive,
+# royalty-free, world-wide license to reproduce, analyze, test, perform
+# and/or display publicly, prepare derivative works, distribute, and
+# otherwise use the Software alone or in any derivative version,
+# provided, however, that the BeOpen Python License is retained in the
+# Software, alone or in any derivative version prepared by Licensee.
+#
+# 3. BeOpen is making the Software available to Licensee on an "AS IS"
+# basis.  BEOPEN MAKES NO REPRESENTATIONS OR WARRANTIES, EXPRESS OR
+# IMPLIED.  BY WAY OF EXAMPLE, BUT NOT LIMITATION, BEOPEN MAKES NO AND
+# DISCLAIMS ANY REPRESENTATION OR WARRANTY OF MERCHANTABILITY OR FITNESS
+# FOR ANY PARTICULAR PURPOSE OR THAT THE USE OF THE SOFTWARE WILL NOT
+# INFRINGE ANY THIRD PARTY RIGHTS.
+#
+# 4. BEOPEN SHALL NOT BE LIABLE TO LICENSEE OR ANY OTHER USERS OF THE
+# SOFTWARE FOR ANY INCIDENTAL, SPECIAL, OR CONSEQUENTIAL DAMAGES OR LOSS
+# AS A RESULT OF USING, MODIFYING OR DISTRIBUTING THE SOFTWARE, OR ANY
+# DERIVATIVE THEREOF, EVEN IF ADVISED OF THE POSSIBILITY THEREOF.
+#
+# 5. This License Agreement will automatically terminate upon a material
+# breach of its terms and conditions.
+#
+# 6. This License Agreement shall be governed by and interpreted in all
+# respects by the law of the State of California, excluding conflict of
+# law provisions.  Nothing in this License Agreement shall be deemed to
+# create any relationship of agency, partnership, or joint venture
+# between BeOpen and Licensee.  This License Agreement does not grant
+# permission to use BeOpen trademarks or trade names in a trademark
+# sense to endorse or promote products or services of Licensee, or any
+# third party.  As an exception, the "BeOpen Python" logos available at
+# http://www.pythonlabs.com/logos.html may be used according to the
+# permissions granted on that web page.
+#
+# 7. By copying, installing or otherwise using the software, Licensee
+# agrees to be bound by the terms and conditions of this License
+# Agreement.
+#
+#
+# CNRI LICENSE AGREEMENT FOR PYTHON 1.6.1
+# ---------------------------------------
+#
+# 1. This LICENSE AGREEMENT is between the Corporation for National
+# Research Initiatives, having an office at 1895 Preston White Drive,
+# Reston, VA 20191 ("CNRI"), and the Individual or Organization
+# ("Licensee") accessing and otherwise using Python 1.6.1 software in
+# source or binary form and its associated documentation.
+#
+# 2. Subject to the terms and conditions of this License Agreement, CNRI
+# hereby grants Licensee a nonexclusive, royalty-free, world-wide
+# license to reproduce, analyze, test, perform and/or display publicly,
+# prepare derivative works, distribute, and otherwise use Python 1.6.1
+# alone or in any derivative version, provided, however, that CNRI's
+# License Agreement and CNRI's notice of copyright, i.e., "Copyright (c)
+# 1995-2001 Corporation for National Research Initiatives; All Rights
+# Reserved" are retained in Python 1.6.1 alone or in any derivative
+# version prepared by Licensee.  Alternately, in lieu of CNRI's License
+# Agreement, Licensee may substitute the following text (omitting the
+# quotes): "Python 1.6.1 is made available subject to the terms and
+# conditions in CNRI's License Agreement.  This Agreement together with
+# Python 1.6.1 may be located on the internet using the following
+# unique, persistent identifier (known as a handle): 1895.22/1013.  This
+# Agreement may also be obtained from a proxy server on the internet
+# using the following URL: http://hdl.handle.net/1895.22/1013".
+#
+# 3. In the event Licensee prepares a derivative work that is based on
+# or incorporates Python 1.6.1 or any part thereof, and wants to make
+# the derivative work available to others as provided herein, then
+# Licensee hereby agrees to include in any such work a brief summary of
+# the changes made to Python 1.6.1.
+#
+# 4. CNRI is making Python 1.6.1 available to Licensee on an "AS IS"
+# basis.  CNRI MAKES NO REPRESENTATIONS OR WARRANTIES, EXPRESS OR
+# IMPLIED.  BY WAY OF EXAMPLE, BUT NOT LIMITATION, CNRI MAKES NO AND
+# DISCLAIMS ANY REPRESENTATION OR WARRANTY OF MERCHANTABILITY OR FITNESS
+# FOR ANY PARTICULAR PURPOSE OR THAT THE USE OF PYTHON 1.6.1 WILL NOT
+# INFRINGE ANY THIRD PARTY RIGHTS.
+#
+# 5. CNRI SHALL NOT BE LIABLE TO LICENSEE OR ANY OTHER USERS OF PYTHON
+# 1.6.1 FOR ANY INCIDENTAL, SPECIAL, OR CONSEQUENTIAL DAMAGES OR LOSS AS
+# A RESULT OF MODIFYING, DISTRIBUTING, OR OTHERWISE USING PYTHON 1.6.1,
+# OR ANY DERIVATIVE THEREOF, EVEN IF ADVISED OF THE POSSIBILITY THEREOF.
+#
+# 6. This License Agreement will automatically terminate upon a material
+# breach of its terms and conditions.
+#
+# 7. This License Agreement shall be governed by the federal
+# intellectual property law of the United States, including without
+# limitation the federal copyright law, and, to the extent such
+# U.S. federal law does not apply, by the law of the Commonwealth of
+# Virginia, excluding Virginia's conflict of law provisions.
+# Notwithstanding the foregoing, with regard to derivative works based
+# on Python 1.6.1 that incorporate non-separable material that was
+# previously distributed under the GNU General Public License (GPL), the
+# law of the Commonwealth of Virginia shall govern this License
+# Agreement only as to issues arising under or with respect to
+# Paragraphs 4, 5, and 7 of this License Agreement.  Nothing in this
+# License Agreement shall be deemed to create any relationship of
+# agency, partnership, or joint venture between CNRI and Licensee.  This
+# License Agreement does not grant permission to use CNRI trademarks or
+# trade name in a trademark sense to endorse or promote products or
+# services of Licensee, or any third party.
+#
+# 8. By clicking on the "ACCEPT" button where indicated, or by copying,
+# installing or otherwise using Python 1.6.1, Licensee agrees to be
+# bound by the terms and conditions of this License Agreement.
+#
+#         ACCEPT
+#
+#
+# CWI LICENSE AGREEMENT FOR PYTHON 0.9.0 THROUGH 1.2
+# --------------------------------------------------
+#
+# Copyright (c) 1991 - 1995, Stichting Mathematisch Centrum Amsterdam,
+# The Netherlands.  All rights reserved.
+#
+# Permission to use, copy, modify, and distribute this software and its
+# documentation for any purpose and without fee is hereby granted,
+# provided that the above copyright notice appear in all copies and that
+# both that copyright notice and this permission notice appear in
+# supporting documentation, and that the name of Stichting Mathematisch
+# Centrum or CWI not be used in advertising or publicity pertaining to
+# distribution of the software without specific, written prior
+# permission.
+#
+# STICHTING MATHEMATISCH CENTRUM DISCLAIMS ALL WARRANTIES WITH REGARD TO
+# THIS SOFTWARE, INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+# FITNESS, IN NO EVENT SHALL STICHTING MATHEMATISCH CENTRUM BE LIABLE
+# FOR ANY SPECIAL, INDIRECT OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+# ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT
+# OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+#
+# ZERO-CLAUSE BSD LICENSE FOR CODE IN THE PYTHON DOCUMENTATION
+# ----------------------------------------------------------------------
+#
+# Permission to use, copy, modify, and/or distribute this software for any
+# purpose with or without fee is hereby granted.
+#
+# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+# REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY
+# AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+# INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM
+# LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR
+# OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+# PERFORMANCE OF THIS SOFTWARE.
+
+"""A lexical analyzer class for simple shell-like syntaxes."""
+
+# Module and documentation by Eric S. Raymond, 21 Dec 1998
+# Input stacking and error message cleanup added by ESR, March 2000
+# push_source() and pop_source() made explicit by ESR, January 2001.
+# Posix compliance, split(), string arguments, and
+# iterator interface by Gustavo Niemeyer, April 2003.
+# changes to tokenize more like Posix shells by Vinay Sajip, July 2016.
+
+import sys
+from io import StringIO
+
+__all__ = ["shlex", "split", "quote", "join"]
+
+class shlex:
+    "A lexical analyzer class for simple shell-like syntaxes."
+    def __init__(self, instream=None, infile=None, posix=False,
+                 punctuation_chars=False):
+        from collections import deque  # deferred import for performance
+
+        if isinstance(instream, str):
+            instream = StringIO(instream)
+        if instream is not None:
+            self.instream = instream
+            self.infile = infile
+        else:
+            self.instream = sys.stdin
+            self.infile = None
+        self.posix = posix
+        if posix:
+            self.eof = None
+        else:
+            self.eof = ''
+        self.commenters = '#'
+        self.wordchars = ('abcdfeghijklmnopqrstuvwxyz'
+                          'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_')
+        if self.posix:
+            self.wordchars += ('ßàáâãäåæçèéêëìíîïðñòóôõöøùúûüýþÿ'
+                               'ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖØÙÚÛÜÝÞ')
+        self.whitespace = ' \t\r\n'
+        self.whitespace_split = False
+        self.quotes = '\'"'
+        self.escape = '\\'
+        self.escapedquotes = '"'
+        self.state = ' '
+        self.pushback = deque()
+        self.lineno = 1
+        self.debug = 0
+        self.token = ''
+        self.filestack = deque()
+        self.source = None
+        if not punctuation_chars:
+            punctuation_chars = ''
+        elif punctuation_chars is True:
+            punctuation_chars = '();<>|&'
+        self._punctuation_chars = punctuation_chars
+        if punctuation_chars:
+            # _pushback_chars is a push back queue used by lookahead logic
+            self._pushback_chars = deque()
+            # these chars added because allowed in file names, args, wildcards
+            self.wordchars += '~-./*?='
+            #remove any punctuation chars from wordchars
+            t = self.wordchars.maketrans(dict.fromkeys(punctuation_chars))
+            self.wordchars = self.wordchars.translate(t)
+
+    @property
+    def punctuation_chars(self):
+        return self._punctuation_chars
+
+    def push_token(self, tok):
+        "Push a token onto the stack popped by the get_token method"
+        if self.debug >= 1:
+            print("shlex: pushing token " + repr(tok))
+        self.pushback.appendleft(tok)
+
+    def push_source(self, newstream, newfile=None):
+        "Push an input source onto the lexer's input source stack."
+        if isinstance(newstream, str):
+            newstream = StringIO(newstream)
+        self.filestack.appendleft((self.infile, self.instream, self.lineno))
+        self.infile = newfile
+        self.instream = newstream
+        self.lineno = 1
+        if self.debug:
+            if newfile is not None:
+                print('shlex: pushing to file %s' % (self.infile,))
+            else:
+                print('shlex: pushing to stream %s' % (self.instream,))
+
+    def pop_source(self):
+        "Pop the input source stack."
+        self.instream.close()
+        (self.infile, self.instream, self.lineno) = self.filestack.popleft()
+        if self.debug:
+            print('shlex: popping to %s, line %d' \
+                  % (self.instream, self.lineno))
+        self.state = ' '
+
+    def get_token(self):
+        "Get a token from the input stream (or from stack if it's nonempty)"
+        if self.pushback:
+            tok = self.pushback.popleft()
+            if self.debug >= 1:
+                print("shlex: popping token " + repr(tok))
+            return tok
+        # No pushback.  Get a token.
+        raw = self.read_token()
+        # Handle inclusions
+        if self.source is not None:
+            while raw == self.source:
+                spec = self.sourcehook(self.read_token())
+                if spec:
+                    (newfile, newstream) = spec
+                    self.push_source(newstream, newfile)
+                raw = self.get_token()
+        # Maybe we got EOF instead?
+        while raw == self.eof:
+            if not self.filestack:
+                return self.eof
+            else:
+                self.pop_source()
+                raw = self.get_token()
+        # Neither inclusion nor EOF
+        if self.debug >= 1:
+            if raw != self.eof:
+                print("shlex: token=" + repr(raw))
+            else:
+                print("shlex: token=EOF")
+        return raw
+
+    def read_token(self):
+        quoted = False
+        escapedstate = ' '
+        while True:
+            if self.punctuation_chars and self._pushback_chars:
+                nextchar = self._pushback_chars.pop()
+            else:
+                nextchar = self.instream.read(1)
+            if nextchar == '\n':
+                self.lineno += 1
+            if self.debug >= 3:
+                print("shlex: in state %r I see character: %r" % (self.state,
+                                                                  nextchar))
+            if self.state is None:
+                self.token = ''        # past end of file
+                break
+            elif self.state == ' ':
+                if not nextchar:
+                    self.state = None  # end of file
+                    break
+                elif nextchar in self.whitespace:
+                    if self.debug >= 2:
+                        print("shlex: I see whitespace in whitespace state")
+                    if self.token or (self.posix and quoted):
+                        break   # emit current token
+                    else:
+                        continue
+                elif nextchar in self.commenters:
+                    self.instream.readline()
+                    self.lineno += 1
+                elif self.posix and nextchar in self.escape:
+                    escapedstate = 'a'
+                    self.state = nextchar
+                elif nextchar in self.wordchars:
+                    self.token = nextchar
+                    self.state = 'a'
+                elif nextchar in self.punctuation_chars:
+                    self.token = nextchar
+                    self.state = 'c'
+                elif nextchar in self.quotes:
+                    if not self.posix:
+                        self.token = nextchar
+                    self.state = nextchar
+                elif self.whitespace_split:
+                    self.token = nextchar
+                    self.state = 'a'
+                else:
+                    self.token = nextchar
+                    if self.token or (self.posix and quoted):
+                        break   # emit current token
+                    else:
+                        continue
+            elif self.state in self.quotes:
+                quoted = True
+                if not nextchar:      # end of file
+                    if self.debug >= 2:
+                        print("shlex: I see EOF in quotes state")
+                    # XXX what error should be raised here?
+                    raise ValueError("No closing quotation")
+                if nextchar == self.state:
+                    if not self.posix:
+                        self.token += nextchar
+                        self.state = ' '
+                        break
+                    else:
+                        self.state = 'a'
+                elif (self.posix and nextchar in self.escape and self.state
+                      in self.escapedquotes):
+                    escapedstate = self.state
+                    self.state = nextchar
+                else:
+                    self.token += nextchar
+            elif self.state in self.escape:
+                if not nextchar:      # end of file
+                    if self.debug >= 2:
+                        print("shlex: I see EOF in escape state")
+                    # XXX what error should be raised here?
+                    raise ValueError("No escaped character")
+                # In posix shells, only the quote itself or the escape
+                # character may be escaped within quotes.
+                if (escapedstate in self.quotes and
+                        nextchar != self.state and nextchar != escapedstate):
+                    self.token += self.state
+                self.token += nextchar
+                self.state = escapedstate
+            elif self.state in ('a', 'c'):
+                if not nextchar:
+                    self.state = None   # end of file
+                    break
+                elif nextchar in self.whitespace:
+                    if self.debug >= 2:
+                        print("shlex: I see whitespace in word state")
+                    self.state = ' '
+                    if self.token or (self.posix and quoted):
+                        break   # emit current token
+                    else:
+                        continue
+                elif nextchar in self.commenters:
+                    self.instream.readline()
+                    self.lineno += 1
+                    if self.posix:
+                        self.state = ' '
+                        if self.token or (self.posix and quoted):
+                            break   # emit current token
+                        else:
+                            continue
+                elif self.state == 'c':
+                    if nextchar in self.punctuation_chars:
+                        self.token += nextchar
+                    else:
+                        if nextchar not in self.whitespace:
+                            self._pushback_chars.append(nextchar)
+                        self.state = ' '
+                        break
+                elif self.posix and nextchar in self.quotes:
+                    self.state = nextchar
+                elif self.posix and nextchar in self.escape:
+                    escapedstate = 'a'
+                    self.state = nextchar
+                elif (nextchar in self.wordchars or nextchar in self.quotes
+                      or (self.whitespace_split and
+                          nextchar not in self.punctuation_chars)):
+                    self.token += nextchar
+                else:
+                    if self.punctuation_chars:
+                        self._pushback_chars.append(nextchar)
+                    else:
+                        self.pushback.appendleft(nextchar)
+                    if self.debug >= 2:
+                        print("shlex: I see punctuation in word state")
+                    self.state = ' '
+                    if self.token or (self.posix and quoted):
+                        break   # emit current token
+                    else:
+                        continue
+        result = self.token
+        self.token = ''
+        if self.posix and not quoted and result == '':
+            result = None
+        if self.debug > 1:
+            if result:
+                print("shlex: raw token=" + repr(result))
+            else:
+                print("shlex: raw token=EOF")
+        return result
+
+    def sourcehook(self, newfile):
+        "Hook called on a filename to be sourced."
+        import os.path
+        if newfile[0] == '"':
+            newfile = newfile[1:-1]
+        # This implements cpp-like semantics for relative-path inclusion.
+        if isinstance(self.infile, str) and not os.path.isabs(newfile):
+            newfile = os.path.join(os.path.dirname(self.infile), newfile)
+        return (newfile, open(newfile, "r"))
+
+    def error_leader(self, infile=None, lineno=None):
+        "Emit a C-compiler-like, Emacs-friendly error-message leader."
+        if infile is None:
+            infile = self.infile
+        if lineno is None:
+            lineno = self.lineno
+        return "\"%s\", line %d: " % (infile, lineno)
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        token = self.get_token()
+        if token == self.eof:
+            raise StopIteration
+        return token
+
+def split(s, comments=False, posix=True):
+    """Split the string *s* using shell-like syntax."""
+    if s is None:
+        raise ValueError("s argument must not be None")
+    lex = shlex(s, posix=posix)
+    lex.whitespace_split = True
+    if not comments:
+        lex.commenters = ''
+    return list(lex)
+
+
+def join(split_command):
+    """Return a shell-escaped string from *split_command*."""
+    return ' '.join(quote(arg) for arg in split_command)
+
+
+def quote(s):
+    """Return a shell-escaped version of the string *s*."""
+    if not s:
+        return "''"
+
+    if not isinstance(s, str):
+        raise TypeError(f"expected string object, got {type(s).__name__!r}")
+
+    # Use bytes.translate() for performance
+    safe_chars = (b'%+,-./0123456789:=@'
+                  b'ABCDEFGHIJKLMNOPQRSTUVWXYZ_'
+                  b'abcdefghijklmnopqrstuvwxyz')
+    # No quoting is needed if `s` is an ASCII string consisting only of `safe_chars`
+    if s.isascii() and not s.encode().translate(None, delete=safe_chars):
+        return s
+
+    # use single quotes, and put single quotes into double quotes
+    # the string $'b is then quoted as '$'"'"'b'
+    return "'" + s.replace("'", "'\"'\"'") + "'"
+
+
+def _print_tokens(lexer):
+    while tt := lexer.get_token():
+        print("Token: " + repr(tt))
+
+if __name__ == '__main__':
+    if len(sys.argv) == 1:
+        _print_tokens(shlex())
+    else:
+        fn = sys.argv[1]
+        with open(fn) as f:
+            _print_tokens(shlex(f, fn))

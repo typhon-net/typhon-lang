@@ -1,0 +1,10 @@
+import os
+import sys
+import sysconfig
+
+paths = sysconfig.get_paths()
+print("stdlib" in sysconfig.get_path_names())
+print(sysconfig.get_path("stdlib") == paths["stdlib"], os.path.isabs(paths["stdlib"]))
+print(sysconfig.get_path("platstdlib") == paths["platstdlib"], os.path.isabs(paths["platstdlib"]))
+print(sysconfig.get_config_var("py_version_short") == f"{sys.version_info.major}.{sys.version_info.minor}")
+print(sysconfig.is_python_build())

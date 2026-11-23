@@ -25,6 +25,12 @@ namespace Typhon.Runtime
         PyTuple<object?> args { get; }
     }
 
+    [AttributeUsage(AttributeTargets.Class, Inherited = false)]
+    internal sealed class PyExceptionBasesAttribute(params Type[] bases) : Attribute
+    {
+        internal readonly Type[] Bases = bases;
+    }
+
     /// <summary>Python's rules for an exception's args: str(e) and repr(e).</summary>
     internal static class PyExc
     {
@@ -90,6 +96,29 @@ namespace Typhon.Runtime
 
         /// <summary>The Python name of a class: KeyError for .NET's KeyNotFoundException, int for long, a Typhon class's own name.</summary>
         public static string TypeName(Type t) => Builtins.PyTypeName(t);
+
+        internal static Type[]? DeclaredBases(Type type) =>
+            (Attribute.GetCustomAttribute(type, typeof(PyExceptionBasesAttribute), inherit: false) as PyExceptionBasesAttribute)?.Bases;
+
+        internal static bool HasDeclaredBase(Type type, Type candidate)
+        {
+            for (Type? current = type; current != null; current = current.BaseType)
+                if (DeclaredBases(current) is Type[] bases &&
+                    bases.Any(parent => Builtins.DirectSubclass(parent, candidate))) return true;
+            return false;
+        }
+
+        internal static Type? BuiltinParent(Type type)
+        {
+            if (type == typeof(ArgumentOutOfRangeException) || type == typeof(IndexOutOfRangeException) ||
+                type == typeof(KeyNotFoundException)) return typeof(LookupError);
+            if (type == typeof(DivideByZeroException) || type == typeof(OverflowException)) return typeof(ArithmeticException);
+            if (type == typeof(NotImplementedException)) return typeof(InvalidOperationException);
+            if (type == typeof(System.IO.FileNotFoundException) || type == typeof(TimeoutException) ||
+                type == typeof(UnauthorizedAccessException)) return typeof(System.IO.IOException);
+            if (type == typeof(Exception)) return typeof(object);
+            return DotNetNames.ContainsKey(type) || type == typeof(LookupError) ? typeof(Exception) : null;
+        }
 
         internal static string? BuiltinTypeName(Type type) => DotNetNames.GetValueOrDefault(type);
 

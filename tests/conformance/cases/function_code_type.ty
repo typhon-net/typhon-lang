@@ -1,0 +1,10 @@
+import types
+
+def example():
+    pass
+
+def iscode(value):
+    return isinstance(value, types.CodeType)
+
+for value in (example.__code__, compile("1", "<probe>", "eval"), None):
+    print(type(value) is types.CodeType, iscode(value))

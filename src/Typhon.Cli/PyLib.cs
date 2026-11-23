@@ -17,7 +17,7 @@ internal static class PyLib
     static readonly Regex Directive = new(@"^#:pylib(?:[ \t]+(?<dir>[^\r\n]*?))?[ \t]*\r?$", RegexOptions.Multiline);
 
     /// <summary>The typing-only modules (Typhon's compiler handles their names itself): never compiled from Lib.</summary>
-    static readonly HashSet<string> TypingOnly = new() { "typing", "abc", "enum", "__future__", "collections.abc", "typing_extensions" };
+    static readonly HashSet<string> TypingOnly = new() { "typing", "enum", "__future__", "collections.abc", "typing_extensions" };
 
     /// <summary>Does the source ask for #:pylib; the folder it gives (or null), relative to the source's folder.</summary>
     public static bool Requested(string source, string sourceDir, out string? dir)

@@ -18,6 +18,15 @@ namespace Typhon.Stdlib
         public static readonly Type Union = typeof(types.UnionType);
         public static object? _idfunc(object? value) => value;
 
+        internal class Any
+        {
+            public Any()
+            {
+                if (GetType() == typeof(Any))
+                    throw new InvalidCastException("Any cannot be instantiated");
+            }
+        }
+
         internal sealed class NoDefaultType : IPyRepr
         {
             internal NoDefaultType() { }

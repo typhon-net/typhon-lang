@@ -1,0 +1,20 @@
+from typing import Any as Unknown
+
+def later():
+    from typing import Any
+    return Any
+
+def identity(value: Unknown) -> Unknown:
+    return value
+
+marker = later()
+print(repr(marker), marker.__module__, marker.__name__, marker is Unknown)
+print(identity(3), identity("text"))
+try:
+    isinstance(3, Unknown)
+except TypeError:
+    print("instance check rejected")
+try:
+    Unknown()
+except TypeError:
+    print("cannot instantiate")

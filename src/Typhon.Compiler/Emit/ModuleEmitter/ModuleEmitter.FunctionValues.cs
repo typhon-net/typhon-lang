@@ -25,12 +25,8 @@ namespace Typhon.Compiler.Emit
 
         HashSet<string> FunctionValueKeys => _p.FunctionValueKeys ??= ComputeFunctionValueKeys(_p);
 
-        internal static bool IsFunctionValueCandidate(FunctionDef f)
-        {
-            if (f.TypeParams.Count != 0 || f.Decorators.Count != 0) return false;
-            int rest = f.Params.FindIndex(p => p.Kind != ParamKind.Normal);
-            return rest < 0 || f.Params.Skip(rest).All(p => p.Kind != ParamKind.Normal);
-        }
+        internal static bool IsFunctionValueCandidate(FunctionDef f) =>
+            f.TypeParams.Count == 0 && f.Decorators.Count == 0;
 
         static HashSet<string> ComputeFunctionValueKeys(ProjectContext p)
         {
@@ -314,9 +310,33 @@ namespace Typhon.Compiler.Emit
             _w.Line($"public static readonly {cls} Instance = new {cls}();");
             string doc = f.Body.Count > 0 && f.Body[0] is ExprStmt ds && ds.Value is ConstExpr dc && dc.Kind == ConstKind.Str ? CsString(dc.Str) : null;
             string module = _m.IsGdScript ? "" : $"__module__ = {CsString(PythonModuleName)}; _signature = {SignatureProviderName(f)}; ";
-            string source = !_m.IsGdScript && _m.RuntimeCodeMode == null && f.EndOffset > f.StartOffset && f.EndOffset <= _m.SourceText?.Length
-                ? $"_code = new global::Typhon.Runtime.RuntimeFunctionCode(__name__, {CsString(_path)}, {f.Line}, " +
-                  $"{CsString(_m.SourceText.Substring(f.StartOffset, f.EndOffset - f.StartOffset))}, {(_big ? "true" : "false")}); " : "";
+            string source = "";
+            if (!_m.IsGdScript)
+            {
+                var positional = ps.Where(parameter => parameter.Kind == ParamKind.Normal && !parameter.KeywordOnly).ToList();
+                var keywords = ps.Where(parameter => parameter.Kind == ParamKind.Normal && parameter.KeywordOnly).ToList();
+                string arity = $"({positional.Count}, {positional.Count(parameter => parameter.PositionalOnly)}, {keywords.Count})";
+                var parameters = positional.Concat(keywords).Concat(ps.Where(parameter => parameter.Kind != ParamKind.Normal))
+                    .Select(parameter => parameter.Name);
+                string names = $"new string[] {{ {string.Join(", ", parameters.Concat(locals.AllLocals).Distinct().Select(CsString))} }}";
+                long flags = 0x3L; // OPTIMIZED and NEWLOCALS
+                if (ps.Any(parameter => parameter.Kind == ParamKind.VarArgs)) flags |= 0x4;
+                if (ps.Any(parameter => parameter.Kind == ParamKind.KwArgs)) flags |= 0x8;
+                if (f.IsAsync) flags |= locals.HasYield ? 0x200 : 0x80;
+                else if (locals.HasYield) flags |= 0x20;
+                if (doc != null) flags |= 0x4000000;
+                if (HasFutureAnnotations) flags |= FutureAnnotationsFlag;
+
+                if (_m.RuntimeCodeMode == null && f.EndOffset > f.StartOffset && f.EndOffset <= _m.SourceText?.Length)
+                {
+                    string text = CsString(_m.SourceText.Substring(f.StartOffset, f.EndOffset - f.StartOffset));
+                    source = $"_code = new global::Typhon.Runtime.RuntimeFunctionCode(__name__, {CsString(_path)}, {f.Line}, " +
+                        $"{text}, {(_big ? "true" : "false")}, {flags}, {arity}, {names}); ";
+                }
+                else
+                    source = $"_code = new global::Typhon.Stdlib.types.CodeType(__name__, {CsString(_path)}, {f.Line}, {flags}, " +
+                        $"arity: {arity}, variables: new {PyTuplePrefix}string>({names})); ";
+            }
             _w.Line($"{cls}() : base({CsString(f.PyName ?? f.Name)}) {{ {module}{source}{(doc != null ? $"__doc__ = {doc}; " : "")}}}");
             if (ps.Any(p => p.Kind != ParamKind.Normal))
             {

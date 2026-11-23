@@ -60,11 +60,15 @@ namespace Typhon.Stdlib
             Caches.Add(cls, new Cache());
         }
 
+        static IEnumerable<object?> AbstractMethods(Type cls) =>
+            PyMetaclasses.TryOwnValue(cls, "__abstractmethods__", out var value) && value is IEnumerable methods
+                ? methods.Cast<object?>() : Enumerable.Empty<object?>();
+
+        internal static bool HasAbstractMethods(Type cls) => AbstractMethods(cls).Any();
+
         internal static void CheckAbstract(Type cls)
         {
-            if (!PyMetaclasses.TryOwnValue(cls, "__abstractmethods__", out var value) || value is not IEnumerable methods)
-                return;
-            string[] names = methods.Cast<object?>().Select(Builtins.str).OrderBy(name => name, StringComparer.Ordinal).ToArray();
+            string[] names = AbstractMethods(cls).Select(Builtins.str).OrderBy(name => name, StringComparer.Ordinal).ToArray();
             if (names.Length == 0) return;
             string members = string.Join(", ", names.Select(name => "'" + name + "'"));
             throw new InvalidCastException($"Can't instantiate abstract class {Builtins.PyTypeName(cls)} without an implementation for abstract method{(names.Length == 1 ? "" : "s")} {members}");

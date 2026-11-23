@@ -1,0 +1,14 @@
+table = globals()
+for label, value in [("YES", 7), ("NO", 2)]:
+    table["FLAG_" + label] = value
+
+def read():
+    return FLAG_YES - FLAG_NO
+
+print(read())
+table["FLAG_" + "YES"] = None
+print(FLAG_YES is None, len([FLAG_YES, FLAG_NO]))
+try:
+    print(FLAG_UNKNOWN)
+except NameError as error:
+    print(error.name)

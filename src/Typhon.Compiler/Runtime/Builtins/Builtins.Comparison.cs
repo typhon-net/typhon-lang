@@ -37,11 +37,18 @@ namespace Typhon.Runtime
             return AsInt(value, out integer) && integer is >= -5 and <= 256;
         }
 
+        static object? IntegerEnumValue(object? value) => value switch
+        {
+            PyIntegerEnum member => (object)member.value,
+            Enum member when Enum.GetUnderlyingType(member.GetType()) == typeof(long) => Convert.ToInt64(member, Inv),
+            _ => value,
+        };
+
         /// <summary>Python's ==: numbers by value (1 == 1.0 == True), str by characters, containers element by element.</summary>
         public static bool eq(object? a, object? b)
         {
-            if (a is PyIntegerEnum leftIntegerEnum) a = leftIntegerEnum.value;
-            if (b is PyIntegerEnum rightIntegerEnum) b = rightIntegerEnum.value;
+            a = IntegerEnumValue(a);
+            b = IntegerEnumValue(b);
             if (ReferenceEquals(a, b)) return true;
             if (b is PyApprox) return b.Equals(a); // (Python tries the right operand's __eq__ when the left one has none for it)
             if (a is null || b is null) return false;

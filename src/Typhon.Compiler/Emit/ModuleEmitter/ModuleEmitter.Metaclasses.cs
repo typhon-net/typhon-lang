@@ -104,7 +104,9 @@ namespace Typhon.Compiler.Emit
                 return;
             }
             string metaclass = definition.Metaclass == null ? "null" : $"(global::System.Type){Paren(EmitValue(definition.Metaclass))}";
-            string bases = string.Join(", ", definition.Bases.Select(b => $"(global::System.Type){Paren(EmitValue(b))}"));
+            string BaseValue(Expr basis) => basis is SubscriptExpr && TryTypeExpr(basis, out var constructedType)
+                ? $"typeof({constructedType})" : $"(global::System.Type){Paren(EmitValue(basis))}";
+            string bases = string.Join(", ", definition.Bases.Select(BaseValue));
             var names = definition.Body.SelectMany(statement => statement switch
             {
                 FunctionDef method => new[] { method.Name },

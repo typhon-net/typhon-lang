@@ -33,6 +33,7 @@ namespace Typhon.Stdlib
     using System.Collections.Specialized;
     using System.Linq;
     using System.Reflection;
+    using System.Runtime.InteropServices;
     using Typhon.Runtime;
 
     internal static partial class inspect
@@ -133,10 +134,29 @@ namespace Typhon.Stdlib
             _ => Builtins.repr(annotation),
         };
 
-        public static Signature signature(object? obj, bool follow_wrapped = true)
+        public static Signature signature(object? obj, [Optional, DefaultParameterValue(true)] bool follow_wrapped,
+            [PyKeywordOnly, Optional, DefaultParameterValue(1L)] object? annotation_format)
+        {
+            if (Builtins.eq(annotation_format, 2L))
+                throw new ArgumentException("The VALUE_WITH_FAKE_GLOBALS format is for internal use only");
+            bool strings = Builtins.eq(annotation_format, 4L);
+            if (!strings && !Builtins.eq(annotation_format, 1L) && !Builtins.eq(annotation_format, 3L))
+                throw new ArgumentException($"Unsupported format {Builtins.repr(annotation_format)}");
+
+            var result = ReadSignature(obj, follow_wrapped);
+            if (!strings) return result;
+
+            static object? AnnotationString(object? value) =>
+                ReferenceEquals(value, Signature.empty) || value is string ? value : FormatAnnotation(value);
+            return new Signature(result.Arguments.Select(parameter => new Parameter(parameter.name, parameter.kind,
+                (object?)parameter.@default, AnnotationString((object?)parameter.annotation))).ToArray(),
+                AnnotationString((object?)result.return_annotation));
+        }
+
+        static Signature ReadSignature(object? obj, bool follow_wrapped)
         {
             if (!Builtins.callable(obj)) throw new InvalidCastException($"{Builtins.repr(obj)} is not a callable object");
-            if (obj is types.MethodType method) return signature(method.__func__, follow_wrapped).BindReceiver();
+            if (obj is types.MethodType method) return ReadSignature(method.__func__, follow_wrapped).BindReceiver();
             if (follow_wrapped)
                 obj = unwrap(obj, value => HasExplicitSignature(value));
             object? custom = Builtins.getattr(obj, "__signature__", null);

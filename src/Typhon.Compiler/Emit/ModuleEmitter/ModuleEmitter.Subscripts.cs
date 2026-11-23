@@ -140,17 +140,19 @@ namespace Typhon.Compiler.Emit
                 return $"{target}[{EmitExpr(new TupleExpr { Elts = tk.Elts, Parenthesized = true, Line = tk.Line, Col = tk.Col })}]";
             if (s.Index is TupleExpr t && !t.Parenthesized)
                 return $"{target}[{string.Join(", ", t.Elts.Select(x => x is SliceExpr xs ? EmitRange(xs, targetType) : EmitPosition(x, targetType)))}]";
+            // A ref-returning call must bind statically when it becomes an assignment target.
+            string RefReceiver() => store ? $"(({targetType}){Paren(target)})" : target;
             // xs[i] with a late-bound i: a Python int converted, the position checked like any other (an int indexer does not
             // take a boxed long at run time)
             if (targetType != null && (targetType.StartsWith("List<") || targetType.EndsWith("[]")) && InferType(s.Index) == "dynamic")
-                return $"{Rt("__at")}({target}, (long){Paren(ModuleOrClassValue(s.Index) ?? EmitExpr(s.Index))})";
+                return $"{Rt("__at")}({RefReceiver()}, (long){Paren(ModuleOrClassValue(s.Index) ?? EmitExpr(s.Index))})";
             // a list or array position that may be negative counts from the end (Python's xs[-k], xs[i - 1] at i == 0)
             if (!IsIntLiteral(s.Index) && !IsNonNegative(s.Index) && targetType != null && !(s.Index is TupleExpr) && IsIntegral(InferType(s.Index)) &&
                 (targetType.StartsWith("List<") || targetType.EndsWith("[]") || targetType.StartsWith("IList<") || targetType.StartsWith("IReadOnlyList<") || targetType.StartsWith(PyTuplePrefix)))
             {
                 string count = targetType.EndsWith("[]") ? "Length" : "Count";
                 bool simple = s.Target is NameExpr || s.Target is AttributeExpr sa && (sa.Target is NameExpr || sa.Target is AttributeExpr sa2 && sa2.Target is NameExpr);
-                if (targetType.StartsWith("List<") || targetType.EndsWith("[]")) return $"{Rt("__at")}({target}, {EmitIndex(s.Index)})";
+                if (targetType.StartsWith("List<") || targetType.EndsWith("[]")) return $"{Rt("__at")}({RefReceiver()}, {EmitIndex(s.Index)})";
                 if (simple) return $"{target}[{Rt("__pos")}({EmitIndex(s.Index)}, {target}.{count})]";
             }
             return $"{target}[{EmitPosition(s.Index, targetType)}]";

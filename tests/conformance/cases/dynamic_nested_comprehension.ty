@@ -1,0 +1,10 @@
+from typing import Any
+
+def counts(rows: Any):
+    return [(name, number + count) for (name, number), count in rows if number > 0]
+
+def repeatedly_unpacked(rows: Any):
+    return [name for (name, name), count in rows if count > 1]
+
+print(counts([(("one", 1), 4), (("zero", 0), 8)]))
+print(repeatedly_unpacked([iter((iter(("unused", "last")), 3))]))

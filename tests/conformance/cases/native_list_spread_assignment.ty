@@ -1,0 +1,13 @@
+import sys
+from typing import Any
+
+def arguments(remainder: Any):
+    sys.argv = ["fixture.py", *remainder]
+    return sys.argv
+
+saved = sys.argv
+try:
+    print(arguments(["one", "two"]))
+    print(arguments(("three",)))
+finally:
+    sys.argv = saved

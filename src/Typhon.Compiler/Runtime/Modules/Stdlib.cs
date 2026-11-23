@@ -562,13 +562,18 @@ namespace Typhon.Stdlib
             while (true) foreach (var x in saved) yield return x;
         }
         public static IEnumerable<string> cycle(string s) => cycle(Chars(s));
-        public static IEnumerable<object?> repeat(object? obj, long? times = null) => repeat<object?>(obj, times);
+        public static PyIterator<object?> repeat(object? @object) => repeat<object?>(@object);
+        public static PyIterator<object?> repeat(object? @object, object? times) => repeat<object?>(@object, times);
+        public static PyIterator<T> repeat<T>(T @object) => new(RepeatItems(@object, null).GetEnumerator());
+        public static PyIterator<T> repeat<T>(T @object, object? times) =>
+            new(RepeatItems(@object, checked((long)Builtins.RangeIndex(times))).GetEnumerator());
 
-        public static IEnumerable<T> repeat<T>(T obj, long? times = null)
+        static IEnumerable<T> RepeatItems<T>(T value, long? count)
         {
-            if (times == null) while (true) yield return obj;
-            for (long i = 0; i < times; i++) yield return obj;
+            if (count == null) while (true) yield return value;
+            for (long index = 0; index < count; index++) yield return value;
         }
+
         public static IEnumerable<T> islice<T>(IEnumerable<T> iterable, long? stop) => islice(iterable, 0, stop, 1);
         public static IEnumerable<dynamic> islice(object? iterable, object? stop) =>
             islice(Builtins.__iter_dyn(iterable), IsliceIndex(stop));
@@ -772,6 +777,47 @@ namespace Typhon.Stdlib
     /// <summary>operator: the operators as functions (for reduce, map, sorted keys).</summary>
     internal static class @operator
     {
+        internal sealed class attrgetter : System.Dynamic.DynamicObject, IPyRepr, IPyKeywordCallable
+        {
+            readonly string[] _names;
+            readonly string[][] _paths;
+
+            public attrgetter() => throw new InvalidCastException("attrgetter expected 1 argument, got 0");
+
+            public attrgetter([PyPositionalOnly] object? name, params object?[] more)
+            {
+                _names = new[] { name }.Concat(more ?? [null]).Select(attribute => attribute as string ??
+                    throw new InvalidCastException("attribute name must be a string")).ToArray();
+                _paths = _names.Select(attribute => attribute.Split('.')).ToArray();
+            }
+
+            static object? Read(object? target, string[] path)
+            {
+                foreach (string part in path) target = Builtins.getattr(target, part);
+                return target;
+            }
+
+            public object? __call_kw__(object?[] args, IDictionary<string, object?>? kwargs)
+            {
+                if (args.Length != 1 || kwargs?.Count > 0)
+                    throw PyClosure.ArgCountError("attrgetter", 1, 1, args.Length);
+                return _paths.Length == 1 ? Read(args[0], _paths[0]) :
+                    new PyTuple<object?>(_paths.Select(path => Read(args[0], path)));
+            }
+
+            public override bool TryInvoke(System.Dynamic.InvokeBinder binder, object?[]? args, out object? result)
+            {
+                if (binder.CallInfo.ArgumentNames.Count != 0)
+                    throw new InvalidCastException("attrgetter() takes no keyword arguments");
+                result = __call_kw__(args ?? [], null);
+                return true;
+            }
+
+            public (Type, PyTuple<string>) __reduce__() => (typeof(attrgetter), new PyTuple<string>(_names));
+            public string __repr__() => "operator.attrgetter(" + string.Join(", ", _names.Select(name => Builtins.repr(name))) + ")";
+            public override string ToString() => __repr__();
+        }
+
         public static dynamic index(object? value) => Builtins.__index_value(value);
 
         public static long add(long a, long b) => checked(a + b);
@@ -837,6 +883,24 @@ namespace Typhon.Stdlib
     {
         public static Typhon.Runtime.Fraction Fraction(long numerator = 0, long denominator = 1) => new Typhon.Runtime.Fraction(numerator, denominator);
         public static Typhon.Runtime.Fraction Fraction(Typhon.Runtime.Fraction f) => f;
+
+        public static Typhon.Runtime.Fraction Fraction(object? numerator)
+        {
+            if (numerator is bool boolean) return Fraction(boolean ? 1 : 0);
+            object? asRatio = Builtins.getattr(numerator, "as_integer_ratio", null);
+            if (asRatio == null)
+                throw new InvalidCastException("argument should be a string or a Rational instance or have the as_integer_ratio() method");
+            object? ratio = Builtins.__invoke(asRatio, []);
+            var pair = Builtins.__unpack_items(Builtins.__iter_dyn(ratio), 2);
+            return new Typhon.Runtime.Fraction(ToInteger(pair[0]), ToInteger(pair[1]));
+        }
+
+        static BigInteger ToInteger(object? value)
+        {
+            object index = Builtins.__index_value(value);
+            return index is BigInteger wide ? wide : (long)index;
+        }
+
         public static Typhon.Runtime.Fraction Fraction(BigInteger numerator, BigInteger denominator) => new Typhon.Runtime.Fraction(numerator, denominator);
         public static Typhon.Runtime.Fraction Fraction(BigInteger numerator) => new Typhon.Runtime.Fraction(numerator, 1);
         public static Typhon.Runtime.Fraction Fraction(double value)

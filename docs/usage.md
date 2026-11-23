@@ -113,8 +113,8 @@ sources. With the directive enabled, import `ast`, `opcode` or `dis` in the entr
 source under the same Python import name. Imports from dependencies can use Typhon's managed implementations.
 The original `doctest` runs examples through the Typhon CLI.
 Typhon bundles selected CPython 3.15.2 sources for programs that use them without an external Lib directory.
-These include `_ast_unparse`, `cmd`, `netrc`, `selectors`, and `token`. Each file header contains the upstream
-attribution and license.
+These include `_ast_unparse`, `abc`, `annotationlib`, `cmd`, `decimal`, `_pydecimal`, `locale`, `netrc`,
+`optparse`, `pstats`, `runpy`, `selectors`, and `token`. Each file header contains the upstream attribution and license.
 Which modules compile is tracked by compiling
 each of CPython's modules alone (`docs/conformance.md`); a module that does not compile reports its errors with
 `Lib/<name>.py` lines, and tracebacks show its frames. The `Lib` folder is `#:pylib DIR`, else the `TYPHON_PYLIB`

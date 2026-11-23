@@ -61,6 +61,7 @@ namespace Typhon.Compiler
         internal bool MayReplaceModule;
         /// <summary>Module-level type aliases: EdgeT = tuple[int, int], Matrix = list[list[float]], X: TypeAlias = ...</summary>
         public readonly Dictionary<string, Expr> TypeAliases = new Dictionary<string, Expr>();
+        public bool UsedByDynamicImport;
         internal readonly HashSet<string> RuntimeTypeVariables = new HashSet<string>();
         public readonly List<TyDiagnostic> ParseDiagnostics = new List<TyDiagnostic>();
         /// <summary>The module asks for big-int mode with a "# typhon: int=bigint" comment (it applies to the whole program).</summary>
@@ -216,6 +217,67 @@ namespace Typhon.Compiler
                 if (node is ImportStmt || node is ImportFromStmt) imports.Add((Stmt)node);
             });
             return imports;
+        }
+
+        /// <summary>Absolute names passed to __import__ as a literal or read from a fixed sequence.</summary>
+        public static IReadOnlyCollection<string> LiteralImportNames(ModuleInfo module)
+        {
+            var names = new HashSet<string>(StringComparer.Ordinal);
+            if (module.IsGdScript || module.SourceText?.Contains("__import__") != true ||
+                module.Globals.Contains("__import__") || module.Functions.Contains("__import__") ||
+                module.Classes.ContainsKey("__import__")) return names;
+
+            static bool IsModuleName(string name) => name.Split('.').All(part => part.Length != 0 &&
+                (char.IsLetter(part[0]) || part[0] == '_') &&
+                part.All(character => char.IsLetterOrDigit(character) || character == '_'));
+
+            static Expr ImportArgument(Node node)
+            {
+                if (node is not CallExpr { Func: NameExpr { Id: "__import__" } } call ||
+                    call.Args.Count == 0 || call.Args[0] is not Arg { Name: null or "name", Star: false, DoubleStar: false } name)
+                    return null;
+                if (call.Args.Skip(1).Any(argument => argument.Name == "level" &&
+                    argument.Value is not ConstExpr { Kind: ConstKind.Int, Raw: "0" }) || call.Args.Count > 4)
+                    return null;
+                return name.Value;
+            }
+
+            static IEnumerable<string> SequenceNames(Expr sequence)
+            {
+                var elements = sequence switch
+                {
+                    ListExpr list => list.Elts,
+                    TupleExpr tuple => tuple.Elts,
+                    SetExpr set => set.Elts,
+                    _ => null,
+                };
+                return elements != null && elements.All(element => element is ConstExpr { Kind: ConstKind.Str })
+                    ? elements.Cast<ConstExpr>().Select(name => name.Str).Where(IsModuleName)
+                    : Enumerable.Empty<string>();
+            }
+
+            var assigned = module.Ast.Body.OfType<AssignStmt>()
+                .Where(statement => statement.Targets.Count == 1 && statement.Targets[0] is NameExpr)
+                .GroupBy(statement => ((NameExpr)statement.Targets[0]).Id, StringComparer.Ordinal)
+                .Where(group => group.Count() == 1)
+                .ToDictionary(group => group.Key, group => group.Single().Value, StringComparer.Ordinal);
+
+            AstWalker.VisitAll(module.Ast.Body, node =>
+            {
+                if (ImportArgument(node) is ConstExpr { Kind: ConstKind.Str } literal && IsModuleName(literal.Str))
+                    names.Add(literal.Str);
+
+                if (node is ForStmt { Target: NameExpr target } loop)
+                {
+                    Expr sequence = loop.Iter is NameExpr binding && assigned.TryGetValue(binding.Id, out var definition)
+                        ? definition : loop.Iter;
+                    var candidates = SequenceNames(sequence).ToArray();
+                    if (candidates.Length != 0 && AstWalker.ContainsOutsideNestedScopes(loop.Body,
+                        entry => ImportArgument(entry) is NameExpr item && item.Id == target.Id))
+                        names.UnionWith(candidates);
+                }
+            });
+            return names;
         }
 
         /// <summary>Is the file a GDScript module (by its extension)?</summary>

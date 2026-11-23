@@ -1,0 +1,25 @@
+from operator import attrgetter
+
+class Item:
+    def __init__(self, name, child=None):
+        self.name = name
+        self.child = child
+
+item = Item("root", Item("leaf"))
+getter = attrgetter("name", "child.name")
+print(type(getter).__name__, getter(item), repr(getter))
+print(attrgetter("child.name")(item))
+print(sorted([Item("z"), Item("a")], key=attrgetter("name"))[0].name)
+for argument in [42, None]:
+    try:
+        attrgetter(argument)
+    except TypeError as error:
+        print(str(error))
+try:
+    attrgetter("name", None)
+except TypeError as error:
+    print(str(error))
+try:
+    attrgetter()
+except TypeError as error:
+    print(str(error))

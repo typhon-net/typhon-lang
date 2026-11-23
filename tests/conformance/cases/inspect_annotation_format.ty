@@ -1,0 +1,16 @@
+from annotationlib import Format
+from inspect import signature
+
+def function(x: int, y: "int" = 3) -> list[int]:
+    return [x, y]
+
+for mode in (Format.VALUE, Format.FORWARDREF, Format.STRING):
+    info = signature(function, annotation_format=mode)
+    print(info)
+    print(repr(info.parameters["x"].annotation))
+
+for mode in (Format.VALUE_WITH_FAKE_GLOBALS, None, 8):
+    try:
+        signature(function, annotation_format=mode)
+    except ValueError as error:
+        print(str(error))

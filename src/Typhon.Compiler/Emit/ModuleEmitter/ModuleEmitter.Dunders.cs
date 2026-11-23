@@ -21,8 +21,19 @@ namespace Typhon.Compiler.Emit
         ClassDef NamedTupleOf(string t)
         {
             if (t == null) return null;
-            if (_cls != null && t == _cls.CsSelfType && _cls.Def.NamedTupleFields != null) return _cls.Def;
-            return ClassKeyOfType(t, out _) is string key && ClassDefOfKey(key) is ClassDef c && c.NamedTupleFields != null ? c : null;
+            if (_cls != null && t == _cls.CsSelfType) return NamedTupleDeclaration(_cls.Def);
+            return ClassKeyOfType(t, out _) is string key ? NamedTupleDeclaration(ClassDefOfKey(key)) : null;
+        }
+
+        ClassDef NamedTupleDeclaration(ClassDef definition, int depth = 0)
+        {
+            if (definition == null || depth > 20) return null;
+            if (definition.NamedTupleFields != null) return definition;
+            foreach (var basis in definition.Bases)
+                if (ClassDeclarationResolver(definition).ResolveBase(basis, out var parent, out _) &&
+                    NamedTupleDeclaration(parent, depth + 1) is ClassDef declaration)
+                    return declaration;
+            return null;
         }
 
         bool IsNamedTupleField(ClassDef c, string name, int depth = 0)

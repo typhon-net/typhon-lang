@@ -1,0 +1,5 @@
+2 1 1
+('first', 'label', 'mode', 'rest', 'extra', 'result') 6
+15 True
+('default',) {'mode': 'basic'}
+7

@@ -1,0 +1,11 @@
+from datetime import date
+from typing import Callable
+
+def format_days(days: list[int]) -> list[str]:
+    formatters: list[Callable[[str], str]] = [date(2001, 1, day).strftime for day in days]
+    return [formatter("%d") for formatter in formatters]
+
+print(format_days([2, 7]))
+
+untyped = [date(2001, 1, day).strftime for day in (3, 8)]
+print([formatter("%d") for formatter in untyped])

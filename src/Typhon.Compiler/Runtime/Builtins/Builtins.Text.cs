@@ -93,7 +93,8 @@ namespace Typhon.Runtime
 
         internal static string DefaultClassRepr(Type type) => $"<class '{PythonQualifiedTypeName(type)}'>";
 
-        static string ClassRepr(Type type) => TryMetaclassText(type, "__repr__", out string text) ? text : DefaultClassRepr(type);
+        static string ClassRepr(Type type) => type == typeof(Typhon.Stdlib._typing.Any) ? "typing.Any" :
+            TryMetaclassText(type, "__repr__", out string text) ? text : DefaultClassRepr(type);
 
         static bool TryMetaclassText(Type type, string slot, out string result)
         {
@@ -777,17 +778,42 @@ namespace Typhon.Runtime
             IList list => IterateList(list),
             ITuple t => Enumerable.Range(0, t.Length).Select(i => t[i]!),
             IEnumerable e => e.Cast<object>(),
-            _ => throw new InvalidCastException($"'{o?.GetType().Name}' object is not iterable"),
+            _ => IteratePythonObject(o),
         };
+        static IEnumerable<dynamic> IteratePythonObject(object? value)
+        {
+            var iterator = LookupSourceSpecialMethod(value, "__iter__");
+            if (iterator.Owner != null) return IteratorItems(__invoke(iterator.Value, []));
+            var item = LookupSourceSpecialMethod(value, "__getitem__");
+            if (item.Owner != null) return IterateIndexed(item.Value);
+            throw new InvalidCastException($"'{PyTypeName(__type_of(value))}' object is not iterable");
+        }
+
         static IEnumerable<dynamic> DictionaryKeys(IDictionary dictionary)
         {
             var iteratorMethod = LookupSourceSpecialMethod(dictionary, "__iter__");
-            if (iteratorMethod.Owner == null) return dictionary.Keys.Cast<object>().Select(PyNoneDictKey.Read);
-            object? iterator = __invoke(iteratorMethod.Value, []);
+            return iteratorMethod.Owner == null ? dictionary.Keys.Cast<object>().Select(PyNoneDictKey.Read) :
+                IteratorItems(__invoke(iteratorMethod.Value, []));
+        }
+
+        static IEnumerable<dynamic> IteratorItems(object? iterator)
+        {
             if (iterator is IEnumerable values) return values.Cast<object>();
-            if (!TryGetAttr(iterator, "__next__", out var nextMethod))
-                throw new InvalidCastException($"iter() returned non-iterator of type '{PyTypeName(__type_of(iterator))}'");
-            return ReadIterator(nextMethod);
+            var next = LookupSourceSpecialMethod(iterator, "__next__");
+            if (next.Owner != null) return ReadIterator(next.Value);
+            throw new InvalidCastException($"iter() returned non-iterator of type '{PyTypeName(__type_of(iterator))}'");
+        }
+
+        static IEnumerable<dynamic> IterateIndexed(object? getItem)
+        {
+            for (long index = 0; ; index++)
+            {
+                object? value;
+                try { value = __invoke(getItem, [index]); }
+                catch (Exception error) when (error is ArgumentOutOfRangeException or IndexOutOfRangeException or StopIteration ||
+                    PyExc.HasDeclaredBase(error.GetType(), typeof(ArgumentOutOfRangeException))) { yield break; }
+                yield return value!;
+            }
         }
 
         static IEnumerable<dynamic> ReadIterator(object? nextMethod)

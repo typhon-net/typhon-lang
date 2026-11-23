@@ -14,12 +14,16 @@ namespace Typhon.Compiler.Emit
 
         static bool IsBase(Expr expression) => DottedName(expression) is "StrEnum" or "enum.StrEnum";
 
-        static bool IsObjectIntegerEnum(ClassDef cls) => cls.Decorators.Any(Decorators.IsIntegerEnumDecorator);
+        static bool IsIntegerFlag(ClassDef cls) => cls.Bases.Any(basis => DottedName(basis) is "IntFlag" or "enum.IntFlag");
+
+        static bool IsObjectIntegerEnum(ClassDef cls) => IsIntegerFlag(cls) ||
+            cls.ExportsIntegerEnumMembers || cls.Decorators.Any(Decorators.IsIntegerEnumDecorator) || IsIntEnum(cls) && cls.Body.Any(statement => statement is FunctionDef);
 
         void EmitObjectEnum(ClassDef cls, bool integer)
         {
             string name = Esc(cls.Name);
             string runtimeClass = integer ? "PyIntegerEnum" : "PyStrEnum";
+            bool flags = IsIntegerFlag(cls);
             string keyType = integer ? "global::System.Numerics.BigInteger" : "string";
             var context = new ClassContext { Def = cls, Name = cls.Name, CsSelfType = name };
             var previous = _cls;
@@ -29,10 +33,17 @@ namespace Typhon.Compiler.Emit
             EmitClassSource(cls.Body, cls.Line);
             EmitConditionalModuleClassAttribute(cls);
             EmitAttributes(cls.Decorators, decorator => decorator is "_simple_enum" or "enum._simple_enum");
-            _w.Line($"internal partial class {name} : global::Typhon.Runtime.{runtimeClass}");
+            string repr = !cls.ExportsIntegerEnumMembers && cls.Body.OfType<FunctionDef>().Any(method => method.Name == "__repr__")
+                ? ", global::Typhon.Runtime.IPyRepr" : "";
+            string baseType = flags ? "global::Typhon.Stdlib.@enum.IntFlag" : $"global::Typhon.Runtime.{runtimeClass}";
+            _w.Line($"internal partial class {name} : {baseType}{repr}");
             _w.Open();
             _w.Line($"private {name}() {{ }}");
+            if (cls.ExportsIntegerEnumMembers)
+                _w.Line($"protected override string EnumReprModule => {CsString(PythonModuleName.Split('.').Last())};");
             _w.Line($"internal static readonly OrderedDictionary<{keyType}, {name}> _value2member_map_ = new();");
+            _w.Line($"private static readonly OrderedDictionary<string, {name}> __member_map = new();");
+            _w.Line("public static global::Typhon.Stdlib.types.MappingProxyType __members__ => new(__member_map);");
 
             var allocator = cls.Body.OfType<FunctionDef>().FirstOrDefault(method => method.Name == "__new__");
             if (allocator != null) EmitFunction(allocator, isModuleLevel: false);
@@ -46,9 +57,13 @@ namespace Typhon.Compiler.Emit
             else
                 _w.Line($"var member = ({name})new global::Typhon.Runtime.PyBoundMethod(typeof({name}), \"__new__\", includeNonPublic: true).__call__([typeof({name}), .. args]);");
             string key = integer ? "member.Integer" : "member.value";
-            _w.Line($"if (_value2member_map_.TryGetValue({key}, out var existing)) return existing;");
+            _w.Line($"if (_value2member_map_.TryGetValue({key}, out var existing)) member = existing;");
+            _w.Line("else");
+            _w.Open();
             _w.Line("member._name_ = name;");
             _w.Line($"_value2member_map_[{key}] = member;");
+            _w.Close();
+            _w.Line("__member_map[name] = member;");
             _w.Line("return member;");
             _w.Close();
 
@@ -59,18 +74,21 @@ namespace Typhon.Compiler.Emit
                     IEnumerable<Expr> values = assignment.Value is TupleExpr tuple ? tuple.Elts : new[] { assignment.Value };
                     var args = integer && assignment.Value is CallExpr { Args.Count: 0 } auto &&
                         DottedName(auto.Func) is "auto" or "enum.auto"
-                        ? new[] { "global::Typhon.Runtime.PyIntegerEnum.NextAutoValue(_value2member_map_.Keys)" }
+                        ? new[] { $"global::Typhon.Runtime.{(flags ? "PyIntegerFlag" : "PyIntegerEnum")}.NextAutoValue(_value2member_map_.Keys)" }
                         : values.Select(value => $"(object?){Paren(EmitLooseValue(value))}");
                     LineDirective(assignment);
                     _w.Line($"public static readonly {name} {Esc(field.Id)} = __enum_member({CsString(field.Id)}, [{string.Join(", ", args)}]);");
                     context.FieldTypes[field.Id] = name;
                     context.Members.Add(field.Id);
                 }
-                else if (statement is FunctionDef method && method != allocator)
+                else if (statement is FunctionDef method && method != allocator &&
+                         (!cls.ExportsIntegerEnumMembers || method.Name != "__repr__"))
                     EmitMethod(method, context, new List<Expr>());
                 else if (!(statement is FunctionDef || statement is PassStmt || statement is ExprStmt { Value: ConstExpr { Kind: ConstKind.Str } }))
                     Unsupported(statement, integer ? "this statement in a simple IntEnum" : "this statement in a StrEnum");
             }
+            if (flags) _w.Line("internal static readonly bool __enum_complete = true;");
+            EmitDunderBridges(cls.Body.OfType<FunctionDef>().Where(method => method != allocator).ToList(), context);
             if (Obs != null) Obs.Fields[TypeInference.ClassKey(_m, cls.Name)] = context.FieldTypes;
             _w.Close();
             _cls = previous;

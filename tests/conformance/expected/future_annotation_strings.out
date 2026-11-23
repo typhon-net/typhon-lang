@@ -1,0 +1,4 @@
+{'x': 'list[Entry]', 'y': "'Entry'", 'flag': 'bool', 'return': 'Entry | None'}
+(x: 'list[Entry]', y: "'Entry'", *, flag: 'bool' = True) -> 'Entry | None'
+{'field': 'tuple[int, str]'}
+{'values': 'list[Entry]'}

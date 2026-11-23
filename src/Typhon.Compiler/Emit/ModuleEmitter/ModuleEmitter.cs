@@ -604,6 +604,8 @@ namespace Typhon.Compiler.Emit
             scope.IsAsync = isAsync;
             // an uncaught SystemExit (sys.exit) ends the program with its code, without a traceback
             string tests = PytestEpilogue();
+            foreach (ModuleInfo module in _p.Modules.Values.Where(module => module.UsedByDynamicImport))
+                registrations += $"\nglobal::Typhon.Runtime.PyModule.RegisterCompiled({CsString(module.Name)}, typeof({ModuleClassName(module)}));";
             EmitFunctionBody(stmts, scope, moduleFields, locals, prologue: $"global::Typhon.Stdlib.sys_.__init__(__argv, typeof({ModuleClassName(_m)}));{registrations}\ntry\n{{",
                              epilogue: (tests != null ? tests + "\n" : "") + "}\ncatch (global::Typhon.Runtime.SystemExit __exit) { __exit.Exit(); }");
         }

@@ -250,6 +250,7 @@ namespace Typhon.Compiler.Syntax
     public sealed class ClassDef : Stmt
     {
         internal bool ConditionalModuleDefinition;
+        internal bool ExportsIntegerEnumMembers;
         internal string PyName;
         public string Name;
         public List<TypeParam> TypeParams = new List<TypeParam>();

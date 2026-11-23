@@ -57,7 +57,7 @@ namespace Typhon.Runtime
             if (value is PyBoundMethod method && Typhon.Stdlib.inspect.ismethod(method))
                 return typeof(Typhon.Stdlib.types.MethodType);
             Type actual = value.GetType();
-            if (value is Typhon.Stdlib.sys_.code) return typeof(Typhon.Stdlib.sys_.code);
+            if (value is Typhon.Stdlib.types.CodeType) return typeof(Typhon.Stdlib.types.CodeType);
             if (value is System.Threading.Tasks.Task) return typeof(Typhon.Stdlib.types.CoroutineType);
             if (Typhon.Stdlib.inspect.IsGeneratorType(actual)) return typeof(Typhon.Stdlib.types.GeneratorType);
             if (Typhon.Stdlib.inspect.IsAsyncGeneratorType(actual)) return typeof(Typhon.Stdlib.types.AsyncGeneratorType);
@@ -411,7 +411,7 @@ namespace Typhon.Runtime
             var parts = moduleName.Split('.');
             bool wantsLeaf = fromlist is IEnumerable fl && fl.Cast<object?>().Any();
             Type? top = StdlibModuleType(parts[0]);
-            if (top == null)
+            if (top == null || PyModule.CompiledType(moduleName) != null)
             {
                 object loaded = Typhon.Stdlib.SourceImport.ImportModule(moduleName);
                 return wantsLeaf || parts.Length == 1 ? loaded : Typhon.Stdlib.SourceImport.ImportModule(parts[0]);

@@ -1,0 +1,22 @@
+# typhon: int=bigint
+
+import decimal
+from decimal import Decimal, localcontext
+from fractions import Fraction
+import locale
+import sys
+
+print(decimal is sys.modules["decimal"], Decimal.__module__)
+print(Decimal("1.25") + Decimal("2.05"))
+with localcontext() as context:
+    context.prec = 10
+    print(Decimal(1) / Decimal(7))
+print(Decimal("0.375").as_integer_ratio(), Fraction(Decimal("0.375")))
+print(locale.normalize("en_US.UTF-8"), locale.normalize("de_DE.utf8"))
+print(locale.format_string("%.2f", 12.75))
+
+class Ratio:
+    def as_integer_ratio(self):
+        return (1 << 80, 3)
+
+print(str(Fraction(Ratio())), str(Fraction(True)))

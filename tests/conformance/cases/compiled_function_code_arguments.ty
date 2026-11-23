@@ -1,0 +1,12 @@
+def example(first, /, label="default", *rest, mode="basic", **extra):
+    """Probe metadata for a function with all parameter kinds."""
+    result = first
+    return result
+
+code = example.__code__
+print(code.co_argcount, code.co_posonlyargcount, code.co_kwonlyargcount)
+print(code.co_varnames, code.co_nlocals)
+print(code.co_flags & 15, bool(code.co_flags & (1 << 26)))
+print(example.__defaults__, example.__kwdefaults__)
+callback = example
+print(callback(7, "other", 8, mode="new", extra_argument=True))

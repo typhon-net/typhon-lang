@@ -178,6 +178,9 @@ namespace Typhon.Compiler.Emit
             if (!_m.IsGdScript && OperatorDunders.TryGetValue(b.Op, out var operation) &&
                 HasClassAssignedOperator(lType, rType, operation))
                 return $"{Rt("__class_binary_op")}((object?){Paren(l)}, (object?){Paren(r)}, {CsString(operation)}, {CsString(b.Op)})";
+            if (!_m.IsGdScript && ArithmeticOps.Contains(b.Op) &&
+                (IsObjectIntegerEnumType(lType) || IsObjectIntegerEnumType(rType)))
+                return $"{Rt(OperatorDunders[b.Op])}((object?){Paren(l)}, (object?){Paren(r)})";
             // an IntEnum member is an int in arithmetic (Level.LOW + 1 == 2)
             if (ArithmeticOps.Contains(b.Op))
             {
@@ -194,6 +197,8 @@ namespace Typhon.Compiler.Emit
                 else if (lType == Big && (rType == "double" || rType == "float")) l = $"((double){Paren(l)})";
                 else if (rType == Big && (lType == "double" || lType == "float")) r = $"((double){Paren(r)})";
             }
+            bool lateArithmetic = lType == "dynamic" || rType == "dynamic" ||
+                IsUnknownType(lType) && MaybeLateBound(b.Left) || IsUnknownType(rType) && MaybeLateBound(b.Right);
             // bool is an int in Python: True + True == 2 (but "%s" % True formats the bool)
             bool bitwise = IsBitwiseOperator(b.Op);
             if (ArithmeticOps.Contains(b.Op) && !(b.Op == "%" && (lType == "string" || IsUnknownType(lType))) ||
@@ -229,7 +234,7 @@ namespace Typhon.Compiler.Emit
                 var items = lItems.Select((_, i) => $"__ta.Item{i + 1}").Concat(rItems.Select((_, i) => $"__tb.Item{i + 1}"));
                 return $"(({l}, {r}) switch {{ var (__ta, __tb) => ({string.Join(", ", items)}) }})";
             }
-            if (b.Op == "-" && (lType == "dynamic" || rType == "dynamic") ||
+            if (b.Op == "-" && lateArithmetic ||
                 bitwise && (IsUnknownType(lType) || IsUnknownType(rType)))
                 return $"{Rt(b.Op == "-" ? "sub" : b.Op == "|" ? "or_" : b.Op == "&" ? "and_" : "xor_")}({l}, {r})";
             // x // 2**k and x % 2**k on integers are exactly an arithmetic shift and a mask in Python (floor semantics, any sign)
@@ -259,8 +264,8 @@ namespace Typhon.Compiler.Emit
                 case "@": return $"{Paren(l)}.__matmul__({r})";
                 case "*" when IsSequenceLiteral(b.Left) || IsSequenceLiteral(b.Right) || IsSequenceTyped(b.Left) || IsSequenceTyped(b.Right): return $"{Rt("__repeat")}({l}, {r})";
                 // late-bound operands may be a str or list at run time: "ab" * 2 must repeat, not fail in the binder
-                case "*" when InferType(b.Left) == "dynamic" || InferType(b.Right) == "dynamic": return $"{Rt("mul")}({l}, {r})";
-                case "+" when lType == "dynamic" || rType == "dynamic":
+                case "*" when lateArithmetic: return $"{Rt("mul")}({l}, {r})";
+                case "+" when lateArithmetic:
                     return $"{Rt("add")}((object?){Paren(l)}, (object?){Paren(r)})";
                 // lists of different item types: a list of dynamic values (C# lists are invariant)
                 case "+" when (IsListy(b.Left) || IsListy(b.Right)) && ListConcatMismatch(b): return $"{Rt("__concat_any")}({l}, {r})";

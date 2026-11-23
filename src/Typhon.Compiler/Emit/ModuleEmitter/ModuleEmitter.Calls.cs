@@ -955,10 +955,12 @@ namespace Typhon.Compiler.Emit
             if (_big && c.Func is NameExpr { Id: "range" } && !IsShadowed("range") &&
                 c.Args.Count is >= 1 and <= 3 && c.Args.All(argument => argument.Name == null && !argument.Star && !argument.DoubleStar))
                 return $"{Rt("__range_big")}({string.Join(", ", c.Args.Select(argument => $"(object?){Paren(EmitValue(argument.Value))}"))})";
-            // range(n) with a late-bound n: converted to a Python int, so the range binds statically
-            if (c.Func is NameExpr rgn && rgn.Id == "range" && !IsShadowed("range") && c.Args.All(x => x.Name == null && !x.Star) &&
-                c.Args.Any(x => InferType(x.Value) == "dynamic" || IsDynamicallyDispatched(x.Value)))
-                return $"{EmitName(rgn)}({string.Join(", ", c.Args.Select(x => InferType(x.Value) == "dynamic" || IsDynamicallyDispatched(x.Value) ? $"checked((long)({EmitExpr(x.Value)}))" : EmitExpr(x.Value)))})";
+            if (!_big && IsBuiltinRange(c, out var rangeArguments))
+            {
+                if (rangeArguments.All(IsClrRangeBound))
+                    return $"{Rt("range")}({string.Join(", ", rangeArguments.Select(argument => EmitExpr(argument)))})";
+                return $"{Rt("__range_small")}({string.Join(", ", rangeArguments.Select(argument => $"(object?){Paren(EmitValue(argument))}"))})";
+            }
             if (c.Func is NameExpr fn && SpecialBuiltins.Contains(fn.Id) && !IsShadowed(fn.Id))
             {
                 switch (fn.Id)
@@ -971,13 +973,16 @@ namespace Typhon.Compiler.Emit
                         if (candidate is LambdaExpr || (classInfo is TupleExpr alternatives
                             ? alternatives.Elts.Any(x => !IsTypeish(x) || NeedsRuntimeClassInfo(x))
                             : !IsTypeish(classInfo) || NeedsRuntimeClassInfo(classInfo)))
-                            return $"global::Typhon.Stdlib.builtins.isinstance((object?){Paren(EmitLooseValue(candidate))}, (object?){Paren(EmitValue(classInfo))})";
+                            return $"global::Typhon.Stdlib.builtins.isinstance((object?){Paren(EmitLooseValue(candidate))}, (object?){Paren(RuntimeClassInfo(classInfo))})";
                         string v = EmitLooseValue(candidate);
                         string vt = InferType(c.Args[0].Value);
                         // big-int mode: a value of unknown type that is a Python int may be a BigInteger or a 64-bit count (len())
                         string Is(Expr t)
                         {
                             string mt = MapType(t, c);
+                            if (t is NameExpr exception && ExceptionMap.ContainsKey(exception.Id) &&
+                                !IsShadowed(exception.Id) && ProjectHasMultipleBuiltinExceptionBases)
+                                return $"global::Typhon.Stdlib.builtins.isinstance((object?){Paren(v)}, typeof({mt}))";
                             if (mt == "dynamic" && DottedName(t) is string lateClass &&
                                 TryResolveType(lateClass, 0, out var lateMeta, out _) && lateMeta != null)
                                 return $"global::Typhon.Stdlib.builtins.isinstance((object?){Paren(v)}, typeof({CsTypeName(lateMeta)}))";
@@ -1022,6 +1027,9 @@ namespace Typhon.Compiler.Emit
                     case "object":
                         if (c.Args.Count == 0) return "new object()";
                         break;
+                    case "list" when c.Args.Count == 1 && c.Args[0] is Arg { Name: null, Star: false, DoubleStar: false } items &&
+                                     EnumIterated(items.Value, out _) != null:
+                        return $"{Rt("list")}({EmitIterable(items.Value)})";
                     case "list":
                     case "dict":
                     case "set":
@@ -1724,6 +1732,13 @@ namespace Typhon.Compiler.Emit
             return true;
         }
 
+        string RuntimeClassInfo(Expr expression)
+        {
+            if (expression is not TupleExpr tuple) return EmitValue(expression);
+            var types = tuple.Elts.Select(item => $"(object?){Paren(RuntimeClassInfo(item))}");
+            return $"new {PyTuplePrefix}object?>(new object?[] {{ {string.Join(", ", types)} }})";
+        }
+
         string InvokeLogicalMethod(AttributeExpr method, string receiver, List<Arg> args)
         {
             string callable = $"(object?){Rt("getattr")}({receiver}, {CsString(method.Name)})";
@@ -1788,12 +1803,19 @@ namespace Typhon.Compiler.Emit
             string type = InferType(receiver);
             // An unresolved local can still have a concrete C# type inferred from its initializer.
             // Late subscripts, on the other hand, explicitly return dynamic from the runtime.
-            if (type is ("dynamic" or "object" or "object?") || receiver is CallExpr && MaybeLateBound(receiver)) return true;
-            if (receiver is SubscriptExpr item && UsesRuntimeSubscriptReceiver(item.Target, InferType(item.Target))) return true;
+            if (type is ("dynamic" or "object" or "object?") || receiver is CallExpr call &&
+                (MaybeLateBound(call) || UsesMethodDefaultArguments(call))) return true;
+            if (receiver is SubscriptExpr item && (UsesRuntimeSubscriptReceiver(item.Target, InferType(item.Target)) ||
+                IsDynamicallyDispatched(item.Target))) return true;
             if (type != null || receiver is not AttributeExpr attribute) return false;
             return DottedName(attribute) is string dotted && IsLocal(dotted.Split('.')[0]) ||
                 statement && attribute.Target is not NameExpr { Id: "self" } && InferType(attribute.Target) == null;
         }
+
+        bool UsesMethodDefaultArguments(CallExpr call) =>
+            call.Func is AttributeExpr && TyphonCallee(call, out int implicitParameters) is FunctionDef method &&
+            implicitParameters != 0 && method.Returns == null &&
+            method.Params.Skip(implicitParameters).Count(parameter => parameter.Kind == ParamKind.Normal) > call.Args.Count;
 
         bool NativeChain(Expr receiver)
         {

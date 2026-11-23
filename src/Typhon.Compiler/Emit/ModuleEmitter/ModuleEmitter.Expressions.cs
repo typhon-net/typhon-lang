@@ -443,6 +443,14 @@ namespace Typhon.Compiler.Emit
         HashSet<Expr> Receivers => _receivers ??= CollectReceivers();
         HashSet<Expr> _receivers;
         readonly HashSet<Expr> _attributeStores = new HashSet<Expr>();
+        readonly HashSet<Expr> _nameStores = new HashSet<Expr>();
+        readonly HashSet<NameExpr> _sourceNames = new HashSet<NameExpr>();
+
+        bool IsSourceNameRead(NameExpr name)
+        {
+            _ = Receivers;
+            return _sourceNames.Contains(name) && !_nameStores.Contains(name);
+        }
         readonly HashSet<Expr> _callCallees = new HashSet<Expr>();
 
         bool IsAttributeStore(AttributeExpr value)
@@ -457,13 +465,15 @@ namespace Typhon.Compiler.Emit
             void Store(Expr target)
             {
                 if (target is AttributeExpr) _attributeStores.Add(target);
+                if (target is NameExpr) _nameStores.Add(target);
                 if (target is TupleExpr tuple) foreach (var item in tuple.Elts) Store(item);
                 if (target is ListExpr list) foreach (var item in list.Elts) Store(item);
             }
             if (_m.Ast != null)
                 AstWalker.VisitAll(_m.Ast.Body, n =>
                 {
-                    if (n is AttributeExpr x) set.Add(x.Target);
+                    if (n is NameExpr name) _sourceNames.Add(name);
+                    else if (n is AttributeExpr x) set.Add(x.Target);
                     else if (n is CallExpr c) { set.Add(c.Func); _callCallees.Add(c.Func); }
                     // (places, not values: assignment, augmented assignment and del targets)
                     else if (n is AssignStmt a) foreach (var t in a.Targets)
@@ -715,7 +725,8 @@ namespace Typhon.Compiler.Emit
         string BaseObjectMethod(AttributeExpr attr) =>
             attr.Target is NameExpr { Id: "dict" } && !IsShadowed("dict") && attr.Name is ("__new__" or "__eq__")
                 ? (attr.Name == "__new__" ? "__dict_new" : "__dict_eq") :
-            attr is { Target: NameExpr { Id: "int" }, Name: "__new__" } && !IsShadowed("int") ? (_big ? "__bigint_new" : "__int_new") :
+            attr is { Target: NameExpr { Id: "int" }, Name: "__new__" } && !IsShadowed("int") ?
+                (_cls != null && IsObjectIntegerEnum(_cls.Def) ? "__int_enum_new" : _big ? "__bigint_new" : "__int_new") :
             attr is { Target: NameExpr { Id: "str" }, Name: "__new__" } && !IsShadowed("str") ? "__str_new" :
             attr.Target is NameExpr { Id: "object" } && !IsShadowed("object") ? attr.Name switch
             {
@@ -954,7 +965,7 @@ namespace Typhon.Compiler.Emit
                 if (nt == null || nt == "dynamic" || nt == "object" || nt == "object?" || nt == "global::System.Type" || nt == "System.Type")
                     return $"{Rt("__name_of")}((object?){Paren(EmitLooseValue(a.Target))})";
             }
-            if (a.Name is "__func__" or "__doc__" or "__code__" && !IsAttributeStore(a))
+            if (a.Name is "__func__" or "__doc__" or "__code__" or "__defaults__" or "__kwdefaults__" && !IsAttributeStore(a))
                 return $"{Rt("getattr")}((object?){Paren(EmitLooseValue(a.Target))}, {CsString(a.Name)})";
             if (a.Name == "__dict__" && !IsAttributeStore(a))
             {

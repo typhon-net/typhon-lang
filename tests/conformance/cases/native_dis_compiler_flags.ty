@@ -1,0 +1,6 @@
+import dis
+
+flags = dis.COMPILER_FLAG_NAMES
+print(list(flags.items()))
+names = {name: mask for mask, name in flags.items()}
+print(names["VARARGS"] | names["VARKEYWORDS"], names["COROUTINE"] | names["ASYNC_GENERATOR"])

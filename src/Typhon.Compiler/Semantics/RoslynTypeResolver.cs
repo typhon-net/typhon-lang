@@ -34,12 +34,15 @@ namespace Typhon.Compiler.Semantics
 
         public bool TypeExists(string metadataName) => Find(metadataName) != null;
 
-        // A sealed CLR type can only match its own type, a base type, or an implemented interface.
-        internal bool? SealedTypeMatches(string actualMetadata, string targetMetadata)
+        internal bool IsInstanceType(string metadataName) =>
+            Find(metadataName) is { IsStatic: false, TypeKind: TypeKind.Class or TypeKind.Interface };
+
+        // Physical assignability uses the declared CLR type, or its known exact type for a sealed-value test.
+        internal bool? RuntimeTypeMatches(string actualMetadata, string targetMetadata, bool requireSealed)
         {
             var actual = Find(actualMetadata);
             var target = Find(targetMetadata);
-            if (actual == null || !actual.IsSealed || target == null) return null;
+            if (actual == null || requireSealed && !actual.IsSealed || target == null) return null;
             var comparer = SymbolEqualityComparer.Default;
             for (var ancestor = actual; ancestor != null; ancestor = ancestor.BaseType)
                 if (comparer.Equals(ancestor, target)) return true;

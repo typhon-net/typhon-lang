@@ -219,6 +219,19 @@ namespace Typhon.Compiler.Emit
 
         bool AtRuntimeModuleScope => _scopeKey == RuntimeCodeScopeKey && _scope?.Parent == null;
 
+        bool MayReadComputedGlobal(NameExpr expression)
+        {
+            string name = expression.Id;
+            return _m.RebindsUnknownGlobals && !_m.IsGdScript && _m.RuntimeCodeMode == null && !IsShadowed(name) &&
+            !_dotnetAliases.ContainsKey(name) && !_moduleAliases.ContainsKey(name) && !_typingOnlyNames.Contains(name) &&
+            !_runtimeProjectBindings.ContainsKey(name) && !ExceptionMap.ContainsKey(name) &&
+            StdlibOwner(name) == null && _r.GetMembers("Typhon.Runtime.Builtins", name).Count == 0 &&
+            _r.GetMembers("Typhon.Stdlib.builtins", name).Count == 0 &&
+            !TryResolveType(name, 0, out _, out _) &&
+            !(_classFieldInitializer && _cls?.Members.Contains(name) == true) &&
+            KnownType(name) == null && IsSourceNameRead(expression);
+        }
+
         string EmitName(NameExpr n)
         {
             string id = n.Id;
@@ -279,6 +292,8 @@ namespace Typhon.Compiler.Emit
                 !_dotnetAliases.ContainsKey(id) && !_moduleAliases.ContainsKey(id) &&
                 _r.GetMembers("Typhon.Runtime.Builtins", id).Count == 0)
                 return EmitPreparedName(id);
+            if (MayReadComputedGlobal(n))
+                return $"{ModuleObject(_m)}.ReadGlobal({CsString(id)})";
             return Esc(id);
         }
 
@@ -475,6 +490,8 @@ namespace Typhon.Compiler.Emit
             pyClass == null && meta != null && meta.StartsWith("Typhon.Stdlib.") && !meta.Contains('`')
                 ? "global::" + string.Join(".", meta.Replace('+', '.').Split('.').Select(Esc)) : null;
 
+        const string RuntimeTypingAnyType = "Typhon.Stdlib._typing+Any";
+
         bool IsSourceTypingAny(ClassDef definition) => definition != null &&
             (definition.PyName ?? definition.Name) == "Any" && _p.DeclaringModule(definition)?.Name == "typing";
 
@@ -501,6 +518,8 @@ namespace Typhon.Compiler.Emit
                         (_typingOnlyNames.Contains(n.Id) || _m.Name == "typing" && !_m.Classes.ContainsKey(n.Id)))
                         return "dynamic";
                     if (TypeAlias(n.Id) is Expr aliased) return MapType(aliased, at, isReturn);
+                    if (!preserveClrType && TryResolveType(n.Id, 0, out var runtimeType, out _) &&
+                        runtimeType == RuntimeTypingAnyType) return "dynamic";
                     if (StdlibClassType(n.Id) is string stdlibType) return stdlibType;
                     if (n.Id == "NDArray" && !IsShadowed("NDArray") && _staticTypes.Contains("Typhon.Stdlib.numpy+typing")) return "global::Typhon.Stdlib.numpy.ndarray";
                     if (_big && n.Id == "int" && !IsShadowed("int")) return IntT;
@@ -510,9 +529,11 @@ namespace Typhon.Compiler.Emit
                     if (!preserveClrType && IsLateBoundDotNetType(n.Id)) return "dynamic";
                     if (TryResolveType(n.Id, 0, out var stdMeta, out var stdPy))
                     {
-                        if (IsSourceTypingAny(stdPy)) return "dynamic";
+                        if (IsSourceTypingAny(stdPy) || !preserveClrType && stdMeta == RuntimeTypingAnyType) return "dynamic";
                         if (StdlibTypeCode(stdMeta, stdPy) is string stdName) return stdName;
                     }
+                    // An annotation can be a value computed by the enclosing Python module.
+                    if (!IsLocal(n.Id) && _m.Globals.Contains(n.Id)) return "dynamic";
                     return QualifiedProjectImport(n.Id) ?? Esc(n.Id);
                 }
                 case AttributeExpr a:
@@ -534,7 +555,7 @@ namespace Typhon.Compiler.Emit
                     if (!preserveClrType && IsLateBoundDotNetType(dotted)) return "dynamic";
                     if (TryResolveType(dotted, 0, out var stdMeta, out var stdPy))
                     {
-                        if (IsSourceTypingAny(stdPy)) return "dynamic";
+                        if (IsSourceTypingAny(stdPy) || !preserveClrType && stdMeta == RuntimeTypingAnyType) return "dynamic";
                         if (StdlibTypeCode(stdMeta, stdPy) is string stdName) return stdName;
                     }
                     return (stdPy == null ? null : ProjectModuleMember(dotted)) ?? StdlibNestedType(dotted) ?? string.Join(".", dotted.Split('.').Select(Esc));

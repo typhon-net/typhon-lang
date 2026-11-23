@@ -1,0 +1,17 @@
+from enum import IntFlag, auto
+
+class Access(IntFlag):
+    NONE = 0
+    READ = auto()
+    WRITE = auto()
+    READ_WRITE = READ | WRITE
+    OWNER = auto()
+
+print(isinstance(Access.READ, IntFlag), isinstance(Access.READ, int))
+print(Access.READ.value, Access.WRITE.value, Access.OWNER.value)
+print(repr(Access.READ | 2), (Access.READ | Access.WRITE) is Access.READ_WRITE)
+print(repr(Access.OWNER | Access.READ), repr(Access.READ | 8), repr(Access(16)))
+print(repr(Access.READ_WRITE & ~Access.READ), repr(Access.READ_WRITE ^ Access.READ))
+print(Access(5) is Access(5), Access(-1).value, (0 | Access.READ).value)
+print(Access.READ in Access.READ_WRITE, Access.OWNER in Access.READ_WRITE)
+print([member.name for member in Access.READ_WRITE], len(Access(24)), bool(Access.NONE))

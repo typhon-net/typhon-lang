@@ -62,9 +62,10 @@ namespace Typhon.Stdlib
         public static bool ismodule(object? @object) => @object is PyModule;
         public static bool isclass(object? @object) => @object is Type;
         public static bool isframe(object? @object) => @object is sys_.frame;
-        public static bool iscode(object? @object) => @object is sys_.code;
+        public static bool iscode(object? @object) => @object is types.CodeType;
         public static bool istraceback(object? @object) => @object is types.TracebackType;
-        public static bool isabstract(object? @object) => @object is Type { IsAbstract: true, IsSealed: false };
+        public static bool isabstract(object? @object) => @object is Type type &&
+            (type.IsAbstract && !type.IsSealed || _abc.HasAbstractMethods(type));
         public static bool isfunction(object? @object) => @object switch
         {
             PyFunction => true,
@@ -218,7 +219,7 @@ namespace Typhon.Stdlib
                 return ModuleByName(stdlib.Name.TrimEnd('_'), stdlib);
             if (@object is Type || isbuiltin(@object) || ismethoddescriptor(@object) || ismethodwrapper(@object))
                 return ModuleByName("builtins");
-            string? filename = _filename ?? (@object as sys_.code)?.co_filename;
+            string? filename = _filename ?? (@object as types.CodeType)?.co_filename;
             if (!string.IsNullOrEmpty(filename))
                 foreach (object? entry in sys_.modules.Values)
                     if (entry is PyModule candidate && Source(candidate.SourceType)?.Filename == filename) return candidate;
@@ -229,7 +230,7 @@ namespace Typhon.Stdlib
         {
             if (@object is types.TracebackType traceback) @object = traceback.tb_frame;
             if (@object is sys_.frame frame) return frame.f_code.co_filename;
-            if (@object is sys_.code code) return code.co_filename;
+            if (@object is types.CodeType code) return code.co_filename;
             if (Source(SourceType(@object)) is { } source) return source.Filename;
             if (@object is PyFunction function && getmodule(function) is PyModule module &&
                 Source(module.SourceType) is { } moduleSource) return moduleSource.Filename;

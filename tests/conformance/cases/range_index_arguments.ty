@@ -1,0 +1,21 @@
+class Bound:
+    def __init__(self, value: int):
+        self.value = value
+        print("argument", value)
+
+    def __index__(self) -> int:
+        print("index", self.value)
+        return self.value
+
+print(list(range(Bound(1), Bound(7), Bound(2))))
+for value in range(Bound(1), Bound(7), Bound(2)):
+    print(value)
+try:
+    for value in range(2, 0, 0):
+        print(value)
+except ValueError:
+    print("zero step")
+try:
+    print(list(range(2.0)))
+except TypeError:
+    print("integer required")

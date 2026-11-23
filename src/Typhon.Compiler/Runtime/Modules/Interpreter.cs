@@ -130,6 +130,7 @@ namespace Typhon.Stdlib
             switch (classinfo)
             {
                 case Type t:
+                    if (t == typeof(_typing.Any)) throw new InvalidCastException("typing.Any cannot be used with isinstance()");
                     if (t == typeof(types.MethodType) && obj is PyBoundMethod method) return inspect.ismethod(method);
                     Type actual = obj is PyIntEnumMember member ? member.Owner :
                         obj is Type cls ? PyMetaclasses.Of(cls) : obj?.GetType() ?? typeof(types.NoneType);

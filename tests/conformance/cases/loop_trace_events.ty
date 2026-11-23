@@ -1,0 +1,26 @@
+import sys
+
+events: list[int] = []
+
+def watch(frame, event, detail):
+    if event == "line" and frame.f_code.co_name == "sample":
+        events.append(frame.f_lineno)
+    return watch
+
+def sample(count: int) -> int:
+    total = 0
+    for value in range(count):
+        if value == 1:
+            continue
+        total += value
+    for value in [4, 0]:
+        total += value
+    return total
+
+sys.settrace(watch)
+try:
+    print(sample(3))
+finally:
+    sys.settrace(None)
+
+print([events.count(line) for line in sorted(set(events))])

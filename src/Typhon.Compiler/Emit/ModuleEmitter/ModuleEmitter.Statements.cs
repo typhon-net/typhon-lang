@@ -192,7 +192,11 @@ namespace Typhon.Compiler.Emit
                 case CallExpr _:
                 case AwaitExpr _:
                     _statementCall = e.Value as CallExpr;
-                    _w.Line(StripParens(EmitExpr(e.Value)) + ";");
+                    string call = StripParens(EmitExpr(e.Value));
+                    // A translated call can be a C# test expression, which still runs for side effects.
+                    if (call.StartsWith("(") && InferType(e.Value) == "bool")
+                        call = $"var {NewTmp("ignored")} = {call}";
+                    _w.Line(call + ";");
                     _statementCall = null;
                     return;
                 default:
@@ -387,7 +391,7 @@ namespace Typhon.Compiler.Emit
             if ((actual == "string" || IsBytesType(actual)) && DotNetMeta(actual) is string actualMeta &&
                 DottedName(tested) is string testedName && TryResolveType(testedName, 0, out string expected, out var declared) &&
                 declared == null && expected != null && IsRuntimeClassMeta(expected) && !MayHaveVirtualSubclasses(expected, declared) &&
-                _r is RoslynTypeResolver resolver && resolver.SealedTypeMatches(actualMeta, expected) == false)
+                _r is RoslynTypeResolver resolver && resolver.RuntimeTypeMatches(actualMeta, expected, requireSealed: true) == false)
                 return false;
             return null;
         }
@@ -654,6 +658,7 @@ namespace Typhon.Compiler.Emit
                 string name = h.Name;
                 string csName = name ?? NewTmp("e");
                 bool renamed = false;
+                bool mayCatchAdditionalBase = false;
                 if (name != null && (IsLocal(name) || _renames.ContainsKey(name))) { csName = NewTmp("e"); renamed = true; }
                 if (h.Type == null) _w.Line($"catch (Exception {Esc(csName)})");
                 else
@@ -664,8 +669,14 @@ namespace Typhon.Compiler.Emit
                         (x is AttributeExpr || InferType(x) is "System.Type" or "global::System.Type" ||
                          x is NameExpr nameValue && (IsLocal(nameValue.Id) || IsValueName(nameValue.Id)))).ToList();
                     var types = specs.Except(aliases).SelectMany(x => CatchTypes(x, h)).Distinct().ToList();
+                    var builtinBases = !_m.IsGdScript && ProjectHasMultipleBuiltinExceptionBases
+                        ? specs.OfType<NameExpr>().Where(spec => ExceptionMap.ContainsKey(spec.Id) && !IsShadowed(spec.Id)).ToList()
+                        : new List<NameExpr>();
+                    mayCatchAdditionalBase = builtinBases.Count > 0;
                     IEnumerable<string> AliasTests(string caught) => aliases.Select(x =>
-                        $"global::Typhon.Stdlib.builtins.isinstance({caught}, (object?){Paren(EmitValue(x))})");
+                        $"global::Typhon.Stdlib.builtins.isinstance({caught}, (object?){Paren(EmitValue(x))})")
+                        .Concat(builtinBases.Select(spec =>
+                            $"global::Typhon.Runtime.PyExc.HasDeclaredBase({caught}.GetType(), typeof({ExceptionMap[spec.Id]}))"));
                     // except Exception: not SystemExit, KeyboardInterrupt or GeneratorExit (they derive from BaseException only)
                     bool exceptException = specs.Any(x => x is NameExpr xn && xn.Id == "Exception" && !IsShadowed("Exception"));
                     if (exceptException)
@@ -675,7 +686,7 @@ namespace Typhon.Compiler.Emit
                             .Select(x => $"{Esc(v)} is {x}").Concat(AliasTests(Esc(v)));
                         _w.Line($"catch (Exception {Esc(v)}) when ({Esc(v)} is not global::Typhon.Runtime.IPyBaseException{string.Concat(others.Select(o => " || " + o))})");
                     }
-                    else if (aliases.Count == 0 && types.Count == 1 && !types[0].StartsWith("("))
+                    else if (aliases.Count == 0 && !mayCatchAdditionalBase && types.Count == 1 && !types[0].StartsWith("("))
                         _w.Line($"catch ({types[0]} {Esc(csName)})");
                     else
                     {
@@ -691,7 +702,7 @@ namespace Typhon.Compiler.Emit
                 if (name != null)
                 {
                     hadType = _scope.Types.TryGetValue(name, out oldType);
-                    _scope.Types[name] = h.Type != null && TryTypeExpr(h.Type, out var caught) && !(h.Type is TupleExpr) ? caught : "global::System.Exception";
+                    _scope.Types[name] = !mayCatchAdditionalBase && h.Type != null && TryTypeExpr(h.Type, out var caught) && !(h.Type is TupleExpr) ? caught : "global::System.Exception";
                 }
                 _w.Open();
                 if (!_m.IsGdScript) _w.Line($"using var {NewTmp("handling")} = {Rt("__handling_exception")}({Esc(csName)});");

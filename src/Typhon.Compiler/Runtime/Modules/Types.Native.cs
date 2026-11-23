@@ -16,7 +16,7 @@ namespace Typhon.Stdlib
         public static readonly Type CapsuleType = typeof(types.CapsuleType);
         public static readonly Type CellType = typeof(types.CellType);
         public static readonly Type ClassMethodDescriptorType = typeof(types.ClassMethodDescriptorType);
-        public static readonly Type CodeType = typeof(sys_.code);
+        public static readonly Type CodeType = typeof(types.CodeType);
         public static readonly Type CoroutineType = typeof(types.CoroutineType);
         public static readonly Type EllipsisType = typeof(types.EllipsisType);
         public static readonly Type FrameType = typeof(sys_.frame);

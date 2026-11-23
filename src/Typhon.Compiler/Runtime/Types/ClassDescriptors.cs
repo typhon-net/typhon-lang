@@ -91,6 +91,20 @@ namespace Typhon.Runtime
             }
         }
 
+        internal sealed class TypeMember(string name)
+        {
+            public string __name__ => name;
+            public Type __objclass__ => typeof(Type);
+
+            public object? __get__(object? instance, object? owner = null)
+            {
+                if (instance == null) return this;
+                if (instance is not Type type)
+                    throw new InvalidCastException($"descriptor '{name}' requires a type object");
+                return Builtins.getattr(type, name);
+            }
+        }
+
         internal static readonly object Unassigned = new();
 
         internal static dynamic? ReadBodyName(object? value, string name, Type module, string moduleName)
@@ -197,7 +211,7 @@ namespace Typhon.Runtime
                 __qualname__ = Builtins.PyTypeName(type) + "." + name,
                 __doc__ = source?.DocString,
                 _signature = method != null ? PySignatureAttribute.Of(method) : null,
-                _code = source is { Line: > 0 } ? new sys_.code(name, source.Filename, source.Line) : null,
+                _code = source is { Line: > 0 } ? new types.CodeType(name, source.Filename, source.Line) : null,
             };
             if (method?.IsDefined(typeof(PyAbstractMethodAttribute), false) == true)
                 Builtins.setattr(callable, "__isabstractmethod__", true);
@@ -257,7 +271,12 @@ namespace Typhon.Runtime
                 var source = type.GetCustomAttribute<PySourceAttribute>();
                 _bindings["__module__"] = () => Builtins.__module_of(type);
                 _bindings["__doc__"] = () => source?.DocString;
-                if (type == typeof(Type)) AddDescriptor("__annotations__", new TypeAnnotations());
+                if (type == typeof(Type))
+                {
+                    AddDescriptor("__annotations__", new TypeAnnotations());
+                    foreach (string name in new[] { "__mro__", "__dict__", "__bases__" })
+                        AddDescriptor(name, new TypeMember(name));
+                }
                 if (type == typeof(PyFunction) || type == typeof(types.FunctionType))
                     _bindings["__call__"] = Bind(new PyClosure("__call__", (arguments, keywords) =>
                     {

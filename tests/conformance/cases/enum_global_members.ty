@@ -1,0 +1,10 @@
+from enum import IntEnum, global_enum
+
+@global_enum
+class Month(IntEnum):
+    JANUARY = 1
+    FEBRUARY = 2
+    FEB = 2
+
+print(repr(JANUARY), str(FEBRUARY), Month(2) is FEB)
+print(FEB is FEBRUARY, list(Month), globals()["JANUARY"] is JANUARY)

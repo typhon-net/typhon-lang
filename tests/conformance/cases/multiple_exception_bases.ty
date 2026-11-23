@@ -1,0 +1,24 @@
+class DualError(ValueError, IndexError):
+    pass
+
+class InheritedError(DualError):
+    pass
+
+print(DualError.__bases__ == (ValueError, IndexError))
+print([base.__name__ for base in DualError.__mro__[:4]])
+print(issubclass(InheritedError, IndexError))
+print(isinstance(InheritedError("problem"), (KeyError, IndexError)))
+
+def catch(base):
+    try:
+        raise InheritedError("problem")
+    except base as caught:
+        print(type(caught).__name__)
+
+catch(ValueError)
+catch(IndexError)
+
+try:
+    raise InheritedError("problem")
+except IndexError as caught:
+    print(type(caught).__name__)

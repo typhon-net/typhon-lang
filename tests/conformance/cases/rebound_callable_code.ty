@@ -1,0 +1,9 @@
+def code_name(value):
+    if hasattr(value, "__code__"):
+        value = value.__code__
+    return value.co_name
+
+def example():
+    return 1
+
+print(code_name(example))

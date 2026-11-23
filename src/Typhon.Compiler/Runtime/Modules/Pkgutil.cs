@@ -307,9 +307,26 @@ namespace Typhon.Stdlib
 
         internal static object ImportModule(string name)
         {
-            if (sys_.modules.TryGetValue(name, out object? existing) && existing != null) return existing;
+            Type? compiled = PyModule.CompiledType(name);
+            if (sys_.modules.TryGetValue(name, out object? existing) && existing != null &&
+                (compiled == null || existing is PyModule { SourceType: { } type } && compiled == type)) return existing;
+            if (compiled != null)
+            {
+                int separator = name.LastIndexOf('.');
+                if (separator >= 0) ImportModule(name[..separator]);
+                object module = PyModule.Import(compiled, name) ?? throw new ModuleNotFoundError($"No module named '{name}'", name);
+                return AttachToParent(name, module);
+            }
             var spec = importlib.util.find_spec(name) ?? throw new ModuleNotFoundError($"No module named '{name}'", name);
             return Load(spec);
+        }
+
+        static object AttachToParent(string name, object module)
+        {
+            int separator = name.LastIndexOf('.');
+            if (separator >= 0 && sys_.modules.TryGetValue(name[..separator], out object? parent) && parent != null)
+                Builtins.setattr(parent, name[(separator + 1)..], module);
+            return module;
         }
 
         internal static object Load(importlib.machinery.ModuleSpec spec)
@@ -321,10 +338,7 @@ namespace Typhon.Stdlib
             {
                 if (spec.loader is SourceLoader source) source.exec_module(module);
                 else if (spec.loader != null) Builtins.__invoke(Builtins.getattr(spec.loader, "exec_module"), new[] { module });
-                int separator = name.LastIndexOf('.');
-                if (separator >= 0 && sys_.modules.TryGetValue(name[..separator], out object? parent) && parent != null)
-                    Builtins.setattr(parent, name[(separator + 1)..], module);
-                return module;
+                return AttachToParent(name, module);
             }
             catch
             {

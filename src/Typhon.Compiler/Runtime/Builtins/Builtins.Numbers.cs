@@ -213,8 +213,8 @@ namespace Typhon.Runtime
         public static dynamic truediv(object a, object b)
         {
             if (TryClassBinaryOp(a, b, "truediv", "/", out var result)) return result!;
-            if (a is bool ab) a = ab ? 1L : 0L;
-            if (b is bool bb) b = bb ? 1L : 0L;
+            a = NumericOperand(a)!;
+            b = NumericOperand(b)!;
             if (AsInt(a, out var ia) && AsInt(b, out var ib)) return truediv(ia, ib);
             if (a is BigInteger || b is BigInteger)
             {
@@ -245,6 +245,8 @@ namespace Typhon.Runtime
         public static dynamic floordiv(object a, object b)
         {
             if (TryClassBinaryOp(a, b, "floordiv", "//", out var result)) return result!;
+            a = NumericOperand(a)!;
+            b = NumericOperand(b)!;
             return AsInt(a, out var x) && AsInt(b, out var y) ? floordiv(x, y) : Math.Floor((dynamic)a / (dynamic)b);
         }
 
@@ -267,8 +269,8 @@ namespace Typhon.Runtime
         {
             if (TryClassBinaryOp(a, b, "mod", "%", out var result)) return result!;
             if (a is string format) return __percent(format, b);
-            if (a is bool left) a = left ? 1L : 0L;
-            if (b is bool right) b = right ? 1L : 0L;
+            a = NumericOperand(a)!;
+            b = NumericOperand(b)!;
             if (AsInt(a, out long x) && AsInt(b, out long y)) return mod(x, y);
             if (a is BigInteger || b is BigInteger)
             {
@@ -287,6 +289,8 @@ namespace Typhon.Runtime
         public static dynamic divmod(object? a, object? b)
         {
             if (TryClassBinaryOp(a, b, "divmod", "divmod()", out var result)) return result!;
+            a = NumericOperand(a)!;
+            b = NumericOperand(b)!;
             if (IntegralPowerArgument(a, out var x) && IntegralPowerArgument(b, out var y))
                 return a is BigInteger || b is BigInteger ? (object)divmod(x, y) : divmod((long)x, (long)y);
             if (a != null && b != null && IsRealNumber(a) && IsRealNumber(b))
@@ -324,8 +328,9 @@ namespace Typhon.Runtime
         }
         public static dynamic pow(object a, object b)
         {
-            if (a is bool flagA) a = flagA ? 1L : 0L;
-            if (b is bool flagB) b = flagB ? 1L : 0L;
+            if (TryClassBinaryOp(a, b, "pow", "**", out var result)) return result!;
+            a = NumericOperand(a)!;
+            b = NumericOperand(b)!;
             if (AsInt(a, out var x) && AsInt(b, out var y) && y >= 0) return pow(x, y);
             if ((a is BigInteger || b is BigInteger) && (a is BigInteger || AsInt(a, out _)) &&
                 (b is BigInteger || AsInt(b, out _)))
@@ -561,6 +566,8 @@ namespace Typhon.Runtime
         public static List<T> __repeat<T>(BigInteger n, List<T> l) => __repeat(l, n);
 
 
+        static object? NumericOperand(object? value) => value is bool bit ? (bit ? 1L : 0L) : IntegerEnumValue(value);
+
         /// <summary>A boxed integer as a long (late-bound arithmetic keeps Python's integer semantics).</summary>
         static bool AsInt(object? o, out long v)
         {
@@ -595,8 +602,26 @@ namespace Typhon.Runtime
             if (n < 0) throw new ArgumentException("negative shift count");
             return n >= 64 ? (a < 0 ? -1 : 0) : a >> (int)n;
         }
-        public static dynamic lshift(object a, object b) => AsInt(a, out var x) && AsInt(b, out var y) ? lshift(x, y) : checked((dynamic)a << (dynamic)b);
-        public static dynamic rshift(object a, object b) => AsInt(a, out var x) && AsInt(b, out var y) ? rshift(x, y) : checked((dynamic)a >> (dynamic)b);
+        public static dynamic lshift(object a, object b)
+        {
+            if (TryClassBinaryOp(a, b, "lshift", "<<", out var result)) return result!;
+            a = NumericOperand(a)!;
+            b = NumericOperand(b)!;
+            if (AsInt(a, out var x) && AsInt(b, out var y)) return lshift(x, y);
+            if ((a is BigInteger || AsInt(a, out _)) && (b is BigInteger || AsInt(b, out _)))
+                return lshift(BigOf(a), BigOf(b));
+            return checked((dynamic)a << (dynamic)b);
+        }
+        public static dynamic rshift(object a, object b)
+        {
+            if (TryClassBinaryOp(a, b, "rshift", ">>", out var result)) return result!;
+            a = NumericOperand(a)!;
+            b = NumericOperand(b)!;
+            if (AsInt(a, out var x) && AsInt(b, out var y)) return rshift(x, y);
+            if ((a is BigInteger || AsInt(a, out _)) && (b is BigInteger || AsInt(b, out _)))
+                return rshift(BigOf(a), BigOf(b));
+            return checked((dynamic)a >> (dynamic)b);
+        }
 
         /// <summary>A Typhon __hash__ returns a (64-bit) int; .NET hash codes are 32-bit.</summary>
         public static int __hash32(long h) => unchecked((int)(h ^ (h >> 32)));
@@ -637,6 +662,8 @@ namespace Typhon.Runtime
         {
             object oa = a, ob = b;
             if (TryClassBinaryOp(oa, ob, "mul", "*", out var result)) return result!;
+            oa = NumericOperand(oa)!;
+            ob = NumericOperand(ob)!;
             if (oa is string s1 && TryRepeatCount(ob, out var n1)) return __repeat(s1, n1);
             if (ob is string s2 && TryRepeatCount(oa, out var n2)) return __repeat(s2, n2);
             if (oa is IList l1 && TryRepeatCount(ob, out var n3)) return RepeatList(l1, n3);
@@ -644,7 +671,7 @@ namespace Typhon.Runtime
             if (oa is ITuple && TryRepeatCount(ob, out var tupleCount)) return __tuprep<object?>(oa, tupleCount);
             if (ob is ITuple && TryRepeatCount(oa, out var swappedCount)) return __tuprep<object?>(ob, swappedCount);
             if (AsInt(oa, out var x) && AsInt(ob, out var y)) return checked(x * y);
-            return checked(a * b);
+            return checked((dynamic)oa * (dynamic)ob);
         }
 
         static bool TryRepeatCount(object? value, out long count)
@@ -661,6 +688,8 @@ namespace Typhon.Runtime
         public static dynamic add(dynamic a, dynamic b)
         {
             if (TryClassBinaryOp((object?)a, (object?)b, "add", "+", out var result)) return result!;
+            a = NumericOperand((object?)a)!;
+            b = NumericOperand((object?)b)!;
             if (a is ITuple && b is ITuple) return __tupcat<object?>((object)a, (object)b);
             if (a is IList la && b is IList lb && !(a is string) && !(a is IDictionary))
             {

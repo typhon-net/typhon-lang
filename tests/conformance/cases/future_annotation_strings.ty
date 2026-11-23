@@ -1,0 +1,15 @@
+from __future__ import annotations
+from inspect import signature
+
+class Entry:
+    field: tuple[int,str]
+
+values: list [Entry] = []
+
+def build(x: list [Entry], y: "Entry", *, flag: bool = True) -> Entry|None:
+    return None
+
+print(build.__annotations__)
+print(signature(build))
+print(Entry.__annotations__)
+print(__annotations__)

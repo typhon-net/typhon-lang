@@ -1,0 +1,17 @@
+import abc
+import collections.abc
+
+class Interface(abc.ABC):
+    @abc.abstractmethod
+    def value(self):
+        pass
+
+class Provider:
+    def value(self):
+        return 7
+
+print(abc is not collections.abc)
+print(abc.ABCMeta.__module__, collections.abc.Sequence.__module__)
+print(issubclass(type(Interface), abc.ABCMeta))
+returned = Interface.register(Provider)
+print(returned is Provider, issubclass(Provider, Interface), isinstance(Provider(), Interface))

@@ -85,9 +85,10 @@ namespace Typhon.Runtime
     internal abstract class PyIntegerEnum : IPyRepr, IComparable
     {
         internal BigInteger Integer { get; private set; }
-        internal string _name_ = "";
+        internal string? _name_ = "";
         internal virtual string EnumName => GetType().Name;
-        public string name => _name_;
+        protected virtual string? EnumReprModule => null;
+        public string? name => _name_;
         public dynamic value => Integer >= long.MinValue && Integer <= long.MaxValue ? (object)(long)Integer : Integer;
 
         protected PyIntegerEnum() { }
@@ -101,7 +102,12 @@ namespace Typhon.Runtime
         public dynamic __int__() => value;
         public dynamic __index__() => value;
         public override string ToString() => Integer.ToString(CultureInfo.InvariantCulture);
-        public string __repr__() => $"<{EnumName}.{name}: {this}>";
+        public string __repr__()
+        {
+            if (EnumReprModule is string module) return $"{module}.{name}";
+            string valueText = Integer.ToString(CultureInfo.InvariantCulture);
+            return name == null ? $"<{EnumName}: {valueText}>" : $"<{EnumName}.{name}: {valueText}>";
+        }
         public override bool Equals(object? other) => other is PyIntegerEnum member
             ? Integer == member.Integer : Builtins.eq((object)value, other);
         public override int GetHashCode() => Builtins.KeyHash((object)value);
@@ -124,6 +130,7 @@ namespace Typhon.Runtime
         internal static PyIntegerEnum Lookup(Type type, object? input)
         {
             if (input is PyIntegerEnum member && type.IsInstanceOfType(member)) return member;
+            if (typeof(PyIntegerFlag).IsAssignableFrom(type)) return PyIntegerFlag.FromValue(type, PyIntEnumType.Integer(input));
             const BindingFlags flags = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
             var entries = (IDictionary?)type.GetField("_value2member_map_", flags)?.GetValue(null);
             try
@@ -151,6 +158,8 @@ namespace Typhon.Stdlib
 
     internal static class @enum
     {
+        internal abstract class IntFlag : PyIntegerFlag { }
+
         internal static class IntEnum
         {
             public static Type _convert_(string name, string module, object filter, object? source = null,

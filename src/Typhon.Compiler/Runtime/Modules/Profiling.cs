@@ -129,7 +129,7 @@ namespace Typhon.Stdlib
                 double Now() => _timer == null ? Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency :
                     Convert.ToDouble((object?)Builtins.__invoke(_timer, []), CultureInfo.InvariantCulture) * (_timeunit > 0 ? _timeunit : 1.0);
 
-                static Label Key(sys_.code code) => (code.co_filename, code.co_firstlineno, code.co_name);
+                static Label Key(types.CodeType code) => (code.co_filename, code.co_firstlineno, code.co_name);
 
                 object PyProfiling.IProfileObserver.Enter(sys_.frame frame)
                 {
@@ -208,9 +208,9 @@ namespace Typhon.Stdlib
                     }
                 }
 
-                internal sealed class Counter(sys_.code code)
+                internal sealed class Counter(types.CodeType code)
                 {
-                    public readonly sys_.code Code = code;
+                    public readonly types.CodeType Code = code;
                     public readonly Totals Times = new();
                     public readonly Dictionary<Counter, Totals> Edges = new();
                 }
@@ -236,10 +236,10 @@ namespace Typhon.Stdlib
 
                 internal class ProfileSubEntry : PyStructSeq
                 {
-                    public readonly sys_.code code;
+                    public readonly types.CodeType code;
                     public readonly long callcount, reccallcount;
                     public readonly double totaltime, inlinetime;
-                    internal ProfileSubEntry(sys_.code key, Totals counts)
+                    internal ProfileSubEntry(types.CodeType key, Totals counts)
                     {
                         code = key; callcount = counts.Calls; reccallcount = counts.Recursive;
                         totaltime = counts.Total; inlinetime = counts.Own;

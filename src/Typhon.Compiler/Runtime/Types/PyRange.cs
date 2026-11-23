@@ -45,6 +45,8 @@ namespace Typhon.Runtime
         public long this[int i] => this[(long)i]; // (an int argument would otherwise be ambiguous between long and Index)
         public int Count => checked((int)_count);
         public bool Contains(long x) => Step > 0 ? x >= Start && x < Stop && (x - Start) % Step == 0 : x <= Start && x > Stop && (Start - x) % -Step == 0;
+        public long index(object? value) => PyBigRange.TryPosition(value, Start, Step, _count, out var position)
+            ? checked((long)position) : throw new ArgumentException($"{Builtins.repr(value)} is not in range");
         public IEnumerator<long> GetEnumerator() { for (long k = 0, i = Start; k < _count; k++, i += Step) yield return i; }
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
         bool ICollection<long>.IsReadOnly => true;
@@ -97,7 +99,11 @@ namespace Typhon.Runtime
             }
         }
 
-        bool TryPosition(object? value, out BigInteger position)
+        bool TryPosition(object? value, out BigInteger position) =>
+            TryPosition(value, start, step, _count, out position);
+
+        internal static bool TryPosition(object? value, BigInteger start, BigInteger step,
+            BigInteger count, out BigInteger position)
         {
             position = default;
             BigInteger integer;
@@ -118,7 +124,7 @@ namespace Typhon.Runtime
                     return false;
             }
             position = BigInteger.DivRem(integer - start, step, out var remainder);
-            return remainder.IsZero && position.Sign >= 0 && position < _count;
+            return remainder.IsZero && position.Sign >= 0 && position < count;
         }
 
         public bool __contains__(object? value) => TryPosition(value, out _);

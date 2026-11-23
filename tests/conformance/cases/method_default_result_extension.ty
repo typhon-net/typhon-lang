@@ -1,0 +1,10 @@
+class Document:
+    def raw(self, year, month, width=0, indent=0):
+        return f"{year}-{month:02d}\n" + (" " * indent) + f"width={width}"
+
+class Detailed(Document):
+    def raw(self, year, month, width=0, indent=0):
+        return super().raw(year, month, width, indent)
+
+print(Document().raw(2024, 2).splitlines()[0].strip())
+print(Detailed().raw(2025, 3).splitlines()[-1])

@@ -39,8 +39,8 @@ namespace Typhon.Runtime
             internal long Events;
             internal bool HasLocalEvents;
             internal readonly Dictionary<long, object> Callbacks = new();
-            internal readonly ConditionalWeakTable<sys_.code, LocalMask> Local = new();
-            internal ConditionalWeakTable<sys_.code, HashSet<(long Event, long Offset)>> Disabled = new();
+            internal readonly ConditionalWeakTable<types.CodeType, LocalMask> Local = new();
+            internal ConditionalWeakTable<types.CodeType, HashSet<(long Event, long Offset)>> Disabled = new();
         }
 
         static readonly object Sync = new();
@@ -104,7 +104,7 @@ namespace Typhon.Runtime
 
         public static long get_local_events(long tool_id, object code)
         {
-            if (code is not sys_.code pythonCode) throw new InvalidCastException("code must be a code object");
+            if (code is not types.CodeType pythonCode) throw new InvalidCastException("code must be a code object");
             lock (Sync)
                 return Tools[ToolIndex(tool_id)] is { } tool && tool.Local.TryGetValue(pythonCode, out var local)
                     ? local.Events : 0;
@@ -112,7 +112,7 @@ namespace Typhon.Runtime
 
         public static void set_local_events(long tool_id, object code, long @event_set)
         {
-            if (code is not sys_.code pythonCode) throw new InvalidCastException("code must be a code object");
+            if (code is not types.CodeType pythonCode) throw new InvalidCastException("code must be a code object");
             lock (Sync)
             {
                 var tool = ToolInUse(tool_id);
@@ -147,7 +147,7 @@ namespace Typhon.Runtime
         internal static void Notify(sys_.frame frame, long @event, Func<object?[]> arguments)
         {
             if (PyTracing.InCallback) return;
-            sys_.code code = frame.f_code;
+            types.CodeType code = frame.f_code;
             var point = (@event, frame.f_lasti);
             List<(Tool Tool, object Callback)>? observers = null;
             lock (Sync)

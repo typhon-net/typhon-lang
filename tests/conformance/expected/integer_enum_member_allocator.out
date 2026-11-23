@@ -1,0 +1,3 @@
+FIRST 0 first item <Slot.FIRST: 0>
+SECOND 1 second item <Slot.SECOND: 1>
+['FIRST', 'SECOND'] True True

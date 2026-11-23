@@ -106,18 +106,25 @@ namespace Typhon.Compiler.Emit
         }
 
         /// <summary>The type of an expression as something iterated (an Enum class iterates its members).</summary>
-        string IterableType(Expr e) => EnumIterated(e) is string et ? et + "[]" : InferType(e);
+        string IterableType(Expr e) => EnumIterated(e, out _) is string et ? et + "[]" : InferType(e);
 
         /// <summary>The C# type of an Enum class used as an iterable (for kind in Color:), or null.</summary>
-        string EnumIterated(Expr e) =>
-            e is NameExpr en && !IsLocal(en.Id) && TryResolveType(en.Id, 0, out _, out var ec) && ec != null &&
-            ec.Bases.Any(b => (b is SubscriptExpr bs ? bs.Target : b) is NameExpr bn && (bn.Id == "Enum" || bn.Id == "IntEnum") || b is AttributeExpr ba && (ba.Name == "Enum" || ba.Name == "IntEnum"))
-                ? Esc(ec.Name) : null;
+        string EnumIterated(Expr e, out ClassDef definition)
+        {
+            definition = null;
+            if (DottedName(e) is not string name || IsLocal(name.Split('.')[0]) ||
+                !TryResolveType(name, 0, out _, out var cls) || cls == null ||
+                !(IsObjectIntegerEnum(cls) || cls.Bases.Any(basis => DottedName(basis) is "Enum" or "enum.Enum" or "IntEnum" or "enum.IntEnum")))
+                return null;
+            definition = cls;
+            return StdlibTypeCode(null, cls) ?? Esc(cls.Name);
+        }
 
         string EmitIterable(Expr e)
         {
             // for kind in Color: an Enum class iterates its members in definition order
-            if (EnumIterated(e) is string enumType) return $"global::System.Enum.GetValues<{enumType}>()";
+            if (EnumIterated(e, out var enumClass) is string enumType)
+                return IsObjectIntegerEnum(enumClass) ? $"{enumType}._value2member_map_.Values" : $"global::System.Enum.GetValues<{enumType}>()";
             string code = EmitExpr(e);
             // iterating a str yields one-character strs
             if (e is ConstExpr sc && sc.Kind == ConstKind.Str || e is FStringExpr) return $"{Rt("chars")}({code})";
@@ -385,6 +392,15 @@ namespace Typhon.Compiler.Emit
         /// <summary>The element of a comprehension for a declared element type: nested comprehensions follow it, an int becomes a float.</summary>
         string EmitElementAs(Expr elt, string targetElem)
         {
+            if (elt is AttributeExpr attribute && BoundMethodValue(attribute) is string bound)
+            {
+                if (targetElem is null or "dynamic") return $"(dynamic){Paren(bound)}";
+                if (targetElem is "object" or "object?") return $"(object?){Paren(bound)}";
+                if (IsDotNetMethod(attribute) && (targetElem is "Action" or "global::System.Action" ||
+                    targetElem.StartsWith("Func<") || targetElem.StartsWith("global::System.Func<") ||
+                    targetElem.StartsWith("Action<") || targetElem.StartsWith("global::System.Action<")))
+                    return $"({targetElem}){Paren(EmitAttribute(attribute, allowMethodGroup: true))}";
+            }
             if (targetElem == null) return EmitValue(elt);
             if (targetElem == "dynamic") return $"(dynamic){Paren(EmitValue(elt))}";
             if (elt is ComprehensionExpr inner) return EmitComprehension(inner, targetElem);
@@ -393,6 +409,35 @@ namespace Typhon.Compiler.Emit
             if (elt is ListExpr le && targetElem.StartsWith("List<") && targetElem.EndsWith(">") && !le.Elts.Any(x => x is StarredExpr))
                 return $"new {targetElem} {{ {string.Join(", ", le.Elts.Select(x => EmitElementAs(x, GenericArg(targetElem))))} }}";
             return EmitValue(elt);
+        }
+
+        static List<Expr> ComprehensionTargets(Expr expression) => expression switch
+        {
+            TupleExpr tuple => tuple.Elts,
+            ListExpr list => list.Elts,
+            _ => null,
+        };
+
+        static bool CanUnpackComprehension(Expr expression) =>
+            expression is NameExpr || ComprehensionTargets(expression)?.All(CanUnpackComprehension) == true;
+
+        string UnpackComprehension(string item, Expr target, Dictionary<string, string> assignments)
+        {
+            var statements = new List<string>();
+            void Unpack(string value, Expr binding)
+            {
+                if (binding is NameExpr name)
+                {
+                    assignments[name.Id] = value;
+                    return;
+                }
+                var targets = ComprehensionTargets(binding);
+                string unpacked = NewTmp("unpack");
+                statements.Add($"var {unpacked} = {Rt("__unpack_items")}({Rt("__iter_dyn")}((object?){value}), {targets.Count});");
+                for (int index = 0; index < targets.Count; index++) Unpack($"{unpacked}[{index}]", targets[index]);
+            }
+            Unpack(item, target);
+            return string.Join(" ", statements);
         }
 
         string EmitComprehensionCore(ComprehensionExpr c, Scope bindings, string targetType)
@@ -410,32 +455,33 @@ namespace Typhon.Compiler.Emit
                     ? "dynamic" : IterElementType(InferType(g.Iter));
                 BindTargetTypes(bindings, g.Target, elemType);
                 string param; string deconstruct = null;
+                string seq = iter;
                 var bound = new HashSet<string>();
                 AstWalker.VisitAll(g.Target, n => { if (n is NameExpr ne) bound.Add(ne.Id); });
                 if (g.Target is NameExpr tn) param = Esc(tn.Id);
+                else if ((IsUnknownType(elemType) || elemType == "object?") && CanUnpackComprehension(g.Target))
+                {
+                    param = NewTmp("c");
+                    var values = new Dictionary<string, string>();
+                    string unpack = UnpackComprehension(param, g.Target, values);
+                    if (g.Ifs.Count == 0)
+                        deconstruct = unpack + " " + string.Join(" ", values.Select(binding => $"var {Esc(binding.Key)} = {binding.Value};"));
+                    else
+                    {
+                        seq = $"{Paren(seq)}.Select({param} => {{ {unpack} return new object?[] {{ {string.Join(", ", values.Values)} }}; }})";
+                        deconstruct = string.Join(" ", values.Keys.Select((name, index) => $"dynamic {Esc(name)} = {param}[{index}];"));
+                    }
+                }
                 else if (g.Target is TupleExpr tuple && tuple.Elts.All(x => x is NameExpr))
                 {
                     param = NewTmp("c");
                     var names = tuple.Elts.Cast<NameExpr>().Select(name => name.Id).ToList();
-                    bool late = IsUnknownType(elemType);
-                    if (late)
-                    {
-                        string unpacked = NewTmp("unpack");
-                        var lastBindings = names.Select((name, index) => (name, index))
-                            .Where(binding => binding.index == names.LastIndexOf(binding.name));
-                        deconstruct = $"var {unpacked} = {Rt("__unpack_items")}({Rt("__iter_dyn")}((object?){param}), {names.Count}); " +
-                            string.Join(" ", lastBindings.Select(binding => $"var {Esc(binding.name)} = {unpacked}[{binding.index}];"));
-                    }
-                    else
-                    {
-                        string pattern = string.Join(", ", names.Select((name, index) => index == names.LastIndexOf(name) ? Esc(name) : NewTmp("discard")));
-                        deconstruct = $"var ({pattern}) = {param};";
-                    }
+                    string pattern = string.Join(", ", names.Select((name, index) => index == names.LastIndexOf(name) ? Esc(name) : NewTmp("discard")));
+                    deconstruct = $"var ({pattern}) = {param};";
                 }
                 else { param = NewTmp("c"); deconstruct = $"var {DeconstructionPattern(g.Target)} = {param};"; }
                 _lambdaParams.Push(bound.ToDictionary(name => name, Esc));
                 string Lambda(string body) => deconstruct == null ? $"{param} => {body}" : $"{param} => {{ {deconstruct} return {body}; }}";
-                string seq = iter;
                 foreach (var cond in g.Ifs) seq = $"{Paren(seq)}.Where({Lambda(Cond(cond))})";
                 string result;
                 if (i == c.Generators.Count - 1)

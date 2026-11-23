@@ -1,0 +1,14 @@
+from itertools import repeat
+
+class Count:
+    def __index__(self) -> int:
+        return 3
+
+numbers = repeat("x", Count())
+print(iter(numbers) is numbers)
+print(next(numbers), list(numbers), list(numbers))
+print(list(repeat(object="y", times=-2)), next(repeat("z")))
+try:
+    repeat("invalid", None)
+except TypeError:
+    print("requires integer")
