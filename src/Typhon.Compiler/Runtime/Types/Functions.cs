@@ -59,9 +59,8 @@ namespace Typhon.Runtime
             var type = _target as Type ?? _target.GetType();
             var flags = _visibility | (_target is Type ? System.Reflection.BindingFlags.Static : System.Reflection.BindingFlags.Instance);
             var methods = type.GetMethods(flags).Where(IsPythonMethod).ToList();
-            if (_target is Type && args.Length > 0 && args[0] != null && type.IsInstanceOfType(args[0]) &&
-                methods.Count == 0)
-                return new PyBoundMethod(args[0]!, _name, includeNonPublic: IncludesNonPublic).__call__(args.Skip(1).ToArray());
+            if (methods.Count == 0 && _target is Type && TryCallUnbound(type, args, null, out var unbound))
+                return unbound;
             var candidates = methods.Select(m => CloseMethod(m, args, null)).OfType<System.Reflection.MethodInfo>().ToList();
             var best = PyArgs.Best(candidates, args, null, out var fitted);
             if (best != null) return Invoke(best, fitted);
@@ -108,8 +107,37 @@ namespace Typhon.Runtime
             var flags = _visibility | (_target is Type ? System.Reflection.BindingFlags.Static : System.Reflection.BindingFlags.Instance);
             var candidates = type.GetMethods(flags).Where(IsPythonMethod)
                 .Select(m => CloseMethod(m, args, kw)).OfType<System.Reflection.MethodInfo>().ToList();
+            if (candidates.Count == 0 && _target is Type && TryCallUnbound(type, args, kw, out var unbound))
+                return unbound;
             var best = PyArgs.Best(candidates, args, kw, out var call) ?? throw PyArgs.NoFit(_name, kw, candidates);
             return Invoke(best, call);
+        }
+
+        bool TryCallUnbound(Type owner, object?[] args, IDictionary<string, object?>? keywords, out object? result)
+        {
+            result = null;
+            if (args.Length == 0 || args[0] is not object receiver || !owner.IsInstanceOfType(receiver)) return false;
+            var positional = args[1..];
+            var candidates = owner.GetMethods(_visibility | System.Reflection.BindingFlags.Instance)
+                .Where(method => IsPythonMethod(method) && !method.IsAbstract)
+                .Select(method => CloseMethod(method, positional, keywords)).OfType<System.Reflection.MethodInfo>().ToArray();
+            if (candidates.Length == 0) return false;
+            var method = PyArgs.Best(candidates, positional, keywords, out var fitted)
+                ?? throw PyArgs.NoFit(_name, keywords, candidates);
+            result = InvokeDeclared(method, receiver, fitted);
+            return true;
+        }
+
+        internal static object? InvokeDeclared(System.Reflection.MethodInfo method, object? receiver, object?[] args)
+        {
+            if (receiver != null && receiver.GetType() != method.DeclaringType && method.IsVirtual && !method.IsFinal)
+                return Typhon.Stdlib.builtins.super.InvokeDirect(method, receiver, args);
+            try { return method.Invoke(receiver, args); }
+            catch (System.Reflection.TargetInvocationException ex) when (ex.InnerException != null)
+            {
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex.InnerException).Throw();
+                throw;
+            }
         }
 
         object? Invoke(System.Reflection.MethodInfo method, object?[] call)
@@ -400,6 +428,7 @@ namespace Typhon.Runtime
                 if (args.Length != 1) throw new InvalidCastException($"{t.Name}() expected one value");
                 return PyStrEnum.Lookup(t, args[0]);
             }
+            if (TryConstructCollectionClass(t, args, null, out var collection)) return collection;
             if (t == typeof(frozendict<object, object>)) return ConstructFrozenDict(args, null);
             if (t == typeof(OrderedDictionary<object, object>)) return dict(ConstructFrozenDict(args, null, "dict"));
             if (t == typeof(List<object>) || t == typeof(HashSet<object>) || t == typeof(frozenset<object>) || t == typeof(ITuple))
@@ -508,7 +537,7 @@ namespace Typhon.Runtime
             {
                 var definition = t.GetGenericTypeDefinition();
                 if (definition == typeof(PyArray<>)) return "array";
-                if (definition == typeof(deque<>)) return "collections";
+                if (Typhon.Stdlib.collections.CanonicalClass(t) != null) return "collections";
             }
             if (t.Namespace is string ns && (ns == "System" || ns.StartsWith("System.") || ns.StartsWith("Microsoft.") || ns.StartsWith("Typhon."))) return "builtins";
             return outer != t ? outer.Name : t.Namespace ?? "builtins";
@@ -525,9 +554,6 @@ namespace Typhon.Runtime
         /// <summary>A type's Python name: int for long, str for string, list for List&lt;T&gt;, a Typhon class's own name.</summary>
         public static string PyTypeName(Type t)
         {
-            if (t.Name.StartsWith("__typhon_rebound_class_", StringComparison.Ordinal) &&
-                t.GetCustomAttributes(typeof(PySourceAttribute), false).OfType<PySourceAttribute>().FirstOrDefault()?.PythonName is string name)
-                return name;
             if (t == typeof(object)) return "object";
             if (PyExc.BuiltinTypeName(t) is string exceptionName) return exceptionName;
             if (t == typeof(Typhon.Stdlib.types.UnionType)) return "Union";
@@ -561,6 +587,7 @@ namespace Typhon.Runtime
             if (t.IsGenericType)
             {
                 var g = t.GetGenericTypeDefinition();
+                if (g == typeof(PyOrderedDict<,>)) return "OrderedDict";
                 if (g == typeof(List<>)) return "list";
                 if (g == typeof(PyZip<>)) return "zip";
                 if (g == typeof(OrderedDictionary<,>) || g == typeof(Dictionary<,>)) return "dict";
@@ -568,6 +595,8 @@ namespace Typhon.Runtime
                 if (g == typeof(PyArray<>)) return "array";
                 if (g == typeof(PyTuple<>) || t.FullName?.StartsWith("System.ValueTuple") == true) return "tuple";
             }
+            if (t.GetCustomAttributes(typeof(PySourceAttribute), false).OfType<PySourceAttribute>().FirstOrDefault()?.PythonName is string name)
+                return name;
             int tick = t.Name.IndexOf('`');
             return tick < 0 ? t.Name : t.Name.Substring(0, tick);
         }
@@ -598,7 +627,9 @@ namespace Typhon.Runtime
                 Typhon.Stdlib._abc.CheckAbstract(t);
                 if (t == typeof(MissingMemberException)) return __attribute_error(args, kw);
                 if (t == typeof(PyPartial)) return ConstructPartial(args, kw);
+                if (t == typeof(BigInteger)) return ConstructBigInt(args, kw);
                 if (ByteSequenceFactory(t) is PyBoundMethod factory) return factory.__call_kw__(args, kw);
+                if (TryConstructCollectionClass(t, args, kw, out var collection)) return collection;
                 if (t == typeof(frozendict<object, object>)) return ConstructFrozenDict(args, kw);
                 if (t == typeof(OrderedDictionary<object, object>)) return dict(ConstructFrozenDict(args, kw, "dict"));
                 if (t == typeof(frozenset<object>)) throw new InvalidCastException("frozenset() takes no keyword arguments");
@@ -659,6 +690,24 @@ namespace Typhon.Runtime
             ? new PyBoundMethod(typeof(Builtins), nameof(bytes)) : type == typeof(PyByteArray)
             ? new PyBoundMethod(typeof(Builtins), nameof(bytearray)) : null;
 
+        static BigInteger ConstructBigInt(object?[] args, IDictionary<string, object?>? keywords)
+        {
+            if (keywords?.Count > 0)
+            {
+                if (keywords.Count != 1 || !keywords.TryGetValue("base", out var basis) || args.Length != 1)
+                    throw new InvalidCastException("int() takes one positional value and an optional base");
+                return __bigint(args[0]!, (long)__index_value(basis));
+            }
+            return args.Length switch
+            {
+                0 => BigInteger.Zero,
+                1 when args[0] != null => __bigint(args[0]!),
+                1 => throw new InvalidCastException("int() argument must be a string or a number, not 'NoneType'"),
+                2 => __bigint(args[0]!, (long)__index_value(args[1])),
+                _ => throw new InvalidCastException($"int() takes at most 2 arguments ({args.Length} given)"),
+            };
+        }
+
         /// <summary>Builtin conversions, type(x), and object() through the type object of the builtin.</summary>
         static bool BuiltinTypeCall(Type t, object?[] args, out object? result)
         {
@@ -666,6 +715,11 @@ namespace Typhon.Runtime
             if (ByteSequenceFactory(t) is PyBoundMethod factory)
             {
                 result = (object?)factory.__call__(args);
+                return true;
+            }
+            if (t == typeof(BigInteger))
+            {
+                result = ConstructBigInt(args, null);
                 return true;
             }
             if (t == typeof(long) && args.Length == 2 && args[0] is string integerText && args[1] is int or long)

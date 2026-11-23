@@ -53,7 +53,7 @@ namespace Typhon.Runtime
         const BindingFlags Declared = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly;
         static readonly ConditionalWeakTable<Type, ClassNamespace> Namespaces = new();
 
-        static ClassNamespace Namespace(Type type) => Namespaces.GetValue(type, t => new ClassNamespace(t));
+        static ClassNamespace Namespace(Type type) => Namespaces.GetValue(PyMetaclasses.Storage(type), t => new ClassNamespace(t));
 
         internal static IDictionary DeclaredNamespace(Type type) => Namespace(type);
 
@@ -194,12 +194,7 @@ namespace Typhon.Runtime
         static object? Invoke(IEnumerable<MethodInfo> methods, string name, object? target, object?[] args, IDictionary<string, object?>? keywords)
         {
             var method = PyArgs.Best(methods, args, keywords, out var call) ?? throw PyArgs.NoFit(name, keywords, methods);
-            try { return method.Invoke(target, call); }
-            catch (TargetInvocationException error) when (error.InnerException != null)
-            {
-                ExceptionDispatchInfo.Capture(error.InnerException).Throw();
-                throw;
-            }
+            return PyBoundMethod.InvokeDeclared(method, target, call);
         }
 
         static object Receiver(string name, object?[] args) => args.Length > 0 && args[0] != null ? args[0]! :
@@ -208,8 +203,14 @@ namespace Typhon.Runtime
         static PyClosure InstanceFunction(Type type, string name, MethodInfo[] methods, PySourceAttribute? source)
         {
             var method = methods.FirstOrDefault();
-            var callable = Callable(type, name, source, method,
-                (args, keywords) => Invoke(methods, name, Receiver(name, args), args[1..], keywords));
+            var unbound = type.GetMethod("__typhon_unbound_" + name, Declared);
+            var callable = Callable(type, name, source, method, (args, keywords) =>
+            {
+                object receiver = Receiver(name, args);
+                return unbound != null && !type.IsInstanceOfType(receiver)
+                    ? Invoke([unbound], name, null, args, keywords)
+                    : Invoke(methods, name, receiver, args[1..], keywords);
+            });
             if (method?.GetCustomAttribute<PyDataclassReprAttribute>() is { } generated &&
                 type.GetMethod(generated.Body, Declared) is MethodInfo implementation)
             {
@@ -242,7 +243,6 @@ namespace Typhon.Runtime
             {
                 var source = type.GetCustomAttribute<PySourceAttribute>();
                 _bindings["__module__"] = () => Builtins.__module_of(type);
-                _bindings["__qualname__"] = () => Builtins.PyTypeName(type);
                 _bindings["__doc__"] = () => source?.DocString;
                 if (type == typeof(Type)) AddDescriptor("__annotations__", new TypeAnnotations());
                 if (type == typeof(PyFunction) || type == typeof(types.FunctionType))
@@ -316,7 +316,7 @@ namespace Typhon.Runtime
 
             internal bool SetAdded(string name, object? value)
             {
-                if (_bindings.ContainsKey(name)) return false;
+                if (name != "__doc__" && _bindings.ContainsKey(name)) return false;
                 lock (_added) _added[name] = value;
                 return true;
             }

@@ -54,12 +54,8 @@ namespace Typhon.Runtime
                 case PyBigRange range: return key is PySlice rangeSlice ? (object)range[rangeSlice] : range[key];
                 case IDictionary d:
                 {
-                    var k = KeyFor(d, key);
-                    if (d.Contains(k!)) return d[k!];
-                    if (o is IPyMissingKey mapping) return mapping.GetMissingKey(k!);
-                    var missing = LookupSourceSpecialMethod(d, "__missing__");
-                    if (missing.Owner != null) return __invoke(missing.Value, [key]);
-                    throw new KeyNotFoundException(repr(key));
+                    var getter = LookupSourceSpecialMethod(d, "__getitem__");
+                    return getter.Owner == null ? DictionaryItem(d, key) : __invoke(getter.Value, [key]);
                 }
                 case PyBytes bytes when key is PySlice byteSlice:
                 {
@@ -82,6 +78,8 @@ namespace Typhon.Runtime
                 case Typhon.Stdlib.collections.abc.Mapping mappingValue: return mappingValue.Item(key);
                 case null: throw new NullReferenceException("'NoneType' object is not subscriptable");
             }
+            var sourceMethod = LookupSourceSpecialMethod(o, "__getitem__");
+            if (sourceMethod.Owner != null) return __invoke(sourceMethod.Value, [key]);
             if (IsIndex(key) && o is not IDictionary)
             {
                 dynamic dyn = o;
@@ -127,7 +125,7 @@ namespace Typhon.Runtime
             }
             switch (o)
             {
-                case IDictionary d: d[KeyFor(d, key)!] = value; return;
+                case IDictionary d: SetDictionaryItem(d, key, value); return;
                 case Typhon.Stdlib.collections.abc.MutableMapping mapping: mapping.Put(key, value); return;
                 case IList or PyByteArray when key is PySlice selection:
                 {
@@ -295,6 +293,37 @@ namespace Typhon.Runtime
         public static IEnumerable<dynamic?> map<T>(PyClosure f, IEnumerable<T> xs) => xs.Select(x => f.__call__([x]));
         public static IEnumerable<dynamic?> map<T>(PyBoundMethod f, IEnumerable<T> xs) => xs.Select(x => f.__call__([x]));
         public static IEnumerable<dynamic?> map<T>(object f, IEnumerable<T> xs) => xs.Select(x => __invoke(f, [x]));
+        public static PyIterator<object?> __map_many(object? callable, object?[] inputs, object? strict)
+        {
+            if (inputs.Length == 0) throw new InvalidCastException("map() must have at least two arguments.");
+            var iterators = inputs.Select(input => __iter_dyn(input).GetEnumerator()).ToArray();
+            return new PyIterator<object?>(MappedRows(callable, iterators, truthy(strict)).GetEnumerator());
+        }
+
+        static IEnumerable<object?> MappedRows(object? callable, IEnumerator<object?>[] iterators, bool strict)
+        {
+            while (true)
+            {
+                var arguments = new object?[iterators.Length];
+                for (int i = 0; i < iterators.Length; i++)
+                {
+                    if (!iterators[i].MoveNext())
+                    {
+                        if (strict && i > 0) throw MapLengthError(i, "shorter");
+                        if (strict)
+                            for (int other = 1; other < iterators.Length; other++)
+                                if (iterators[other].MoveNext()) throw MapLengthError(other, "longer");
+                        yield break;
+                    }
+                    arguments[i] = iterators[i].Current;
+                }
+                yield return __invoke(callable, arguments);
+            }
+        }
+
+        static ArgumentException MapLengthError(int preceding, string comparison) =>
+            new($"map() argument {preceding + 1} is {comparison} than {(preceding == 1 ? "argument 1" : $"arguments 1-{preceding}")}");
+
         public static IEnumerable<T> __filter_truthy<T>(IEnumerable<T> xs) => xs.Where(item => truthy(item));
         public static IEnumerable<T> filter<T>(Func<T, bool> f, IEnumerable<T> xs) => xs.Where(f);
         public static IEnumerable<T> filter<T>(PyClosure f, IEnumerable<T> xs) => xs.Where(x => truthy(f.__call__([x])));
@@ -528,6 +557,7 @@ namespace Typhon.Runtime
             if (o is Exception && name == "add_note") return !HasSourceMember(o.GetType(), name);
             if (o == null) return false;
             Type type = o.GetType();
+            if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(frozendict<,>)) return false;
             bool builtinShape = o is ITuple or IList || o is IDictionary and not (Typhon.Stdlib.types.MappingProxyType or PyAttrDict) ||
                 type.IsGenericType && type.GetGenericTypeDefinition() == typeof(HashSet<>);
             return builtinShape && !HasSourceMember(type, name);

@@ -1,0 +1,14 @@
+def apply(function, number):
+    return function(number)
+
+
+def make_counter():
+    def count(number: int) -> int:
+        if number == 0:
+            return 0
+        return apply(count, number - 1) + 1
+    return count
+
+
+counter = make_counter()
+print(counter(4), counter(2))

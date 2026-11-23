@@ -1,0 +1,16 @@
+from typing import Any
+
+class Position:
+    def __init__(self, value):
+        self.value = value
+
+    def move(self, offset):
+        return Position(self.value + offset)
+
+def steps(initial: Any, offsets):
+    history = [initial]
+    for offset in offsets:
+        history.append(history[-1].move(offset))
+    return [point.value for point in history]
+
+print(steps(Position(4), [3, 5, -6]))

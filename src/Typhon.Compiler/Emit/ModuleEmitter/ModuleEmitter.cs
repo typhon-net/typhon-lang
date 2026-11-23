@@ -123,7 +123,7 @@ namespace Typhon.Compiler.Emit
                     _funcReturnTypes[f.Name] = AnnotatedCallResult(f);
 
             bool hasNs = !string.IsNullOrEmpty(_m.Namespace);
-            if (hasNs) { _w.Line("namespace " + _m.Namespace); _w.Open(); }
+            if (hasNs) { _w.Line("namespace " + EscapeDottedName(_m.Namespace)); _w.Open(); }
 
             var body = _m.Ast.Body;
             // a GDScript module: the script class is a top-level class (Godot's script classes must be), which sees the
@@ -205,6 +205,12 @@ namespace Typhon.Compiler.Emit
 
             if (!runtimeCode && !_m.IsGdScript)
             {
+                if (_m.IsPackage && !_m.Globals.Contains("__path__"))
+                {
+                    fields["__path__"] = _moduleFieldTypes["__path__"] = "List<string>";
+                    string directory = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(_m.Path));
+                    _w.Line($"internal static List<string> __path__ = [{CsString(directory)}];");
+                }
                 foreach (var name in new[] { "__name__", "__doc__" }.Where(_m.Globals.Contains))
                 {
                     fields[name] = _moduleFieldTypes[name] = "dynamic";

@@ -1,0 +1,68 @@
+import __future__
+import ast
+import codeop
+
+scope = {}
+compiled = codeop.compile_command('answer = 21 * 2')
+print(compiled is not None, compiled.co_filename)
+exec(compiled, scope)
+print(scope['answer'])
+print(eval(codeop.compile_command('6 * 7', symbol='eval')))
+for text in ['if True:', 'if True:\n    pass', '(6 *', '"""incomplete', 'try:\n    pass']:
+    print(codeop.compile_command(text) is None)
+for text in ['if True\n    pass', 'x =', 'a = (]', '1 +', "'broken", 'x:=9', '1 = 2', 'break', 'continue']:
+    try:
+        codeop.compile_command(text)
+    except SyntaxError:
+        print('syntax error')
+compiler = codeop.Compile()
+stateful = codeop.CommandCompiler()
+annotation_flag = __future__.annotations.compiler_flag
+print(bool(compiler('from __future__ import annotations', '<input>', 'exec').co_flags & annotation_flag))
+print(bool(compiler('pass', '<input>', 'exec').co_flags & annotation_flag))
+print(bool(stateful('from __future__ import annotations', symbol='exec').co_flags & annotation_flag))
+print(stateful('if True:') is None, bool(stateful('pass').co_flags & annotation_flag))
+
+stateful('from __future__ import barry_as_FLUFL', symbol='exec')
+print(eval(stateful('1 <> 2', symbol='eval')))
+try:
+    stateful('1 != 2', symbol='eval')
+except SyntaxError:
+    print('remembered grammar')
+print(codeop.compile_command('@decorate') is None, codeop.compile_command('match value:') is None)
+print(codeop.compile_command('if True:\n    pass', symbol='exec') is not None)
+print(codeop.compile_command('(', symbol='eval') is None)
+try:
+    codeop.compile_command('if True:', symbol='eval')
+except SyntaxError:
+    print('statement in eval mode')
+try:
+    codeop.compile_command('if True:\npass')
+except IndentationError:
+    print('indentation error')
+try:
+    codeop.compile_command('return')
+except SyntaxError:
+    print('invalid module return')
+for text in [' 1 + 2', 'await f()', 'nonlocal missing']:
+    try:
+        codeop.compile_command(text)
+    except SyntaxError as error:
+        print(type(error).__name__)
+blank = codeop.compile_command('# comment', symbol='exec')
+print(blank is not None)
+print(codeop.compile_command('if True:\n    pass\nelse:') is None)
+local_scope = {}
+exec(compiler('value = 40', '<commands>', 'exec'), local_scope)
+exec(compiler('value + 2', '<commands>', 'single'), local_scope)
+tree = compiler('6 * 7', '<tree>', 'eval', flags=ast.PyCF_ONLY_AST)
+print(type(tree).__name__, tree.body.left.value, tree.body.right.value)
+print(bool(compiler('pass', '<input>', 'exec').co_flags & annotation_flag))
+import warnings
+with warnings.catch_warnings(record=True) as recorded:
+    warnings.simplefilter('always')
+    warnings.simplefilter('ignore', (SyntaxWarning, DeprecationWarning))
+    warnings.warn('hidden', SyntaxWarning)
+    warnings.warn('hidden', DeprecationWarning)
+    warnings.warn('visible', RuntimeWarning)
+    print(len(recorded), str(recorded[0].message))

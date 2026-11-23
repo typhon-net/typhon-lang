@@ -356,7 +356,7 @@ namespace Typhon.Compiler.Semantics
                 if (c.DeclaredAccessibility != Accessibility.Public && !isProtected) continue;
                 // skip [Obsolete] (e.g. Exception's serialization constructor) and by-ref parameters
                 if (c.GetAttributes().Any(a => a.AttributeClass?.Name == "ObsoleteAttribute")) continue;
-                if (c.Parameters.Any(p => p.RefKind != RefKind.None || p.IsParams)) continue;
+                if (c.Parameters.Any(p => p.RefKind != RefKind.None || p.IsParams && p.Type is not IArrayTypeSymbol { Rank: 1 })) continue;
                 var sig = new CtorSignature { IsProtected = isProtected, Signature = MethodSig(c) };
                 foreach (var p in c.Parameters)
                 {

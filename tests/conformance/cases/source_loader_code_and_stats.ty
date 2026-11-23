@@ -1,0 +1,16 @@
+from importlib.machinery import SourceFileLoader
+import os
+from tempfile import TemporaryDirectory
+
+with TemporaryDirectory() as directory:
+    path = os.path.join(directory, "module.py")
+    content = b"# coding: latin-1\nname = '\xe9'\n"
+    with open(path, "wb") as output:
+        output.write(content)
+    loader = SourceFileLoader("example", path)
+    stats = loader.path_stats(path)
+    print(sorted(stats), stats["size"] == len(content), stats["mtime"] == os.stat(path).st_mtime)
+    code = loader.source_to_code(loader.get_data(path), "input.py")
+    namespace = {}
+    exec(code, namespace)
+    print(code.co_filename, namespace["name"])

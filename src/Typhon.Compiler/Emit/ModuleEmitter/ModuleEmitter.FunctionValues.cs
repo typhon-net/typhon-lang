@@ -59,7 +59,7 @@ namespace Typhon.Compiler.Emit
             return keys;
         }
 
-        static string ModuleClassName(ModuleInfo m) => "global::" + (string.IsNullOrEmpty(m.Namespace) ? "" : m.Namespace + ".") + Esc(m.ClassName);
+        static string ModuleClassName(ModuleInfo m) => m.QualifiedClassName;
 
         /// <summary>The C# type of a module function used as a value.</summary>
         static string FunctionValueType(ModuleInfo m, string name) => ModuleClassName(m) + "." + FnPrefix + name;

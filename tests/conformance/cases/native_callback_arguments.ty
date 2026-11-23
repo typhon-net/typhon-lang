@@ -1,0 +1,12 @@
+from itertools import islice, repeat as duplicate, starmap as apply
+
+for sequence in apply(duplicate, [('x',), ('y', 3)]):
+    print(list(islice(sequence, 2)))
+
+class Factory:
+    def make(self, function: object, entries: list[str]):
+        return function(entries, 5)
+
+make_dict = dict.fromkeys
+print(Factory().make(make_dict, ['b', 'a']))
+print(list(map(dict.fromkeys, ('xy', 'z'))))

@@ -1,0 +1,17 @@
+class Reader:
+    def __init__(self):
+        self._name = 'first'
+
+    def get_name(self):
+        return self._name
+
+    def set_name(self, value):
+        self._name = value
+
+    name = property(get_name, set_name)
+
+
+reader = Reader()
+print(reader.name, reader.get_name())
+reader.name = 'second'
+print(reader.name, reader.get_name(), isinstance(Reader.name, property))

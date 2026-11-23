@@ -45,6 +45,15 @@ namespace Typhon.Compiler.Emit
                 foreach (var c in m.Classes.Values) { DropTypingOnlyMembers(c); NormalizeSelfNames(c); AddMethodAliases(c); NormalizeSuper(c); }
             }
             AddBaseStubs(p);
+            foreach (var module in p.Modules.Values)
+            {
+                if (module.Ast == null || module.ParseDiagnostics.Count > 0 || module.IsGdScript) continue;
+                var resolver = ModuleEmitter.CreateClassDeclarationResolver(module, p);
+                AstWalker.VisitAll(module.Ast.Body, node =>
+                {
+                    if (node is AttributeExpr attribute) resolver.MarkUnboundSourceMethod(attribute);
+                });
+            }
         }
 
         static void LowerLegacyGenerics(ModuleInfo module)
@@ -286,7 +295,9 @@ namespace Typhon.Compiler.Emit
 
         // ───────────────────────────── namedtuple ─────────────────────────────
 
-        static bool IsNamedTupleCall(Expr e) => e is CallExpr c && (c.Func is NameExpr n && n.Id == "namedtuple" || c.Func is AttributeExpr a && a.Name == "namedtuple");
+        static bool IsNamedTupleCall(Expr expression, HashSet<string> factories) =>
+            expression is CallExpr call && (call.Func is NameExpr name && factories.Contains(name.Id) ||
+                call.Func is AttributeExpr { Name: "namedtuple" });
 
         /// <summary>The fields known for a tuple literal or a previously declared namedtuple.</summary>
         static List<string> NamedTupleFieldTuple(Expr spec, Dictionary<string, List<string>> known)
@@ -327,22 +338,48 @@ namespace Typhon.Compiler.Emit
         {
             var body = m.Ast.Body;
             var known = new Dictionary<string, List<string>>();
+            var factories = new HashSet<string> { "namedtuple" };
             for (int i = 0; i < body.Count; i++)
             {
-                if (body[i] is AssignStmt a && a.Targets.Count == 1 && a.Targets[0] is NameExpr target && IsNamedTupleCall(a.Value) &&
+                if (body[i] is ImportFromStmt import)
+                {
+                    foreach (var name in import.Names)
+                    {
+                        string local = name.AsName ?? name.Name;
+                        Forget(local);
+                        if (import.Level == 0 && import.Module == "collections" && name.Name == "namedtuple")
+                            factories.Add(local);
+                    }
+                    continue;
+                }
+                if (body[i] is ImportStmt moduleImport)
+                {
+                    foreach (var name in moduleImport.Names) Forget(name.AsName ?? name.Name.Split('.')[0]);
+                    continue;
+                }
+                if (body[i] is AssignStmt a && a.Targets.Count == 1 && a.Targets[0] is NameExpr target && IsNamedTupleCall(a.Value, factories) &&
                     NamedTupleFieldsOf((CallExpr)a.Value, known) is List<string> fields)
                 {
-                    var cls = new ClassDef { Name = target.Id, Line = a.Line, Col = a.Col };
-                    MakeNamedTuple(cls, fields, ((CallExpr)a.Value).Args.FirstOrDefault(x => x.Name == "defaults")?.Value, annotated: null);
+                    var factory = (CallExpr)a.Value;
+                    var typeName = factory.Args.FirstOrDefault(x => x.Name == "typename") ??
+                        factory.Args.FirstOrDefault(x => x.Name == null && !x.Star && !x.DoubleStar);
+                    var cls = new ClassDef
+                    {
+                        Name = target.Id, Line = a.Line, Col = a.Col,
+                        PyName = typeName?.Value is ConstExpr { Kind: ConstKind.Str } name ? name.Str : null,
+                    };
+                    MakeNamedTuple(cls, fields, factory.Args.FirstOrDefault(x => x.Name == "defaults")?.Value, annotated: null);
                     body[i] = cls;
                     m.Classes[cls.Name] = cls;
                     m.Globals.Remove(cls.Name);
+                    factories.Remove(cls.Name);
                     known[cls.Name] = fields;
                     continue;
                 }
                 if (body[i] is ClassDef c && c.NamedTupleFields == null)
                 {
-                    var ntBase = c.Bases.FirstOrDefault(IsNamedTupleCall) as CallExpr;
+                    var ntBase = c.Bases.FirstOrDefault(basis => IsNamedTupleCall(basis, factories)) as CallExpr;
+                    factories.Remove(c.Name);
                     if (ntBase != null && NamedTupleFieldsOf(ntBase, known) is List<string> bf)
                     {
                         c.Bases.Remove(ntBase);
@@ -367,9 +404,15 @@ namespace Typhon.Compiler.Emit
                     else known.Remove(c.Name);
                 }
                 else if (body[i] is AssignStmt reassignment)
-                    foreach (var name in reassignment.Targets.OfType<NameExpr>()) known.Remove(name.Id);
-                else if (body[i] is AnnAssignStmt { Value: not null, Target: NameExpr annotation }) known.Remove(annotation.Id);
-                else if (body[i] is FunctionDef function) known.Remove(function.Name);
+                    foreach (var name in reassignment.Targets.OfType<NameExpr>()) Forget(name.Id);
+                else if (body[i] is AnnAssignStmt { Value: not null, Target: NameExpr annotation }) Forget(annotation.Id);
+                else if (body[i] is FunctionDef function) Forget(function.Name);
+            }
+
+            void Forget(string name)
+            {
+                known.Remove(name);
+                factories.Remove(name);
             }
         }
 
@@ -642,6 +685,18 @@ namespace Typhon.Compiler.Emit
             foreach (var nested in c.Body.OfType<ClassDef>()) AddMethodAliases(nested);
         }
 
+        internal static bool UsesVariadicOverrideBridge(FunctionDef method, FunctionDef inherited)
+        {
+            if (method.Params.Count < 2 || inherited.Params.Count < method.Params.Count - 1 ||
+                method.Params.Last().Kind != ParamKind.VarArgs || inherited.Params.Skip(1).Any(parameter =>
+                    parameter.Kind != ParamKind.Normal || parameter.KeywordOnly) ||
+                method.TypeParams.Count != 0 || inherited.TypeParams.Count != 0 || method.IsAsync != inherited.IsAsync)
+                return false;
+            int prefix = method.Params.Count - 2;
+            return method.Params.Skip(1).Take(prefix).All(parameter => parameter.Kind == ParamKind.Normal && !parameter.KeywordOnly) &&
+                (prefix != 0 || inherited.Params.Skip(1).Any(parameter => parameter.Default != null));
+        }
+
         static void AddBaseStubs(ProjectContext p)
         {
             var owner = new Dictionary<ClassDef, ModuleInfo>();
@@ -698,6 +753,14 @@ namespace Typhon.Compiler.Emit
                 if (root == d || IsSpecial(root)) continue;
                 foreach (var f in d.Body.OfType<FunctionDef>())
                 {
+                    if (f.Params.LastOrDefault()?.Kind == ParamKind.VarArgs && f.Decorators.Count == 0)
+                        foreach (var inherited in ancestors.SelectMany(parent => parent.Body.OfType<FunctionDef>())
+                            .Where(candidate => candidate.Name == f.Name && UsesVariadicOverrideBridge(f, candidate)))
+                        {
+                            // Bind Python calls against the actual method's positional and keyword parameters.
+                            inherited.NeedsOverrideBinding = true;
+                            f.NeedsOverrideBinding = true;
+                        }
                     if (f.Name.StartsWith("__") && f.Name.EndsWith("__") || f.Decorators.Count > 0 || f.Params.Count == 0) continue;
                     if (MultipleInheritance.IsGenerated(f.Name)) continue; // (multiple inheritance's own hooks and copies)
                     if (ancestors.Any(a => Defines(a, f.Name)) || RuntimeDefines(root, f.Name)) continue;
@@ -715,8 +778,14 @@ namespace Typhon.Compiler.Emit
                                           f.TypeParams.Count == 0);
                 if (!same) continue;
                 var root = kv.Key.Root;
+                bool HasResult(FunctionDef method) => AstWalker.ContainsOutsideNestedScopes(method.Body, node =>
+                    node is ReturnStmt { Value: not null and not ConstExpr { Kind: ConstKind.None } });
+                bool sharedResult = !first.IsAsync && defs.Any(HasResult) && !defs.All(HasResult) &&
+                    !defs.Any(method => AstWalker.ContainsOutsideNestedScopes(method.Body, node => node is YieldExpr));
+                if (sharedResult)
+                    foreach (FunctionDef method in defs) method.UsesObjectReturnSlot = true;
                 var stub = new FunctionDef { Name = kv.Key.Name, Line = root.Line, Col = root.Col,
-                    IsAsync = first.IsAsync, IsMissingMethodStub = true };
+                    IsAsync = first.IsAsync, IsMissingMethodStub = true, UsesObjectReturnSlot = sharedResult };
                 foreach (var prm in first.Params) stub.Params.Add(new Param { Name = prm.Name, Default = prm.Default, Kind = ParamKind.Normal, Line = root.Line, Col = root.Col });
                 stub.Body.Add(new RaiseStmt
                 {

@@ -1,0 +1,18 @@
+@classmethod
+def recognize(cls, candidate):
+    if candidate.__name__ == 'Match':
+        return cls.__name__ == 'Root'
+    return NotImplemented
+
+class Root:
+    pass
+
+class Match:
+    pass
+
+Root.__subclasshook__ = recognize
+print(isinstance(recognize, classmethod))
+print(Root.__dict__['__subclasshook__'] is recognize)
+bound = getattr(Root, "__subclasshook__")
+print(bound(Match))
+print(bound.__self__ is Root)

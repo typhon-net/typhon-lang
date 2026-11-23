@@ -1,0 +1,24 @@
+prefix = "value"
+
+
+class Assignments:
+    def __setitem__(self, key, value):
+        raise NotImplementedError
+
+    def set_entries(self, entries=(), /, **named):
+        for key, item in entries:
+            self[key] = (prefix, item)
+        for key, item in named.items():
+            self[key] = (prefix, item)
+
+
+class Namespace(dict):
+    copy_entries = Assignments.set_entries
+
+
+data = Namespace()
+data.copy_entries([("x", 10)], y=20)
+print(data)
+unbound = Assignments.set_entries
+unbound(data, z=30)
+print(data)

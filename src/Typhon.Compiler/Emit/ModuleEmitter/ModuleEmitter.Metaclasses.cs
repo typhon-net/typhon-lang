@@ -42,9 +42,11 @@ namespace Typhon.Compiler.Emit
         bool MetaclassMember(AttributeExpr member, out string type)
         {
             type = null;
-            return !_m.IsGdScript && DottedName(member.Target) is string name &&
-                TryResolveType(name, 0, out _, out var definition) && HasUserMetaclass(definition) &&
-                TryTypeExpr(member.Target, out type);
+            if (_m.IsGdScript || DottedName(member.Target) is not string name ||
+                !TryResolveType(name, 0, out _, out var definition) || !HasUserMetaclass(definition) ||
+                !TryTypeExpr(member.Target, out string className)) return false;
+            type = ClassTypeValue(className, definition);
+            return true;
         }
 
         bool IsMetaclassInstance(Expr expression) => DottedName(expression) is string name &&

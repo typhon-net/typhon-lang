@@ -1,0 +1,23 @@
+from typing import Any
+
+class Matcher:
+    def __init__(self, predicate=None, left='', right='', greedy=True):
+        self.left = left
+        self.right = right
+        self.greedy = greedy
+
+class Child(Matcher):
+    pass
+
+def make(left: Any, right: Any):
+    return Matcher(None, left, right)
+
+def child(left: Any, right: Any):
+    return Child(None, left, right)
+
+a = make([1], [2])
+b = child((1,), (2,))
+c = Matcher(None, '', '', False)
+print(a.left, a.right, a.greedy)
+print(b.left, b.right, b.greedy)
+print(c.left == '', c.greedy)

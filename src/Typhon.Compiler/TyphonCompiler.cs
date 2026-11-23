@@ -73,7 +73,7 @@ namespace Typhon.Compiler
         /// <summary>What the GDScript front end knows about a .gd module (its script class, exports, inner classes).</summary>
         public GdScriptModule GdScript;
 
-        public string QualifiedClassName => "global::" + (string.IsNullOrEmpty(Namespace) ? "" : Namespace + ".") + ClassName;
+        public string QualifiedClassName => "global::" + (string.IsNullOrEmpty(Namespace) ? "" : ModuleEmitter.EscapeDottedName(Namespace) + ".") + ModuleEmitter.Esc(ClassName);
         public bool IsMainModule => Name == "__main__" || Name.EndsWith(".__main__");
         public string PackageName => IsPackage ? Name : Name.Substring(0, Math.Max(0, Name.LastIndexOf('.')));
 

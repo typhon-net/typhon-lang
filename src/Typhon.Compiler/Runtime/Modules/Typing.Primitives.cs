@@ -144,9 +144,15 @@ namespace Typhon.Stdlib
                     _parameters = PyTuple<object?>.Empty;
                     return null;
                 }
-                object typing = SourceImport.ImportModule("typing");
-                object? initialize = Builtins.getattr(typing, "_generic_init_subclass");
-                return Builtins.__invoke_kw(initialize, args, keywords);
+                if (sys_.modules.TryGetValue("typing", out object? typing) &&
+                    (object?)Builtins.getattr(typing, "_generic_init_subclass", null) is object initialize)
+                    return Builtins.__invoke_kw(initialize, args, keywords);
+                var parent = new builtins.super(typeof(Generic), cls);
+                if (parent.TryResolve("__init_subclass__", out var hook)) Builtins.__invoke_kw(hook, [], keywords);
+                if ((object?)Builtins.getattr(cls, "__type_params__", null) is not PyTuple<object?> parameters)
+                    throw new InvalidCastException("Cannot inherit from plain Generic");
+                Builtins.setattr(cls, "__parameters__", parameters);
+                return null;
             });
 
             public static types.MethodType __init_subclass__ => new(InitializeSubclass, typeof(Generic));

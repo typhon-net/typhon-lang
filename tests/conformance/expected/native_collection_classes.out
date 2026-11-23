@@ -1,0 +1,8 @@
+True collections deque
+True collections Counter
+True collections OrderedDict
+True collections defaultdict
+deque(['b', 'c'], maxlen=2)
+Counter({'b': 5, 'a': 2, 'c': 1})
+OrderedDict({2: 'x', 'item': 'y'})
+True

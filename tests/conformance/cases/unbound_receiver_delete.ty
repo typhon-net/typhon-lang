@@ -1,0 +1,18 @@
+class DeclaresPayload:
+    def __init__(self):
+        self.payload = "original"
+
+    def clear(self):
+        del self.payload
+
+
+class Separate:
+    pass
+
+
+clear = DeclaresPayload.clear
+target = Separate()
+setattr(target, "payload", 42)
+print(getattr(target, "payload"))
+clear(target)
+print(hasattr(target, "payload"))

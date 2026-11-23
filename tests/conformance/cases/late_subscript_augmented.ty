@@ -1,0 +1,29 @@
+from collections import Counter, defaultdict
+
+def tally(samples):
+    counts = defaultdict(Counter)
+    for line in samples:
+        for character, count in Counter(line).items():
+            if character.isascii():
+                counts[character][count] += 1
+    for symbol, counter in sorted(counts.items()):
+        print(symbol, sorted(counter.items()))
+
+tally(['abc', 'aca', 'ba'])
+
+events = []
+def index():
+    events.append('index')
+    return 'nested'
+
+def other():
+    events.append('key')
+    return -1
+
+def value():
+    events.append('value')
+    return 4
+
+rows = {'nested': [1, 2]}
+rows[index()][other()] += value()
+print(rows, events)

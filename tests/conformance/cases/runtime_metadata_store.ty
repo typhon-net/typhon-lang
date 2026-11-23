@@ -1,0 +1,34 @@
+import _collections_abc as protocols
+import collections.abc
+from collections import abc as public_protocols
+import sys
+
+def prepare(code):
+    function = eval(code)
+    function.__name__ = 'increment'
+    return function
+
+f = prepare('lambda item: item + 1')
+print(f.__name__, f(5))
+
+module_name = 'typhon_probe_mapping_tools'
+sys.modules[module_name] = protocols
+print(sys.modules[module_name] is protocols, sys.modules[module_name].__name__)
+del sys.modules[module_name]
+print(protocols.__name__, public_protocols is collections.abc)
+print(getattr(collections, 'abc') is sys.modules['collections.abc'])
+
+class Reader:
+    __sentinel = object()
+
+    def has_default(self, value=__sentinel):
+        return value is self.__sentinel
+
+reader = Reader()
+print(reader.has_default(), reader.has_default(object()))
+
+def get_value(mapping):
+    lookup = mapping.get
+    return lookup('key'), lookup('absent', 17)
+
+print(get_value({'key': 9}))

@@ -1,0 +1,19 @@
+from collections import namedtuple
+from typing import Any
+
+Point = namedtuple('Point', 'a b')
+
+class Factory:
+    def point(self, n):
+        return Point(n + 1, n + 2)
+
+    def unpack(self, n: Any):
+        a, b = point = self.point(n)
+        return a, b, point
+
+def nested(first: Any, second: Any):
+    (left, x), (right, y) = first, second
+    return left, x, right, y
+
+print(Factory().unpack(3))
+print(nested((1, 'one'), [2, 'two']))

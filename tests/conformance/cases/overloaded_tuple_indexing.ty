@@ -1,0 +1,14 @@
+import os
+import posixpath
+import sys
+from typing import Any
+
+def basename_stem():
+    return os.path.splitext(os.path.basename(sys.argv[0]))[0]
+
+def parts(path: Any):
+    return posixpath.splitext(path)[0], posixpath.splitext(path)[-1]
+
+print(basename_stem())
+print(parts('folder/input.txt'))
+print(parts(b'folder/input.txt'))

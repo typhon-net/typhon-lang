@@ -1,0 +1,21 @@
+class Table(dict):
+    def __new__(cls, /, **values):
+        table = dict.__new__(cls)
+        table.state = 'allocated'
+        table.__marker = 'created'
+        return table
+
+    def __init__(self, /, **values):
+        print(self.state, len(self))
+        self.state = 'ready'
+        self.update(values)
+
+    def label(self):
+        return self.__marker
+
+class Derived(Table):
+    pass
+
+item = Derived(answer=42)
+print(item.state, item['answer'], isinstance(item, Table), item.label())
+print(dict.__new__(dict) == {})

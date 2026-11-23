@@ -1,0 +1,23 @@
+class RequestHandler:
+    pass
+
+
+class Observer(RequestHandler):
+    def handle(self, request):
+        if request:
+            return
+        print('empty')
+
+
+class Formatter(RequestHandler):
+    def handle(self, request):
+        return f'handled {request}'
+
+
+def execute(handler: RequestHandler):
+    print(handler.handle('request'))
+
+
+execute(Observer())
+execute(Formatter())
+print(Observer().handle(''))

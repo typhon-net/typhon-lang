@@ -1,0 +1,4 @@
+before before None
+edited edited edited None
+True True
+cannot delete '__doc__' attribute of type 'Base'

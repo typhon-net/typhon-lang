@@ -1,0 +1,7 @@
+def use_builtins():
+    make_dict, make_tuple, size, transform, pair = dict, tuple, len, map, zip
+    first = make_dict(pair('ab', [10, 20]))
+    second = make_tuple(transform(lambda x, y: x + y, [1, 2], [3, 4], strict=True))
+    return first, second, size(second)
+
+print(use_builtins())

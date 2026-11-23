@@ -71,6 +71,10 @@ namespace Typhon.Compiler.Syntax
             return names.Contains(Root(d));
         }
 
+        // A descriptor on a function outside a class suite is a regular decorator call.
+        static bool IsFunctionDecorator(Expr d, HashSet<string> names) =>
+            Name(d) is "classmethod" or "staticmethod" or "property" || IsPythonDecorator(d, names);
+
         static void Rewrite(List<Stmt> body, HashSet<string> names, ModuleAst module)
         {
             for (int i = 0; i < body.Count; i++)
@@ -79,7 +83,7 @@ namespace Typhon.Compiler.Syntax
                 {
                     case FunctionDef f:
                         Rewrite(f.Body, names, module);
-                        if (f.Decorators.Count > 0 && f.Decorators.Any(d => IsPythonDecorator(d, names)))
+                        if (f.Decorators.Count > 0 && f.Decorators.Any(d => IsFunctionDecorator(d, names)))
                         {
                             // decorators apply bottom-up; Typhon's own decorators keep working only below Python ones
                             Expr value = new NameExpr { Id = UndecoratedPrefix + f.Name, Line = f.Line, Col = f.Col };
@@ -87,7 +91,7 @@ namespace Typhon.Compiler.Syntax
                             for (int k = f.Decorators.Count - 1; k >= 0; k--)
                             {
                                 var d = f.Decorators[k];
-                                if (!IsPythonDecorator(d, names) && value is NameExpr) { kept.Insert(0, d); continue; }
+                                if (!IsFunctionDecorator(d, names) && value is NameExpr) { kept.Insert(0, d); continue; }
                                 value = new CallExpr { Func = d, Args = { new Arg { Value = value } }, Line = d.Line, Col = d.Col };
                             }
                             f.Decorators = kept;
@@ -175,6 +179,8 @@ namespace Typhon.Compiler.Syntax
                 if (fn.Id == "property" && args.Count >= 1 && args.Count <= 2 && args.All(x => x is NameExpr n && methods.Contains(n.Id)) &&
                     call.Args.All(x => x.Name == null || x.Name == "doc"))
                 {
+                    // A generated CLR property would reserve these method names. Keep the Python descriptor.
+                    if (methods.Contains("get_" + target.Id) || methods.Contains("set_" + target.Id)) continue;
                     string get = ((NameExpr)args[0]).Id;
                     src = $"@property\ndef {target.Id}(self):\n    return self.{get}()\n";
                     if (args.Count == 2) src += $"@{target.Id}.setter\ndef {target.Id}(self, value):\n    self.{((NameExpr)args[1]).Id}(value)\n";

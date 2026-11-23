@@ -1,0 +1,12 @@
+from itertools import chain as flatten, repeat as repeat_value, starmap as map_args
+import itertools as iterators
+
+data = [('A', 2), ('B', 0), ('C', 1)]
+items = flatten.from_iterable(map_args(repeat_value, data))
+print(next(items), list(items), list(items))
+print(list(iterators.chain.from_iterable([[1, 2], [], [3]])))
+
+def describe(name, count):
+    return name + str(count)
+
+print(list(map_args(describe, data)))

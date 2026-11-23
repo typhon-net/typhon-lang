@@ -1,0 +1,17 @@
+class Meta(type):
+    def __new__(mcls, name, bases, namespace, **kwargs):
+        return super().__new__(mcls, name, bases, namespace, **kwargs)
+
+
+class Parent(metaclass=Meta):
+    def __init_subclass__(cls, *, role):
+        super().__init_subclass__()
+        cls.role = role
+
+
+class Child(Parent, role='worker'):
+    pass
+
+
+print(Child.role, issubclass(Child, Parent))
+print(tuple(base.__name__ for base in Child.__mro__))

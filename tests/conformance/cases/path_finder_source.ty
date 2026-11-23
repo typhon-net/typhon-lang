@@ -1,0 +1,38 @@
+from importlib.machinery import PathFinder
+from importlib.util import module_from_spec
+import os
+import sys
+from tempfile import TemporaryDirectory
+
+
+class Finder:
+    def __init__(self):
+        self.calls = []
+        self.invalidated = False
+
+    def find_spec(self, name, target=None):
+        self.calls.append((name, target))
+        return None
+
+    def invalidate_caches(self):
+        self.invalidated = True
+
+
+with TemporaryDirectory() as left, TemporaryDirectory() as right:
+    for directory in (left, right):
+        os.mkdir(os.path.join(directory, "link_space"))
+    with open(os.path.join(right, "link_example.py"), "w") as source:
+        source.write("value = 42\n")
+    namespace = PathFinder.find_spec("link_space", [left, right])
+    print(namespace.loader is None, list(namespace.submodule_search_locations) ==
+          [os.path.join(left, "link_space"), os.path.join(right, "link_space")])
+    spec = PathFinder.find_spec("link_example", [left, right])
+    module = module_from_spec(spec)
+    spec.loader.exec_module(module)
+    print(spec.name, module.value)
+    tracking = Finder()
+    sys.path_importer_cache[left] = tracking
+    print(PathFinder.find_spec("absent", [left], "target") is None)
+    print(tracking.calls)
+    PathFinder.invalidate_caches()
+    print(tracking.invalidated)

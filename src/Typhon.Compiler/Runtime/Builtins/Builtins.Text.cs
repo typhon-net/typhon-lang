@@ -773,12 +773,34 @@ namespace Typhon.Runtime
         {
             string s => new StrChars(s),
             PyAttrDict attrs => attrs.Keys,
-            IDictionary d => d.Keys.Cast<object>().Select(PyNoneDictKey.Read),
+            IDictionary d => DictionaryKeys(d),
             IList list => IterateList(list),
             ITuple t => Enumerable.Range(0, t.Length).Select(i => t[i]!),
             IEnumerable e => e.Cast<object>(),
             _ => throw new InvalidCastException($"'{o?.GetType().Name}' object is not iterable"),
         };
+        static IEnumerable<dynamic> DictionaryKeys(IDictionary dictionary)
+        {
+            var iteratorMethod = LookupSourceSpecialMethod(dictionary, "__iter__");
+            if (iteratorMethod.Owner == null) return dictionary.Keys.Cast<object>().Select(PyNoneDictKey.Read);
+            object? iterator = __invoke(iteratorMethod.Value, []);
+            if (iterator is IEnumerable values) return values.Cast<object>();
+            if (!TryGetAttr(iterator, "__next__", out var nextMethod))
+                throw new InvalidCastException($"iter() returned non-iterator of type '{PyTypeName(__type_of(iterator))}'");
+            return ReadIterator(nextMethod);
+        }
+
+        static IEnumerable<dynamic> ReadIterator(object? nextMethod)
+        {
+            while (true)
+            {
+                object? value;
+                try { value = __invoke(nextMethod, []); }
+                catch (StopIteration) { yield break; }
+                yield return value!;
+            }
+        }
+
         static IEnumerable<dynamic> IterateList(IList list)
         {
             // Python's list iterator advances by position even if the list is updated.
@@ -840,8 +862,52 @@ namespace Typhon.Runtime
         public static bool endswith(this PyByteArray value, PyBytes suffix) => value.endswith(suffix);
         public static bool startswith(this string s, ITuple prefixes) => Enumerable.Range(0, prefixes.Length).Any(i => s.StartsWith((string)prefixes[i]!, StringComparison.Ordinal));
         public static bool endswith(this string s, ITuple suffixes) => Enumerable.Range(0, suffixes.Length).Any(i => s.EndsWith((string)suffixes[i]!, StringComparison.Ordinal));
-        public static bool startswith(this string s, string prefix, long start, long? end = null) => slice(s, start, end).StartsWith(prefix, StringComparison.Ordinal);
-        public static bool endswith(this string s, string suffix, long start, long? end = null) => slice(s, start, end).EndsWith(suffix, StringComparison.Ordinal);
+        public static bool startswith(this string s, string prefix, long start, long? end = null) => StringHasAffix(s, prefix, start, end, suffix: false);
+        public static bool endswith(this string s, string suffix, long start, long? end = null) => StringHasAffix(s, suffix, start, end, suffix: true);
+
+        public static bool startswith(this string s, object prefix, object? start, object? end = null)
+        {
+            var (first, last, _) = new PySlice(start, end).Bounds();
+            return StringHasAffix(s, prefix, first ?? 0, last, suffix: false);
+        }
+
+        public static bool endswith(this string s, object suffix, object? start, object? end = null)
+        {
+            var (first, last, _) = new PySlice(start, end).Bounds();
+            return StringHasAffix(s, suffix, first ?? 0, last, suffix: true);
+        }
+
+        static bool StringHasAffix(string value, object choices, long start, long? end, bool suffix)
+        {
+            int characters = (int)len(value);
+            var (first, last) = StringSearchBounds(characters, start, end);
+            if (first <= last && characters != value.Length)
+            {
+                int Offset(int index)
+                {
+                    int offset = 0;
+                    for (int i = 0; i < index; i++) offset += char.IsSurrogatePair(value, offset) ? 2 : 1;
+                    return offset;
+                }
+                (first, last) = (Offset(first), Offset(last));
+            }
+
+            bool Matches(object? candidate)
+            {
+                if (candidate is not string text)
+                    throw new InvalidCastException("prefix or suffix must be a string");
+                if (text.Length > last - first) return false;
+                int offset = suffix ? last - text.Length : first;
+                int boundary = suffix ? offset : offset + text.Length;
+                return (boundary <= 0 || !char.IsSurrogatePair(value, boundary - 1)) &&
+                    value.AsSpan(offset, text.Length).SequenceEqual(text.AsSpan());
+            }
+
+            if (choices is not ITuple alternatives) return Matches(choices);
+            for (int i = 0; i < alternatives.Length; i++)
+                if (Matches(alternatives[i])) return true;
+            return false;
+        }
         public static string replace(this string s, string old, string @new) => s.Replace(old, @new, StringComparison.Ordinal);
         public static string replace(this string s, string old, string @new, long count)
         {
@@ -884,7 +950,26 @@ namespace Typhon.Runtime
         public static long rindex(this string s, string sub) { int i = s.LastIndexOf(sub, StringComparison.Ordinal); return i >= 0 ? i : throw new ArgumentException("substring not found"); }
         public static long index(this string s, string sub, long start, long? end = null) { long i = s.find(sub, start, end); return i >= 0 ? i : throw new ArgumentException("substring not found"); }
         public static long index(this string s, string sub, object? start, object? end = null) { long i = s.find(sub, start, end); return i >= 0 ? i : throw new ArgumentException("substring not found"); }
-        public static long count(this string s, string sub, long start, long? end = null) => slice(s, start, end).count(sub);
+        public static long count(this string s, string sub, long start, long? end = null)
+        {
+            var (first, last) = StringSearchBounds(s.Length, start, end);
+            if (last < first) return 0;
+            if (sub.Length == 0) return last - first + 1L;
+            long matches = 0;
+            while (first <= last - sub.Length)
+            {
+                int index = s.IndexOf(sub, first, last - first, StringComparison.Ordinal);
+                if (index < 0) break;
+                matches++;
+                first = index + sub.Length;
+            }
+            return matches;
+        }
+        public static long count(this string s, string sub, object? start, object? end = null)
+        {
+            var (first, last, _) = new PySlice(start, end).Bounds();
+            return s.count(sub, first ?? 0, last);
+        }
         public static (string, string, string) partition(this string s, string sep) { int i = s.IndexOf(sep, StringComparison.Ordinal); return i < 0 ? (s, "", "") : (s.Substring(0, i), sep, s.Substring(i + sep.Length)); }
         public static (string, string, string) rpartition(this string s, string sep) { int i = s.LastIndexOf(sep, StringComparison.Ordinal); return i < 0 ? ("", "", s) : (s.Substring(0, i), sep, s.Substring(i + sep.Length)); }
         public static List<string> rsplit(this string s, [Optional, DefaultParameterValue(null)] string? sep, [Optional] object? maxsplit)
@@ -1026,7 +1111,7 @@ namespace Typhon.Runtime
         public static long rindex(this string s, string sub, long start, long? end = null) { long i = s.rfind(sub, start, end); return i >= 0 ? i : throw new ArgumentException("substring not found"); }
         public static long rindex(this string s, string sub, object? start, object? end = null) { long i = s.rfind(sub, start, end); return i >= 0 ? i : throw new ArgumentException("substring not found"); }
         public static long index(this string s, string sub) { int i = s.IndexOf(sub, StringComparison.Ordinal); return i >= 0 ? i : throw new ArgumentException("substring not found"); }
-        public static long count(this string s, string sub) { long n = 0; int i = 0; while (sub.Length > 0 && (i = s.IndexOf(sub, i, StringComparison.Ordinal)) >= 0) { n++; i += sub.Length; } return n; }
+        public static long count(this string s, string sub) => s.count(sub, 0);
         public static bool isdigit(this string s) => s.Length > 0 && s.All(char.IsDigit);
         public static bool isalpha(this string s) => s.Length > 0 && s.All(char.IsLetter);
         public static bool isalnum(this string s) => s.Length > 0 && s.All(char.IsLetterOrDigit);

@@ -1,0 +1,27 @@
+def build_marker():
+    return "default"
+
+
+class Base:
+    def collect(self, item, first=build_marker(), second=None):
+        return ("base", item, first, second)
+
+
+class Variadic(Base):
+    def collect(self, key, *rest):
+        return ("variadic", key, rest)
+
+
+def call_base(receiver: Base):
+    print(receiver.collect("A"))
+    print(receiver.collect("B", None))
+    print(receiver.collect("C", 0, None))
+
+
+call_base(Base())
+call_base(Variadic())
+print(Variadic().collect(key="D"))
+try:
+    Variadic().collect("E", first=10)
+except TypeError:
+    print("unexpected keyword")

@@ -68,7 +68,7 @@ namespace Typhon.Compiler.Emit
                 _w.Line($"public global::System.Collections.Generic.IEnumerator<object?> GetEnumerator() {{ {string.Join(" ", fs.Select(f => $"yield return {F(f)};"))} {(fs.Count == 0 ? "yield break;" : "")} }}");
                 _w.Line("global::System.Collections.IEnumerator global::System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();");
             }
-            string repr = $"$\"{c.Name}({string.Join(", ", fs.Select(f => $"{f}={{(global::Typhon.Runtime.Builtins.repr({F(f)}))}}"))})\"";
+            string repr = $"$\"{{(global::Typhon.Runtime.Builtins.PyTypeName(GetType()))}}({string.Join(", ", fs.Select(f => $"{f}={{(global::Typhon.Runtime.Builtins.repr({F(f)}))}}"))})\"";
             if (!Has("__repr__")) _w.Line($"public string __repr__() => {repr};");
             else
             {

@@ -36,7 +36,7 @@ namespace Typhon.Compiler.Emit
             c != null ? HasVirtualSubclasses(c) :
                 meta is MappingMeta or MutableMappingMeta or "Typhon.Stdlib.os_+PathLike" or
                     "Typhon.Stdlib.types+MethodType" or
-                    "Typhon.Stdlib.collections+abc+Sequence" or
+                    "Typhon.Stdlib.collections+abc+Sequence" or "Typhon.Stdlib.collections+abc+MutableSequence" or
                     "Typhon.Stdlib.collections+abc+Generator" or "Typhon.Stdlib.collections+abc+Coroutine" or
                     "Typhon.Stdlib.collections+abc+MappingView" or "Typhon.Stdlib.collections+abc+KeysView" or
                     "Typhon.Stdlib.collections+abc+ValuesView" or "Typhon.Stdlib.collections+abc+ItemsView" ||
@@ -488,13 +488,32 @@ namespace Typhon.Compiler.Emit
             _w.Line($"{owner}.Members[{CsString(method.Name)}] = {member};");
         }
 
+        // An allocation-time assignment can declare a field on the object returned by __new__.
+        static string AllocatedReceiver(FunctionDef allocator)
+        {
+            foreach (var statement in allocator.Body.OfType<AssignStmt>())
+            {
+                if (statement.Targets.Count != 1 || statement.Targets[0] is not NameExpr receiver ||
+                    statement.Value is not CallExpr { Func: AttributeExpr { Name: "__new__" } method } call ||
+                    call.Args.FirstOrDefault()?.Value is not NameExpr argument || argument.Id != allocator.Params[0].Name)
+                    continue;
+                bool builtinAllocation = method.Target is NameExpr { Id: "object" or "dict" or "str" } ||
+                    method.Target is CallExpr { Func: NameExpr { Id: "super" }, Args.Count: 0 };
+                if (builtinAllocation && !AssignsName(allocator.Body.Where(other => other != statement).ToList(), receiver.Id))
+                    return receiver.Id;
+            }
+            return null;
+        }
+
         static Dictionary<string, KeyValuePair<Expr, KeyValuePair<FunctionDef, Expr>>> CollectImplicitFields(ClassDef c)
         {
             var result = new Dictionary<string, KeyValuePair<Expr, KeyValuePair<FunctionDef, Expr>>>(); // name → (annotation, (method, value))
             foreach (var f in c.Body.OfType<FunctionDef>())
             {
-                if (f.Params.Count == 0 || HasDecorator(f.Decorators, "staticmethod")) continue;
-                string self = f.Params[0].Name;
+                if (f.Params.Count == 0) continue;
+                string allocated = f.Name == "__new__" ? AllocatedReceiver(f) : null;
+                if (allocated == null && HasDecorator(f.Decorators, "staticmethod")) continue;
+                string self = allocated ?? f.Params[0].Name;
                 AstWalker.VisitAll(f.Body, n =>
                 {
                     Expr target = null, ann = null, value = null;
@@ -668,8 +687,8 @@ namespace Typhon.Compiler.Emit
             definition.ClassKeywords.Count > 0 || BaseHasMember(definition.Bases, "__init_subclass__", requireOverridable: false);
 
         bool RunsClassBodyAtDefinition(ClassDef cls) =>
-            cls.TypeParams.Count == 0 && !cls.Bases.Any(b => DottedName(b is SubscriptExpr sub ? sub.Target : b) is
-                "Enum" or "enum.Enum" or "IntEnum" or "enum.IntEnum" or "Protocol" or "typing.Protocol") &&
+            (cls.TypeParams.Count == 0 || HasUserMetaclass(cls)) && !cls.Bases.Any(b => IsInterfaceProtocolBase(b, _m) ||
+                DottedName(b is SubscriptExpr sub ? sub.Target : b) is "Enum" or "enum.Enum" or "IntEnum" or "enum.IntEnum") &&
             (HasUserMetaclass(cls) || ExecutableClassStatements(cls).Any() || RunsSubclassHook(cls));
 
         void EmitClassBodyStatement(Stmt statement, ClassContext context, HashSet<string> declared)
@@ -726,7 +745,7 @@ namespace Typhon.Compiler.Emit
             {
                 var init = owner.Body.OfType<FunctionDef>().First(function => function.Name == "__init__");
                 if (owner.TypeParams.Count != 0 || init.TypeParams.Count != 0 || init.IsAsync ||
-                    init.Params.Any(parameter => parameter.Kind != ParamKind.Normal)) return false;
+                    init.Params.Count == 0 || init.Params[0].Kind != ParamKind.Normal) return false;
                 owner = NearestInitAncestor(owner);
             }
             return true;
@@ -940,7 +959,8 @@ namespace Typhon.Compiler.Emit
                         {
                             string pt = p.Annotation != null ? MapType(p.Annotation, p) : variant != null && variant[vi] != TypeInference.Declared ? variant[vi] : null;
                             vi++;
-                            if (pt != null) { tmpScope.Params.Add(p.Name); tmpScope.Types[p.Name] = pt; }
+                            tmpScope.Params.Add(p.Name);
+                            if (pt != null) tmpScope.Types[p.Name] = pt;
                         }
                         var saved = _scope; _scope = tmpScope;
                         candidates.Add(value != null ? PyType(InferType(value)) : null);
@@ -1227,7 +1247,7 @@ namespace Typhon.Compiler.Emit
                     return inherited.TypeParams.Count == 0 && inherited.IsAsync == method.IsAsync && inherited.Params.Count > 0 &&
                         !HasDecorator(inherited.Decorators, "staticmethod") && !HasDecorator(inherited.Decorators, "classmethod") &&
                         !HasDecorator(inherited.Decorators, "property") ? inherited : null;
-                if (owner.Bases.Count == 0 || !ResolveBase(owner.Bases[0], out owner, out _)) break;
+                if (owner.Bases.Count == 0 || !ClassDeclarationResolver(owner).ResolveBase(owner.Bases[0], out owner, out _)) break;
             }
             return default;
         }
@@ -1379,13 +1399,18 @@ namespace Typhon.Compiler.Emit
             if (inherited == null)
                 return variadic && EmitNativeVariadicOverride(method, signature, bases, modifiers);
             bool fixedBase = inherited.Params.Skip(1).All(parameter => parameter.Kind == ParamKind.Normal);
-            var inheritedSignature = BuildSignature(inherited, dropFirst: true);
+            bool variadicBridge = ClassModel.UsesVariadicOverrideBridge(method, inherited);
+            var inheritedSignature = BuildSignature(inherited, dropFirst: true, forOverrideSlot: variadicBridge);
 
             string arguments;
             if (!fixedBase)
             {
                 arguments = ExpandedOverrideArguments(method, signature, inherited, inheritedSignature);
                 if (arguments == null) return false;
+            }
+            else if (variadicBridge)
+            {
+                arguments = null;
             }
             else if (variadic)
             {
@@ -1402,14 +1427,32 @@ namespace Typhon.Compiler.Emit
             {
                 var extra = method.Params.Skip(inherited.Params.Count).ToList();
                 if (method.Params.Skip(1).Any(parameter => parameter.Kind != ParamKind.Normal) ||
-                    extra.Count == 0 || extra.Any(parameter => parameter.Default == null || !IsConstantDefault(parameter.Default))) return false;
-                // The existing parameters have the same names, CLR types and defaults in both slots.
+                    extra.Count == 0 || extra.Any(parameter => parameter.Default == null ||
+                        !IsConstantDefault(parameter.Default) && !_defaultSources.ContainsKey(parameter))) return false;
                 if (inheritedSignature.Params.Length > 0 &&
-                    !signature.Params.StartsWith(inheritedSignature.Params + ", ", StringComparison.Ordinal)) return false;
+                    !signature.Params.StartsWith(inheritedSignature.Params + ", ", StringComparison.Ordinal))
+                {
+                    // A Python override may rename an inherited positional parameter.
+                    var inheritedParameters = inherited.Params.Skip(1);
+                    var shared = method.Params.Skip(1).Take(inherited.Params.Count - 1);
+                    if (inheritedParameters.Zip(shared, (parent, child) => parent.Default == null && child.Default == null &&
+                        inheritedSignature.Scope.Types[parent.Name] == signature.Scope.Types[child.Name]).Any(same => !same))
+                        return false;
+                }
+                string DefinitionDefault(Param parameter) => _defaultSources.TryGetValue(parameter, out string storage)
+                    ? Esc(storage) : EmitExpr(parameter.Default, targetTyped: true);
                 arguments = string.Join(", ", inherited.Params.Skip(1).Select(parameter => Esc(parameter.Name))
-                    .Concat(extra.Select(parameter => $"{Esc(parameter.Name)}: {EmitExpr(parameter.Default, targetTyped: true)}")));
+                    .Concat(extra.Select(parameter => $"{Esc(parameter.Name)}: {DefinitionDefault(parameter)}")));
             }
-            string call = $"this.{Esc(method.Name)}({arguments})";
+            string call;
+            if (variadicBridge)
+            {
+                string slotValues = string.Join(", ", inherited.Params.Skip(1).Select(parameter => Esc(parameter.Name)));
+                string supplied = $"global::System.Linq.Enumerable.Where(new object?[] {{ {slotValues} }}, value => !global::System.Object.ReferenceEquals(value, global::System.Type.Missing))";
+                string callable = $"(object?){Rt("getattr")}(this, {CsString(method.Name)})";
+                call = $"{Rt("__invoke")}({callable}, global::System.Linq.Enumerable.ToArray({supplied}))";
+            }
+            else call = $"this.{Esc(method.Name)}({arguments})";
             bool awaitResult = method.IsAsync && !signature.IsGenerator && !inheritedSignature.IsGenerator &&
                 signature.ReturnType != inheritedSignature.ReturnType;
             bool slotVoid = inheritedSignature.ReturnType == "void" || awaitResult && inheritedSignature.ReturnType == "Task";
@@ -1511,6 +1554,7 @@ namespace Typhon.Compiler.Emit
         void EmitMethodTyped(FunctionDef f, ClassContext ctx, List<Expr> bases, bool isStaticDecl, bool isClassMethod, string retKey, string[] paramTypes = null)
         {
             var sig = BuildSignature(f, dropFirst: !isStaticDecl, paramTypes: paramTypes, retKey: retKey);
+            if (f.UsesObjectReturnSlot) sig.Scope.ReturnType = sig.ReturnType = "dynamic";
             bool metaclassMethod = _metaclassMethods.Contains(f);
             if (isStaticDecl && (f.Name == "__new__" && UsesCustomAllocation(ctx.Def) || metaclassMethod))
                 sig.Scope.ClassArgument = f.Params[0].Name;
@@ -1568,6 +1612,26 @@ namespace Typhon.Compiler.Emit
             else _w.Line(header);
             EmitSignatureBody(f.Body, sig);
             if (decorated) EmitDecoratedMethod(f, ctx, sig, decorators, isStatic);
+            if (!_dry && !isStatic && !decorated && !sig.IsGenerator && paramTypes == null &&
+                sig.Scope.ReboundReceiver == null && f.UsedWithUnboundReceiver)
+                EmitUnboundReceiverBody(f, sig);
+        }
+
+        // A Python function can be called on a receiver outside its declaring CLR hierarchy.
+        void EmitUnboundReceiverBody(FunctionDef method, Signature signature)
+        {
+            var receiver = method.Params[0];
+            string name = Esc(receiver.Name);
+            string positional = receiver.PositionalOnly ? "[global::Typhon.Runtime.PyPositionalOnly] " : "";
+            string parameters = positional + "dynamic " + name + (signature.Params.Length == 0 ? "" : ", " + signature.Params);
+            signature.Scope.Params.Add(receiver.Name);
+            signature.Scope.Types[receiver.Name] = "dynamic";
+            signature.Scope.ReboundReceiver = NewTmp("unboundReceiver");
+            signature.Renames[receiver.Name] = signature.Scope.ReboundReceiver;
+            signature.Prologue.Insert(0, $"dynamic {signature.Scope.ReboundReceiver} = {name};");
+            LineDirective(method);
+            _w.Line($"private static {signature.ReturnType} __typhon_unbound_{method.Name}({parameters})");
+            EmitSignatureBody(method.Body, signature);
         }
 
         /// <summary>

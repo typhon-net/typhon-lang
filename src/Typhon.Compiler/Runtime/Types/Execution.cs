@@ -72,6 +72,10 @@ namespace Typhon.Runtime
 
     internal static partial class Builtins
     {
+        public static dynamic compile(object? source, object? filename, object? mode, System.Numerics.BigInteger flags,
+            bool dont_inherit = false, long optimize = -1, object? module = null) =>
+            compile(source, filename, mode, checked((long)flags), dont_inherit, optimize, module);
+
         public static dynamic compile(object? source, object? filename = null, object? mode = null, long flags = 0, bool dont_inherit = false, long optimize = -1, object? module = null)
         {
             if (module != null && module is not string)

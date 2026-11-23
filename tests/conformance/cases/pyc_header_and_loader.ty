@@ -1,0 +1,27 @@
+from importlib import _bootstrap_external
+from importlib.machinery import PathFinder, SourcelessFileLoader
+from io import BytesIO
+from pkgutil import read_code
+import os
+from tempfile import TemporaryDirectory
+
+data = bytes.fromhex('520e0d0a000000000000000000000000630000000000000000000000000100000000000000f30c000000800000005d2a7300500721002901e92a0000002901da0576616c7565a900f300000000da09736f757263652e7079da083c6d6f64756c653e720600000001000000730a000000f103010101d8080a82057204000000')
+print(_bootstrap_external._classify_pyc(data, "sample", {}))
+try:
+    _bootstrap_external._classify_pyc(data[:4], "sample", {})
+except EOFError:
+    print("truncated header")
+try:
+    _bootstrap_external._classify_pyc(b"bad!", "sample", {})
+except ImportError:
+    print("bad magic")
+code = read_code(BytesIO(data))
+print(code.co_filename, code.co_names, code.co_consts[0])
+with TemporaryDirectory() as directory:
+    name = os.path.join(directory, "sample.pyc")
+    with open(name, "wb") as file:
+        file.write(data)
+    spec = PathFinder.find_spec("sample", [directory])
+    print(isinstance(spec.loader, SourcelessFileLoader))
+    loaded = spec.loader.get_code("sample")
+    print(loaded.co_filename, loaded.co_names, loaded.co_consts[0])

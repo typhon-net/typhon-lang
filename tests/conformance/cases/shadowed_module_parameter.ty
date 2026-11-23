@@ -1,0 +1,20 @@
+import warnings
+from typing import Any
+
+
+class WarningFilter:
+    def __init__(self, warnings=None, *, active=True):
+        self.warnings = warnings
+        self.active = active
+
+    def apply(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter(self.warnings)
+            print(self.warnings, self.active)
+
+
+def build(factory: Any):
+    return factory("ignore")
+
+
+build(WarningFilter).apply()

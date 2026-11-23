@@ -49,11 +49,15 @@ namespace Typhon.Runtime
         }
         public static void delitem(object container, object? key)
         {
+            var descriptor = LookupSourceSpecialMethod(container, "__delitem__");
+            if (descriptor.Owner != null)
+            {
+                __invoke(descriptor.Value, [key]);
+                return;
+            }
             if (container is IDictionary mapping)
             {
-                var storedKey = KeyFor(mapping, key);
-                if (storedKey == null || !mapping.Contains(storedKey)) throw new KeyNotFoundException(repr(key));
-                mapping.Remove(storedKey);
+                __dict_delete(mapping, key);
                 return;
             }
             if (key is PySlice selection)
@@ -115,9 +119,26 @@ namespace Typhon.Runtime
             ? (T)t[__pos(i!, t.Length)]!
             : throw new InvalidCastException("tuple indices must be integers");
         public static bool contains(ITuple t, object? x) { for (int i = 0; i < t.Length; i++) if (eq(t[i], x)) return true; return false; }
-        public static bool contains(object c, object x)
+        public static bool __membership(object? item, object? collection) => contains(collection, item);
+
+        public static bool contains(object? c, object? x)
         {
+            if (c == null) throw new InvalidCastException("argument of type 'NoneType' is not iterable");
+            if (MembershipHook(c, x) is bool declared) return declared;
+            if (c is PyString pythonText) c = pythonText.Text;
+            if (c is string text)
+            {
+                if (x is PyString substring) x = substring.Text;
+                if (x is char character) return contains(text, character);
+                return x is string value ? contains(text, value) :
+                    throw new InvalidCastException($"'in <string>' requires string as left operand, not {PyTypeName(__type_of(x))}");
+            }
+            if (c is ITuple tuple) return contains(tuple, x);
+            if (c is PyBytes bytes) return bytes.__contains__(x);
+            if (c is PyByteArray array) return array.__contains__(x);
+            if (c is global::memoryview view) return view.__contains__(x);
             if (c is PyBigRange range) return range.__contains__(x);
+            if (c is PyRange smallRange && AsInt(x, out long integer)) return smallRange.Contains(integer);
             if (c is PyAttrDict attrs) return x is string name && attrs.ContainsKey(name);
             if (c is IDictionary d)
             {
@@ -125,9 +146,11 @@ namespace Typhon.Runtime
                 try { return d.Contains(key); }
                 catch (ArgumentNullException) when (key == null) { return false; }
             }
-            if (MembershipHook(c, x) is bool declared) return declared;
-            if (c is IEnumerable e) { foreach (var item in e) if (eq(item, x)) return true; return false; }
-            return ((dynamic)c).__contains__((dynamic)x);
+            if (TryGetAttr(c, "__contains__", out var method, allowFallback: false))
+                return truthy((object?)__invoke(method, [x]));
+            foreach (object? item in __iter_dyn(c))
+                if (ReferenceEquals(item, x) || eq(item, x)) return true;
+            return false;
         }
 
         /// <summary>
@@ -146,6 +169,12 @@ namespace Typhon.Runtime
         public static K __key<K>(object? k) => k is K kk ? kk :
             k == null && typeof(K) == typeof(object) ? (K)(object)PyNoneDictKey.Value :
             k != null && ConvertKey(k, typeof(K)) is K converted ? converted : (K)(dynamic)k!;
+
+        public static object? __dict_get(IDictionary mapping, object? key, object? @default = null)
+        {
+            object? stored = KeyFor(mapping, key);
+            return stored != null && mapping.Contains(stored) ? mapping[stored] : @default;
+        }
 
         static Type? DictKeyType(Type t)
         {
@@ -175,7 +204,12 @@ namespace Typhon.Runtime
                 if (keyType == typeof(double)) return (double)l;
                 if (keyType == typeof(BigInteger)) return new BigInteger(l);
             }
-            if (key is double dk && keyType == typeof(long) && Math.Floor(dk) == dk && dk >= long.MinValue && dk <= long.MaxValue) return (long)dk;
+            if (key is double dk && double.IsFinite(dk) && Math.Truncate(dk) == dk)
+            {
+                var integer = new BigInteger(dk);
+                if (keyType == typeof(BigInteger)) return integer;
+                if (keyType == typeof(long) && integer >= long.MinValue && integer <= long.MaxValue) return (long)integer;
+            }
             return null;
         }
 
@@ -434,7 +468,13 @@ namespace Typhon.Runtime
         }
         public static object? __dict_update_keywords(object target, object?[] args, IDictionary<string, object?> keywords)
         {
-            if (target is not IDictionary dictionary) return __invoke_kw(getattr(target, "update"), args, keywords);
+            if (target is not IDictionary dictionary || HasSourceMember(target.GetType(), "update"))
+                return __invoke_kw((object?)getattr(target, "update"), args, keywords);
+            return __dict_base_update(dictionary, args, keywords);
+        }
+
+        public static object? __dict_base_update(IDictionary dictionary, object?[] args, IDictionary<string, object?> keywords)
+        {
             if (args.Length > 1) throw new InvalidCastException($"update expected at most 1 argument, got {args.Length}");
             if (args.Length == 1) update(dictionary, args[0]);
             foreach (var (name, value) in keywords) dictionary[KeyFor(dictionary, name)!] = value;
@@ -444,16 +484,68 @@ namespace Typhon.Runtime
         public static void update(IDictionary target, object? source)
         {
             if (ReferenceEquals(target, source)) return;
-            if (source is IDictionary mapping)
+            if (source == null) throw new InvalidCastException("'NoneType' object is not iterable");
+            foreach (var (key, value) in ReadDictItems(source)) target[KeyFor(target, key)!] = value;
+        }
+
+        static object? DictionaryItem(IDictionary dictionary, object? key)
+        {
+            object? stored = KeyFor(dictionary, key);
+            if (dictionary.Contains(stored!)) return dictionary[stored!];
+            if (dictionary is IPyMissingKey mapping) return mapping.GetMissingKey(stored!);
+            var missing = LookupSourceSpecialMethod(dictionary, "__missing__");
+            if (missing.Owner != null) return __invoke(missing.Value, [key]);
+            throw new KeyNotFoundException(repr(key));
+        }
+
+        static object? SetDictionaryItem(IDictionary dictionary, object? key, object? value)
+        {
+            dictionary[KeyFor(dictionary, key)!] = value;
+            return null;
+        }
+
+        static PyFunction DictionaryDescriptor(string name, int minimum, int maximum, Func<IDictionary, object?[], object?> operation) =>
+            new PyClosure(name, (arguments, keywords) =>
             {
-                foreach (DictionaryEntry entry in mapping) target[KeyFor(target, entry.Key)!] = entry.Value;
-                return;
-            }
-            foreach (object? item in __iter_dyn(source))
+                if (arguments.Length < minimum || arguments.Length > maximum || keywords?.Count > 0)
+                    throw PyClosure.ArgCountError("dict." + name, minimum, maximum, arguments.Length);
+                if (arguments[0] is not IDictionary dictionary)
+                    throw new InvalidCastException($"descriptor '{name}' requires a 'dict' object");
+                return operation(dictionary, arguments);
+            });
+
+        static readonly Dictionary<string, PyFunction> DictionaryDescriptors = new()
+        {
+            ["__getitem__"] = DictionaryDescriptor("__getitem__", 2, 2, (dictionary, args) => DictionaryItem(dictionary, args[1])),
+            ["__setitem__"] = DictionaryDescriptor("__setitem__", 3, 3, (dictionary, args) => SetDictionaryItem(dictionary, args[1], args[2])),
+            ["__delitem__"] = DictionaryDescriptor("__delitem__", 2, 2, (dictionary, args) => __dict_delete(dictionary, args[1])),
+            ["clear"] = DictionaryDescriptor("clear", 1, 1, (dictionary, _) => { dictionary.Clear(); return null; }),
+            ["fromkeys"] = new PyClosure("fromkeys", (args, keywords) =>
             {
-                var pair = __unpack_items(__iter_dyn(item), 2);
-                target[KeyFor(target, pair[0])!] = pair[1];
-            }
+                if (args.Length is < 1 or > 2 || keywords?.Count > 0)
+                    throw PyClosure.ArgCountError("fromkeys", 1, 2, args.Length);
+                return fromkeys<object, object?>(__iter_dyn(args[0]), args.Length == 2 ? args[1] : null);
+            }),
+            ["pop"] = DictionaryDescriptor("pop", 2, 3, (dictionary, args) =>
+            {
+                object? stored = KeyFor(dictionary, args[1]);
+                if (!dictionary.Contains(stored!))
+                {
+                    if (args.Length == 3) return args[2];
+                    throw new KeyNotFoundException(repr(args[1]));
+                }
+                object? previous = dictionary[stored!];
+                dictionary.Remove(stored!);
+                return previous;
+            }),
+        };
+
+        public static object? __dict_delete(IDictionary dictionary, object? key)
+        {
+            object? storedKey = KeyFor(dictionary, key);
+            if (storedKey == null || !dictionary.Contains(storedKey)) throw new KeyNotFoundException(repr(key));
+            dictionary.Remove(storedKey);
+            return null;
         }
 
         public static void update<K, V>(this IDictionary<K, V> d, IDictionary<K, V> other)
@@ -476,6 +568,9 @@ namespace Typhon.Runtime
             if (d.Count == 0) throw new KeyNotFoundException("popitem(): dictionary is empty");
             var last = d.GetAt(d.Count - 1); d.RemoveAt(d.Count - 1); return (PyNoneDictKey.Read(last.Key), last.Value);
         }
+        public static bool __contains__<T>(this HashSet<T> values, object? item) =>
+            values.Any(value => ReferenceEquals(value, item) || eq(value, item));
+
         public static void add<T>(this HashSet<T> s, T x) => s.Add(x);
         public static void discard<T>(this HashSet<T> s, T x) => s.Remove(x);
         public static void remove<T>(this HashSet<T> s, T x) { if (!s.Remove(x)) throw new KeyNotFoundException(repr(x)); }

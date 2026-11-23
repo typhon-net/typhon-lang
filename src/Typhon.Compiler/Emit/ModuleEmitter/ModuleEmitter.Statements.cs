@@ -67,7 +67,7 @@ namespace Typhon.Compiler.Emit
                                     x is "global::System.Type" or "System.Type" ||
                                     x is "global::Typhon.Stdlib.re.Match" or "global::Typhon.Stdlib.re.BytesMatch" ||
                                     x.StartsWith("global::Typhon.Runtime.PyTuple<") || x.StartsWith("global::Typhon.Runtime.PyIterator<");
-            return Plain(t) && Plain(v);
+            return Plain(t.TrimEnd('?')) && Plain(v.TrimEnd('?'));
         }
 
         void EmitBlock(List<Stmt> stmts, string prologue = null, string nonNegativeUntilAssigned = null, string narrowed = null)
@@ -155,7 +155,7 @@ namespace Typhon.Compiler.Emit
             // statement, not a conditional expression, chooses between the runtime's method and the object's own
             // (also on an attribute of a value whose type is not known: late-bound in C# then too, pred_info.successors.append(x))
             if (e.Value is CallExpr dc && dc.Func is AttributeExpr dm &&
-                LatePythonMethodReceiver(dm.Target, statement: true) &&
+                LateRuntimeMethodReceiver(dm.Target, dc.Args, statement: true) &&
                 !(dm.Target is NameExpr dmn && (ModuleRef(dmn.Id) != null || _dotnetAliases.ContainsKey(dmn.Id) || TryResolveType(dmn.Id, 0, out _, out _))) &&
                 !(dm.Target is CallExpr dsc && dsc.Func is NameExpr dsn && dsn.Id == "super") && !dc.Args.Any(a => a.Star || a.DoubleStar) && IsRuntimeMethod(dm.Name, dc.Args))
             {
@@ -521,7 +521,19 @@ namespace Typhon.Compiler.Emit
         {
             foreach (var t in d.Targets)
             {
-                if (t is SubscriptExpr s && !(s.Index is SliceExpr)) _w.Line($"{Rt("delitem")}({EmitExpr(s.Target)}, {ModuleOrClassValue(s.Index) ?? EmitExpr(s.Index)});");
+                if (t is SubscriptExpr s && !(s.Index is SliceExpr))
+                {
+                    string receiverType = InferType(s.Target);
+                    string receiver = EmitExpr(s.Target);
+                    string index = ModuleOrClassValue(s.Index) ?? EmitExpr(s.Index);
+                    if (ClassKeyOfType(receiverType, out _) is string key && ClassDefOfKey(key) is ClassDef cls &&
+                        MethodInHierarchy(cls, "__delitem__") != null)
+                    {
+                        receiver = $"(object){Paren(receiver)}";
+                        index = $"(object?){Paren(EmitValue(s.Index))}";
+                    }
+                    _w.Line($"{Rt("delitem")}({receiver}, {index});");
+                }
                 else if (t is SubscriptExpr ss && ss.Index is SliceExpr sl)
                     _w.Line($"{Rt("delslice")}({EmitExpr(ss.Target)}, {(sl.Lower != null ? SliceBound(sl.Lower) : "null")}, {(sl.Upper != null ? SliceBound(sl.Upper) : "null")}, {(sl.Step != null ? SliceBound(sl.Step) : "1")});");
                 else if (t is NameExpr name && (_m.ReboundFunctions.Contains(name.Id) || _m.ReboundClasses.Contains(name.Id)) && !IsLocal(name.Id))
@@ -550,7 +562,7 @@ namespace Typhon.Compiler.Emit
                         _w.Line($"{Rt("delattr")}({namespaceValue}, {CsString(da.Name)});");
                         continue;
                     }
-                    if (IsInstanceClassDefault(da))
+                    if (IsReboundReceiver(da.Target) || IsInstanceClassDefault(da))
                     {
                         _w.Line($"{Rt("delattr")}((object?){Paren(EmitExpr(da.Target))}, {CsString(da.Name)});");
                         continue;

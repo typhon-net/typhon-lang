@@ -60,14 +60,18 @@ namespace Typhon.Stdlib
 
             public Context copy() => new Context(Vars);
 
-            /// <summary>Calls callable(*args) in this context: the variables it sets stay set here, not in the caller's.</summary>
-            public dynamic? run(object? callable, params object?[] args)
+            /// <summary>Runs a callable with the variables belonging to this context.</summary>
+            public dynamic? run([PyPositionalOnly] object? callable, params object?[] args) =>
+                run(callable, args, null);
+
+            public dynamic? run([PyPositionalOnly] object? callable, [PyPackedArguments] object?[] args,
+                [PyKeywordArguments] IDictionary<string, object?>? __kwargs)
             {
                 if (global::System.Threading.Interlocked.Exchange(ref _entered, 1) == 1)
                     throw new InvalidOperationException($"cannot enter context: {__repr__()} is already entered");
                 var previous = _current.Value;
                 _current.Value = this;
-                try { return PyWait.Call(callable, args); }
+                try { return PyWait.Call(callable, args, __kwargs); }
                 finally
                 {
                     _current.Value = previous;

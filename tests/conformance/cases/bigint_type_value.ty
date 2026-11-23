@@ -1,0 +1,17 @@
+# typhon: int=bigint
+import builtins
+from typing import Any
+
+
+def parse(converter: Any, text: str) -> Any:
+    return converter(text)
+
+
+def parse_hex(converter: Any, text: str) -> Any:
+    return converter(text, base=16)
+
+
+print(type(len('abc')) is int, type(True) is bool)
+print(parse(int, '123456789012345678901234567890'))
+print(parse(builtins.int, '123456789012345678901234567890'))
+print(parse_hex(int, 'ffffffffffffffffffffffff'))

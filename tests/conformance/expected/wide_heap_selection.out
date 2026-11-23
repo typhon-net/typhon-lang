@@ -1,0 +1,5 @@
+[('large', 12), ('medium', 5)]
+[('large', 12), ('medium', 5), ('small', 1)]
+[('small', 1), ('medium', 5), ('large', 12)]
+[3, 2, 1]
+[]

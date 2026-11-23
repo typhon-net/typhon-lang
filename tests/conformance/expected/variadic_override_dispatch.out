@@ -1,0 +1,8 @@
+('base', 'A', 'default', None)
+('base', 'B', None, None)
+('base', 'C', 0, None)
+('variadic', 'A', ())
+('variadic', 'B', (None,))
+('variadic', 'C', (0, None))
+('variadic', 'D', ())
+unexpected keyword

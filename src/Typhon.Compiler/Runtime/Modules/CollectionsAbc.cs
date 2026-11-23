@@ -97,6 +97,53 @@ namespace Typhon.Stdlib
                 }
             }
 
+            /// <summary>Mutable sequence operations supplied by the positional read, write, delete and insert hooks.</summary>
+            public abstract class MutableSequence : Sequence
+            {
+                public abstract void __setitem__(object? index, object? value);
+                public abstract void __delitem__(object? index);
+                public abstract void insert(object? index, object? value);
+
+                public void append(object? value) => insert(__len__(), value);
+
+                public void clear()
+                {
+                    while (true)
+                    {
+                        try { pop(); }
+                        catch (Exception error) when (error is IndexOutOfRangeException or ArgumentOutOfRangeException) { return; }
+                    }
+                }
+
+                public void reverse()
+                {
+                    long count = __len__();
+                    for (long first = 0; first < count / 2; first++)
+                    {
+                        long last = count - first - 1;
+                        object? right = __getitem__(last), left = __getitem__(first);
+                        __setitem__(first, right);
+                        __setitem__(last, left);
+                    }
+                }
+
+                public void extend(object? values)
+                {
+                    if (ReferenceEquals(values, this)) values = this.ToArray();
+                    foreach (object? item in Builtins.__iter_dyn(values)) append(item);
+                }
+
+                public dynamic? pop(long index = -1)
+                {
+                    object? value = __getitem__(index);
+                    __delitem__(index);
+                    return value;
+                }
+
+                public void remove(object? value) => __delitem__(index(value));
+                public MutableSequence __iadd__(object? values) { extend(values); return this; }
+            }
+
             /// <summary>The read-only mapping mixin implemented by __getitem__, __iter__, and __len__.</summary>
             public abstract class Mapping : IEnumerable<object?>
             {
@@ -132,6 +179,8 @@ namespace Typhon.Stdlib
             public abstract class MutableMapping : Mapping
             {
                 public MutableMapping() { }
+
+                public static PyFunction __ne__ => Builtins.ObjectNotEqual;
 
                 public dynamic? this[object? key] { get => Item(key); set => Put(key, value); }
 
@@ -176,16 +225,26 @@ namespace Typhon.Stdlib
                     catch (KeyNotFoundException) { Put(key, @default); return @default; }
                 }
 
-                public void update([System.Runtime.InteropServices.Optional] object? other,
-                    [PyKeywordArguments] IDictionary<string, object?>? __kwargs = null)
+                public void update([System.Runtime.InteropServices.Optional, PyPositionalOnly] object? other,
+                    [PyKeywordArguments] IDictionary<string, object?>? __kwargs = null) => Update(this, other, __kwargs);
+
+                // The ABC supplies a Python mixin, so the unbound function can also be attached to an unrelated class.
+                internal static PyFunction UpdateFunction { get; } = new PyClosure("update", (args, keywords) =>
+                {
+                    if (args.Length is < 1 or > 2) throw PyClosure.ArgCountError("update", 1, 2, args.Length);
+                    Update(args[0], args.Length == 2 ? args[1] : Type.Missing, keywords);
+                    return null;
+                });
+
+                static void Update(object? receiver, object? other, IDictionary<string, object?>? keywords)
                 {
                     if (!ReferenceEquals(other, Type.Missing))
                     {
                         if (other == null) throw new InvalidCastException("'NoneType' object is not iterable");
-                        foreach (var item in Builtins.ReadDictItems(other)) Put(item.Key, item.Value);
+                        foreach (var (key, value) in Builtins.ReadDictItems(other)) Builtins.__setitem(receiver, key, value);
                     }
-                    if (__kwargs != null)
-                        foreach (var item in __kwargs) Put(item.Key, item.Value);
+                    if (keywords != null)
+                        foreach (var (key, value) in keywords) Builtins.__setitem(receiver, key, value);
                 }
             }
 

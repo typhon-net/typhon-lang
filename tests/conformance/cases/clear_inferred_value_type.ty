@@ -1,0 +1,19 @@
+import sys
+
+def report():
+    try:
+        raise ValueError('captured')
+    except ValueError:
+        info = sys.exc_info()
+        print(info[0].__name__, str(info[1]))
+        info = None
+        print(info is None)
+
+def select(clear):
+    pair = (3, 'typed')
+    if clear:
+        pair = None
+    return pair
+
+report()
+print(select(False), select(True))

@@ -1,0 +1,32 @@
+from typing import Any
+
+
+def includes(item: Any, container: Any):
+    return item in container, item not in container
+
+
+class Receipt:
+    def __contains__(self, item):
+        return item == 'paid'
+
+
+print(includes('second', tuple(['first', 'second'])))
+print(includes('second', tuple(['second', 2])))
+print(includes(True, tuple([1, 2])))
+print(includes('inner', 'outer-inner'))
+print(includes(b'ab', b'xxabyy'))
+print(includes('paid', {'paid': 1}))
+print(includes('paid', Receipt()))
+
+
+def left():
+    print('left')
+    return 'second'
+
+
+def right():
+    print('right')
+    return ('first', 'second')
+
+
+print(left() in right())

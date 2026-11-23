@@ -32,8 +32,7 @@ namespace Typhon.Stdlib
                 __self__ = @object;
                 if (@object == null) return;
                 __self_class__ = @object as Type ?? (@object is PyLocalClassInstance local ? local.PythonType : @object.GetType());
-                bool Compatible() => __thisclass__ is PyLocalDataClass || __self_class__ is PyLocalDataClass
-                    ? Builtins.DirectSubclass(__self_class__, __thisclass__) : __thisclass__.IsAssignableFrom(__self_class__);
+                bool Compatible() => Builtins.DirectSubclass(__self_class__, __thisclass__);
                 if (!Compatible() && @object is Type target &&
                     PyMetaclasses.IsMetaclass(__thisclass__))
                     __self_class__ = PyMetaclasses.Of(target);
@@ -74,7 +73,7 @@ namespace Typhon.Stdlib
                 object? receiver = __self__ is Type ? null : __self__;
                 if (__self_class__ != null)
                 {
-                    for (Type? owner = __thisclass__.BaseType; owner != null; owner = owner.BaseType)
+                    foreach (Type owner in PyMetaclasses.MethodOrder(__self_class__).SkipWhile(type => type != __thisclass__).Skip(1))
                     {
                         if (owner == typeof(object) && name == "__init_subclass__")
                         {
@@ -159,6 +158,8 @@ namespace Typhon.Stdlib
                             (getter.IsStatic || receiver != null) && (getter.IsStatic || descriptor != null || !owner.IsDefined(typeof(PySourceAttribute))))
                         {
                             result = InvokeDirect(getter, receiver, []);
+                            if (name == "__init_subclass__" && result is types.MethodType { __self__: Type } hook)
+                                result = new types.MethodType(hook.__func__, __self_class__);
                             return true;
                         }
                         MethodInfo[] methods = owner.GetMethods(Declared).Where(m => m.Name == name && !m.IsAbstract &&
@@ -192,7 +193,7 @@ namespace Typhon.Stdlib
             delegate object? DirectCall(object? target, object?[] args);
             static readonly ConditionalWeakTable<MethodInfo, DirectCall> Invokers = new();
 
-            static object? InvokeDirect(MethodInfo method, object? target, object?[] args) =>
+            internal static object? InvokeDirect(MethodInfo method, object? target, object?[] args) =>
                 Invokers.GetValue(method, BuildInvoker)(target, args);
 
             static DirectCall BuildInvoker(MethodInfo method)

@@ -1,0 +1,25 @@
+from urllib.parse import urlparse, urlsplit
+
+def describe(address, *, missing=False):
+    parsed = urlparse(address, missing_as_none=missing)
+    print(tuple(parsed), parsed.username, parsed.password, parsed.hostname, parsed.port)
+    print(parsed.geturl(), tuple(urlsplit(address, missing_as_none=missing)))
+
+describe(" \tHTTPS://a:b@[2001:DB8::1%SomeZone]:8443/a;p?q#frag")
+describe("a;b/c;d?x#")
+describe("http:///p?#", missing=True)
+describe("http:/document")
+describe("mailto:user@example.com")
+describe(b"http://EXAMPLE.test/%f0?q#x")
+print(urlparse("", " HTTPS ").scheme, urlparse("path#a?b", allow_fragments=False).path)
+print(urlparse("https://Example.Test").encode().decode() == urlparse("https://Example.Test"))
+for invalid in ["http://[127.0.0.1]", "http://[broken]", "http://example.com：443"]:
+    try:
+        urlparse(invalid)
+    except ValueError:
+        print("bad host")
+for address in ["http://a:99999", "http://a:bad"]:
+    try:
+        print(urlparse(address).port)
+    except ValueError:
+        print("bad port")

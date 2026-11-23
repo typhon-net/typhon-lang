@@ -67,6 +67,7 @@ namespace Typhon.Compiler.Emit
                     if (InitTarget(initOwner, py) is InferenceTarget it &&
                         it.InferParams && Ti.Signatures.TryGetValue(it.Key, out var baseSigs))
                     {
+                        bool emitFallback = Ti.Fallback.Contains(it.Key);
                         foreach (var types in baseSigs)
                         {
                             var tps = it.Params.Select((p, i) => $"{(types[i] == TypeInference.Declared ? ParameterType(p) : types[i])} {Esc(p.Name)}").ToList();
@@ -75,7 +76,7 @@ namespace Typhon.Compiler.Emit
                             {
                                 var p = it.Params[i];
                                 string pt = types[i] == TypeInference.Declared ? ParameterType(p) : types[i];
-                                if (p.Default == null) continue;
+                                if (p.Default == null || emitFallback) continue;
                                 if (!ClassDeclarationResolver(py).IsConstantDefault(p.Default))
                                 {
                                     if (p.Annotation != null || InferType(p.Default) == pt)
@@ -103,7 +104,7 @@ namespace Typhon.Compiler.Emit
                             _w.Line($"{SurfaceVisibility("public", string.Join(", ", tps))} {Esc(ctx.Name)}({string.Join(", ", tps)}) : base({string.Join(", ", baseArgs)}) {{ }}");
                         }
                         _w.Line();
-                        if (!Ti.Fallback.Contains(it.Key)) return;
+                        if (!emitFallback) return;
                     }
                     var ps = new List<string>(); var names = new List<string>(); var baseDefaults = new List<string>();
                     foreach (var p in init.Params.Skip(1))
@@ -149,7 +150,11 @@ namespace Typhon.Compiler.Emit
                     var ctors = _r.GetConstructors(meta);
                     foreach (var c in ctors)
                     {
-                        var ps = c.Parameters.Select(kv => $"{kv.Key} {Esc(kv.Value)}").ToList();
+                        var ps = c.Parameters.Select((parameter, index) =>
+                        {
+                            string modifier = c.Signature?.Parameters[index].IsParams == true ? "params " : "";
+                            return $"{modifier}{parameter.Key} {Esc(parameter.Value)}";
+                        }).ToList();
                         if (c.Defaults.Count == ps.Count)
                         {
                             var defaults = c.Defaults.ToArray();
@@ -312,11 +317,13 @@ namespace Typhon.Compiler.Emit
 
         void EmitConstructorCore(FunctionDef f, ClassContext ctx, List<Expr> bases, string[] paramTypes)
         {
-            var sig = BuildSignature(f, dropFirst: true, paramTypes: paramTypes);
+            string key = TypeInference.FuncKey(_m, ctx.Def, f.Name);
+            var sig = BuildSignature(f, dropFirst: true, paramTypes: paramTypes,
+                keepSpecializedDefaults: Ti?.Fallback.Contains(key) != true);
             sig.Scope.ReturnType = "void";
             sig.Scope.HasSelf = true;
             sig.Scope.Params.Remove(f.Params[0].Name);
-            bool twoPhase = TwoPhaseClasses.Contains(ctx.Def) && f.Params.All(x => x.Kind == ParamKind.Normal);
+            bool twoPhase = TwoPhaseClasses.Contains(ctx.Def);
             if (twoPhase || DefersBaseInit(f) || ForwardsBaseInit(ctx.Def, f) ||
                 NeverCallsBaseInit(f) && NearestInitAncestor(ctx.Def) != null)
             {
@@ -330,7 +337,8 @@ namespace Typhon.Compiler.Emit
                     if (!ctx.NoInitDone) { _w.Line($"private protected {Esc(ctx.Name)}({NoInitType} _){alloc} {{ }}"); ctx.NoInitDone = true; }
                     _w.Line($"{SurfaceVisibility("public", sig.Params)} {Esc(ctx.Name)}({sig.Params}){alloc} {{ __init__({string.Join(", ", f.Params.Skip(1).Select(x => Esc(x.Name)))}); }}");
                     LineDirective(f);
-                    _w.Line($"protected {(NearestInitAncestor(ctx.Def) != null ? "new " : "")}void __init__({sig.Params})");
+                    string visibility = SurfaceVisibility("protected", sig.Params) == "internal" ? "private protected" : "protected";
+                    _w.Line($"{visibility} {(NearestInitAncestor(ctx.Def) != null ? "new " : "")}void __init__({sig.Params})");
                 }
                 else _w.Line($"{SurfaceVisibility("public", sig.Params)} {Esc(ctx.Name)}({sig.Params}){alloc}");
                 EmitSignatureBody(f.Body, sig);

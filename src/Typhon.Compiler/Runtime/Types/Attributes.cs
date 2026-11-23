@@ -75,7 +75,7 @@ namespace Typhon.Runtime
             {
                 if (name == "__dict__") { value = module.__dict__; return true; }
                 if (name == "__class__") { value = typeof(PyModule); return true; }
-                if (module.__dict__.TryGetValue(name, out value)) return true;
+                if (module.TryReadAttribute(name, out value, allowFallback)) return true;
                 if (name == "__dir__") { value = DirectoryMethod(module); return true; }
                 return false;
             }
@@ -95,14 +95,14 @@ namespace Typhon.Runtime
                 if (t == typeof(Type) && PyMetaclasses.TypeCheckSlot(name) is PyClosure typeCheck) { value = typeCheck; return true; }
                 if (name == "__name__") { value = PyTypeName(t); return true; }
                 if (name == "__class__") { value = PyMetaclasses.Of(t); return true; }
-                if (name == "__qualname__") { value = t is PyLocalDataClass localName ? localName.QualName : PyTypeName(t); return true; }
+                if (name == "__qualname__") { value = PyMetaclasses.QualifiedName(t); return true; }
                 if (name == "__dict__")
                 {
                     value = t is PyLocalDataClass localDict ? new Typhon.Stdlib.types.MappingProxyType(localDict.Members) : PyClassDescriptors.Dictionary(t);
                     return true;
                 }
                 if (name == "__module__") { value = __module_of(t); return true; }
-                if (name == "__mro__") { value = new PyTuple<Type>(Ancestors(t)); return true; }
+                if (name == "__mro__") { value = new PyTuple<Type>(PyMetaclasses.MethodOrder(t)); return true; }
                 if (name == "__bases__") { value = new PyTuple<Type>(PyMetaclasses.Bases(t)); return true; }
                 if (t == typeof(Typhon.Stdlib._typing.Generic) && name == "__parameters__")
                     return Typhon.Stdlib._typing.Generic.TryGetParameters(out value);
@@ -117,7 +117,7 @@ namespace Typhon.Runtime
                     if (name == "__doc__") return true;
                     return TryGetAttr(local.BaseType, name, out value, allowFallback);
                 }
-                if (name == "__doc__") { value = t.GetCustomAttribute<PySourceAttribute>()?.DocString; return true; }
+                if (name == "__doc__") { value = ClassDocumentation(t); return true; }
                 if (PyMetaclasses.TryOwnValue(t, name, out value)) { value = PyMetaclasses.Bind(value, null, t); return true; }
                 if (PyClassDescriptors.TryGetAttribute(t, name, out value)) return true;
                 if (name == "__repr__") { value = ReprSlot(t); return true; }
@@ -128,16 +128,28 @@ namespace Typhon.Runtime
                 }
                 if (name == "__module__") { value = ModuleOfType(t); return true; }
                 if (TryGetClassData(t, name, out value)) return true;
-                if (t.GetMethods(StaticMembers | InstanceMembers).Any(m =>
+                if (t == typeof(Typhon.Stdlib.collections.abc.MutableMapping) && name == "update")
+                { value = Typhon.Stdlib.collections.abc.MutableMapping.UpdateFunction; return true; }
+                Type storage = PyMetaclasses.Storage(t);
+                if (storage.GetMethods(StaticMembers | InstanceMembers).Any(m =>
                     m.Name == name && !m.IsDefined(typeof(PyMissingMethodAttribute), false)))
-                { value = new PyBoundMethod(t, name); return true; }
+                { value = new PyBoundMethod(storage, name); return true; }
                 if (name == "__getstate__") { value = __object_method("__object_getstate"); return true; }
                 if (name == "__hash__" && t == typeof(object)) { value = __object_method("__object_hash"); return true; }
+                if (t == typeof(OrderedDictionary<object, object>))
+                {
+                    if (name == "__eq__") { value = __object_method("__dict_eq"); return true; }
+                    if (DictionaryDescriptors.TryGetValue(name, out var dictMethod)) { value = dictMethod; return true; }
+                }
+                if (name == "__ne__" && (t == typeof(object) || t.IsDefined(typeof(PySourceAttribute), false)))
+                { value = ObjectNotEqual; return true; }
                 if (name == "__new__")
                 {
                     if (t == typeof(Type) || PyMetaclasses.IsMetaclass(t)) { value = PyMetaclasses.New; return true; }
                     if (t == typeof(long)) { value = __object_method("__int_new"); return true; }
+                    if (t == typeof(BigInteger)) { value = __object_method("__bigint_new"); return true; }
                     if (t == typeof(string)) { value = __object_method("__str_new"); return true; }
+                    if (t == typeof(OrderedDictionary<object, object>)) { value = __object_method("__dict_new"); return true; }
                     if (t == typeof(object) || t.IsDefined(typeof(PySourceAttribute), false) &&
                         !typeof(System.Runtime.CompilerServices.ITuple).IsAssignableFrom(t))
                     { value = __object_method("__object_new"); return true; }
@@ -212,11 +224,21 @@ namespace Typhon.Runtime
                 if (instanceMethod.DeclaringType != type && type.IsDefined(typeof(PySourceAttribute), false) &&
                     TryGetClassData(type, name, out var shadowedMethod, before: instanceMethod.DeclaringType))
                     value = PyMetaclasses.Bind(shadowedMethod, o, type);
+                else if (instanceMethod.DeclaringType?.GetField("__decorated_" + name, StaticMembers | BindingFlags.DeclaredOnly) is FieldInfo decorator)
+                    value = PyMetaclasses.Bind(decorator.GetValue(null), o, type);
                 else
                     value = new PyBoundMethod(o, name, includeNonPublic: true);
                 return true;
             }
             if (PyClassDescriptors.TryGetAttribute(type, name, out value, instance: true)) return true;
+            // A method stored in a Python class takes precedence over the native container's extensions.
+            bool sourceInstance = type.IsDefined(typeof(PySourceAttribute), false);
+            if (sourceInstance && name == "__doc__") { value = ClassDocumentation(type); return true; }
+            if (sourceInstance && TryGetClassData(type, name, out value))
+            {
+                value = PyMetaclasses.Bind(value, o, type);
+                return true;
+            }
             if (o is ITuple tuple && name is ("__getitem__" or "__contains__"))
             {
                 value = new PyClosure(name, (args, keywords) =>
@@ -249,14 +271,19 @@ namespace Typhon.Runtime
                 };
                 return true;
             }
-            if (o is System.Collections.IDictionary dictionary && name == "get")
+            if (o is System.Collections.IDictionary dictionary && name is ("get" or "pop"))
             {
                 value = new PyClosure(name, (args, keywords) =>
                 {
                     if (args.Length is < 1 or > 2 || keywords?.Count > 0)
                         throw PyClosure.ArgCountError(name, 1, 2, args.Length);
+                    if (name == "get") return __dict_get(dictionary, args[0], args.Length == 2 ? args[1] : null);
                     object? key = KeyFor(dictionary, args[0]);
-                    return key != null && dictionary.Contains(key) ? dictionary[key] : args.Length == 2 ? args[1] : null;
+                    if (key == null || !dictionary.Contains(key))
+                        return args.Length == 2 ? args[1] : throw new KeyNotFoundException(repr(args[0]));
+                    object? item = dictionary[key];
+                    dictionary.Remove(key);
+                    return item;
                 });
                 return true;
             }
@@ -302,14 +329,19 @@ namespace Typhon.Runtime
                 catch (Microsoft.CSharp.RuntimeBinder.RuntimeBinderException) { }
                 catch (MissingMemberException) { }
             }
-            if (TryGetClassData(type, name, out value))
+            if (!sourceInstance && TryGetClassData(type, name, out value))
             {
-                if (value is PyFunction function) value = new Typhon.Stdlib.types.MethodType(function, o);
+                value = PyMetaclasses.Bind(value, o, type);
                 return true;
             }
             if (FindNestedType(type, name) is Type nestedType) { value = nestedType; return true; }
             if (name == "__repr__") { value = ReprSlot(type).__get__(o, type); return true; }
             if (name == "__dir__") { value = DirectoryMethod(o); return true; }
+            if (name == "__ne__" && (type == typeof(object) || type.IsDefined(typeof(PySourceAttribute), false)))
+            {
+                value = new Typhon.Stdlib.types.MethodType(ObjectNotEqual, o);
+                return true;
+            }
             if (name == "__getstate__")
             {
                 value = new Typhon.Stdlib.types.MethodType(__object_method("__object_getstate"), o);
@@ -353,6 +385,10 @@ namespace Typhon.Runtime
             }
             return default;
         }
+
+        static object? ClassDocumentation(Type type) =>
+            TryGetClassData(type, "__doc__", out var value, before: type.BaseType)
+                ? value : type.GetCustomAttribute<PySourceAttribute>()?.DocString;
 
         static bool TryGetClassData(Type type, string name, out object? value, Type? before = null)
         {
@@ -415,7 +451,9 @@ namespace Typhon.Runtime
             {
                 "__object_new" or "__object_hash" => typeof(object),
                 "__int_new" => typeof(long),
+                "__bigint_new" => typeof(BigInteger),
                 "__str_new" => typeof(string),
+                "__dict_new" => typeof(OrderedDictionary<object, object>),
                 _ => null,
             }));
 
@@ -442,6 +480,12 @@ namespace Typhon.Runtime
             if (instance == null) return null;
             var state = new PyAttrDict(instance);
             return state.Count == 0 ? null : state;
+        }
+
+        public static BigInteger __bigint_new(Type cls, params object?[] args)
+        {
+            if (cls != typeof(BigInteger)) throw new InvalidCastException("int.__new__() requires the int type");
+            return ConstructBigInt(args, null);
         }
 
         static void RequireIntClass(Type cls)
@@ -621,6 +665,8 @@ namespace Typhon.Runtime
             if (o is PyModule module && module.__dict__.Remove(name)) return;
             if (o is PyLocalClassInstance instance && instance.Remove(name)) return;
             if (o is PyLocalDataClass local && local.Members.Remove(name)) return;
+            if (o is Type annotated && name == "__doc__" && annotated.IsDefined(typeof(PySourceAttribute), false))
+                throw new InvalidCastException($"cannot delete '__doc__' attribute of type '{PyTypeName(annotated)}'");
             if (o is Type type && PyClassDescriptors.DeleteSlot(type, name)) return;
             if (o is Type owner && PyClassDescriptors.DeleteAddedAttribute(owner, name)) return;
             if (o != null && o.GetType().IsDefined(typeof(PySourceAttribute), false) &&

@@ -1,0 +1,32 @@
+from io import StringIO
+
+
+class Capture(StringIO):
+    def getvalue(self):
+        return "override"
+
+    def write(self, text: str) -> int:
+        return 100
+
+
+text = Capture("abc")
+native_read = StringIO.getvalue
+native_write = StringIO.write
+print(native_read(text), text.getvalue())
+print(native_write(text, "XY"), text.write("3"))
+print(StringIO.getvalue(text))
+
+
+class Source:
+    def report(self, label="base"):
+        return label
+
+
+class Derived(Source):
+    def report(self, label="base"):
+        return label + " override"
+
+
+receiver = Derived()
+source = Source.report
+print(source(receiver, label="explicit"), receiver.report())

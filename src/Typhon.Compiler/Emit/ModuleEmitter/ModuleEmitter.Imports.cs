@@ -41,8 +41,12 @@ namespace Typhon.Compiler.Emit
         static bool ConditionalModuleClass(ModuleInfo module, string name) =>
             module.Classes.TryGetValue(name, out var definition) && definition.ConditionalModuleDefinition;
 
+        static bool HasModuleAttributeFallback(ModuleInfo module) =>
+            module.Functions.Contains("__getattr__") || module.Globals.Contains("__getattr__");
+
         bool UsesRuntimeProjectMember(ModuleInfo module, string name) =>
-            module.MayReplaceModule || ConditionalModuleClass(module, name) || module.WritesModuleGlobals &&
+            module.MayReplaceModule || ConditionalModuleClass(module, name) ||
+            (module.WritesModuleGlobals || HasModuleAttributeFallback(module)) &&
             ProjectExport(module, name).Owner == null && RuntimeReExport(module, name).Module == null;
 
         bool ConditionalClassReference(Expr reference) => reference switch
@@ -397,7 +401,7 @@ namespace Typhon.Compiler.Emit
                                 Module = export.Module, Line = s.Line, Col = s.Col,
                                 Names = { new ImportAlias { Name = export.Member, AsName = bound } },
                             });
-                        else if (mod.WritesModuleGlobals)
+                        else if (mod.WritesModuleGlobals || HasModuleAttributeFallback(mod))
                             _runtimeProjectBindings[bound] = (mod, a.Name, "__typhon_" + NewTmp("import"));
                         else Report(s, "TY0102", Severity.Error, $"cannot import name '{a.Name}' from '{modName}'");
                         continue;

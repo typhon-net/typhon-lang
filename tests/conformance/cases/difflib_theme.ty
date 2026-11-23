@@ -1,0 +1,7 @@
+from _colorize import get_theme
+
+plain = get_theme(force_no_color=True).difflib
+colored = get_theme(force_color=True).difflib
+print(plain.header == plain.removed == plain.reset == '')
+print(colored.header == '\x1b[1m', colored.hunk == '\x1b[36m')
+print(colored.added == '\x1b[32m', colored.removed == '\x1b[31m', colored.context == colored.reset)

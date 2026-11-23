@@ -133,7 +133,10 @@ namespace Typhon.Compiler.Emit
                     return null;
                 }
                 case AttributeExpr component when UsesComplexComponent(component): return "double";
-                case AttributeExpr comparator when UsesBuiltinStringComparison(comparator): return "dynamic";
+                case AttributeExpr comparator when UsesBuiltinStringComparison(comparator) || UsesInheritedNotEqual(comparator):
+                    return "dynamic";
+                case CallExpr { Func: AttributeExpr notEqual } when UsesInheritedNotEqual(notEqual):
+                    return "dynamic";
                 case AttributeExpr typeCheck when !_m.IsGdScript && IsTypeCheckSlot(typeCheck.Name) &&
                     BuiltinTypeBase(typeCheck.Target): return "dynamic";
                 case AttributeExpr { Name: "__class__" }: return "global::System.Type";
@@ -281,17 +284,17 @@ namespace Typhon.Compiler.Emit
                 case ListExpr l when l.Elts.Any(x => x is StarredExpr):
                 {
                     var et = SpreadElementType(l.Elts);
-                    return et == null || et == TypeInference.Pending ? et : $"List<{et}>";
+                    return et == TypeInference.Pending ? et : $"List<{et ?? "dynamic"}>";
                 }
                 case TupleExpr te when te.Elts.Any(x => x is StarredExpr):
                 {
                     var et = SpreadElementType(te.Elts);
-                    return et == null || et == TypeInference.Pending ? et : $"global::Typhon.Runtime.PyTuple<{et}>";
+                    return et == TypeInference.Pending ? et : $"global::Typhon.Runtime.PyTuple<{et ?? "dynamic"}>";
                 }
                 case SetExpr se when se.Elts.Any(x => x is StarredExpr):
                 {
                     var et = SpreadElementType(se.Elts);
-                    return et == null || et == TypeInference.Pending ? et : $"HashSet<{et}>";
+                    return et == TypeInference.Pending ? et : $"HashSet<{et ?? "dynamic"}>";
                 }
                 case ListExpr l:
                 {
@@ -309,7 +312,7 @@ namespace Typhon.Compiler.Emit
                     if (ts.Contains(TypeInference.Pending)) return TypeInference.Pending;
                     if (ts.Count == 1 && ts[0] != null) return $"HashSet<{ts[0]}>";
                     if (ts.All(t => IsIntegral(t) || t == "double")) return ts.Contains("double") ? "HashSet<double>" : "HashSet<long>";
-                    return null;
+                    return "HashSet<dynamic>";
                 }
                 case DictExpr d:
                 {
@@ -368,7 +371,7 @@ namespace Typhon.Compiler.Emit
             if (!_m.IsGdScript && (BuiltinTypeBase(call.Func) && call.Args.Count == 3 || IsMetaclassExpression(call.Func)))
                 return "dynamic";
             if (CustomAllocatorTarget(call.Func, out _) ||
-                call.Func is AttributeExpr allocator && (BaseObjectMethod(allocator) == "__object_new" ||
+                call.Func is AttributeExpr allocator && (BaseObjectMethod(allocator) is "__object_new" or "__dict_new" ||
                     allocator.Name == "__new__" && CustomAllocatorTarget(allocator.Target, out _)))
                 return "dynamic";
             if (SuperListAppend(call) != null || ConditionalClassReference(call.Func)) return "dynamic";

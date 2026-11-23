@@ -1,0 +1,6 @@
+from _colorize import get_theme
+
+plain = get_theme(force_no_color=True).unittest
+print(plain.passed == plain.warn == plain.fail == plain.fail_info == plain.reset == '')
+color = get_theme(force_color=True).unittest
+print(repr(color.passed), repr(color.warn), repr(color.fail), repr(color.fail_info), repr(color.reset))

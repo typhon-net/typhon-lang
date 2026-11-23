@@ -1,0 +1,7 @@
+import time
+
+ns = time.time_ns()
+print(isinstance(ns, int), ns > 0)
+print(abs(time.time() - ns / 1_000_000_000) < 60.0)
+print(tuple(time.gmtime(0)), time.gmtime(0).tm_zone, time.gmtime(0).tm_gmtoff)
+print(tuple(time.gmtime(-0.1)), len(time.localtime()))

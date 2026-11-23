@@ -1,0 +1,13 @@
+from collections.abc import MutableMapping
+
+class Log(dict):
+    update = MutableMapping.update
+
+    def __setitem__(self, key, value):
+        print('set', key, value)
+        dict.__setitem__(self, key, value)
+
+mapping = Log()
+mapping.update([('first', 2)], second=3)
+getattr(mapping, 'update')({'first': 8}, third=4)
+print(dict(mapping))

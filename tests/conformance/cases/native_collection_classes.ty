@@ -1,0 +1,14 @@
+import collections
+
+module = collections
+for name in ("deque", "Counter", "OrderedDict", "defaultdict"):
+    cls = getattr(module, name)
+    print(isinstance(cls, type), cls.__module__, cls.__qualname__)
+
+queue = getattr(module, "deque")
+counts = getattr(module, "Counter")
+ordered = getattr(module, "OrderedDict")
+print(queue("abc", maxlen=2))
+print(counts("abac", b=4))
+print(ordered([(2, "x")], item="y"))
+print(type(collections.deque([1])) is queue)

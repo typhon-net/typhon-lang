@@ -1,0 +1,10 @@
+# typhon: int=bigint
+import ast
+from builtins import compile as compile_source
+
+def evaluate(flags):
+    return eval(compile('40 + 2', '<probe>', 'eval', flags, True))
+
+print(evaluate(eval('0')))
+node = compile_source('1 + 2', '<probe>', 'eval', flags=int(ast.PyCF_ONLY_AST))
+print(type(node).__name__, type(node.body).__name__)

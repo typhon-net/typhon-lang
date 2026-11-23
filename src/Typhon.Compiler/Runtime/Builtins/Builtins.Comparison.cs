@@ -85,6 +85,34 @@ namespace Typhon.Runtime
             }
             return a.Equals(b);
         }
+        public static object __dict_eq(IDictionary mapping, object? other) =>
+            other is IDictionary right ? (object)eq(mapping, right) : NotImplemented;
+
+        internal static PyFunction ObjectNotEqual { get; } = new PyClosure("__ne__", (args, keywords) =>
+        {
+            if (args.Length != 2 || keywords?.Count > 0) throw PyClosure.ArgCountError("__ne__", 2, 2, args.Length);
+            return __object_ne(args[0], args[1]);
+        });
+
+        public static object __object_ne(object? receiver, object? other)
+        {
+            var equality = LookupSourceSpecialMethod(receiver, "__eq__");
+            if (equality.Owner != null)
+            {
+                object? equal = __invoke(equality.Value, [other]);
+                return ReferenceEquals(equal, NotImplemented) ? NotImplemented : !truthy(equal);
+            }
+            if (ReferenceEquals(receiver, other)) return false;
+            if (receiver is IDictionary and not PyAttrDict)
+                return other is IDictionary ? (object)!eq(receiver, other) : NotImplemented;
+            if ((receiver is BigInteger || IsNumber(receiver)) && (other is BigInteger || IsNumber(other)) ||
+                receiver is (string or char or PyString) && other is (string or char or PyString) ||
+                receiver is ITuple && other is ITuple ||
+                receiver is IList && other is IList)
+                return !eq(receiver, other);
+            return NotImplemented;
+        }
+
         // typed overloads: C# picks them whenever the operands really are numbers/str/bool, so eq() costs nothing there
         public static bool eq(long a, long b) => a == b;
         public static bool eq(double a, double b) => a == b;

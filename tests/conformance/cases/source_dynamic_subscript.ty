@@ -1,0 +1,13 @@
+from typing import Any
+
+
+class _Indexed:
+    def __getitem__(self, key: Any):
+        return 'logical member', key
+
+
+def dynamic_subscript(instance: Any, key: Any):
+    return instance[key]
+
+
+print(dynamic_subscript(_Indexed(), ('key', 3)))

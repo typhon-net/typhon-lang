@@ -1,0 +1,9 @@
+from typing import Any
+
+def capture(values: Any):
+    member = values.__contains__
+    return member('apple'), member('grape'), member(2.0)
+
+mixed = {'apple', 'orange', 2}
+print(capture(mixed))
+print(capture(frozenset(mixed)))

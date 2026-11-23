@@ -1,0 +1,5 @@
+11 [22] []
+[(1, 'a', True), (2, 'b', False)]
+['1', '2']
+map() argument 2 is longer than argument 1
+map() argument 3 is shorter than arguments 1-2

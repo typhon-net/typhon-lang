@@ -1,0 +1,4 @@
+('Parent', 'Generic') T class body evaluated
+('Child', 'Parent', 'Generic', 'object')
+('T',)
+fallback resolve

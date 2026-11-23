@@ -15,9 +15,9 @@ namespace Typhon.Stdlib
     using System.Text;
     using Typhon.Runtime;
 
-    internal static class urllib
+    internal static partial class urllib
     {
-        internal static class parse
+        internal static partial class parse
         {
             const string Hex = "0123456789ABCDEF";
 

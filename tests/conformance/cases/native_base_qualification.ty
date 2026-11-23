@@ -1,0 +1,15 @@
+from io import StringIO
+
+
+class Capture(StringIO):
+    def getvalue(self):
+        return StringIO.getvalue(self) + "!"
+
+    def truncate(self, size=None):
+        return StringIO.truncate(self, size)
+
+
+capture = Capture("abc")
+print(capture.getvalue())
+print(capture.truncate(2))
+print(capture.getvalue())

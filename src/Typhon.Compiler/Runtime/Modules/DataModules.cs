@@ -294,10 +294,35 @@ namespace Typhon.Stdlib
         }
 
         // nlargest / nsmallest: documented as sorted(iterable, key=key, reverse=...)[:n]
-        public static List<T> nlargest<T>(long n, IEnumerable<T> iterable) => Builtins.sorted(iterable, reverse: true).Take((int)Math.Max(0, n)).ToList();
-        public static List<T> nlargest<T, K>(long n, IEnumerable<T> iterable, Func<T, K> key) => Builtins.sorted(iterable, key, reverse: true).Take((int)Math.Max(0, n)).ToList();
-        public static List<T> nsmallest<T>(long n, IEnumerable<T> iterable) => Builtins.sorted(iterable).Take((int)Math.Max(0, n)).ToList();
-        public static List<T> nsmallest<T, K>(long n, IEnumerable<T> iterable, Func<T, K> key) => Builtins.sorted(iterable, key).Take((int)Math.Max(0, n)).ToList();
+        static int SelectionSize(long n) => (int)Math.Clamp(n, 0, int.MaxValue);
+        static int SelectionSize(System.Numerics.BigInteger n) =>
+            (int)System.Numerics.BigInteger.Clamp(n, System.Numerics.BigInteger.Zero, int.MaxValue);
+
+        public static List<T> nlargest<T>(long n, IEnumerable<T> iterable) =>
+            n <= 0 ? [] : Builtins.sorted(iterable, reverse: true).Take(SelectionSize(n)).ToList();
+        public static List<T> nlargest<T>(System.Numerics.BigInteger n, IEnumerable<T> iterable) =>
+            nlargest((long)SelectionSize(n), iterable);
+        public static List<T> nlargest<T, K>(long n, IEnumerable<T> iterable, Func<T, K> key) =>
+            n <= 0 ? [] : Builtins.sorted(iterable, key, reverse: true).Take(SelectionSize(n)).ToList();
+        public static List<T> nlargest<T, K>(System.Numerics.BigInteger n, IEnumerable<T> iterable, Func<T, K> key) =>
+            nlargest((long)SelectionSize(n), iterable, key);
+        public static List<T> nlargest<T>(long n, IEnumerable<T> iterable, object? key) =>
+            n <= 0 ? [] : Builtins.sorted(iterable, key, reverse: true).Take(SelectionSize(n)).ToList();
+        public static List<T> nlargest<T>(System.Numerics.BigInteger n, IEnumerable<T> iterable, object? key) =>
+            nlargest((long)SelectionSize(n), iterable, key);
+
+        public static List<T> nsmallest<T>(long n, IEnumerable<T> iterable) =>
+            n <= 0 ? [] : Builtins.sorted(iterable).Take(SelectionSize(n)).ToList();
+        public static List<T> nsmallest<T>(System.Numerics.BigInteger n, IEnumerable<T> iterable) =>
+            nsmallest((long)SelectionSize(n), iterable);
+        public static List<T> nsmallest<T, K>(long n, IEnumerable<T> iterable, Func<T, K> key) =>
+            n <= 0 ? [] : Builtins.sorted(iterable, key).Take(SelectionSize(n)).ToList();
+        public static List<T> nsmallest<T, K>(System.Numerics.BigInteger n, IEnumerable<T> iterable, Func<T, K> key) =>
+            nsmallest((long)SelectionSize(n), iterable, key);
+        public static List<T> nsmallest<T>(long n, IEnumerable<T> iterable, object? key) =>
+            n <= 0 ? [] : Builtins.sorted(iterable, key).Take(SelectionSize(n)).ToList();
+        public static List<T> nsmallest<T>(System.Numerics.BigInteger n, IEnumerable<T> iterable, object? key) =>
+            nsmallest((long)SelectionSize(n), iterable, key);
 
         /// <summary>merge(*iterables): sorted inputs merged lazily; equal items come from the earlier input first.</summary>
         public static IEnumerable<T> merge<T>(params IEnumerable<T>[] iterables) => Merge(iterables, (Func<T, T>)(x => x), false);

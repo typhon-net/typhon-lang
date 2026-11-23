@@ -1,0 +1,31 @@
+import collections.abc as protocols
+
+class Dictionary(dict):
+    __ne__ = protocols.MutableMapping.__ne__
+
+    def __eq__(self, other):
+        print('using dict equality')
+        return dict.__eq__(self, other)
+
+class Receiver:
+    def __init__(self):
+        self.data = {'start': 1}
+
+    def merge(self, other):
+        self.data.update(other)
+
+d = Dictionary()
+d['a'] = 1
+print(d.__ne__({'a': 1}), d.__ne__({'a': 2}), d.__ne__(42))
+print(dict.__eq__({'a': 1}, frozendict(a=1)))
+print(protocols.MutableMapping.__ne__(1, '1'), protocols.MutableMapping.__ne__(1, 2))
+receiver = Receiver()
+receiver.merge(iter([('end', 2)]))
+print(receiver.data)
+
+def merge_in_place(destination, source):
+    alias = destination
+    destination |= source
+    return destination is alias, destination
+
+print(merge_in_place({'initial': 4}, iter([('new', 5), ('initial', 6)])))

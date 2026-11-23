@@ -1,0 +1,33 @@
+def report(method):
+    def replaced(self, label):
+        method(self, label)
+        return 'wrapped'
+    return replaced
+
+class Parent:
+    @report
+    def note(self, label):
+        print('base', label)
+
+class Child(Parent):
+    def note(self, label):
+        print('child', label)
+
+def use(value: Parent):
+    return value.note('tag')
+
+print(use(Parent()))
+print(use(Child()))
+
+def replace_signature(method):
+    def decorated(self, *, new_name):
+        return method(self, new_name)
+    return decorated
+
+class Renamed:
+    @replace_signature
+    def label(self, old_name):
+        return old_name.upper()
+
+print(Renamed().label(new_name='changed'))
+print(getattr(Renamed(), 'label')(new_name='bound'))

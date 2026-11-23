@@ -38,7 +38,50 @@ namespace Typhon.Stdlib
 
         public static double monotonic() => perf_counter();
         public static double time() => (DateTime.UtcNow - Epoch).TotalSeconds;
+        public static long time_ns() => checked((DateTime.UtcNow - Epoch).Ticks * 100);
         public static void sleep(double seconds) => System.Threading.Thread.Sleep(TimeSpan.FromSeconds(seconds));
+
+        static DateTime WallClock(double? seconds) => seconds.HasValue
+            ? Epoch.AddSeconds(Math.Floor(seconds.Value)) : DateTime.UtcNow;
+
+        public static struct_time gmtime(double? seconds = null) =>
+            new(WallClock(seconds), false, "GMT", 0);
+
+        public static struct_time localtime(double? seconds = null)
+        {
+            DateTime utc = WallClock(seconds);
+            var zone = TimeZoneInfo.Local;
+            var local = TimeZoneInfo.ConvertTimeFromUtc(utc, zone);
+            bool daylight = zone.IsDaylightSavingTime(utc);
+            return new struct_time(local, daylight, daylight ? zone.DaylightName : zone.StandardName,
+                (long)zone.GetUtcOffset(utc).TotalSeconds);
+        }
+
+        internal sealed class struct_time : PyStructSeq
+        {
+            public readonly long tm_year, tm_mon, tm_mday, tm_hour, tm_min, tm_sec, tm_wday, tm_yday, tm_isdst, tm_gmtoff;
+            public readonly string tm_zone;
+
+            internal struct_time(DateTime value, bool daylight, string zone, long offset)
+            {
+                tm_year = value.Year;
+                tm_mon = value.Month;
+                tm_mday = value.Day;
+                tm_hour = value.Hour;
+                tm_min = value.Minute;
+                tm_sec = value.Second;
+                tm_wday = ((int)value.DayOfWeek + 6) % 7;
+                tm_yday = value.DayOfYear;
+                tm_isdst = daylight ? 1 : 0;
+                tm_zone = zone;
+                tm_gmtoff = offset;
+            }
+
+            protected override string TypeName => "time.struct_time";
+            protected override string[] Fields => ["tm_year", "tm_mon", "tm_mday", "tm_hour", "tm_min", "tm_sec", "tm_wday", "tm_yday", "tm_isdst"];
+            protected override object?[] Values => [tm_year, tm_mon, tm_mday, tm_hour, tm_min, tm_sec, tm_wday, tm_yday, tm_isdst];
+            public object? this[long index] => Item(index);
+        }
     }
 
     /// <summary>sys: the interpreter's state as far as a compiled .NET program has one.</summary>
@@ -458,9 +501,23 @@ namespace Typhon.Runtime
             set => __dict__["__doc__"] = value;
         }
         public PyAttrDict __dict__ { get; }
-        public dynamic? ImportAttribute(string name) => __dict__.TryGetValue(name, out var value) ? value :
+        internal bool TryReadAttribute(string name, out object? value, bool allowFallback = true)
+        {
+            if (__dict__.TryGetValue(name, out value)) return true;
+            if (!allowFallback || name == "__getattr__" || !__dict__.TryGetValue("__getattr__", out var fallback)) return false;
+            try
+            {
+                value = Builtins.__invoke(fallback, [name]);
+                return true;
+            }
+            catch (MissingMemberException)
+            {
+                return false;
+            }
+        }
+        public dynamic? ImportAttribute(string name) => TryReadAttribute(name, out var value) ? value :
             throw new ImportError($"cannot import name '{name}' from '{__name__}'");
-        public override bool TryGetMember(GetMemberBinder binder, out object? result) => __dict__.TryGetValue(binder.Name, out result);
+        public override bool TryGetMember(GetMemberBinder binder, out object? result) => TryReadAttribute(binder.Name, out result);
         public override bool TrySetMember(SetMemberBinder binder, object? value) { __dict__[binder.Name] = value; return true; }
         public override bool TryInvokeMember(InvokeMemberBinder binder, object?[]? args, out object? result)
         {
@@ -499,6 +556,8 @@ namespace Typhon.Runtime
             if (_type == typeof(Typhon.Stdlib.builtins) && name == "print") { result = Builtins.__print_value(); return true; }
             if (_type == typeof(Typhon.Stdlib.builtins) && Typhon.Stdlib.builtins.RuntimeClasses.TryGetValue(name, out Type? cls))
             { result = cls; return true; }
+            if (_type == typeof(Typhon.Stdlib.collections) && Typhon.Stdlib.collections.RuntimeClasses.TryGetValue(name, out Type? collection))
+            { result = collection; return true; }
             if (_type == typeof(Typhon.Stdlib.functools) && name == "partial") { result = typeof(PyPartial); return true; }
             if (_type.GetField(name, Members) is FieldInfo f)
             {
@@ -511,7 +570,11 @@ namespace Typhon.Runtime
                 catch (TargetInvocationException e) when (p.IsDefined(typeof(PyLateAttributeAttribute)) && e.InnerException is NameError) { return false; }
             }
             if (_type.GetNestedType(name, BindingFlags.Public | BindingFlags.NonPublic) is Type nested &&
-                PyConditionalModuleClassAttribute.IsBound(nested)) { result = nested; return true; }
+                PyConditionalModuleClassAttribute.IsBound(nested))
+            {
+                result = _source == null && IsNativeSubmodule(nested) ? Of(nested, _name + "." + NativeModuleName(nested.Name)) : nested;
+                return true;
+            }
             if (_type.GetMethods(Members).Any(m => m.Name == name && IsNamespaceMethod(m)))
             {
                 var fn = _type.GetNestedType("__fn_" + name, BindingFlags.NonPublic)?.GetField("Instance", BindingFlags.Public | BindingFlags.Static);
@@ -572,6 +635,10 @@ namespace Typhon.Runtime
             name == "__main__" ? "<module '__main__'>" : $"<module {Builtins.repr(name)} (built-in)>";
         public override string ToString() => __repr__();
 
+        static bool IsNativeSubmodule(Type type) => type.IsAbstract && type.IsSealed && char.IsLower(type.Name[0]);
+        static string NativeModuleName(string name) =>
+            name.EndsWith('_') && !name.EndsWith("__", StringComparison.Ordinal) ? name[..^1] : name;
+
         /// <summary>The standard modules of the runtime (Typhon.Stdlib's static classes, 'x_' named 'x') and __main__.</summary>
         internal static OrderedDictionary<string, object?> All(Type? mainModule = null)
         {
@@ -581,10 +648,13 @@ namespace Typhon.Runtime
             catch (ReflectionTypeLoadException e) { types = e.Types.Where(t => t != null).Select(t => t!).ToArray(); }
             foreach (var t in types.Where(t => t.Namespace == "Typhon.Stdlib" && !t.IsNested && t.IsAbstract && t.IsSealed).OrderBy(t => t.Name, StringComparer.Ordinal))
             {
-                string name = t.Name.EndsWith('_') ? t.Name.Substring(0, t.Name.Length - 1) : t.Name;
+                string name = NativeModuleName(t.Name);
                 if (!d.ContainsKey(name)) d[name] = Of(t, name);
-                foreach (var nested in t.GetNestedTypes().Where(n => n.IsAbstract && n.IsSealed && char.IsLower(n.Name[0])))
-                    d.TryAdd(name + "." + nested.Name, Of(nested, name + "." + nested.Name));
+                foreach (var nested in t.GetNestedTypes().Where(IsNativeSubmodule))
+                {
+                    string submodule = name + "." + NativeModuleName(nested.Name);
+                    d.TryAdd(submodule, Of(nested, submodule));
+                }
             }
             d.TryAdd("builtins", Of(typeof(Builtins), "builtins"));
             mainModule ??= Assembly.GetEntryAssembly()?.GetType("__main__");

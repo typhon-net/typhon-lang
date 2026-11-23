@@ -27,8 +27,39 @@ namespace Typhon.Compiler.Emit
             ConstExpr { Kind: ConstKind.None } => "null",
             NameExpr or AttributeExpr when TryTypeExpr(expression, out string type) => $"typeof({type})",
             _ when CanMaterializeTypeAlias(expression) => EmitUnionOperand(expression),
+            SubscriptExpr subscription => SourceAnnotationSubscription(subscription),
             _ => null,
         };
+
+        string SourceAnnotationSubscription(SubscriptExpr subscription)
+        {
+            ModuleInfo module;
+            string member;
+            if (subscription.Target is AttributeExpr attribute && DottedName(attribute.Target) is string dotted &&
+                !IsLocal(dotted.Split('.')[0]) && ModuleRef(dotted) is ModuleInfo owner)
+            {
+                module = owner;
+                member = attribute.Name;
+            }
+            else if (subscription.Target is NameExpr name && !IsLocal(name.Id) && !_m.Globals.Contains(name.Id) &&
+                _importedFromModules.TryGetValue(name.Id, out var imported))
+            {
+                module = imported.Key;
+                member = imported.Value;
+            }
+            else return null;
+
+            if (!module.Globals.Contains(member) && !module.Functions.Contains(member) && !module.Classes.ContainsKey(member))
+                return null;
+            var arguments = MaterializedArguments(subscription.Index).Select(argument =>
+                argument is ConstExpr { Kind: not (ConstKind.None or ConstKind.Str) } ? EmitValue(argument) : RuntimeAnnotation(argument)).ToList();
+            if (arguments.Any(argument => argument == null)) return null;
+            string index = subscription.Index is TupleExpr ?
+                $"new global::Typhon.Runtime.PyTuple<object?>([{string.Join(", ", arguments.Select(argument => $"(object?){Paren(argument)}"))}])" :
+                arguments[0];
+            string receiver = $"{Rt("getattr")}({ModuleObject(module)}, {CsString(member)})";
+            return $"{Rt("__getitem")}((object?){Paren(receiver)}, (object?){Paren(index)})";
+        }
 
         void EmitAnnotationsMap(List<Stmt> body)
         {

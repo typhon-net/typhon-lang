@@ -1,0 +1,8 @@
+values: dict[str, int] = {"count": 3}
+pop = values.pop
+print(pop("missing", "fallback"), pop("missing", None) is None)
+print(pop("count", []), len(values))
+try:
+    pop("missing")
+except KeyError:
+    print("missing")

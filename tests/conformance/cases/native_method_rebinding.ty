@@ -1,0 +1,18 @@
+from argparse import ArgumentParser
+
+
+def print_help(file=None):
+    print("custom help", file)
+
+
+def change(parser: ArgumentParser):
+    parser.print_help = print_help
+    return parser.print_help
+
+
+parser = ArgumentParser(prog="example", add_help=False)
+other = ArgumentParser(prog="other", add_help=False)
+replacement = change(parser)
+print(replacement is print_help)
+parser.print_help("screen")
+print(other.print_help is print_help)

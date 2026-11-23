@@ -1072,6 +1072,9 @@ public sealed class ConformanceTests(ITestOutputHelper output)
             File.WriteAllText(Path.Combine(package, "__init__.py"), """
                 print("package")
                 BASE = 39
+                def path_from_package():
+                    from os.path import basename
+                    return basename(__path__[0])
                 from .helpers import answer as exported, Answer
                 from . import nested as branch
                 """);
@@ -1121,6 +1124,7 @@ public sealed class ConformanceTests(ITestOutputHelper output)
                 from pylib_example import exported as reexport, Answer as Value
                 from pylib_example.nested import reader as from_package
                 print(pylib_example.branch.__package__)
+                print(pylib_example.path_from_package(), os.path.basename(pylib_example.__path__[0]))
                 print(reexport(), pylib_example.exported(), Value().get())
                 print(with_module_name.main(), hasattr(direct, "read"), direct is from_package)
                 print(direct.read(), pylib_example.nested.reader.read(), from_package.read())

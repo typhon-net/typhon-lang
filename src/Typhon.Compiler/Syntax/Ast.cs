@@ -238,6 +238,9 @@ namespace Typhon.Compiler.Syntax
         public bool IsCachedProperty;
         internal bool UsedInClassBody;
         internal bool IsMissingMethodStub;
+        internal bool NeedsOverrideBinding;
+        internal bool UsedWithUnboundReceiver;
+        internal bool UsesObjectReturnSlot;
         /// <summary>The name Python sees (its __name__) when Name was changed: a decorated function's undecorated body.</summary>
         public string PyName;
     }

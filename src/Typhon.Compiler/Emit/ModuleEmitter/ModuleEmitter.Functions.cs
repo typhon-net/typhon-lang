@@ -210,9 +210,13 @@ namespace Typhon.Compiler.Emit
             }
         }
 
+        readonly HashSet<AttributeExpr> _privateClassDefaultReads = new HashSet<AttributeExpr>();
+
         /// <summary>Declares fields for f's definition-time defaults and queues their assignment at the def's position.</summary>
         void RegisterDefaultFields(FunctionDef f, string owner, Dictionary<string, string> fields, List<Stmt> execStmts)
         {
+            // Synthetic slots forward missing arguments to the actual override.
+            if (f.IsMissingMethodStub) return;
             foreach (var p in f.Params)
             {
                 if (p.Default == null || IsConstantDefault(p.Default) || p.Kind != ParamKind.Normal || IsParamAlias(f, p)) continue;
@@ -221,7 +225,11 @@ namespace Typhon.Compiler.Emit
                 var dflt = p.Default;
                 if (owner != null && dflt is NameExpr dn && _m.Classes.TryGetValue(owner, out var oc) &&
                     oc.Body.Any(st => st is AssignStmt ca && ca.Targets.Any(t => t is NameExpr tn && tn.Id == dn.Id) || st is AnnAssignStmt cn && cn.Target is NameExpr cnn && cnn.Id == dn.Id))
-                    dflt = new AttributeExpr { Target = new NameExpr { Id = owner, Line = dn.Line, Col = dn.Col }, Name = dn.Id, Line = dn.Line, Col = dn.Col };
+                {
+                    var member = new AttributeExpr { Target = new NameExpr { Id = owner, Line = dn.Line, Col = dn.Col }, Name = dn.Id, Line = dn.Line, Col = dn.Col };
+                    if (!_m.IsGdScript && Visibility(dn.Id, topLevel: false) == "private") _privateClassDefaultReads.Add(member);
+                    dflt = member;
+                }
                 string type = p.Annotation != null ? MapType(p.Annotation, p) : (PyType(InferType(dflt)) ?? "dynamic");
                 if (type == TypeInference.Pending) type = "dynamic";
                 fields[field] = type;
@@ -359,7 +367,7 @@ namespace Typhon.Compiler.Emit
              !FamilyDefinesElsewhere(_cls.Def, method.Name));
 
         Signature BuildSignature(FunctionDef f, bool dropFirst, string selfName = null, string[] paramTypes = null,
-            string retKey = null, bool keepSpecializedDefaults = true)
+            string retKey = null, bool keepSpecializedDefaults = true, bool forOverrideSlot = false)
         {
             var sig = new Signature();
             var locals = LocalsAnalyzer.Analyze(f.Body, f.Params.Select(p => p.Name), null);
@@ -455,7 +463,9 @@ namespace Typhon.Compiler.Emit
                 string defaultCode = null;
                 // a parameter the body rebinds to values of another type (in a nested block): the body uses a wider local
                 string wider = p.Kind == ParamKind.Normal ? ConflictType(p.Name) : null;
-                if (keepDefault && p.Kind == ParamKind.Normal && !IsConstantDefault(p.Default) && _defaultSources.TryGetValue(p, out var source))
+                if (keepDefault && (forOverrideSlot || f.IsMissingMethodStub) && !IsConstantDefault(p.Default))
+                    decl = DefinitionDefaultParameter(type, Esc(p.Name), out defaultCode);
+                else if (keepDefault && p.Kind == ParamKind.Normal && !IsConstantDefault(p.Default) && _defaultSources.TryGetValue(p, out var source))
                 {
                     // An omitted object argument uses the CLR sentinel so an explicit Python None stays null.
                     string local = p.Name + "__arg";
@@ -853,7 +863,9 @@ namespace Typhon.Compiler.Emit
                 {
                     string value = NewTmp("closure");
                     _scope.LocalFunctionObjects[f.Name] = value;
-                    _w.Line($"var {value} = {ClosureCode(f, sig, name, null)};");
+                    // The generated function body can pass this very closure as a value.
+                    _w.Line($"global::Typhon.Runtime.PyClosure {value} = null!;");
+                    _w.Line($"{value} = {ClosureCode(f, sig, name, null)};");
                 }
             }
             string asyncKw = f.IsAsync && !sig.IsGenerator ? "async " : "";

@@ -68,7 +68,7 @@ internal static class PyLib
     public static bool ProvidedByTyphon(string module, bool bigInts)
     {
         // Compile the Lib implementations that use Typhon's runtime primitives.
-        if (module is "timeit" or "copyreg" or "csv" or "hashlib" or "hmac" or "traceback") return false;
+        if (module is "timeit" or "copyreg" or "csv" or "hashlib" or "hmac" or "traceback" or "codeop") return false;
         // urllib.parse imports ipaddress, whose IPv6 constants require Python's wide integers.
         if (bigInts && module is ("urllib" or "urllib.parse")) return false;
         if (TypingOnly.Contains(module)) return true;

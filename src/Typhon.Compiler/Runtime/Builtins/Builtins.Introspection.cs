@@ -36,6 +36,12 @@ namespace Typhon.Runtime
         /// <summary>Ellipsis, the value of ... .</summary>
         public static readonly Typhon.Stdlib.types.EllipsisType Ellipsis = new Typhon.Stdlib.types.EllipsisType();
 
+        public static Type __type_of_bigint(object? value)
+        {
+            var type = __type_of(value);
+            return IsIntType(type) ? typeof(BigInteger) : type;
+        }
+
         public static Type __type_of(object? value)
         {
             if (value == null) return typeof(Typhon.Stdlib.types.NoneType);
@@ -57,6 +63,7 @@ namespace Typhon.Runtime
             if (PyDictViews.CanonicalType(actual) is Type view) return view;
             if (actual == typeof(ValueTuple)) return typeof(ITuple);
             if (!actual.IsGenericType) return actual;
+            if (Typhon.Stdlib.collections.CanonicalClass(actual) is Type collection) return collection;
             Type definition = actual.GetGenericTypeDefinition();
             if (definition == typeof(List<>)) return typeof(List<object>);
             if (definition == typeof(HashSet<>)) return typeof(HashSet<object>);
@@ -66,6 +73,62 @@ namespace Typhon.Runtime
             if (definition == typeof(frozendict<,>)) return typeof(frozendict<object, object>);
             if (definition == typeof(frozenset<>)) return typeof(frozenset<object>);
             return actual;
+        }
+
+        static bool TryConstructCollectionClass(Type type, object?[] args,
+            IDictionary<string, object?>? keywords, out object? result)
+        {
+            if (type == typeof(deque<object>))
+            {
+                result = ConstructDeque(args, keywords);
+                return true;
+            }
+            if (type != typeof(Counter<object>) && type != typeof(PyOrderedDict<object, object>))
+            {
+                result = null;
+                return false;
+            }
+            if (args.Length > 1) throw new InvalidCastException($"{PyTypeName(type)} expected at most 1 argument, got {args.Length}");
+            var entries = keywords ?? new Dictionary<string, object?>();
+            if (type == typeof(PyOrderedDict<object, object>))
+            {
+                var ordered = new PyOrderedDict<object, object?>();
+                foreach (var entry in ConstructFrozenDict(args, entries, "OrderedDict")) ordered[entry.Key] = entry.Value;
+                result = ordered;
+                return true;
+            }
+            var counter = new Counter<object>();
+            if (args.FirstOrDefault() is object source)
+            {
+                if (hasattr(source, "keys"))
+                    foreach (var entry in ReadDictItems(source)) counter[PyNoneDictKey.Store(entry.Key)] = (long)__index_value(entry.Value);
+                else
+                    foreach (object? item in __iter_dyn(source))
+                    {
+                        var key = PyNoneDictKey.Store(item);
+                        counter[key]++;
+                    }
+            }
+            foreach (var entry in entries) counter[entry.Key] += (long)__index_value(entry.Value);
+            result = counter;
+            return true;
+        }
+
+        static deque<object?> ConstructDeque(object?[] args, IDictionary<string, object?>? keywords)
+        {
+            if (args.Length > 2) throw new InvalidCastException($"deque() expected at most 2 arguments, got {args.Length}");
+            object? iterable = args.Length == 0 ? Array.Empty<object>() : args[0];
+            object? maxlen = args.Length < 2 ? null : args[1];
+            if (keywords != null)
+                foreach (var (name, value) in keywords)
+                {
+                    if (name == "iterable" && args.Length == 0) iterable = value;
+                    else if (name == "maxlen" && args.Length < 2) maxlen = value;
+                    else throw new InvalidCastException($"deque() got an invalid or duplicate argument '{name}'");
+                }
+            long? limit = maxlen == null ? null : (long)__index_value(maxlen);
+            if (limit < 0) throw new ArgumentException("maxlen must be non-negative");
+            return new deque<object?>(__iter_dyn(iterable), limit);
         }
 
         static frozendict<object, object?> ConstructFrozenDict(object?[] args, IDictionary<string, object?>? keywords, string name = "frozendict")
@@ -193,8 +256,9 @@ namespace Typhon.Runtime
                 cls != typeof(Typhon.Stdlib.types.MappingProxyType) &&
                 !(cls.IsGenericType && (cls.GetGenericTypeDefinition() == typeof(frozendict<,>) ||
                     cls.GetGenericTypeDefinition() == typeof(System.Collections.ObjectModel.ReadOnlyDictionary<,>)))) return true;
+            if (of == typeof(Typhon.Stdlib.collections.abc.MutableSequence) && BuiltinMutableSequence(cls)) return true;
             if (of == typeof(Typhon.Stdlib.collections.abc.Sequence) && !typeof(IDictionary).IsAssignableFrom(cls) &&
-                (cls == typeof(string) || cls == typeof(global::memoryview) || cls == typeof(PyBigRange) ||
+                (cls == typeof(string) || cls == typeof(global::memoryview) || cls == typeof(PyBigRange) || BuiltinMutableSequence(cls) ||
                 typeof(IList).IsAssignableFrom(cls) || typeof(ITuple).IsAssignableFrom(cls) ||
                 typeof(Typhon.Stdlib.collections.UserList).IsAssignableFrom(cls) || typeof(Typhon.Stdlib.collections.UserString).IsAssignableFrom(cls) ||
                 cls.GetInterfaces().Any(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IReadOnlyList<>)))) return true;
@@ -203,8 +267,8 @@ namespace Typhon.Runtime
             if (of == typeof(Typhon.Stdlib.collections.abc.Coroutine) && (cls == typeof(Typhon.Stdlib.types.CoroutineType) || typeof(System.Threading.Tasks.Task).IsAssignableFrom(cls) ||
                 Typhon.Stdlib.collections.abc._check_methods(cls, "__await__", "send", "throw", "close") is true)) return true;
             if (cls is PyLocalDataClass local) return ReferenceEquals(cls, of) || local.BaseType is Type parent && IsSubclass(parent, of);
+            if (PyMetaclasses.HasDeclaredAncestor(cls, of)) return true;
             if (of is PyLocalDataClass) return false;
-            if (cls == of) return true;
             if (of == typeof(Typhon.Stdlib.os_.PathLike) && cls.GetMethods().Any(m => m.Name == "__fspath__" && !m.IsStatic)) return true;
             if (of == typeof(ArgumentException) && typeof(Typhon.Stdlib.io.UnsupportedOperation).IsAssignableFrom(cls)) return true;
             // the numbers ABCs: int is an Integral, float a Real, ...
@@ -234,6 +298,11 @@ namespace Typhon.Runtime
             if (of == typeof(MissingMemberException)) return typeof(MissingMemberException).IsAssignableFrom(cls) || typeof(NullReferenceException).IsAssignableFrom(cls);
             return of.IsAssignableFrom(cls);
         }
+
+        static bool BuiltinMutableSequence(Type type) =>
+            type == typeof(PyByteArray) || typeof(Typhon.Stdlib.collections.UserList).IsAssignableFrom(type) ||
+            Ancestors(type).Any(ancestor => ancestor.IsGenericType &&
+                (ancestor.GetGenericTypeDefinition() == typeof(List<>) || ancestor.GetGenericTypeDefinition() == typeof(deque<>)));
 
         static IEnumerable<Type> Ancestors(Type t) { for (var x = t; x != null; x = x.BaseType) yield return x; }
 
@@ -391,7 +460,7 @@ namespace Typhon.Runtime
     /// same items, hashes like frozenset(d.items()), and | makes a new frozendict. Assignment and the mutating methods
     /// raise TypeError / AttributeError. (It is an OrderedDictionary, so it reads like a dict everywhere one is expected.)
     /// </summary>
-    internal sealed class frozendict<K, V> : OrderedDictionary<K, V>, IPyRepr where K : notnull
+    internal sealed class frozendict<K, V> : OrderedDictionary<K, V>, IPyRepr, IDictionary, IDictionary<K, V> where K : notnull
     {
         int? _hash;
         public frozendict(IEnumerable<KeyValuePair<K, V>> items, IEqualityComparer<K> comparer) : base(comparer)
@@ -400,6 +469,7 @@ namespace Typhon.Runtime
         }
 
         static Exception ReadOnly() => new InvalidCastException("'frozendict' object does not support item assignment");
+        static Exception DeletionNotSupported() => new InvalidCastException("'frozendict' object doesn't support item deletion");
         static Exception NoAttribute(string name) => new MissingMemberException($"'frozendict' object has no attribute '{name}'");
 
         public new V this[K key]
@@ -407,15 +477,29 @@ namespace Typhon.Runtime
             get => base[key];
             set => throw ReadOnly();
         }
+        object? IDictionary.this[object key]
+        {
+            get => key is K typedKey && base.TryGetValue(typedKey, out V? value) ? value : null;
+            set => throw ReadOnly();
+        }
+        bool IDictionary.IsReadOnly => true;
+        bool IDictionary.IsFixedSize => true;
+        void IDictionary.Add(object key, object? value) => throw ReadOnly();
+        void IDictionary.Remove(object key) => throw DeletionNotSupported();
+        void IDictionary.Clear() => throw NoAttribute("clear");
+        bool ICollection<KeyValuePair<K, V>>.IsReadOnly => true;
+        void ICollection<KeyValuePair<K, V>>.Add(KeyValuePair<K, V> item) => throw ReadOnly();
+        bool ICollection<KeyValuePair<K, V>>.Remove(KeyValuePair<K, V> item) => throw DeletionNotSupported();
+
         public new void Add(K key, V value) => throw ReadOnly();
-        public new bool Remove(K key) => throw new InvalidCastException("'frozendict' object doesn't support item deletion");
+        public new bool Remove(K key) => throw DeletionNotSupported();
         public new void Clear() => throw NoAttribute("clear");
         public void update(object? other = null) => throw NoAttribute("update");
         public V pop(K key) => throw NoAttribute("pop");
         public (K, V) popitem() => throw NoAttribute("popitem");
         public V setdefault(K key, V value = default!) => throw NoAttribute("setdefault");
         public void __setitem__(K key, V value) => throw ReadOnly();
-        public void __delitem__(K key) => throw new InvalidCastException("'frozendict' object doesn't support item deletion");
+        public void __delitem__(K key) => throw DeletionNotSupported();
 
         /// <summary>copy(): a frozendict is immutable, so the copy is the object itself.</summary>
         public frozendict<K, V> copy() => this;

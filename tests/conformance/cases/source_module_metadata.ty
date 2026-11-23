@@ -1,0 +1,9 @@
+#:pylib
+import sys
+import graphlib as graph
+
+graph.__doc__ = 'replacement documentation'
+sys.modules['typhon_graph_alias'] = graph
+print(graph.__doc__, sys.modules['typhon_graph_alias'] is graph)
+print(graph.TopologicalSorter({'node': set()}).static_order().__next__())
+del sys.modules['typhon_graph_alias']

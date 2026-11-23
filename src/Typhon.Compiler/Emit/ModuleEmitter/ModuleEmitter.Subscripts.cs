@@ -91,13 +91,14 @@ namespace Typhon.Compiler.Emit
             bool untypedLambdaParameter = targetType == null && s.Target is NameExpr parameter &&
                 _lambdaParams.Any(scope => scope.ContainsKey(parameter.Id));
             bool lateResult = IsDynamicallyDispatched(s.Target) ||
-                targetType == null && s.Target is CallExpr && MaybeLateBound(s.Target);
+                targetType == null && s.Target is CallExpr call &&
+                (MaybeLateBound(call) || !store && DotNetOverloads(call)?.Any(overload => TupleElementTypes(overload.Type) != null) == true);
             bool untypedModuleField = targetType == null && s.Target is AttributeExpr member &&
                 DottedName(member.Target) is string moduleName && ModuleRef(moduleName) is ModuleInfo module &&
                 ProjectExport(module, member.Name) is var exported && exported.Member != null &&
                 exported.Owner?.Globals.Contains(exported.Member) == true;
-            bool lateContainer = targetType is "dynamic" or "object" or "object?" or "global::System.Type" or "System.Type" ||
-                untypedModuleField;
+            bool lateContainer = targetType is "global::System.Type" or "System.Type" ||
+                untypedModuleField || UsesRuntimeSubscriptReceiver(s.Target, targetType);
             if ((lateContainer || lateResult || untypedLambdaParameter ||
                 targetType == null && InferType(s.Index) == "dynamic") && !(s.Index is TupleExpr))
                 return $"{Rt("__getitem")}((object?){target}, (object?){Paren(ModuleOrClassValue(s.Index) ?? EmitExpr(s.Index))})";
@@ -121,6 +122,14 @@ namespace Typhon.Compiler.Emit
             if (s.Index is TupleExpr dt && IsDictType(targetType)) return $"{target}[{EmitExpr(dt)}]"; // d[a, b]: the key is the tuple (a, b)
             if (DictTypes(targetType) is List<string> objectKeys && objectKeys[0] is "dynamic" or "object" or "object?")
                 return $"{target}[{Rt("__key")}<object>((object?){Paren(ModuleOrClassValue(s.Index) ?? EmitExpr(s.Index))})]";
+            if (!store && DictTypes(targetType) is List<string> incompatibleKeys &&
+                Incompatible(incompatibleKeys[0], InferType(s.Index)))
+            {
+                string lookup = $"{Rt("__getitem")}((object?){Paren(target)}, (object?){Paren(EmitValue(s.Index))})";
+                string valueType = incompatibleKeys[1];
+                return IsUnknownType(valueType) || valueType.Contains(TypeInference.Pending)
+                    ? lookup : $"(({valueType}){lookup})";
+            }
             // d[k] with a late-bound k on a typed dict: the key converted, so the lookup (and its result) stays static
             // (also a number of another type: d[3.0] finds the key 3, as in Python)
             if (IsDictType(targetType) && DictTypes(targetType) is List<string> skv && skv[0] != "dynamic" && !skv[0].Contains(TypeInference.Pending) &&
@@ -320,6 +329,10 @@ namespace Typhon.Compiler.Emit
             bool narrow = sequence ? !IsSmallInt(it) : it == "long" || it == "ulong" || it == TypeInference.BigInt;
             return narrow ? $"checked((int)({code}))" : code;
         }
+
+        bool UsesRuntimeSubscriptReceiver(Expr receiver, string type) =>
+            type is "dynamic" or "object" or "object?" ||
+            type == null && (receiver is SubscriptExpr || receiver is NameExpr name && IsLocal(name.Id));
 
         bool IsPositional(string t)
         {

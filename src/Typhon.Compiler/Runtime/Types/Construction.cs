@@ -13,6 +13,19 @@ namespace Typhon.Runtime
 
     internal static partial class Builtins
     {
+        public static dynamic __dict_new(Type cls)
+        {
+            if (cls == typeof(OrderedDictionary<object, object>)) return new OrderedDictionary<object, object>();
+            if (!typeof(System.Collections.IDictionary).IsAssignableFrom(cls))
+                throw new InvalidCastException("dict.__new__ requires a dictionary subtype");
+            Typhon.Stdlib._abc.CheckAbstract(cls);
+            var constructor = cls.GetConstructor(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                binder: null, [typeof(NoInit)], modifiers: null);
+            if (constructor == null)
+                throw new InvalidCastException($"dict.__new__ cannot allocate '{PyTypeName(cls)}'");
+            return constructor.Invoke([default(NoInit)]);
+        }
+
         /// <summary>Binds forwarded arguments to the selected base class's allocation-independent initializer.</summary>
         public static void __base_init(object instance, Type parent, object?[] args, IDictionary<string, object?>? kwargs)
         {

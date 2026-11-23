@@ -1,0 +1,23 @@
+from contextvars import Context, ContextVar
+
+ctx = Context()
+value = ContextVar('value', default='outer')
+
+def set_value(text, *, suffix='!'):
+    value.set(text + suffix)
+    return value.get()
+
+positional = ('content',)
+keywords = {'suffix': '#'}
+print(ctx.run(set_value, *positional, **keywords), value.get(), ctx.run(value.get))
+run = ctx.run
+print(run(set_value, 'next', suffix='?'), value.get())
+
+def fail(*, text):
+    value.set(text)
+    raise ValueError(text)
+
+try:
+    ctx.run(fail, text='failed')
+except ValueError as failure:
+    print(str(failure), value.get(), ctx.run(value.get))

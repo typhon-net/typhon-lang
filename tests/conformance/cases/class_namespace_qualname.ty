@@ -1,0 +1,15 @@
+class Meta(type):
+    def __new__(mcls, name, bases, namespace):
+        print(namespace['__qualname__'])
+        namespace['__qualname__'] = 'scope.' + name
+        return super().__new__(mcls, name, bases, namespace)
+
+class Created(metaclass=Meta):
+    pass
+
+class Plain:
+    pass
+
+Dynamic = type('Dynamic', (), {'__qualname__': 'scope.Dynamic'})
+for cls in (Created, Plain, Dynamic):
+    print(cls.__qualname__, '__qualname__' in cls.__dict__)

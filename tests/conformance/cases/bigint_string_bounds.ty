@@ -1,0 +1,9 @@
+# typhon: int=bigint
+
+def count(text: str, end: int):
+    return text.count('a', 0, end), text.rfind('a', 0, end)
+
+print(count('abaca', 4))
+print(count('abaca', 10 ** 40))
+print(count('abaca', -(10 ** 40)))
+print('abc'.count(''), 'abc'.count('', 3), 'abc'.count('', 4))

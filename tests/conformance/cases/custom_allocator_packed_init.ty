@@ -1,0 +1,16 @@
+class Entry:
+    def __new__(cls, /, *parts, **metadata):
+        entry = object.__new__(cls)
+        entry.allocated = len(parts), dict(metadata)
+        return entry
+
+    def __init__(self, /, *parts, level=0, **metadata):
+        self.info = parts, level, metadata
+
+class Child(Entry):
+    pass
+
+first = Entry('a', 'b', level=4, label='entry')
+second = Child('c', label='child')
+print(first.allocated, first.info)
+print(second.allocated, second.info)

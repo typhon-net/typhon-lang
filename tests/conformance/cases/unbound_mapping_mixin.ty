@@ -1,0 +1,21 @@
+import collections.abc as protocols
+
+class Receiver:
+    def __init__(self):
+        self.data: dict[str, int] = {}
+
+    def __setitem__(self, key: str, value: int):
+        self.data[key] = value
+
+receiver = Receiver()
+update = protocols.MutableMapping.update
+print(update(receiver, [('a', 5)], b=8))
+print(protocols.MutableMapping.update(receiver, {'a': 9}, c=12))
+print(receiver.data)
+
+class AliasReceiver(Receiver):
+    update = protocols.MutableMapping.update
+
+alias = AliasReceiver()
+alias.update({'test': 42}, another=2)
+print(alias.data)

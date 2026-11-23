@@ -230,6 +230,54 @@ namespace Typhon.Stdlib
                 return SourceImport.Find(name, path == null ? sys_.path : Builtins.__iter_dyn(path).OfType<string>());
             }
 
+            public static machinery.ModuleSpec? spec_from_file_location(
+                string name,
+                [System.Runtime.InteropServices.Optional] object? location,
+                [PyKeywordOnly, System.Runtime.InteropServices.Optional] object? loader,
+                [PyKeywordOnly, System.Runtime.InteropServices.Optional] object? submodule_search_locations)
+            {
+                if (ReferenceEquals(loader, Type.Missing)) loader = null;
+                string origin;
+                if (location == null || ReferenceEquals(location, Type.Missing))
+                {
+                    origin = "<unknown>";
+                    object? filename = loader == null ? Type.Missing : Builtins.getattr(loader, "get_filename", Type.Missing);
+                    if (!ReferenceEquals(filename, Type.Missing))
+                    {
+                        try { origin = os_.__path((object?)Builtins.__invoke(filename, [name])); }
+                        catch (ImportError) { }
+                    }
+                }
+                else origin = global::System.IO.Path.GetFullPath(os_.__path(location));
+
+                if (loader == null)
+                {
+                    if (!machinery.SOURCE_SUFFIXES.Any(suffix => origin.EndsWith(suffix, StringComparison.Ordinal))) return null;
+                    loader = new machinery.SourceFileLoader(name, origin);
+                }
+
+                List<string>? locations = null;
+                if (ReferenceEquals(submodule_search_locations, Type.Missing))
+                {
+                    object? isPackage = Builtins.getattr(loader, "is_package", Type.Missing);
+                    if (!ReferenceEquals(isPackage, Type.Missing))
+                    {
+                        try { if (Builtins.truthy((object?)Builtins.__invoke(isPackage, [name]))) locations = []; }
+                        catch (ImportError) { }
+                    }
+                }
+                else if (submodule_search_locations != null)
+                    locations = submodule_search_locations as List<string> ??
+                        Builtins.__iter_dyn(submodule_search_locations).Select(path => os_.__path((object?)path)).ToList();
+
+                if (locations?.Count == 0) locations.Add(global::System.IO.Path.GetDirectoryName(origin) ?? "");
+                return new machinery.ModuleSpec(name, loader, origin)
+                {
+                    has_location = true,
+                    submodule_search_locations = locations,
+                };
+            }
+
             public static dynamic module_from_spec(machinery.ModuleSpec spec)
             {
                 object? module = null;

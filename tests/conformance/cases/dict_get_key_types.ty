@@ -1,0 +1,26 @@
+# typhon: int=bigint
+from typing import Any
+
+by_code = {4: 'four'}
+by_name = {'four': 4}
+
+
+def lookup(key: Any):
+    result = by_code.get(key)
+    if result is not None:
+        return result
+    result = by_name.get(key)
+    if result is not None:
+        return result
+    return 'missing'
+
+
+def mismatched_key(key: int):
+    try:
+        return by_name[key]
+    except KeyError:
+        return 'key missing'
+
+
+print(lookup(4), lookup('four'), lookup(5))
+print(lookup(4.0), mismatched_key(4))

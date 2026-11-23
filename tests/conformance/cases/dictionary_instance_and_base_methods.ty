@@ -1,0 +1,25 @@
+from typing import Any
+
+class Store(dict):
+    def update(self, extra):
+        print('store', super().update(extra, extra=3))
+
+    def __delitem__(self, key):
+        print('remove', super().__delitem__(key))
+
+    def bound_lookup(self):
+        lookup = self.get
+        return lookup('x'), lookup('absent', 9)
+
+def merge(target: dict[str, int], source: Any):
+    target.update(source)
+
+store = Store()
+store.update({'x': 2})
+print(store.bound_lookup())
+del store['x']
+print(dict(store))
+
+target: dict[str, int] = {}
+merge(target, [('written', 5)])
+print(target)

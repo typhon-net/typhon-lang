@@ -1,0 +1,16 @@
+from typing import Any
+
+
+def runtime_tuple(items: Any) -> Any:
+    return tuple(items)
+
+
+def choose(replace: bool):
+    values = []
+    if replace:
+        values = runtime_tuple([1, 2])
+    return type(values).__name__, values
+
+
+print(choose(False))
+print(choose(True))

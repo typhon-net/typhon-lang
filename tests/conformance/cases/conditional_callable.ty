@@ -1,0 +1,13 @@
+class Record:
+    def __init__(self, name):
+        self.name = name
+
+def make(factory, name):
+    return (factory or Record)(name)
+
+def build(factory, name):
+    return (factory if factory else Record)(name=name)
+
+print(make(None, 'fallback').name)
+print(make(lambda name: Record(name.upper()), 'override').name)
+print(build(None, 'keyword').name)

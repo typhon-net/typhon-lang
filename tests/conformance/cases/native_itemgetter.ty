@@ -1,0 +1,10 @@
+from heapq import nlargest, nsmallest
+from operator import itemgetter
+
+pairs = [('b', 2), ('a', 1), ('c', 3)]
+by_value = itemgetter(1)
+print(sorted(pairs, key=by_value))
+print(nlargest(2, pairs, key=itemgetter(1)))
+print(nsmallest(2, pairs, key=by_value))
+print(itemgetter('key')({'key': 7}))
+print(itemgetter(-1, 0)([2, 3, 4]))

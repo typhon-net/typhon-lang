@@ -106,6 +106,10 @@ namespace Typhon.Stdlib
         public static PyAsyncNext anext(object? iterator) => Builtins.anext(iterator);
         public static PyAsyncNext anext(object? iterator, object? @default) => Builtins.anext(iterator, @default);
         public static dynamic enumerate(object iterable, long start = 0) => Builtins.enumerate((dynamic)iterable, start);
+        public static PyIterator<object?> map([PyPositionalOnly] object? function,
+            [PyPackedArguments] object?[] inputs, [PyKeywordOnly] object? strict = null) =>
+            Builtins.__map_many(function, inputs, strict);
+
         public static dynamic zip(object a, object b) => Builtins.zip((dynamic)a, (dynamic)b);
         public static dynamic zip(object a, object b, object c) => Builtins.zip((dynamic)a, (dynamic)b, (dynamic)c);
 
@@ -171,6 +175,10 @@ namespace Typhon.Stdlib
 
         public static object __import__(object? name, object? globals = null, object? locals = null, object? fromlist = null, long level = 0) =>
             Builtins.__import__(name, globals, locals, fromlist, level);
+        public static dynamic? compile(object? source, object? filename, object? mode, System.Numerics.BigInteger flags,
+            bool dont_inherit = false, long optimize = -1, object? module = null) =>
+            Builtins.compile(source, filename, mode, flags, dont_inherit, optimize, module);
+
         public static dynamic? compile(object? source, object? filename = null, object? mode = null, long flags = 0, bool dont_inherit = false, long optimize = -1, object? module = null) =>
             Builtins.compile(source, filename, mode, flags, dont_inherit, optimize, module);
         public static void exec(object? source, object? globals = null, object? locals = null) => Builtins.exec(source, globals, locals);

@@ -22,8 +22,8 @@ namespace Typhon.Runtime
     /// <summary>Python class-creation metadata for classes that keep their declared CLR type.</summary>
     internal static class PyMetaclasses
     {
-        sealed record Definition(Type Meta, Type[] Bases, OrderedDictionary<string, object?> Namespace);
-        sealed record Creation(Type Target, Type Meta, string Name, Type[] Bases, IDictionary Namespace);
+        sealed record Definition(Type Meta, Type Storage, Type[] Bases, Type[] MethodOrder, OrderedDictionary<string, object?> Namespace, string QualName);
+        sealed record Creation(Type Target, Type Storage, Type Meta, string Name, Type[] Bases, IDictionary Namespace);
         static readonly ConditionalWeakTable<Type, Definition> Definitions = new();
         [ThreadStatic] static Creation? _creating;
 
@@ -33,12 +33,52 @@ namespace Typhon.Runtime
         internal static Type Of(Type type) =>
             Definitions.TryGetValue(type, out var definition) ? definition.Meta : typeof(Type);
 
+        internal static Type Storage(Type type) => Definitions.TryGetValue(type, out var definition) ? definition.Storage : type;
+
         internal static IDictionary? Namespace(Type type) =>
             Definitions.TryGetValue(type, out var definition) ? definition.Namespace : null;
+
+        internal static string QualifiedName(Type type) =>
+            Definitions.TryGetValue(type, out var definition) ? definition.QualName :
+                type is PyLocalDataClass local ? local.QualName : Builtins.PyTypeName(type);
 
         internal static Type[] Bases(Type type) => Definitions.TryGetValue(type, out var definition)
             ? definition.Bases.Length == 0 ? [typeof(object)] : definition.Bases
             : type.BaseType is Type parent ? [parent] : [];
+
+        internal static IEnumerable<Type> MethodOrder(Type type)
+        {
+            for (Type? owner = type; owner != null; owner = owner.BaseType)
+            {
+                if (Definitions.TryGetValue(owner, out var definition))
+                {
+                    foreach (Type member in definition.MethodOrder) yield return member;
+                    yield break;
+                }
+                yield return owner;
+            }
+        }
+
+        internal static bool HasDeclaredAncestor(Type target, Type ancestor) =>
+            Definitions.TryGetValue(target, out var definition) && definition.MethodOrder.Contains(ancestor);
+
+        static void Remember(Type type, Type storage, Type metaclass, Type[] bases, OrderedDictionary<string, object?> members, string qualifiedName)
+        {
+            Type[] parents = bases.Length == 0 ? [typeof(object)] : bases;
+            var pending = parents.Select(parent => new Queue<Type>(MethodOrder(parent)))
+                .Append(new Queue<Type>(parents)).ToArray();
+            var order = new List<Type> { type };
+            while (pending.Any(sequence => sequence.Count > 0))
+            {
+                Type? next = pending.Where(sequence => sequence.Count > 0).Select(sequence => sequence.Peek())
+                    .FirstOrDefault(candidate => !pending.Any(sequence => sequence.Skip(1).Contains(candidate)));
+                if (next == null) throw new InvalidCastException("Cannot create a consistent method resolution order (MRO)");
+                order.Add(next);
+                foreach (var sequence in pending)
+                    if (sequence.TryPeek(out Type? head) && head == next) sequence.Dequeue();
+            }
+            Definitions.Add(type, new Definition(metaclass, storage, bases, order.ToArray(), members, qualifiedName));
+        }
 
         internal static bool TryBindMember(Type target, string name, out object? value)
         {
@@ -117,7 +157,7 @@ namespace Typhon.Runtime
         internal static readonly PyClosure New = new("__new__", (args, kwargs) =>
         {
             if (args.Length != 4 || args[0] is not Type metaclass || args[1] is not string name ||
-                args[2] is not ITuple bases || args[3] is not IDictionary members || kwargs?.Count > 0)
+                args[2] is not ITuple bases || args[3] is not IDictionary members)
                 throw new InvalidCastException("type.__new__ expects a metaclass, name, bases, and a namespace");
             Type[] parents = ClassBases(bases);
             var owned = new OrderedDictionary<string, object?>();
@@ -127,22 +167,26 @@ namespace Typhon.Runtime
                 if (entries.Key is not string key) throw new InvalidCastException("type.__new__ namespace keys must be strings");
                 owned[key] = entries.Value;
             }
+            // type.__new__ consumes the class's qualified name into type metadata.
+            string qualifiedName = owned.Remove("__qualname__", out object? declaredName)
+                ? declaredName as string ?? throw new InvalidCastException("type __qualname__ must be a str")
+                : name;
             if (_creating is { } creation)
             {
                 if (metaclass != creation.Meta || name != creation.Name || !parents.SequenceEqual(creation.Bases))
                     throw new NotSupportedException("type.__new__ cannot change a compiled class's metaclass, name, or bases");
-                Definitions.Add(creation.Target, new Definition(metaclass, creation.Bases, owned));
+                Remember(creation.Target, creation.Storage, metaclass, creation.Bases, owned, qualifiedName);
+                Builtins.__initialize_subclass(creation.Target, kwargs);
                 return creation.Target;
             }
             if (parents.Length > 1)
                 throw new NotSupportedException("a runtime-created class supports at most one base class");
             string module = owned.TryGetValue("__module__", out object? declaredModule) && declaredModule is string moduleName
                 ? moduleName : sys_._getframemodulename() ?? "__main__";
-            string qualifiedName = owned.TryGetValue("__qualname__", out object? declaredName) && declaredName is string qualified
-                ? qualified : name;
             owned["__module__"] = module;
             var target = new PyLocalDataClass(name, module, qualifiedName, parents.FirstOrDefault() ?? typeof(object), owned);
-            Definitions.Add(target, new Definition(metaclass, parents, owned));
+            Remember(target, target, metaclass, parents, owned, qualifiedName);
+            Builtins.__initialize_subclass(target, kwargs);
             return target;
         });
 
@@ -168,13 +212,13 @@ namespace Typhon.Runtime
 
         internal static T Write<T>(Type type, string name, T value)
         {
-            if (_creating is { } frame && frame.Target == type) frame.Namespace[name] = value;
+            if (_creating is { } frame && frame.Storage == type) frame.Namespace[name] = value;
             return value;
         }
 
         internal static void Delete(Type type, string name)
         {
-            if (_creating is not { } frame || frame.Target != type || !frame.Namespace.Contains(name))
+            if (_creating is not { } frame || frame.Storage != type || !frame.Namespace.Contains(name))
                 throw new NameError($"name '{name}' is not defined", name: name);
             frame.Namespace.Remove(name);
         }
@@ -188,7 +232,7 @@ namespace Typhon.Runtime
 
         internal static dynamic? Read(Type type, string name, Type module, string moduleName)
         {
-            if (_creating is { } frame && frame.Target == type && frame.Namespace.Contains(name))
+            if (_creating is { } frame && frame.Storage == type && frame.Namespace.Contains(name))
                 return frame.Namespace[name];
             return PyClassDescriptors.ReadBodyName(PyClassDescriptors.Unassigned, name, module, moduleName);
         }
@@ -196,6 +240,21 @@ namespace Typhon.Runtime
         internal static void Define(Type target, Type? declared, string name, string module, Type[] bases, string[] names,
             IDictionary<string, object?>? keywords)
         {
+            Type storage = target;
+            PyTuple<object?>? typeParameters = null;
+            PyTuple<object?>? originalBases = null;
+            if (target.IsGenericTypeDefinition)
+            {
+                Type[] definitions = target.GetGenericArguments();
+                Type[] representatives = definitions.Select(parameter => parameter.GetGenericParameterConstraints().FirstOrDefault() ?? typeof(object)).ToArray();
+                storage = target.MakeGenericType(representatives);
+                typeParameters = new PyTuple<object?>(definitions.Select(parameter => new _typing.TypeVar(parameter.Name, [],
+                    parameter.GetGenericParameterConstraints().FirstOrDefault(), false, false, true, Type.Missing, null)
+                { __module__ = module }));
+                Type generic = typeof(_typing.Generic);
+                originalBases = new PyTuple<object?>([.. bases, new types.GenericAlias(generic, typeParameters)]);
+                if (!bases.Any(parent => Builtins.DirectSubclass(parent, generic))) bases = [.. bases, generic];
+            }
             Type chosen = Select(declared, bases);
             var basis = new PyTuple<Type>(bases);
             object? prepare = Builtins.getattr(chosen, "__prepare__", null);
@@ -204,14 +263,19 @@ namespace Typhon.Runtime
                 throw new InvalidCastException("__prepare__ must return a mapping");
             ns["__module__"] = module;
             ns["__qualname__"] = name;
+            if (typeParameters != null)
+            {
+                ns["__type_params__"] = typeParameters;
+                ns["__orig_bases__"] = originalBases;
+            }
             object?[] create = [chosen, name, basis, ns];
 
             var previous = _creating;
-            _creating = new Creation(target, chosen, name, bases, ns);
+            _creating = new Creation(target, storage, chosen, name, bases, ns);
             try
             {
-                RuntimeHelpers.RunClassConstructor(target.TypeHandle);
-                IDictionary original = PyClassDescriptors.DeclaredNamespace(target);
+                RuntimeHelpers.RunClassConstructor(storage.TypeHandle);
+                IDictionary original = PyClassDescriptors.DeclaredNamespace(storage);
                 foreach (string member in names)
                     if (!ns.Contains(member) && original.Contains(member)) ns[member] = original[member];
                 object? construct = Builtins.getattr(chosen, "__new__", New);

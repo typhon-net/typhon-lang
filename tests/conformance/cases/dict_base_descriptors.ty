@@ -1,0 +1,21 @@
+class Traced(dict):
+    def __setitem__(self, key, value):
+        print('set', key)
+        dict.__setitem__(self, key, value)
+
+    def __missing__(self, key):
+        return 'missing:' + key
+
+    def clear(self):
+        print('clear')
+        dict.clear(self)
+
+set_base = dict.__setitem__
+drop_base = getattr(dict, '__delitem__')
+d = Traced()
+d['visible'] = 5
+print(set_base(d, 'quiet', 9))
+print(dict.__getitem__(d, 'quiet'), dict.__getitem__(d, 'gone'))
+print(dict.pop(d, 'gone', 17), dict.pop(d, 'quiet'))
+print(drop_base(d, 'visible'), dict(d))
+d.clear()

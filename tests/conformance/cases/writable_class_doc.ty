@@ -1,0 +1,15 @@
+class Base:
+    """before"""
+
+class Subclass(Base):
+    pass
+
+print(Base.__doc__, Base.__dict__['__doc__'], Subclass.__doc__)
+Base.__doc__ = 'edited'
+print(Base.__doc__, Base.__dict__['__doc__'], Base().__doc__, Subclass().__doc__)
+setattr(Base, '__doc__', None)
+print(Base.__doc__ is None, Base.__dict__['__doc__'] is None)
+try:
+    delattr(Base, '__doc__')
+except TypeError as error:
+    print(str(error))

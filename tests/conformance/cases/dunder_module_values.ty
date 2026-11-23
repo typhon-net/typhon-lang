@@ -1,0 +1,10 @@
+import __future__ as features
+import sys
+
+def module_name(module):
+    return module.__name__
+
+print(module_name(features))
+print(features is sys.modules['__future__'])
+print('annotations' in getattr(features, 'all_feature_names'))
+print(getattr(features, 'annotations').compiler_flag > 0)

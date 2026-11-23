@@ -1,0 +1,11 @@
+from operator import add
+
+results = map(add, [1, 2, 3], [10, 20])
+print(next(results), list(results), list(results))
+print(list(map(lambda x, y, z: (x, y, z), [1, 2], 'ab', [True, False])))
+print(list(map(str, [1, 2], strict=True)))
+for a, b, c in [([1], [2, 3], [4, 5]), ([1, 2], [3, 4], [5])]:
+    try:
+        print(list(map(lambda x, y, z: x + y + z, a, b, c, strict=True)))
+    except ValueError as error:
+        print(str(error))

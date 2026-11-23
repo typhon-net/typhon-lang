@@ -1,0 +1,5 @@
+set first 2
+set second 3
+set first 8
+set third 4
+{'first': 8, 'second': 3, 'third': 4}

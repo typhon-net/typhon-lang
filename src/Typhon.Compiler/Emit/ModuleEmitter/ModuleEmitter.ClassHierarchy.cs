@@ -103,6 +103,16 @@ namespace Typhon.Compiler.Emit
                    TyphonBases(c).Select(b => MethodInHierarchy(b, name, depth + 1)).FirstOrDefault(f => f != null);
         }
 
+        internal void MarkUnboundSourceMethod(AttributeExpr member)
+        {
+            if (DottedName(member.Target) is not string target ||
+                !TryResolveType(target, 0, out _, out var owner) || owner == null || owner.TypeParams.Count != 0) return;
+            if (MethodInHierarchy(owner, member.Name) is FunctionDef method && method.Params.Count > 0 &&
+                method.Decorators.Count == 0 && method.TypeParams.Count == 0 && !method.IsMissingMethodStub &&
+                !method.IsAsync && method.Name is not ("__init__" or "__new__"))
+                method.UsedWithUnboundReceiver = true;
+        }
+
         ClassDef InstanceMethodOwner(AttributeExpr member, out string classKey)
         {
             string receiver = InferType(member.Target);
@@ -114,12 +124,20 @@ namespace Typhon.Compiler.Emit
             return cls;
         }
 
+        string NativePythonInstanceMethodOwner(AttributeExpr member)
+        {
+            if (_m.IsGdScript || DotNetMeta(InferType(member.Target)) is not string owner ||
+                !owner.StartsWith("Typhon.Stdlib.", StringComparison.Ordinal)) return null;
+            var members = _r.GetMembers(owner, member.Name);
+            return members.Count > 0 && members.All(candidate => candidate.IsMethod && !candidate.IsStatic) ? owner : null;
+        }
+
         bool InstanceMethodMayBeShadowed(AttributeExpr member)
         {
             ClassDef cls = InstanceMethodOwner(member, out var classKey);
-            if (cls == null) return false;
+            if (cls == null) classKey = NativePythonInstanceMethodOwner(member);
             if (classKey != null && Ti?.ExternalFields.ContainsKey(classKey + "|" + member.Name) == true) return true;
-            return AssignedInHierarchy(cls, 0);
+            return cls != null && AssignedInHierarchy(cls, 0);
 
             bool AssignedInHierarchy(ClassDef c, int depth) => depth <= 20 &&
                 (CollectImplicitFields(c).ContainsKey(member.Name) ||
@@ -156,6 +174,8 @@ namespace Typhon.Compiler.Emit
                 foreach (var f in k.Body.OfType<FunctionDef>())
                 {
                     if (f.Name != method) continue;
+                    // The CLR wrapper of a Python-decorated method returns the decorator's result.
+                    if (ClassDeclarationResolver(k)._m.Ast.MethodDecorators.ContainsKey(f)) return true;
                     if (f.Returns != null && !(f.Returns is ConstExpr rc && rc.Kind == ConstKind.None)) return true;
                     var loc = LocalsAnalyzer.Analyze(f.Body, f.Params.Select(x => x.Name), null);
                     if (loc.HasValueReturn || loc.HasYield) return true;

@@ -1,0 +1,23 @@
+class Meta(type):
+    def __init__(cls, name, bases, namespace):
+        cls.observed = tuple(member.__name__ for member in bases)
+
+
+class Parent(metaclass=Meta):
+    def __init_subclass__(cls):
+        super().__init_subclass__()
+        cls.parameter_name = cls.__type_params__[0].__name__
+        cls.fallback = getattr(cls, "missing", "fallback")
+
+
+class Child[T](Parent):
+    marker = 'class body evaluated'
+
+    def resolve(self, value: T) -> T:
+        return value
+
+
+print(Child.observed, Child.parameter_name, Child.marker)
+print(tuple(member.__name__ for member in Child.__mro__))
+print(tuple(parameter.__name__ for parameter in Child.__parameters__))
+print(Child.fallback, Child.resolve.__name__)

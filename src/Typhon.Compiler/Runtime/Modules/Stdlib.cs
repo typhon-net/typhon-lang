@@ -596,6 +596,21 @@ namespace Typhon.Stdlib
         public static PyIterator<dynamic> chain(params object?[] iterables) =>
             chain_from_iterable(iterables.Select(iterator => Builtins.__iter_dyn(iterator)));
 
+        public static PyIterator<dynamic> chain_from_iterable([PyPositionalOnly] object? iterable) =>
+            chain_from_iterable(Builtins.__iter_dyn(iterable).Select(item => Builtins.__iter_dyn((object?)item)));
+
+        public static PyIterator<object?> starmap([PyPositionalOnly] object? function, [PyPositionalOnly] object? iterable)
+        {
+            var source = Builtins.__iter_dyn(iterable);
+            return new PyIterator<object?>(Apply().GetEnumerator());
+
+            IEnumerable<object?> Apply()
+            {
+                foreach (object? args in source)
+                    yield return Builtins.__invoke(function, Builtins.__iter_dyn(args).ToArray());
+            }
+        }
+
         public static PyIterator<T> chain_from_iterable<T>(IEnumerable<IEnumerable<T>> iterables)
         {
             return new PyIterator<T>(Items().GetEnumerator());
@@ -659,6 +674,25 @@ namespace Typhon.Stdlib
     /// <summary>collections: Counter, defaultdict, deque, OrderedDict (the classes live in Typhon.Runtime).</summary>
     internal static partial class collections
     {
+        internal static readonly Dictionary<string, Type> RuntimeClasses = new(StringComparer.Ordinal)
+        {
+            ["Counter"] = typeof(Typhon.Runtime.Counter<object>),
+            ["defaultdict"] = typeof(Typhon.Runtime.defaultdict<object, object>),
+            ["deque"] = typeof(Typhon.Runtime.deque<object>),
+            ["OrderedDict"] = typeof(PyOrderedDict<object, object>),
+        };
+
+        internal static Type? CanonicalClass(Type type)
+        {
+            if (!type.IsGenericType) return null;
+            var definition = type.GetGenericTypeDefinition();
+            if (definition == typeof(Typhon.Runtime.Counter<>)) return typeof(Typhon.Runtime.Counter<object>);
+            if (definition == typeof(Typhon.Runtime.defaultdict<,>)) return typeof(Typhon.Runtime.defaultdict<object, object>);
+            if (definition == typeof(Typhon.Runtime.deque<>)) return typeof(Typhon.Runtime.deque<object>);
+            if (definition == typeof(PyOrderedDict<,>)) return typeof(PyOrderedDict<object, object>);
+            return null;
+        }
+
         public static Typhon.Runtime.Counter<T> Counter<T>(IEnumerable<T> iterable) where T : notnull => new Typhon.Runtime.Counter<T>(iterable);
         public static Typhon.Runtime.Counter<string> Counter(string s) => new Typhon.Runtime.Counter<string>(new StrChars(s));
         public static Typhon.Runtime.Counter<T> Counter<T>(IDictionary<T, long> counts) where T : notnull { var c = new Typhon.Runtime.Counter<T>(); c.update(counts); return c; }
@@ -746,6 +780,19 @@ namespace Typhon.Stdlib
         public static readonly Func<object?, object?, dynamic?> getitem = Builtins.__getitem;
         public static long xor(long a, long b) => a ^ b;
         public static Func<IList<T>, T> itemgetter<T>(long i) => xs => xs[(int)i];
+
+        public static dynamic itemgetter([PyPositionalOnly] object? item, params object?[] more) =>
+            new PyClosure("itemgetter", (args, keywords) =>
+            {
+                if (args.Length != 1 || keywords?.Count > 0)
+                    throw PyClosure.ArgCountError("itemgetter", 1, 1, args.Length);
+                if (more.Length == 0) return Builtins.__getitem(args[0], item);
+                var result = new object?[more.Length + 1];
+                result[0] = Builtins.__getitem(args[0], item);
+                for (int i = 0; i < more.Length; i++)
+                    result[i + 1] = Builtins.__getitem(args[0], more[i]);
+                return new PyTuple<object?>(result);
+            });
     }
 
     /// <summary>string: character classes as str constants.</summary>

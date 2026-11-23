@@ -1,0 +1,11 @@
+# typhon: int=bigint
+from typing import Any
+
+def check(text: str, start: Any, end: Any):
+    print(text.startswith(("xy", "a"), start, end), text.endswith(("🙂", "é"), start, end))
+
+check("🙂aé", 1, 1 << 100)
+check("🙂aé", -(1 << 100), 1)
+check("🙂aé", 3, 1 << 100)
+print("abc".startswith("", 4), "abc".endswith("", 2, 1))
+print("🙂aé".startswith("a", 1), "🙂aé".endswith("🙂", 0, 1))

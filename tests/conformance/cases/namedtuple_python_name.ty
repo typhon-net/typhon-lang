@@ -1,0 +1,10 @@
+from collections import namedtuple
+
+point = namedtuple('Point', 'x y', defaults=(3,))
+print(point.__name__, type(point(8)).__name__)
+print(point(8), point(1, 6)._replace(y=7))
+
+class Offset(point):
+    pass
+
+print(Offset(5), type(Offset(5)).__name__)

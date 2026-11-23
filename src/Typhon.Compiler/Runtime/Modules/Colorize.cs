@@ -40,21 +40,37 @@ namespace Typhon.Stdlib
         internal sealed class Theme
         {
             public global::Typhon.Stdlib.argparse.Theme argparse { get; }
+            public DifflibTheme difflib { get; }
             public PickletoolsTheme pickletools { get; }
             public SyntaxTheme syntax { get; }
             public TokenizeTheme tokenize { get; }
             public TimeitTheme timeit { get; }
             public TracebackTheme traceback { get; }
+            public UnittestTheme unittest { get; }
 
             internal Theme(bool color)
             {
                 argparse = color ? global::Typhon.Stdlib.argparse.Theme.Color : global::Typhon.Stdlib.argparse.Theme.Plain;
+                difflib = new DifflibTheme(color);
                 pickletools = new PickletoolsTheme(color);
                 syntax = new SyntaxTheme(color);
                 tokenize = new TokenizeTheme(color);
                 timeit = new TimeitTheme(color);
                 traceback = new TracebackTheme(color);
+                unittest = new UnittestTheme(color);
             }
+        }
+
+        // The color roles match CPython Lib/_colorize.py. See CPython-LICENSE.txt.
+        internal sealed class DifflibTheme(bool color)
+        {
+            string Color(string code) => color ? code : "";
+            public string added => Color(ANSIColors.GREEN);
+            public string context => reset;
+            public string header => Color(ANSIColors.BOLD);
+            public string hunk => Color(ANSIColors.CYAN);
+            public string removed => Color(ANSIColors.RED);
+            public string reset => Color(ANSIColors.RESET);
         }
 
         internal sealed class PickletoolsTheme
@@ -89,6 +105,15 @@ namespace Typhon.Stdlib
             public string error_highlight => _color ? ANSIColors.BOLD_RED : "";
             public string error_range => _color ? ANSIColors.RED : "";
             public string reset => _color ? ANSIColors.RESET : "";
+        }
+
+        internal sealed class UnittestTheme(bool color)
+        {
+            public string passed => color ? ANSIColors.GREEN : "";
+            public string warn => color ? ANSIColors.YELLOW : "";
+            public string fail => color ? ANSIColors.RED : "";
+            public string fail_info => color ? ANSIColors.BOLD_RED : "";
+            public string reset => color ? ANSIColors.RESET : "";
         }
 
         internal sealed class SyntaxTheme(bool color)

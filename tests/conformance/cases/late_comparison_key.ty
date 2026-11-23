@@ -1,0 +1,25 @@
+from functools import cmp_to_key
+from typing import Any
+
+
+def descending(left: str, right: str) -> int:
+    return (left < right) - (left > right)
+
+
+def arrange(compare: Any):
+    names: list[str] = ["beta", "alpha", "gamma"]
+    names.sort(key=cmp_to_key(compare))
+    return names
+
+
+class Loader:
+    comparison = staticmethod(descending)
+
+    def arrange(self):
+        names: list[str] = ["three", "one", "two"]
+        names.sort(key=cmp_to_key(self.comparison))
+        return names
+
+
+print(arrange(descending))
+print(Loader().arrange())

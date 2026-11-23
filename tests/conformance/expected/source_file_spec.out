@@ -1,0 +1,6 @@
+package.module package True None
+True package.module
+42 package.module package
+package 1 True
+True
+True

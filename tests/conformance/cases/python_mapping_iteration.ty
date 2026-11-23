@@ -1,0 +1,16 @@
+from collections.abc import ItemsView, KeysView, ValuesView
+
+class ReverseKeys(dict):
+    def __iter__(self):
+        yield 'b'
+        yield 'a'
+
+    def __getitem__(self, key):
+        return dict.__getitem__(self, key) * 10
+
+value = ReverseKeys()
+dict.__setitem__(value, 'a', 1)
+dict.__setitem__(value, 'b', 2)
+print(list(ItemsView(value)))
+print(list(KeysView(value)), list(ValuesView(value)))
+print(dict.__getitem__(value, 'b'))

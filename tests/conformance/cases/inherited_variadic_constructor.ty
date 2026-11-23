@@ -1,0 +1,15 @@
+from collections import ChainMap
+
+
+class Overlay(ChainMap):
+    pass
+
+
+class LayeredOverlay(Overlay):
+    pass
+
+
+print(len(Overlay().maps))
+print(Overlay({"one": 1})["one"])
+layers = LayeredOverlay({"one": 1}, {"one": 2, "two": 3})
+print(len(layers.maps), layers["one"], layers["two"])

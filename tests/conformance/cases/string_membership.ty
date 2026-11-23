@@ -1,0 +1,6 @@
+def is_positional(prefix: str, *args: str) -> bool:
+    return len(args) == 1 and args[0][0] not in prefix
+
+print(is_positional('-', 'name'))
+print(is_positional('-', '--name'))
+print(is_positional('Ä', 'Äname'))

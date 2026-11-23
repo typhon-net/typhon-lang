@@ -26,6 +26,7 @@ namespace Typhon.Compiler.Emit
         };
 
         internal static string Esc(string name) => CSharpKeywords.Contains(name) ? "@" + name : name;
+        internal static string EscapeDottedName(string name) => string.Join(".", name.Split('.').Select(Esc));
 
         static readonly Dictionary<string, string> ExceptionMap = new Dictionary<string, string>
         {
@@ -196,7 +197,7 @@ namespace Typhon.Compiler.Emit
         readonly List<string> _stdlibStar = new List<string>();
         readonly Dictionary<string, bool> _clashes = new Dictionary<string, bool>();
 
-        static string CsTypeName(string meta) => "global::" + string.Join(".", meta.Replace('+', '.').Split('.').Select(Esc));
+        static string CsTypeName(string meta) => "global::" + EscapeDottedName(meta.Replace('+', '.'));
 
         string StdlibOwner(string name)
         {
@@ -463,6 +464,9 @@ namespace Typhon.Compiler.Emit
             pyClass == null && meta != null && meta.StartsWith("Typhon.Stdlib.") && !meta.Contains('`')
                 ? "global::" + string.Join(".", meta.Replace('+', '.').Split('.').Select(Esc)) : null;
 
+        bool IsSourceTypingAny(ClassDef definition) => definition != null &&
+            (definition.PyName ?? definition.Name) == "Any" && _p.DeclaringModule(definition)?.Name == "typing";
+
         /// <summary>Maps a Python type annotation to a C# type.</summary>
         string MapType(Expr e, Node at, bool isReturn = false)
         {
@@ -493,7 +497,11 @@ namespace Typhon.Compiler.Emit
                     if (!IsShadowed(n.Id) && PrimitiveTypes.TryGetValue(n.Id, out var prim)) return prim;
                     if (ExceptionMap.TryGetValue(n.Id, out var ex) && !IsShadowed(n.Id)) return ex;
                     if (IsLateBoundDotNetType(n.Id)) return "dynamic";
-                    if (TryResolveType(n.Id, 0, out var stdMeta, out var stdPy) && StdlibTypeCode(stdMeta, stdPy) is string stdName) return stdName;
+                    if (TryResolveType(n.Id, 0, out var stdMeta, out var stdPy))
+                    {
+                        if (IsSourceTypingAny(stdPy)) return "dynamic";
+                        if (StdlibTypeCode(stdMeta, stdPy) is string stdName) return stdName;
+                    }
                     return QualifiedProjectImport(n.Id) ?? Esc(n.Id);
                 }
                 case AttributeExpr a:
@@ -506,13 +514,18 @@ namespace Typhon.Compiler.Emit
                     string stripped = StripTypingPrefix(dotted);
                     if (stripped != dotted)
                     {
+                        if (stripped == "Any") return "dynamic";
                         if (!PrimitiveTypes.ContainsKey(stripped) && TryResolveType(dotted, 0, out _, out var declared) &&
                             declared != null && ProjectModuleMember(dotted) is string sourceType)
                             return sourceType;
                         return MapType(new NameExpr { Id = stripped, Line = a.Line, Col = a.Col }, at, isReturn);
                     }
                     if (IsLateBoundDotNetType(dotted)) return "dynamic";
-                    if (TryResolveType(dotted, 0, out var stdMeta, out var stdPy) && StdlibTypeCode(stdMeta, stdPy) is string stdName) return stdName;
+                    if (TryResolveType(dotted, 0, out var stdMeta, out var stdPy))
+                    {
+                        if (IsSourceTypingAny(stdPy)) return "dynamic";
+                        if (StdlibTypeCode(stdMeta, stdPy) is string stdName) return stdName;
+                    }
                     return (stdPy == null ? null : ProjectModuleMember(dotted)) ?? StdlibNestedType(dotted) ?? string.Join(".", dotted.Split('.').Select(Esc));
                 }
                 case SubscriptExpr s:

@@ -1,0 +1,8 @@
+from typing import Any
+
+def reverse_pairs(items: Any, key: int):
+    pairs = list(reversed([(key, value) for value in items[key]]))
+    pairs.append((key, 0))
+    return pairs
+
+print(reverse_pairs({9: [1, 2]}, 9))

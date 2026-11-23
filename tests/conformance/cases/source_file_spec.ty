@@ -1,0 +1,22 @@
+from importlib.machinery import SourceFileLoader
+from importlib.util import module_from_spec, spec_from_file_location
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+with TemporaryDirectory() as directory:
+    source = Path(directory) / 'module.py'
+    source.write_text('answer = 42\n', encoding='utf-8')
+    spec = spec_from_file_location('package.module', source)
+    print(spec.name, spec.parent, spec.has_location, spec.submodule_search_locations)
+    print(isinstance(spec.loader, SourceFileLoader), spec.loader.name)
+    module = module_from_spec(spec)
+    spec.loader.exec_module(module)
+    print(module.answer, module.__name__, module.__package__)
+
+    package = Path(directory) / '__init__.py'
+    package.write_text('present = True\n', encoding='utf-8')
+    spec = spec_from_file_location('package', package)
+    print(spec.parent, len(spec.submodule_search_locations), spec.loader.is_package('package'))
+    suppressed = spec_from_file_location('package', package, submodule_search_locations=None)
+    print(suppressed.submodule_search_locations is None and suppressed.parent == '')
+    print(spec_from_file_location('unsupported', Path(directory) / 'data.bin') is None)

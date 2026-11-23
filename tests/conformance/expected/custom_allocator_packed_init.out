@@ -1,0 +1,2 @@
+(2, {'level': 4, 'label': 'entry'}) (('a', 'b'), 4, {'label': 'entry'})
+(1, {'label': 'child'}) (('c',), 0, {'label': 'child'})

@@ -1,0 +1,13 @@
+# typhon: int=bigint
+from heapq import nlargest, nsmallest
+from operator import itemgetter
+
+def sample(n: int, pairs):
+    return nlargest(n, pairs, key=itemgetter(1))
+
+values = [('medium', 5), ('large', 12), ('small', 1)]
+print(sample(2, values))
+print(sample(2 ** 100, values))
+print(nsmallest(2 ** 90, values, key=lambda pair: pair[1]))
+print(nlargest(2 ** 90, [2, 3, 1]))
+print(nsmallest(-2 ** 90, [2, 3, 1]))

@@ -1,0 +1,19 @@
+('https', 'a:b@[2001:DB8::1%SomeZone]:8443', '/a', 'p', 'q', 'frag') a b 2001:db8::1%SomeZone 8443
+https://a:b@[2001:DB8::1%SomeZone]:8443/a;p?q#frag ('https', 'a:b@[2001:DB8::1%SomeZone]:8443', '/a;p', 'q', 'frag')
+('', '', 'a;b/c', 'd', 'x', '') None None None None
+a;b/c;d?x ('', '', 'a;b/c;d', 'x', '')
+('http', '', '/p', None, '', '') None None None None
+http:///p?# ('http', '', '/p', '', '')
+('http', '', '/document', '', '', '') None None None None
+http:///document ('http', '', '/document', '', '')
+('mailto', '', 'user@example.com', '', '', '') None None None None
+mailto:user@example.com ('mailto', '', 'user@example.com', '', '')
+(b'http', b'EXAMPLE.test', b'/%f0', b'', b'q', b'x') None None b'example.test' None
+b'http://EXAMPLE.test/%f0?q#x' (b'http', b'EXAMPLE.test', b'/%f0', b'q', b'x')
+HTTPS path#a
+True
+bad host
+bad host
+bad host
+bad port
+bad port

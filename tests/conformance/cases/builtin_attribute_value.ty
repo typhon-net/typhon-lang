@@ -1,0 +1,18 @@
+import os
+import tempfile
+
+
+class Reader:
+    def __init__(self):
+        self.reader = open
+
+    def read(self, filename):
+        with self.reader(filename, encoding='utf-8') as file:
+            return file.read()
+
+
+with tempfile.TemporaryDirectory() as folder:
+    filename = os.path.join(folder, 'message.txt')
+    with open(filename, 'w', encoding='utf-8') as output:
+        output.write('source text')
+    print(Reader().read(filename))

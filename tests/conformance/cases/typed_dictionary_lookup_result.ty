@@ -1,0 +1,12 @@
+def scan(table: dict[int, int], origins: list[int], shifts: list[float]):
+    groups = []
+    for origin in origins:
+        groups.append(frozenset([table[origin + shift] for shift in shifts if origin + shift in table]))
+    return groups
+
+print([sorted(group) for group in scan({1: 10, 2: 20}, [0, 1], [1.0, 2.0, 0.5])])
+try:
+    table: dict[int, int] = {1: 10}
+    print(table[1.5])
+except KeyError:
+    print('missing')

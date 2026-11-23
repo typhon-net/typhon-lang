@@ -346,8 +346,18 @@ namespace Typhon.Compiler.Emit
             }
             switch (op)
             {
-                case "in": return $"{Rt("contains")}({(right is TupleExpr ? EmitIterable(right) : r)}, {l})";
-                case "not in": return $"!{Rt("contains")}({(right is TupleExpr ? EmitIterable(right) : r)}, {l})";
+                case "in":
+                case "not in":
+                {
+                    string negated = op == "in" ? "" : "!";
+                    if (!_m.IsGdScript && (IsUnknownType(lt) || IsUnknownType(rt) || lt == "object?" || rt == "object?" ||
+                        rt?.StartsWith(PyTuplePrefix, StringComparison.Ordinal) == true))
+                        return $"{negated}{Rt("__membership")}((object?){Paren(l)}, (object?){Paren(r)})";
+                    string iterable = right is TupleExpr ? EmitIterable(right) : r;
+                    if (_m.IsGdScript || left is ConstExpr) return $"{negated}{Rt("contains")}({iterable}, {l})";
+                    string item = NewTmp("member");
+                    return $"({Paren(l)} is var {item} && {negated}{Rt("contains")}({iterable}, {item}))";
+                }
                 case "is":
                 case "is not":
                 {

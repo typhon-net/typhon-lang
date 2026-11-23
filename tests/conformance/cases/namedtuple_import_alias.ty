@@ -1,0 +1,11 @@
+from collections import namedtuple as make_record
+
+Record = make_record('Record', 'value tag', defaults=('local',))
+
+class Tagged(make_record('Tagged', 'value')):
+    def describe(self):
+        return 'tagged ' + str(self.value)
+
+a = Record(7)
+print(a, a._fields)
+print(Tagged(11).describe())

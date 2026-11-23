@@ -1,0 +1,3 @@
+overloaded_tuple_indexing
+('folder/input', '.txt')
+(b'folder/input', b'.txt')
