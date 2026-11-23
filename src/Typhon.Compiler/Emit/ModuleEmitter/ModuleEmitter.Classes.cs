@@ -113,7 +113,7 @@ namespace Typhon.Compiler.Emit
 
         void EmitClass(ClassDef c)
         {
-            if (!_m.IsGdScript && IsStringEnum(c)) { EmitObjectEnum(c, integer: false); return; }
+            if (!_m.IsGdScript && (IsStringEnum(c) || IsPlainObjectEnum(c))) { EmitObjectEnum(c, integer: false); return; }
             if (!_m.IsGdScript && IsObjectIntegerEnum(c)) { EmitObjectEnum(c, integer: true); return; }
             var bases = new List<Expr>();
             bool isInterface = false, isEnum = false, isAbstract = false;
@@ -151,6 +151,7 @@ namespace Typhon.Compiler.Emit
             if (vis == "public" && DerivesFromInternalClass(c)) vis = "internal";
             string kind = isInterface ? "partial interface" : (isAbstract ? "abstract partial class" : (ctx.IsSealed ? "sealed partial class" : "partial class"));
             var baseTypes = bases.Select(b => BuiltinStringBase(b) ? "global::Typhon.Runtime.PyString" :
+                BuiltinTupleBase(b) ? "global::Typhon.Runtime.PyTupleSubclass" :
                 (RuntimeClassBase(b) ?? MappingBaseMetadata(b)) is string runtime ? CsTypeName(runtime) : MapType(b, c, preserveClrType: true)).ToList();
             if (!_m.IsGdScript && HasMultipleBuiltinExceptionBases(_m, c))
             {
@@ -398,6 +399,12 @@ namespace Typhon.Compiler.Emit
         }
 
         bool BuiltinStringBase(Expr expression) => !_m.IsGdScript && expression is NameExpr { Id: "str" } && !IsShadowed("str");
+        bool BuiltinTupleBase(Expr expression) => !_m.IsGdScript &&
+            expression is NameExpr { Id: "tuple" } && !IsShadowed("tuple");
+
+        bool HasTupleBase(ClassDef definition, int depth = 0) => depth < 25 &&
+            (definition.Bases.Any(BuiltinTupleBase) || TyphonBases(definition).Any(parent => HasTupleBase(parent, depth + 1)));
+
 
         bool HasStringBase(ClassDef definition, int depth = 0) => depth < 20 &&
             (definition.Bases.Any(BuiltinStringBase) || TyphonBases(definition).Any(parent => HasStringBase(parent, depth + 1)));
@@ -431,6 +438,7 @@ namespace Typhon.Compiler.Emit
             string dotted = DottedName(target);
             if (dotted == null) return false;
             if (BuiltinStringBase(b)) { meta = "Typhon.Runtime.PyString"; return true; }
+            if (BuiltinTupleBase(b)) { meta = "Typhon.Runtime.PyTupleSubclass"; return true; }
             if (arity > 0 && MappingBaseMetadata(b) is string mapping) { meta = mapping; return true; }
             if (arity == 0 && (dotted is "property" or "classmethod" or "staticmethod") && !IsShadowed(dotted))
             {
@@ -537,7 +545,7 @@ namespace Typhon.Compiler.Emit
                     statement.Value is not CallExpr { Func: AttributeExpr { Name: "__new__" } method } call ||
                     call.Args.FirstOrDefault()?.Value is not NameExpr argument || argument.Id != allocator.Params[0].Name)
                     continue;
-                bool builtinAllocation = method.Target is NameExpr { Id: "object" or "dict" or "str" } ||
+                bool builtinAllocation = method.Target is NameExpr { Id: "object" or "dict" or "str" or "tuple" } ||
                     method.Target is CallExpr { Func: NameExpr { Id: "super" }, Args.Count: 0 };
                 if (builtinAllocation && !AssignsName(allocator.Body.Where(other => other != statement).ToList(), receiver.Id))
                     return receiver.Id;
@@ -545,8 +553,13 @@ namespace Typhon.Compiler.Emit
             return null;
         }
 
-        static Dictionary<string, KeyValuePair<Expr, KeyValuePair<FunctionDef, Expr>>> CollectImplicitFields(ClassDef c)
+        readonly Dictionary<ClassDef, IReadOnlyDictionary<string, KeyValuePair<Expr, KeyValuePair<FunctionDef, Expr>>>> _implicitFields =
+            new Dictionary<ClassDef, IReadOnlyDictionary<string, KeyValuePair<Expr, KeyValuePair<FunctionDef, Expr>>>>();
+
+        IReadOnlyDictionary<string, KeyValuePair<Expr, KeyValuePair<FunctionDef, Expr>>> CollectImplicitFields(ClassDef c)
         {
+            // Field declarations come from the class syntax, which is fixed during emission.
+            if (_implicitFields.TryGetValue(c, out var cached)) return cached;
             var result = new Dictionary<string, KeyValuePair<Expr, KeyValuePair<FunctionDef, Expr>>>(); // name → (annotation, (method, value))
             foreach (var f in c.Body.OfType<FunctionDef>())
             {
@@ -577,6 +590,7 @@ namespace Typhon.Compiler.Emit
                     }
                 });
             }
+            _implicitFields[c] = result;
             return result;
         }
 
@@ -775,7 +789,7 @@ namespace Typhon.Compiler.Emit
                 definition.TypeParams.Count != 0 || definition.NamedTupleFields != null) return false;
             var allocator = MethodInHierarchy(definition, "__new__");
             if (ClassVariableOwner(definition, "__new__") == null &&
-                (allocator == null ? !HasStringBase(definition) :
+                (allocator == null ? !HasStringBase(definition) && !HasTupleBase(definition) :
                     allocator.TypeParams.Count != 0 || allocator.IsAsync || allocator.Params.Count == 0 ||
                     allocator.Params[0].Kind != ParamKind.Normal ||
                     allocator.Decorators.Count > 0 && !(allocator.Decorators.Count == 1 && HasDecorator(allocator.Decorators, "staticmethod"))))
@@ -1198,9 +1212,24 @@ namespace Typhon.Compiler.Emit
             return (names, arbitrary);
         }
 
+        HashSet<string> _zeroParameterFunctions;
+
+        bool MayBindZeroParameterFunction(AttributeExpr member)
+        {
+            _zeroParameterFunctions ??= new HashSet<string>(AllClasses().SelectMany(definition => definition.Body.OfType<FunctionDef>())
+                .Where(ZeroParameterClassFunction).Select(method => method.Name));
+            return _zeroParameterFunctions.Contains(member.Name) && InstanceMethodOwner(member, out _) is ClassDef owner &&
+                MethodInHierarchy(owner, member.Name) is FunctionDef method && ZeroParameterClassFunction(method);
+        }
+
+        bool ZeroParameterClassFunction(FunctionDef method) =>
+            !_m.IsGdScript && method.Params.Count == 0 && !HasDecorator(method.Decorators, "staticmethod") &&
+            !HasDecorator(method.Decorators, "classmethod") && !HasDecorator(method.Decorators, "abstractmethod");
+
         string MethodModifiers(FunctionDef f, ClassContext ctx, List<Expr> bases, out bool isStatic, out bool isAbstract)
         {
-            isStatic = HasDecorator(f.Decorators, "staticmethod") || HasDecorator(f.Decorators, "classmethod");
+            isStatic = HasDecorator(f.Decorators, "staticmethod") || HasDecorator(f.Decorators, "classmethod") ||
+                ZeroParameterClassFunction(f);
             isAbstract = HasDecorator(f.Decorators, "abstractmethod") && !HasUserMetaclass(ctx.Def);
             string vis = Visibility(f.Name, false);
             if (f.Name.StartsWith("__") && f.Name.EndsWith("__")) vis = "public";
@@ -1227,7 +1256,7 @@ namespace Typhon.Compiler.Emit
 
         void EmitMethod(FunctionDef f, ClassContext ctx, List<Expr> bases)
         {
-            bool isStaticDecl = HasDecorator(f.Decorators, "staticmethod");
+            bool isStaticDecl = HasDecorator(f.Decorators, "staticmethod") || ZeroParameterClassFunction(f);
             bool isClassMethod = HasDecorator(f.Decorators, "classmethod");
             if (!isStaticDecl && f.Params.Count == 0) { Error(f, $"method '{f.Name}' needs a 'self' parameter (or use @staticmethod)"); return; }
             foreach (var tp in f.TypeParams) _currentFuncTypeParams.Add(tp.Name);
@@ -1642,7 +1671,9 @@ namespace Typhon.Compiler.Emit
             {
                 EmitClassSource(f.Body, f.Line, CallableKind(f, sig));
                 EmitSignatureAttribute(f);
-                if (isStatic) EmitDescriptorAttribute(isClassMethod ? "ClassMethod" : "StaticMethod", classMethodBody);
+                if (isStatic)
+                    EmitDescriptorAttribute(isClassMethod ? "ClassMethod" :
+                        ZeroParameterClassFunction(f) ? "ZeroParameterFunction" : "StaticMethod", classMethodBody);
             }
             string generic = TypeParamList(f.TypeParams), constraints = TypeParamConstraints(f.TypeParams, f);
             string header = $"{(isClassMethod ? mods.Replace("async ", "") : mods)} {sig.ReturnType} {Esc(methodName)}{generic}({sig.Params}){constraints}";

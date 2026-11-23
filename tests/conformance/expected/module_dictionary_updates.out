@@ -1,0 +1,4 @@
+default first [('param', None)] first handler
+other first [('param', 'new')] other values
+secondary second [] second handler
+third second [('number', 3)] registered

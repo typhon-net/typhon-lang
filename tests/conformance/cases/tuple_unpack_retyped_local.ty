@@ -1,0 +1,8 @@
+import getopt
+
+if __name__ == "__main__":
+    try:
+        options, args = getopt.getopt(["-d", "debug", "tail"], "d:")
+    except getopt.GetoptError:
+        options, args = (), ()
+    print(list(options), list(args))

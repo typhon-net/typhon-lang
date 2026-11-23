@@ -1,0 +1,14 @@
+import bz2
+import io
+
+data = bytes(range(256)) * 801 + b"x" * 40000
+compressed = bz2.compress(data, compresslevel=1)
+print(compressed[:4], bz2.decompress(compressed) == data, len(compressed) < len(data))
+print(bz2.decompress(bz2.compress(b"")) == b"")
+encoder = bz2.BZ2Compressor(1)
+chunks = encoder.compress(data[:1024]) + encoder.compress(data[1024:]) + encoder.flush()
+print(bz2.decompress(chunks) == data)
+target = io.BytesIO()
+with bz2.BZ2File(target, "w", compresslevel=1) as f:
+    print(f.write(data), f.tell())
+print(target.closed, bz2.decompress(target.getvalue()) == data)

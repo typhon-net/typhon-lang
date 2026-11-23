@@ -1,0 +1,13 @@
+def ranks(size: int) -> list[float]:
+    values = [0] * size
+    for index in range(size):
+        values[index] = index + 0.5
+    return values
+
+def filled() -> list[float]:
+    values = 2 * [1]
+    values[0] = 0.25
+    values[1] = 1.5
+    return values
+
+print(ranks(3), filled())

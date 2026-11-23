@@ -12,6 +12,8 @@
 namespace Typhon.Runtime
 {
     using System;
+    using System.Buffers;
+    using System.Buffers.Binary;
     using System.Collections;
     using System.Collections.Generic;
     using System.Globalization;
@@ -121,12 +123,13 @@ namespace Typhon.Runtime
             Encoding enc = e switch
             {
                 "utf-8" or "utf8" or "u8" => new UTF8Encoding(false, true),
+                "utf-8-sig" => new UTF8Encoding(true, true),
                 "ascii" or "us-ascii" => Encoding.ASCII,
                 "latin-1" or "latin1" or "iso-8859-1" or "l1" => Encoding.Latin1,
-                "utf-16" or "utf16" => new UnicodeEncoding(false, true, true),
+                "utf-16" or "utf16" => new UnicodeEncoding(!BitConverter.IsLittleEndian, true, true),
                 "utf-16-le" or "utf-16le" => new UnicodeEncoding(false, false, true),
                 "utf-16-be" or "utf-16be" => new UnicodeEncoding(true, false, true),
-                "utf-32" or "utf32" => new UTF32Encoding(false, true, true),
+                "utf-32" or "utf32" => new UTF32Encoding(!BitConverter.IsLittleEndian, true, true),
                 "utf-32-le" or "utf-32le" => new UTF32Encoding(false, false, true),
                 "utf-32-be" or "utf-32be" => new UTF32Encoding(true, false, true),
                 "locale" => CodePagesEncodingProvider.Instance.GetEncoding(0) ?? new UTF8Encoding(false, true),
@@ -199,6 +202,14 @@ namespace Typhon.Runtime
             }
         }
 
+        internal static byte[] Encode(string text, string encoding, string errors)
+        {
+            var codec = EncodingOf(encoding, errors);
+            byte[] bytes = codec.GetBytes(text);
+            return CodecName(encoding) is "utf-8-sig" or "utf-16" or "utf16" or "utf-32" or "utf32"
+                ? [.. codec.GetPreamble(), .. bytes] : bytes;
+        }
+
         public static string Decode(byte[] data, string encoding, string errors)
         {
             if (Typhon.Stdlib.codecs.IsRawUnicodeEscape(encoding))
@@ -208,8 +219,86 @@ namespace Typhon.Runtime
                 int offset = data.AsSpan().IndexOfAnyInRange((byte)128, byte.MaxValue);
                 if (offset >= 0) throw new UnicodeDecodeError("ascii", new PyBytes(data), offset, offset + 1, "ordinal not in range(128)");
             }
-            try { return EncodingOf(encoding, errors).GetString(data); }
+            ReadOnlySpan<byte> input = data;
+            switch (CodecName(encoding))
+            {
+                case "utf-8-sig":
+                    if (input.StartsWith(Typhon.Stdlib.codecs.BOM_UTF8.Data)) input = input[3..];
+                    break;
+                case "utf-16": case "utf16":
+                    if (input.StartsWith(Typhon.Stdlib.codecs.BOM_UTF16_BE.Data)) { input = input[2..]; encoding = "utf-16-be"; }
+                    else if (input.StartsWith(Typhon.Stdlib.codecs.BOM_UTF16_LE.Data)) { input = input[2..]; encoding = "utf-16-le"; }
+                    break;
+                case "utf-32": case "utf32":
+                    if (input.StartsWith(Typhon.Stdlib.codecs.BOM_UTF32_BE.Data)) { input = input[4..]; encoding = "utf-32-be"; }
+                    else if (input.StartsWith(Typhon.Stdlib.codecs.BOM_UTF32_LE.Data)) { input = input[4..]; encoding = "utf-32-le"; }
+                    break;
+            }
+            var codec = EncodingOf(encoding, errors == "surrogatepass" ? "strict" : errors);
+            if (errors == "surrogatepass")
+            {
+                if (codec is UTF8Encoding) return DecodeUtf8(input, encoding, errors);
+                if (codec is UnicodeEncoding or UTF32Encoding) return DecodeSurrogatePass(input, codec, encoding);
+            }
+            try { return codec.GetString(input); }
             catch (DecoderFallbackException ex) { throw new ArgumentException($"'{encoding}' codec can't decode byte: {ex.Message}"); }
+        }
+
+        internal static string DecodeUtf8(ReadOnlySpan<byte> data, string name, string errors)
+        {
+            var result = new StringBuilder(data.Length);
+            Span<char> utf16 = stackalloc char[2];
+            for (int index = 0; index < data.Length;)
+            {
+                var input = data[index..];
+                OperationStatus status = Rune.DecodeFromUtf8(input, out Rune rune, out int consumed);
+                if (status == OperationStatus.Done)
+                {
+                    int width = rune.EncodeToUtf16(utf16);
+                    result.Append(utf16[..width]);
+                    index += consumed;
+                }
+                else if (errors == "surrogateescape")
+                {
+                    result.Append((char)(0xdc00 + input[0]));
+                    index++;
+                }
+                else if (errors == "surrogatepass" && input.Length >= 3 &&
+                         input[0] == 0xed && input[1] is >= 0xa0 and <= 0xbf && input[2] is >= 0x80 and <= 0xbf)
+                {
+                    result.Append((char)(((input[0] & 15) << 12) | ((input[1] & 63) << 6) | (input[2] & 63)));
+                    index += 3;
+                }
+                else
+                {
+                    string reason = status == OperationStatus.NeedMoreData ? "unexpected end of data" :
+                        input[0] is < 0xc2 or > 0xf4 ? "invalid start byte" : "invalid continuation byte";
+                    throw new UnicodeDecodeError(name, new PyBytes(data.ToArray()), index, index + Math.Max(1, consumed), reason);
+                }
+            }
+            return result.ToString();
+        }
+
+        static string DecodeSurrogatePass(ReadOnlySpan<byte> input, Encoding codec, string name)
+        {
+            int width = codec is UTF32Encoding ? 4 : 2;
+            if (input.Length % width != 0)
+                throw new UnicodeDecodeError(name, new PyBytes(input.ToArray()), input.Length - input.Length % width,
+                    input.Length, "truncated data");
+            bool bigEndian = codec.CodePage is 1201 or 12001;
+            var output = new StringBuilder(input.Length / width);
+            for (int offset = 0; offset < input.Length; offset += width)
+            {
+                var unit = input[offset..];
+                uint codepoint = width == 2 ?
+                    (bigEndian ? BinaryPrimitives.ReadUInt16BigEndian(unit) : BinaryPrimitives.ReadUInt16LittleEndian(unit)) :
+                    (bigEndian ? BinaryPrimitives.ReadUInt32BigEndian(unit) : BinaryPrimitives.ReadUInt32LittleEndian(unit));
+                if (codepoint <= 0xffff) output.Append((char)codepoint);
+                else if (codepoint <= 0x10ffff) output.Append(char.ConvertFromUtf32((int)codepoint));
+                else throw new UnicodeDecodeError(name, new PyBytes(input.ToArray()), offset, offset + width,
+                    "code point not in range(0x110000)");
+            }
+            return output.ToString();
         }
 
         public static string Hex(ReadOnlySpan<byte> data, string? sep = null)
@@ -257,7 +346,12 @@ namespace Typhon.Runtime
         int _hash;
         public static readonly PyBytes Empty = new PyBytes(Array.Empty<byte>());
 
-        public PyBytes(byte[] data) { Data = data; }
+        public PyBytes(byte[] data)
+        {
+            Data = data;
+            if (global::Typhon.Stdlib._tracemalloc.is_tracing())
+                global::Typhon.Stdlib._tracemalloc.Record(this, data.LongLength);
+        }
         /// <summary>A bytes literal: the string holds one char per byte (0..255).</summary>
         public static PyBytes Latin1(string s)
         {
@@ -281,12 +375,14 @@ namespace Typhon.Runtime
         public static PyBytes operator +(PyBytes a, PyByteArray b) => new PyBytes(a.Data.Concat(b.ToArray()).ToArray());
         public static PyBytes operator *(PyBytes a, long n)
         {
-            if (n <= 0) return Empty;
-            var r = new byte[a.Data.Length * n];
+            if (n <= 0 || a.Data.Length == 0) return Empty;
+            var r = new byte[checked(a.Data.Length * n)];
             for (long k = 0; k < n; k++) Array.Copy(a.Data, 0, r, k * a.Data.Length, a.Data.Length);
             return new PyBytes(r);
         }
         public static PyBytes operator *(long n, PyBytes a) => a * n;
+        public static PyBytes operator *(PyBytes a, BigInteger n) => a * checked((long)n);
+        public static PyBytes operator *(BigInteger n, PyBytes a) => a * n;
         public static bool operator ==(PyBytes? a, PyBytes? b) => a is null ? b is null : a.Equals(b);
         public static bool operator !=(PyBytes? a, PyBytes? b) => !(a == b);
         public static bool operator <(PyBytes a, PyBytes b) => a.CompareTo(b) < 0;
@@ -524,7 +620,12 @@ namespace Typhon.Runtime
     {
         readonly List<byte> _data;
         public PyByteArray() { _data = new List<byte>(); }
-        public PyByteArray(IEnumerable<byte> data) { _data = new List<byte>(data); }
+        public PyByteArray(IEnumerable<byte> data)
+        {
+            _data = new List<byte>(data);
+            if (global::Typhon.Stdlib._tracemalloc.is_tracing())
+                global::Typhon.Stdlib._tracemalloc.Record(this, _data.Capacity);
+        }
         public byte[] ToArray() => _data.ToArray();
         /// <summary>The storage itself (a memoryview of the bytearray reads and writes it).</summary>
         internal List<byte> Buffer => _data;
@@ -750,6 +851,7 @@ namespace Typhon.Stdlib
 
             public PyBytes pack(params object?[] values)
             {
+                values ??= [null];
                 if (values.Length != _items.Count) throw new error($"pack expected {_items.Count} items for packing (got {values.Length})");
                 var buf = new byte[size];
                 for (int k = 0; k < values.Length; k++) Write(buf, 0, _items[k], values[k]);
@@ -837,11 +939,11 @@ namespace Typhon.Stdlib
                     case 'f': WriteUInt(buf, at, 4, (uint)BitConverter.SingleToInt32Bits((float)ToDouble(v))); return;
                     case 'd': WriteUInt(buf, at, 8, (ulong)BitConverter.DoubleToInt64Bits(ToDouble(v))); return;
                 }
-                BigInteger x = v switch
-                {
-                    bool f => f ? 1 : 0, BigInteger bi => bi, double or float => throw new error("required argument is not an integer"),
-                    _ => new BigInteger(Convert.ToInt64(v, CultureInfo.InvariantCulture)),
-                };
+                if (!Builtins.IsIndex(v) && v is not (sbyte or ushort or uint or ulong) &&
+                    !Builtins.hasattr(v, "__index__"))
+                    throw new error("required argument is not an integer");
+                object index = Builtins.__index_value(v);
+                BigInteger x = index is BigInteger wide ? wide : (long)index;
                 bool signed = char.IsLower(it.Code) && it.Code != 'c';
                 int bits = it.Size * 8;
                 BigInteger lo = signed ? -(BigInteger.One << (bits - 1)) : 0, hi = signed ? (BigInteger.One << (bits - 1)) - 1 : (BigInteger.One << bits) - 1;

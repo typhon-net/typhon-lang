@@ -1,0 +1,12 @@
+utf-8 café
+utf-8-sig café
+utf-16-be café
+utf-16-le café
+utf-16 café
+utf-32-be café
+utf-32-le café
+utf-32 café
+[1, 2]
+[3, 4]
+55296
+utf-8 0 1

@@ -38,6 +38,48 @@ namespace Typhon.Stdlib
         public static double cosh(double x) => Math.Cosh(x);
         public static double tanh(double x) => Math.Tanh(x);
         public static double exp(double x) => Math.Exp(x);
+        public static double erfc(double x)
+        {
+            if (double.IsNaN(x)) return x;
+            bool negative = x < 0;
+            x = Math.Abs(x);
+            if (x >= 28) return negative ? 2 : 0;
+
+            double square = x * x;
+            double result;
+            if (x <= 1)
+            {
+                // Integrate the power series for exp(-t²) near zero.
+                double term = x, series = x;
+                for (int n = 1; n < 40; n++)
+                {
+                    term *= -square / n;
+                    double next = series + term / (2 * n + 1);
+                    if (next == series) break;
+                    series = next;
+                }
+                result = 1 - (2 / Math.Sqrt(Math.PI)) * series;
+            }
+            else
+            {
+                // Continued fraction for the regularized upper incomplete gamma at a = 1/2.
+                double denominator = square + 0.5, inverse = 1 / denominator;
+                double numerator = double.PositiveInfinity, fraction = inverse;
+                for (int n = 1; n < 256; n++)
+                {
+                    double coefficient = -n * (n - 0.5);
+                    denominator += 2;
+                    numerator = denominator + coefficient / numerator;
+                    inverse = 1 / (denominator + coefficient * inverse);
+                    double correction = numerator * inverse;
+                    fraction *= correction;
+                    if (Math.Abs(correction - 1) <= 2.22e-16) break;
+                }
+                double squareError = Math.FusedMultiplyAdd(x, x, -square);
+                result = Math.Exp(-square) * (x * fraction * Math.Exp(-squareError) / Math.Sqrt(Math.PI));
+            }
+            return negative ? 2 - result : result;
+        }
         public static double log(double x) => Math.Log(x);
         public static double log(double x, double @base) => Math.Log(x, @base);
         public static double log(object x) => NumericLog(x);
@@ -117,6 +159,149 @@ namespace Typhon.Stdlib
             if (k > n) return 0;
             long r = 1; for (long i = n - k + 1; i <= n; i++) r = checked(r * i); return r;
         }
-        public static double fsum(IEnumerable<double> xs) => xs.Sum();
+        public static double fsum(object iterable)
+        {
+            var partials = new List<double>();
+            double infinity = 0;
+            bool nanSeen = false;
+            foreach (object? item in Builtins.__iter_dyn(iterable))
+            {
+                double number = AsReal(item);
+                if (!double.IsFinite(number))
+                {
+                    partials.Clear();
+                    if (double.IsNaN(number)) nanSeen = true;
+                    else infinity += number;
+                }
+                else AddPartial(partials, number);
+            }
+            if (double.IsNaN(infinity)) throw new ArgumentException("-inf + inf in fsum");
+            if (nanSeen) return double.NaN;
+            return double.IsInfinity(infinity) ? infinity : SumPartials(partials);
+        }
+
+        // Each partial holds the rounding error left over by adding two terms.
+        static void AddPartial(List<double> partials, double number)
+        {
+            int retained = 0;
+            for (int i = 0; i < partials.Count; i++)
+            {
+                double larger = number, smaller = partials[i];
+                if (Math.Abs(larger) < Math.Abs(smaller)) (larger, smaller) = (smaller, larger);
+                number = larger + smaller;
+                if (!double.IsFinite(number)) throw new OverflowException("intermediate overflow in fsum");
+                double remainder = smaller - (number - larger);
+                if (remainder != 0) partials[retained++] = remainder;
+            }
+            partials.RemoveRange(retained, partials.Count - retained);
+            if (number != 0) partials.Add(number);
+        }
+
+        static double SumPartials(List<double> partials)
+        {
+            double result = 0;
+            for (int i = partials.Count - 1; i >= 0; i--)
+            {
+                double previous = result;
+                result += partials[i];
+                double remainder = partials[i] - (result - previous);
+                if (remainder == 0) continue;
+                // A smaller term on the same side of a midpoint can change the rounding direction.
+                if (i > 0 && Math.Sign(remainder) == Math.Sign(partials[i - 1]))
+                {
+                    double correction = 2 * remainder;
+                    double rounded = result + correction;
+                    if (rounded - result == correction) result = rounded;
+                }
+                break;
+            }
+            return result;
+        }
+
+        static double AsReal(object? value)
+        {
+            if (value is double or float or decimal || IsIntegral(value) ||
+                Builtins.hasattr(value, "__float__")) return Builtins.@float(value!);
+            if (Builtins.hasattr(value, "__index__")) return Builtins.@float((object)Builtins.__index_value(value));
+            throw new InvalidCastException($"must be real number, not {Builtins.PyTypeName(Builtins.__type_of(value))}");
+        }
+
+        static bool IsIntegral(object? value) => value is BigInteger or long or ulong or int or uint or short or ushort or sbyte or byte or bool;
+        static BigInteger AsInteger(object value) => value switch
+        {
+            BigInteger integer => integer,
+            ulong integer => integer,
+            _ => Convert.ToInt64(value, CultureInfo.InvariantCulture),
+        };
+
+        public static dynamic sumprod(object p, object q)
+        {
+            using var left = Builtins.__iter_dyn(p).GetEnumerator();
+            using var right = Builtins.__iter_dyn(q).GetEnumerator();
+            object result = 0L;
+            bool exactIntegerPrefix = true, floatPrefix = true, anyFloat = false;
+            double high = 0, low = 0, tail = 0;
+            while (true)
+            {
+                bool hasLeft = left.MoveNext();
+                if (hasLeft != right.MoveNext()) throw new ArgumentException("Inputs are not the same length");
+                if (!hasLeft) return anyFloat ? AddTerms(result, high + (low + tail)) : result;
+
+                object a = left.Current, b = right.Current;
+                bool integerA = IsIntegral(a), integerB = IsIntegral(b);
+                if (exactIntegerPrefix && integerA && integerB && a is not bool && b is not bool)
+                {
+                    result = AddTerms(result, IntegerResult(AsInteger(a) * AsInteger(b)));
+                    continue;
+                }
+                exactIntegerPrefix = false;
+
+                if (floatPrefix && (a is double && (b is double || integerB) || b is double && integerA))
+                {
+                    double x = AsReal(a), y = AsReal(b);
+                    double product = x * y;
+                    double nextHigh = high + product;
+                    if (double.IsFinite(nextHigh))
+                    {
+                        // Retain the rounding errors from both the multiply and the add.
+                        double productError = Math.FusedMultiplyAdd(x, y, -product);
+                        double addError = AdditionRemainder(high, product, nextHigh);
+                        double errors = productError + addError;
+                        double nextLow = low + errors;
+                        tail += AdditionRemainder(productError, addError, errors) + AdditionRemainder(low, errors, nextLow);
+                        (high, low) = (nextHigh, nextLow);
+                        anyFloat = true;
+                        continue;
+                    }
+                }
+                if (floatPrefix)
+                {
+                    floatPrefix = false;
+                    if (anyFloat) result = AddTerms(result, high + (low + tail));
+                    anyFloat = false;
+                }
+
+                object term = integerA && integerB ? IntegerResult(AsInteger(a) * AsInteger(b))
+                    : a is double && integerB || b is double && integerA ? AsReal(a) * AsReal(b)
+                    : Builtins.mul(a, b);
+                result = AddTerms(result, term);
+            }
+        }
+
+        static double AdditionRemainder(double left, double right, double sum)
+        {
+            double rightRounded = sum - left;
+            return (left - (sum - rightRounded)) + (right - rightRounded);
+        }
+
+        static object IntegerResult(BigInteger value) => value >= long.MinValue && value <= long.MaxValue ? (object)(long)value : value;
+
+        static object AddTerms(object left, object right)
+        {
+            bool leftInteger = IsIntegral(left), rightInteger = IsIntegral(right);
+            if (leftInteger && rightInteger) return IntegerResult(AsInteger(left) + AsInteger(right));
+            if (left is double && rightInteger || right is double && leftInteger) return AsReal(left) + AsReal(right);
+            return Builtins.add(left, right);
+        }
     }
 }

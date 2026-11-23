@@ -1,0 +1,18 @@
+import bz2
+
+compressed = bytes.fromhex("425a6839314159265359648cbb73000000010038002000219819846177245385090648cbb730")
+decoder = bz2.BZ2Decompressor()
+print(decoder.decompress(compressed[:7]), decoder.needs_input, decoder.eof)
+print(decoder.decompress(compressed[7:] + b"other", max_length=0), decoder.needs_input, decoder.eof)
+print(decoder.decompress(b"", max_length=1), decoder.needs_input, decoder.eof)
+print(decoder.decompress(b"", max_length=2), decoder.needs_input, decoder.eof, decoder.unused_data)
+try:
+    decoder.decompress(b"")
+except EOFError:
+    print("finished")
+
+try:
+    bz2.decompress(compressed[:-1])
+except ValueError:
+    print("truncated")
+print(bz2.decompress(compressed + compressed + b"other"))

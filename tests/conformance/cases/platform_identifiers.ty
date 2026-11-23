@@ -1,0 +1,10 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import platform
+import sys
+
+expected = {"win32": "Windows", "linux": "Linux", "darwin": "Darwin"}
+print(platform.system() == expected[sys.platform])
+print(isinstance(platform.machine(), str), bool(platform.machine()))
+print(isinstance(platform.node(), str), bool(platform.node()))

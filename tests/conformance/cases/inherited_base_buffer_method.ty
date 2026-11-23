@@ -1,0 +1,19 @@
+import io
+
+class Parent(io.BufferedIOBase):
+    pass
+
+class Writer(Parent):
+    def __init__(self):
+        self.items: list[bytes] = []
+
+    def write(self, value):
+        self.items.append(value)
+        return len(value)
+
+    def writelines(self, values):
+        return Parent.writelines(self, values)
+
+writer = Writer()
+print(writer.writelines(iter([b"one", b"two"])))
+print(writer.items)

@@ -1,0 +1,24 @@
+from enum import Enum, _simple_enum
+
+@_simple_enum(Enum)
+class Decision:
+    yes = 1
+    true = 1
+    unknown = None
+    pair = (1, 2)
+    maybe = 'maybe'
+
+    def label(self):
+        return self.name.upper()
+
+print(Decision.yes, repr(Decision.yes), Decision.yes.label())
+print(Decision.true is Decision.yes, Decision.unknown.value is None)
+print(Decision(None) is Decision.unknown, Decision(Decision.yes) is Decision.yes)
+print(Decision((1, 2)) is Decision.pair, Decision.pair.value)
+print(isinstance(Decision.maybe, Enum), Decision.maybe == 'maybe')
+print([choice.name for choice in Decision])
+print(list(Decision.__members__))
+try:
+    Decision('missing')
+except ValueError as exc:
+    print(str(exc))

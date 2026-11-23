@@ -33,13 +33,14 @@ namespace Typhon.Runtime
         public static int __pos(BigInteger i, int count) => __pos(checked((long)i), count);
         public static int __pos(object i, int count) => i is BigInteger b ? __pos(b, count) : __pos(Convert.ToInt64(i, Inv), count);
 
-        static bool IsIndex(object? k) => k is long || k is int || k is BigInteger || k is bool || k is short || k is byte;
+        internal static bool IsIndex(object? k) => k is long || k is int || k is BigInteger || k is bool || k is short || k is byte;
 
         /// <summary>o[key] of a late-bound value: list/str/tuple positions (Python ints, negative from the end) or a mapping's key.</summary>
         public static dynamic? __getitem(object? o, object? key)
         {
             switch (o)
             {
+                case PyPlainEnumType enumeration: return enumeration.Member(key);
                 case Type type when type == typeof(Typhon.Stdlib.types.UnionType):
                     return Typhon.Stdlib.types.UnionType.Subscribe(key);
                 case Type type:
@@ -133,7 +134,14 @@ namespace Typhon.Runtime
                     setslice(o, start, stop, step, __iter_dyn(value!));
                     return;
                 }
-                case IList list when IsIndex(key): list[__pos(key is bool lb ? (lb ? 1L : 0L) : key!, list.Count)] = value; return;
+                case IList list when IsIndex(key):
+                {
+                    int index = __pos(key is bool bit ? (bit ? 1L : 0L) : key!, list.Count);
+                    if (list is IList<BigInteger> wide && AsInt(value, out long small))
+                        wide[index] = new BigInteger(small);
+                    else list[index] = value;
+                    return;
+                }
                 case null: throw new NullReferenceException("'NoneType' object does not support item assignment");
             }
             if (key is ITuple tk && key is not IPyTuple)
@@ -216,7 +224,16 @@ namespace Typhon.Runtime
         public static float sum(IEnumerable<float> xs) { float s = 0; foreach (var x in xs) s += x; return s; }
         public static decimal sum(IEnumerable<decimal> xs) { decimal s = 0; foreach (var x in xs) s += x; return s; }
         // Python's sum: an int start, bools count as 0 / 1, list + list concatenates (add)
-        public static dynamic sum(IEnumerable<object> xs) { dynamic s = 0L; foreach (object x in xs) s = add(s, x is bool b ? (b ? 1L : 0L) : x); return s; }
+        public static dynamic sum(IEnumerable<object> xs) => sum(xs, 0L);
+        public static dynamic sum(object iterable, object? start)
+        {
+            string? kind = start is string ? "string" : start is PyBytes ? "bytes" : start is PyByteArray ? "bytearray" : null;
+            if (kind != null) throw new InvalidCastException($"sum() can't sum {kind}s");
+            object? total = start;
+            foreach (object? item in __iter_dyn(iterable))
+                total = add(total!, item is bool flag ? (flag ? 1L : 0L) : item!);
+            return total!;
+        }
 
         public static int min(int a, int b) => Math.Min(a, b);
         public static long min(long a, long b) => Math.Min(a, b);
@@ -325,7 +342,8 @@ namespace Typhon.Runtime
             new($"map() argument {preceding + 1} is {comparison} than {(preceding == 1 ? "argument 1" : $"arguments 1-{preceding}")}");
 
         public static IEnumerable<T> __filter_truthy<T>(IEnumerable<T> xs) => xs.Where(item => truthy(item));
-        public static IEnumerable<T> filter<T>(Func<T, bool> f, IEnumerable<T> xs) => xs.Where(f);
+        public static IEnumerable<T> filter<T, TResult>(Func<T, TResult> f, IEnumerable<T> xs) =>
+            xs.Where(item => truthy((object?)f(item)));
         public static IEnumerable<T> filter<T>(PyClosure f, IEnumerable<T> xs) => xs.Where(x => truthy(f.__call__([x])));
         public static IEnumerable<T> filter<T>(PyBoundMethod f, IEnumerable<T> xs) => xs.Where(x => truthy(f.__call__([x])));
 
@@ -529,11 +547,13 @@ namespace Typhon.Runtime
             return d;
         }
         /// <summary>{**a, **b} of dicts with different key/value types: the result has the unified types.</summary>
-        public static OrderedDictionary<K, V> __dict_merge_as<K, V>(params IDictionary[] parts) where K : notnull
+        public static OrderedDictionary<K, V> __dict_merge_as<K, V>(params object?[] parts) where K : notnull
         {
-            var d = new OrderedDictionary<K, V>();
-            foreach (var part in parts) foreach (DictionaryEntry e in part) d[(K)e.Key] = (V)e.Value!;
-            return d;
+            var result = new OrderedDictionary<K, V>();
+            foreach (var part in parts)
+                foreach (var (key, value) in ReadDictItems(part, requireMapping: true))
+                    result[__key<K>(key)] = (V)PyArgs.ConvertArgument(value, typeof(V))!;
+            return result;
         }
 
 
@@ -548,6 +568,12 @@ namespace Typhon.Runtime
 
         public static void append<T>(this List<T> l, T x) => l.Add(x);
         public static void extend<T>(this List<T> l, IEnumerable<T> xs) => l.AddRange(xs);
+        public static void extend<T>(this List<T> l, [PyPositionalOnly] object? source)
+        {
+            if (source is IEnumerable<T> typed) { l.AddRange(typed); return; }
+            foreach (object? value in __iter_dyn(source))
+                l.Add((T)PyArgs.ConvertArgument(value, typeof(T))!);
+        }
         /// <summary>A list of late-bound (or wider) items extended with typed ones: List&lt;dynamic&gt; += List&lt;long&gt;.</summary>
         public static void __extend_cast<T, U>(List<T> l, IEnumerable<U> xs) { foreach (var x in xs) l.Add((T)(dynamic)x!); }
         /// <summary>Does a late-bound method use the runtime implementation for its builtin receiver?</summary>

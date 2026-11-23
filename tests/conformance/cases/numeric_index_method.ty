@@ -1,0 +1,4 @@
+def index(value: int, flag: bool):
+    print(value.__index__(), flag.__index__())
+
+index(-45, True)

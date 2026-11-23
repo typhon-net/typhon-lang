@@ -182,6 +182,7 @@ namespace Typhon.Compiler.Emit
             public string ReturnType;      // full C# return type incl. Task/IEnumerable wrapping
             public string ElementType;     // yield element type / awaited type / plain type
             public string Params;
+            public string ForwardedConstructorArguments;
             public bool IsGenerator, IsAsync, ReceivesValues, AsyncForm;
             public LocalsResult Locals;
             public Scope Scope;
@@ -420,6 +421,7 @@ namespace Typhon.Compiler.Emit
             var ps = new List<string>();
             var defaults = new List<string>();
             bool packedVarArgs = NeedsPackedVarArgs(f);
+            var forwarded = dropFirst && f.Name == "__init__" ? new List<string>() : null;
             int pi = 0;
             // an override of a .NET or runtime class's method: unannotated parameters take the base method's types
             var baseMethod = dropFirst && _cls != null && !_cls.IsInterface && _cls.Def.Body.Contains(f) ? DotNetBaseMethod(_cls.Def, f) : null;
@@ -431,11 +433,15 @@ namespace Typhon.Compiler.Emit
                 var p = f.Params[i];
                 if (i == 0 && dropFirst) continue;
                 scope.Params.Add(p.Name);
+                if (!_m.IsGdScript && p.Default is NameExpr or AttributeExpr &&
+                    (IsRuntimeTypeValue(p.Default) || TryTypeExpr(p.Default, out _)))
+                    (scope.ClassDefaultParameters ??= new HashSet<string>()).Add(p.Name);
                 if (p.Kind == ParamKind.KwArgs)
                 {
                     // **kwargs: the extra keyword arguments as a dict (call sites pass it by name; omitted, it is empty)
                     ps.Add($"[global::Typhon.Runtime.PyKeywordArguments] OrderedDictionary<string, dynamic>? {Esc(p.Name)}");
                     defaults.Add("null");
+                    forwarded?.Add(Esc(p.Name));
                     scope.Types[p.Name] = "OrderedDictionary<string, dynamic>";
                     sig.Prologue.Add($"{Esc(p.Name)} ??= new OrderedDictionary<string, dynamic>();");
                     pi++;
@@ -450,6 +456,7 @@ namespace Typhon.Compiler.Emit
                 {
                     // (the C# parameter gets another name: the body's calls go to the function, which it must not hide)
                     ps.Add($"object? __alias_{p.Name}");
+                    forwarded?.Add($"__alias_{p.Name}");
                     defaults.Add("null");
                     scope.Params.Remove(p.Name);
                     scope.Aliases[p.Name] = p.Default;
@@ -465,6 +472,7 @@ namespace Typhon.Compiler.Emit
                 {
                     if (p.Annotation == null) type = "object";
                     string argument = Esc(p.Name);
+                    forwarded?.Add(argument);
                     ps.Add(packedVarArgs ? $"[global::Typhon.Runtime.PyPackedArguments] {type}[]? {argument}" : $"params {type}[] {argument}");
                     defaults.Add(packedVarArgs ? "null" : null);
                     var tupleType = $"{PyTuplePrefix}{(type == "object" ? "dynamic" : type)}>";
@@ -478,6 +486,9 @@ namespace Typhon.Compiler.Emit
                     continue;
                 }
                 string decl = $"{type} {Esc(p.Name)}";
+                // Select the initializer statically even when its Python parameters
+                // are late-bound and the object defines __getattr__.
+                forwarded?.Add(type == "dynamic" ? $"(object?){Esc(p.Name)}" : Esc(p.Name));
                 // The fallback method keeps the complete Python signature. Specializations are
                 // available when all arguments are supplied and cannot compete on omitted arguments.
                 bool keepDefault = p.Default != null && (inferredMethod ? paramTypes == null :
@@ -531,6 +542,7 @@ namespace Typhon.Compiler.Emit
             }
             ApplyParameterDefaults(ps, defaults);
             sig.Params = string.Join(", ", ps);
+            if (forwarded != null) sig.ForwardedConstructorArguments = string.Join(", ", forwarded);
 
             string elem;
             // -> list (no type arguments): the element type the returned values have
@@ -800,7 +812,8 @@ namespace Typhon.Compiler.Emit
                     else type = PyType(fv != null ? InferType(fv) : LoopVariableType(scope.Locals, h.Key));
                     // a variable assigned values of different types (in different blocks) is late-bound
                     if (type != null && !observed && scope.Locals.HoistedValues.TryGetValue(h.Key, out var values) &&
-                        values.Select(v => PyType(InferType(v))).Where(t => t != null && t != TypeInference.Pending).Any(t => Incompatible(type, t)))
+                        values.Any(value => value == null || PyType(InferType(value)) is string assigned &&
+                            assigned != TypeInference.Pending && Incompatible(type, assigned)))
                         type = null;
                     // a capture bound from a value of unknown type (case [x, y] on an object) is not known to agree with the others
                     if (type != null && scope.Locals.HoistedCaptures.TryGetValue(h.Key, out var captures) &&
@@ -876,7 +889,9 @@ namespace Typhon.Compiler.Emit
             var sig = BuildSignature(f, dropFirst: false);
             sig.Scope.HasSelf = false;
             bool shadowsParameter = _scope != null && _scope.Params.Contains(f.Name) && IsUnknownType(KnownTypeCore(f.Name));
-            bool bindsLocal = shadowsParameter || _scope?.Locals?.AllLocals.Contains(f.Name) == true;
+            bool conditionalModuleBinding = _lateModuleFields.Contains(f.Name) &&
+                (_scopeKey == TypeInference.FuncKey(_m, null, "<main>") || _scopeKey == TypeInference.FuncKey(_m, null, "<module>"));
+            bool bindsLocal = conditionalModuleBinding || shadowsParameter || _scope?.Locals?.AllLocals.Contains(f.Name) == true;
             bool exports = AtRuntimeModuleScope;
             string name = bindsLocal || exports ? NewTmp("fn") : Esc(f.Name);
             if (!bindsLocal && !exports)

@@ -77,23 +77,45 @@ namespace Typhon.Runtime
         public static Exception Errno(int errno, string? filename = null, string? filename2 = null)
         {
             string msg = $"[Errno {errno}] {StrError(errno)}" + (filename != null ? ": " + Q(filename) : "") + (filename2 != null ? " -> " + Q(filename2) : "");
-            return errno switch
+            Exception error = errno switch
             {
                 2 => new FileNotFoundException(msg, filename),
                 1 or 13 => new UnauthorizedAccessException(msg),
                 _ => new IOException(msg, errno),
             };
+            return WithMetadata(error, errno, StrError(errno), filename, filename2);
         }
 
-        static Exception WinError(int code, string text, string? filename, string? filename2 = null)
+        internal static Exception WinError(int code, string text, string? filename, string? filename2 = null)
         {
             string msg = $"[WinError {code}] {text}" + (filename != null ? ": " + Q(filename) : "") + (filename2 != null ? " -> " + Q(filename2) : "");
-            return code switch
+            Exception error = code switch
             {
                 2 or 3 => new FileNotFoundException(msg, filename),
                 5 => new UnauthorizedAccessException(msg),
                 _ => new IOException(msg, code),
             };
+            error.Data["winerror"] = (long)code;
+            int errno = code switch
+            {
+                2 or 3 => ENOENT,
+                5 => 13,
+                145 => ENOTEMPTY,
+                183 => EEXIST,
+                267 => ENOTDIR,
+                _ => EINVAL,
+            };
+            return WithMetadata(error, errno, text, filename, filename2);
+        }
+
+        static Exception WithMetadata(Exception error, int number, string description, string? first, string? second)
+        {
+            error.Data["errno"] = (long)number;
+            error.Data["strerror"] = description;
+            error.Data["filename"] = first;
+            error.Data["filename2"] = second;
+            error.Data["__args__"] = new object?[] { (long)number, description };
+            return error;
         }
 
         // the errors the os functions raise, in the platform's words
@@ -153,6 +175,8 @@ namespace Typhon.Runtime
 
         [DllImport("libc", EntryPoint = "statx", SetLastError = true)]
         static extern int statx_(int dirfd, string pathname, int flags, uint mask, out Statx buf);
+        [DllImport("libc", EntryPoint = "open", SetLastError = true)]
+        internal static extern int Open(string path, int flags, uint mode);
         [DllImport("libc", EntryPoint = "getuid")] static extern uint getuid_();
         [DllImport("libc", EntryPoint = "geteuid")] static extern uint geteuid_();
         [DllImport("libc", EntryPoint = "getgid")] static extern uint getgid_();
@@ -301,6 +325,19 @@ namespace Typhon.Stdlib
     /// <summary>os: the operating system's files, processes and environment, as CPython has them on this platform.</summary>
     internal static partial class os_
     {
+        public static dynamic _get_exports_list(object module)
+        {
+            try
+            {
+                object? exports = Builtins.getattr(module, "__all__");
+                return Builtins.__iter_dyn(exports).ToList();
+            }
+            catch (MissingMemberException)
+            {
+                return Builtins.dir(module).Where(name => !name.StartsWith('_')).ToList();
+            }
+        }
+
         static bool Win => OperatingSystem.IsWindows();
 
         // ── names and constants ──
@@ -855,7 +892,7 @@ namespace Typhon.Stdlib
             var e = Fd(fd);
             if (OperatingSystem.IsLinux())
             {
-                int osfd = fd <= 2 && e.Path == null ? (int)fd : e.Stream is FileStream fs ? (int)fs.SafeFileHandle.DangerousGetHandle() : -1;
+                int osfd = fd <= 2 && e.Path == null ? (int)fd : DescriptorHandle(e.Stream) is { } handle ? (int)handle.DangerousGetHandle() : -1;
                 if (osfd >= 0 && OsNative.Stat(osfd, "", true, out var st) == 0) return FromStatx(st);
             }
             if (e.Stream is FileStream wfs && OsNative.WinFileInfo(wfs.SafeFileHandle, out var wi) && e.Path != null) return FromWindows(e.Path, wi, true);
@@ -938,6 +975,42 @@ namespace Typhon.Stdlib
 
         // ── file descriptors ──
 
+        sealed class DirectoryDescriptor : Stream
+        {
+            public readonly Microsoft.Win32.SafeHandles.SafeFileHandle Handle;
+            readonly string _path;
+
+            public DirectoryDescriptor(string path, int descriptor)
+            {
+                _path = path;
+                Handle = new Microsoft.Win32.SafeHandles.SafeFileHandle((IntPtr)descriptor, ownsHandle: true);
+            }
+
+            public override bool CanRead => !Handle.IsClosed;
+            public override bool CanSeek => false;
+            public override bool CanWrite => false;
+            public override long Length => throw new NotSupportedException();
+            public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+            public override int Read(byte[] buffer, int offset, int count) => throw OsErrors.IsADirectory(_path);
+            public override void Write(byte[] buffer, int offset, int count) => throw OsErrors.BadFd();
+            public override long Seek(long offset, SeekOrigin origin) => throw OsErrors.Errno(29);
+            public override void SetLength(long value) => throw OsErrors.Errno(22);
+            public override void Flush() { }
+
+            protected override void Dispose(bool disposing)
+            {
+                if (disposing) Handle.Dispose();
+                base.Dispose(disposing);
+            }
+        }
+
+        static Microsoft.Win32.SafeHandles.SafeFileHandle? DescriptorHandle(Stream stream) => stream switch
+        {
+            FileStream file => file.SafeFileHandle,
+            DirectoryDescriptor directory => directory.Handle,
+            _ => null,
+        };
+
         internal sealed class FdEntry
         {
             public Stream Stream = null!;
@@ -975,7 +1048,7 @@ namespace Typhon.Stdlib
                 {
                     // Keep file and socket descriptors in the same native namespace for select().
                     const long firstVirtualDescriptor = (long)int.MaxValue + 1;
-                    fd = e.Stream is FileStream file ? (long)file.SafeFileHandle.DangerousGetHandle() : firstVirtualDescriptor;
+                    fd = DescriptorHandle(e.Stream) is { } handle ? (long)handle.DangerousGetHandle() : firstVirtualDescriptor;
                     if (fd < 3 || _fds.ContainsKey(fd)) fd = firstVirtualDescriptor;
                 }
                 while (_fds.ContainsKey(fd)) fd++;
@@ -1003,6 +1076,29 @@ namespace Typhon.Stdlib
         {
             long acc = flags & 3;
             var access = acc == O_WRONLY ? FileAccess.Write : acc == O_RDWR ? FileAccess.ReadWrite : FileAccess.Read;
+            // Linux encodes O_TMPFILE using O_DIRECTORY, but the resulting handle owns a regular file.
+            if (OperatingSystem.IsLinux() && (flags & O_TMPFILE) == O_TMPFILE)
+            {
+                int descriptor = OsNative.Open(path, checked((int)(flags | O_CLOEXEC)), checked((uint)mode));
+                if (descriptor < 0) throw OsErrors.Errno(System.Runtime.InteropServices.Marshal.GetLastPInvokeError(), path);
+                var handle = new Microsoft.Win32.SafeHandles.SafeFileHandle(new IntPtr(descriptor), ownsHandle: true);
+                try
+                {
+                    var temporary = new FileStream(handle, access);
+                    try { return Allocate(new FdEntry { Stream = temporary, Append = (flags & O_APPEND) != 0 }); }
+                    catch { temporary.Dispose(); throw; }
+                }
+                catch { handle.Dispose(); throw; }
+            }
+            if (OperatingSystem.IsLinux() && ((flags & O_DIRECTORY) != 0 ||
+                acc == O_RDONLY && (flags & (O_CREAT | O_TRUNC)) == 0 && Directory.Exists(path)))
+            {
+                int descriptor = OsNative.Open(path, checked((int)(flags | O_DIRECTORY | O_CLOEXEC)), checked((uint)mode));
+                if (descriptor < 0) throw OsErrors.Errno(System.Runtime.InteropServices.Marshal.GetLastPInvokeError(), path);
+                var directory = new DirectoryDescriptor(path, descriptor);
+                try { return Allocate(new FdEntry { Stream = directory, Path = path }); }
+                catch { directory.Dispose(); throw; }
+            }
             bool creat = (flags & O_CREAT) != 0, excl = (flags & O_EXCL) != 0 && creat, trunc = (flags & O_TRUNC) != 0, append = (flags & O_APPEND) != 0;
             var fm = creat ? (excl ? FileMode.CreateNew : trunc ? FileMode.Create : FileMode.OpenOrCreate) : trunc ? FileMode.Truncate : FileMode.Open;
             if (access == FileAccess.Read && fm != FileMode.Open && fm != FileMode.OpenOrCreate)
@@ -1189,13 +1285,20 @@ namespace Typhon.Stdlib
         internal sealed class DirEntry : IPyRepr
         {
             public readonly string name, path;
+            readonly string _path;
             stat_result? _stat, _lstat;
-            public DirEntry(string dir, string name) { this.name = name; this.path = os_.path.join(dir, name); }
-            public bool is_symlink() => IsLink(path);
-            public bool is_dir(bool follow_symlinks = true) => follow_symlinks ? Directory.Exists(path) : Directory.Exists(path) && !is_symlink();
-            public bool is_file(bool follow_symlinks = true) => follow_symlinks ? File.Exists(path) : File.Exists(path) && !is_symlink();
+            public DirEntry(string dir, string name, bool relative = false)
+            {
+                this.name = name;
+                _path = os_.path.join(dir, name);
+                path = relative ? name : _path;
+            }
+
+            public bool is_symlink() => IsLink(_path);
+            public bool is_dir(bool follow_symlinks = true) => Directory.Exists(_path) && (follow_symlinks || !is_symlink());
+            public bool is_file(bool follow_symlinks = true) => File.Exists(_path) && (follow_symlinks || !is_symlink());
             public bool is_junction() => false;
-            public stat_result stat(bool follow_symlinks = true) => follow_symlinks ? _stat ??= StatPath(path, true) : _lstat ??= StatPath(path, false);
+            public stat_result stat(bool follow_symlinks = true) => follow_symlinks ? _stat ??= StatPath(_path, true) : _lstat ??= StatPath(_path, false);
             public long inode() => stat(false).st_ino;
             public string __fspath__() => path;
             public string __repr__() => $"<DirEntry {Builtins.repr(name)}>";
@@ -1208,8 +1311,14 @@ namespace Typhon.Stdlib
         {
             readonly string _dir;
             readonly List<string> _names;
-            public ScandirIterator(string dir, List<string> names) { _dir = dir; _names = names; }
-            public IEnumerator<DirEntry> GetEnumerator() { foreach (var n in _names) yield return new DirEntry(_dir, n); }
+            readonly bool _relative;
+            public ScandirIterator(string dir, List<string> names, bool relative = false)
+            {
+                _dir = dir;
+                _names = names;
+                _relative = relative;
+            }
+            public IEnumerator<DirEntry> GetEnumerator() { foreach (var n in _names) yield return new DirEntry(_dir, n, _relative); }
             IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
             public void close() { }
             public void Dispose() { }
@@ -1218,6 +1327,16 @@ namespace Typhon.Stdlib
         /// <summary>scandir(path='.'): the entries of a directory as DirEntry objects (in the directory's order).</summary>
         public static ScandirIterator scandir(string path = ".") => new ScandirIterator(path, listdir(path));
         public static BytesScandirIterator scandir(PyBytes path) => new BytesScandirIterator(path, scandir(fsdecode(path)));
+        public static ScandirIterator scandir(long fd)
+        {
+            if (!OperatingSystem.IsLinux()) throw new InvalidCastException("scandir: path should be string, bytes, os.PathLike or None");
+            return WithUnixDescriptor(fd, descriptor =>
+            {
+                string dir = "/proc/self/fd/" + descriptor.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                return new ScandirIterator(dir, listdir(dir), relative: true);
+            }, OsErrors.BadFd);
+        }
+
 
         internal sealed class BytesScandirIterator : IEnumerable<BytesDirEntry>, IDisposable
         {
@@ -1258,8 +1377,30 @@ namespace Typhon.Stdlib
         /// walk(top, topdown=True, onerror=None, followlinks=False): (dirpath, dirnames, filenames) for each directory of the
         /// tree; top-down, removing names from dirnames prunes the walk.
         /// </summary>
-        public static IEnumerable<(string, List<string>, List<string>)> walk(string top, bool topdown = true, Action<Exception>? onerror = null, bool followlinks = false)
+        public static readonly object _walk_symlinks_as_files = new object();
+
+        public static IEnumerable<(string, List<string>, List<string>)> walk(object top, bool topdown = true,
+            object? onerror = null, object? followlinks = null) => Walk(__path(top), topdown, onerror, followlinks);
+
+        public static IEnumerable<(PyBytes, List<PyBytes>, List<PyBytes>)> walk(PyBytes top, bool topdown = true,
+            object? onerror = null, object? followlinks = null)
         {
+            foreach (var (root, dirs, files) in Walk(fsdecode(top), topdown, onerror, followlinks))
+            {
+                var names = dirs.Select(fsencode).ToList();
+                yield return (fsencode(root), names, files.Select(fsencode).ToList());
+                if (topdown)
+                {
+                    dirs.Clear();
+                    dirs.AddRange(names.Select(fsdecode));
+                }
+            }
+        }
+
+        static IEnumerable<(string, List<string>, List<string>)> Walk(string top, bool topdown, object? onerror, object? followlinks)
+        {
+            bool linkAsFile = ReferenceEquals(followlinks, _walk_symlinks_as_files);
+            bool visitLinks = !linkAsFile && Builtins.truthy(followlinks);
             var stack = new Stack<object>();
             stack.Push(top);
             while (stack.Count > 0)
@@ -1269,16 +1410,20 @@ namespace Typhon.Stdlib
                 string dir = (string)item;
                 List<string> names;
                 try { names = listdir(dir); }
-                catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { onerror?.Invoke(e); continue; }
+                catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+                {
+                    if (onerror != null) Builtins.__invoke(onerror, [e]);
+                    continue;
+                }
                 var dirs = new List<string>();
                 var files = new List<string>();
                 var walkInto = new List<string>();
                 foreach (var n in names)
                 {
                     string full = path.join(dir, n);
-                    bool isDir = Directory.Exists(full);
+                    bool isDir = Directory.Exists(full) && (!linkAsFile || !IsLink(full));
                     (isDir ? dirs : files).Add(n);
-                    if (isDir && !topdown && (followlinks || !IsLink(full))) walkInto.Add(full);
+                    if (isDir && !topdown && (visitLinks || !IsLink(full))) walkInto.Add(full);
                 }
                 if (topdown)
                 {
@@ -1287,7 +1432,7 @@ namespace Typhon.Stdlib
                     for (int i = dirs.Count - 1; i >= 0; i--)
                     {
                         string full = path.join(dir, dirs[i]);
-                        if (followlinks || !IsLink(full)) stack.Push(full);
+                        if (visitLinks || !IsLink(full)) stack.Push(full);
                     }
                 }
                 else

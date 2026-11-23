@@ -57,8 +57,44 @@ namespace Typhon.Stdlib
                                 object? cls = null, object? indent = null, object? separators = null, object? @default = null, bool sort_keys = false)
             => ((dynamic)fp).write(dumps(obj, skipkeys, ensure_ascii, check_circular, allow_nan, cls, indent, separators, @default, sort_keys));
 
-        public static dynamic? loads(string s) => new Reader(s).ReadDocument();
-        public static dynamic? load(object fp) => loads((string)((dynamic)fp).read());
+        public static dynamic? loads(object? s)
+        {
+            string text = s switch
+            {
+                string value when value.StartsWith('\uFEFF') =>
+                    throw new JSONDecodeError("Unexpected UTF-8 BOM (decode using utf-8-sig)", value, 0),
+                string value => value,
+                PyBytes bytes => DecodeDocument(bytes.Data),
+                PyByteArray buffer => DecodeDocument(buffer.ToArray()),
+                _ => throw new InvalidCastException($"the JSON object must be str, bytes or bytearray, not {Builtins.PyTypeName(Builtins.__type_of(s))}"),
+            };
+            return new Reader(text).ReadDocument();
+        }
+
+        public static dynamic? load(object fp) => loads((object?)((dynamic)fp).read());
+
+        static string DecodeDocument(byte[] data)
+        {
+            ReadOnlySpan<byte> prefix = data;
+            string encoding = "utf-8";
+            if (prefix.StartsWith(codecs.BOM_UTF32_BE.Data) || prefix.StartsWith(codecs.BOM_UTF32_LE.Data))
+                encoding = "utf-32";
+            else if (prefix.StartsWith(codecs.BOM_UTF16_BE.Data) || prefix.StartsWith(codecs.BOM_UTF16_LE.Data))
+                encoding = "utf-16";
+            else if (prefix.StartsWith(codecs.BOM_UTF8.Data))
+                encoding = "utf-8-sig";
+            else if (prefix.Length >= 4)
+            {
+                if (prefix[0] == 0) encoding = prefix[1] == 0 ? "utf-32-be" : "utf-16-be";
+                else if (prefix[1] == 0) encoding = prefix[2] == 0 && prefix[3] == 0 ? "utf-32-le" : "utf-16-le";
+            }
+            else if (prefix.Length == 2)
+            {
+                if (prefix[0] == 0) encoding = "utf-16-be";
+                else if (prefix[1] == 0) encoding = "utf-16-le";
+            }
+            return ByteOps.Decode(data, encoding, "surrogatepass");
+        }
 
         sealed class Writer
         {

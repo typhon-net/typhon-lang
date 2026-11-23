@@ -1,0 +1,8 @@
+utf-8 efbbbf
+utf-16-le fffe
+utf-16-be feff
+utf-32-le fffe0000
+utf-32-be 0000feff
+True
+True
+True True

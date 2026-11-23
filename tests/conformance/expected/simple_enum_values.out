@@ -1,0 +1,8 @@
+Decision.yes <Decision.yes: 1> YES
+True True
+True True
+True (1, 2)
+True False
+['yes', 'unknown', 'pair', 'maybe']
+['yes', 'true', 'unknown', 'pair', 'maybe']
+'missing' is not a valid Decision

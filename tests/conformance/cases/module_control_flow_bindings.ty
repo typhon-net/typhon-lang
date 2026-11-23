@@ -1,0 +1,21 @@
+from contextlib import nullcontext
+
+def captured():
+    return context_value, assigned, loop_value, finished, matched
+
+with nullcontext("ready") as context_value:
+    assigned = 3
+
+for loop_value in (4,):
+    pass
+
+done = False
+while not done:
+    finished = "yes"
+    done = True
+
+match ("value", 5):
+    case ("value", matched):
+        pass
+
+print(captured())

@@ -74,6 +74,13 @@ namespace Typhon.Compiler.Emit
             _w.Line($"object? global::System.Runtime.CompilerServices.ITuple.this[int __i] => __i switch {{ {string.Join(" ", fs.Select((f, i) => $"{i} => {F(f)},"))} _ => throw new global::System.IndexOutOfRangeException(\"tuple index out of range\") }};");
             _w.Line($"public object? this[long __i] => ((global::System.Runtime.CompilerServices.ITuple)this)[checked((int)(__i < 0 ? __i + {fs.Count} : __i))];");
             if (!Has("__len__")) _w.Line($"public long __len__() => {fs.Count};");
+            else _w.Line("long global::Typhon.Runtime.IPyLen.__len__() => global::Typhon.Runtime.Builtins.__length_result((object?)__len__());");
+            if (Has("__iter__"))
+            {
+                string body = fs.Count == 0 ? "yield break;" : string.Join(" ", fs.Select(f => $"yield return {F(f)};"));
+                _w.Line($"private global::Typhon.Runtime.PyIterator<object?> {ClassModel.NamedTupleBaseIterator}() => new({ClassModel.NamedTupleBaseIterator}_items());");
+                _w.Line($"private global::System.Collections.Generic.IEnumerator<object?> {ClassModel.NamedTupleBaseIterator}_items() {{ {body} }}");
+            }
             if (!Has("__iter__"))
             {
                 _w.Line($"public global::System.Collections.Generic.IEnumerator<object?> GetEnumerator() {{ {string.Join(" ", fs.Select(f => $"yield return {F(f)};"))} {(fs.Count == 0 ? "yield break;" : "")} }}");
@@ -105,11 +112,13 @@ namespace Typhon.Compiler.Emit
             string allocation = c.NamedTupleCustomNew ? $"default({NoInitType}), " : "";
             if (c.NamedTupleCustomNew && fs.Count > 0)
                 _w.Line($"private {Esc(c.Name)}({NoInitType} _, {string.Join(", ", fs.Select(f => $"{T(f)} {Esc(f)}"))}) {{ {string.Join(" ", fs.Select(f => $"{F(f)} = {Esc(f)};"))} }}");
-            if (fs.Count > 0)
+            if (fs.Count > 0 && !Has("_replace"))
                 _w.Line($"public {self} _replace({string.Join(", ", fs.Select(f => $"object? {Esc(f)} = null"))}) => new {self}({allocation}{string.Join(", ", fs.Select(f => $"{Esc(f)} is null ? {F(f)} : ({T(f)})(dynamic){Esc(f)}"))});");
-            _w.Line($"public OrderedDictionary<string, object?> _asdict() => new OrderedDictionary<string, object?> {{ {string.Join(", ", fs.Select(f => $"[{CsString(f)}] = {F(f)}"))} }};");
-            _w.Line($"internal static readonly global::Typhon.Runtime.PyTuple<string> _fields = new global::Typhon.Runtime.PyTuple<string>(new string[] {{ {string.Join(", ", fs.Select(CsString))} }});");
-            if (fs.Count > 0)
+            if (!Has("_asdict"))
+                _w.Line($"public OrderedDictionary<string, object?> _asdict() => new OrderedDictionary<string, object?> {{ {string.Join(", ", fs.Select(f => $"[{CsString(f)}] = {F(f)}"))} }};");
+            if (!ctx.FieldTypes.ContainsKey("_fields"))
+                _w.Line($"internal static readonly global::Typhon.Runtime.PyTuple<string> _fields = new global::Typhon.Runtime.PyTuple<string>(new string[] {{ {string.Join(", ", fs.Select(CsString))} }});");
+            if (fs.Count > 0 && !Has("_make"))
                 _w.Line($"public static {self} _make(object? __items) {{ var __l = global::System.Linq.Enumerable.ToList(global::Typhon.Runtime.Builtins.__iter_dyn(__items)); if (__l.Count != {fs.Count}) throw new global::System.ArgumentException(\"Expected {fs.Count} arguments, got \" + __l.Count); return new {self}({allocation}{string.Join(", ", fs.Select((f, i) => $"({T(f)})(dynamic)__l[{i}]!"))}); }}");
         }
 

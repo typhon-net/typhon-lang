@@ -1,0 +1,27 @@
+import imaplib
+
+class MemoryIMAP(imaplib.IMAP4):
+    def open(self, host="", port=0, timeout=None):
+        self.incoming = [b"* PREAUTH local ready\r\n"]
+        self.sock = None
+
+    def readline(self):
+        if not self.incoming:
+            return b""
+        return self.incoming.pop(0)
+
+    def send(self, data):
+        tag, command, *_ = data.split()
+        if command == b"CAPABILITY":
+            self.incoming.append(b"* CAPABILITY IMAP4rev1 IDLE\r\n")
+        elif command == b"LOGOUT":
+            self.incoming.append(b"* BYE local shutdown\r\n")
+        self.incoming.append(tag + b" OK complete\r\n")
+
+    def shutdown(self):
+        self.sock = None
+
+with MemoryIMAP() as command:
+    print(command.state, command.capabilities, command.PROTOCOL_VERSION)
+    print(command.noop())
+    print(command.logout())

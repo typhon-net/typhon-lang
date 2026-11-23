@@ -1,0 +1,18 @@
+class Binder(tuple):
+    def __new__(cls, encode, decode):
+        result = tuple.__new__(cls, (encode, decode))
+        result.encode = encode
+        result.decode = decode
+        return result
+
+def pack(text: str):
+    return text.encode("ascii")
+
+def unpack(value: bytes):
+    return value.decode("ascii")
+
+def use(container):
+    print(container.encode("hello"), container.decode(b"there"))
+    print(container[0] is container.encode, container[1] is container.decode)
+
+use(Binder(pack, unpack))

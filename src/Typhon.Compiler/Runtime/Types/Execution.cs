@@ -195,7 +195,7 @@ namespace Typhon.Runtime
 
         public static void __display_runtime_result(object? value)
         {
-            if (value != null) sys_.displayhook(value);
+            if (value != null) __invoke((object?)sys_.displayhook, [value]);
         }
     }
 }

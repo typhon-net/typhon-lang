@@ -1,0 +1,10 @@
+# typhon: int=bigint
+
+def load():
+    from typhon_missing_runtime_import_fixture import find
+    return find
+
+try:
+    load()
+except ModuleNotFoundError as error:
+    print(error.name)

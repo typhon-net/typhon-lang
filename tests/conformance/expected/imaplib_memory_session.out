@@ -1,0 +1,3 @@
+AUTH ('IMAP4REV1', 'IDLE') IMAP4REV1
+('OK', [b'complete'])
+('BYE', [b'local shutdown'])

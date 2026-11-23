@@ -1,0 +1,634 @@
+# Source: CPython 3.15.2, Lib/bz2.py
+# https://github.com/python/cpython/blob/v3.15.2/Lib/bz2.py
+# The original source follows the license below without changes.
+#
+# A. HISTORY OF THE SOFTWARE
+# ==========================
+#
+# Python was created in the early 1990s by Guido van Rossum at Stichting
+# Mathematisch Centrum (CWI, see https://www.cwi.nl) in the Netherlands
+# as a successor of a language called ABC.  Guido remains Python's
+# principal author, although it includes many contributions from others.
+#
+# In 1995, Guido continued his work on Python at the Corporation for
+# National Research Initiatives (CNRI, see https://www.cnri.reston.va.us)
+# in Reston, Virginia where he released several versions of the
+# software.
+#
+# In May 2000, Guido and the Python core development team moved to
+# BeOpen.com to form the BeOpen PythonLabs team.  In October of the same
+# year, the PythonLabs team moved to Digital Creations, which became
+# Zope Corporation.  In 2001, the Python Software Foundation (PSF, see
+# https://www.python.org/psf/) was formed, a non-profit organization
+# created specifically to own Python-related Intellectual Property.
+# Zope Corporation was a sponsoring member of the PSF.
+#
+# All Python releases are Open Source (see https://opensource.org for
+# the Open Source Definition).  Historically, most, but not all, Python
+# releases have also been GPL-compatible; the table below summarizes
+# the various releases.
+#
+#     Release         Derived     Year        Owner       GPL-
+#                     from                                compatible? (1)
+#
+#     0.9.0 thru 1.2              1991-1995   CWI         yes
+#     1.3 thru 1.5.2  1.2         1995-1999   CNRI        yes
+#     1.6             1.5.2       2000        CNRI        no
+#     2.0             1.6         2000        BeOpen.com  no
+#     1.6.1           1.6         2001        CNRI        yes (2)
+#     2.1             2.0+1.6.1   2001        PSF         no
+#     2.0.1           2.0+1.6.1   2001        PSF         yes
+#     2.1.1           2.1+2.0.1   2001        PSF         yes
+#     2.1.2           2.1.1       2002        PSF         yes
+#     2.1.3           2.1.2       2002        PSF         yes
+#     2.2 and above   2.1.1       2001-now    PSF         yes
+#
+# Footnotes:
+#
+# (1) GPL-compatible doesn't mean that we're distributing Python under
+#     the GPL.  All Python licenses, unlike the GPL, let you distribute
+#     a modified version without making your changes open source.  The
+#     GPL-compatible licenses make it possible to combine Python with
+#     other software that is released under the GPL; the others don't.
+#
+# (2) According to Richard Stallman, 1.6.1 is not GPL-compatible,
+#     because its license has a choice of law clause.  According to
+#     CNRI, however, Stallman's lawyer has told CNRI's lawyer that 1.6.1
+#     is "not incompatible" with the GPL.
+#
+# Thanks to the many outside volunteers who have worked under Guido's
+# direction to make these releases possible.
+#
+#
+# B. TERMS AND CONDITIONS FOR ACCESSING OR OTHERWISE USING PYTHON
+# ===============================================================
+#
+# Python software and documentation are licensed under the
+# Python Software Foundation License Version 2.
+#
+# Starting with Python 3.8.6, examples, recipes, and other code in
+# the documentation are dual licensed under the PSF License Version 2
+# and the Zero-Clause BSD license.
+#
+# Some software incorporated into Python is under different licenses.
+# The licenses are listed with code falling under that license.
+#
+#
+# PYTHON SOFTWARE FOUNDATION LICENSE VERSION 2
+# --------------------------------------------
+#
+# 1. This LICENSE AGREEMENT is between the Python Software Foundation
+# ("PSF"), and the Individual or Organization ("Licensee") accessing and
+# otherwise using this software ("Python") in source or binary form and
+# its associated documentation.
+#
+# 2. Subject to the terms and conditions of this License Agreement, PSF hereby
+# grants Licensee a nonexclusive, royalty-free, world-wide license to reproduce,
+# analyze, test, perform and/or display publicly, prepare derivative works,
+# distribute, and otherwise use Python alone or in any derivative version,
+# provided, however, that PSF's License Agreement and PSF's notice of copyright,
+# i.e., "Copyright (c) 2001 Python Software Foundation; All Rights Reserved"
+# are retained in Python alone or in any derivative version prepared by Licensee.
+#
+# 3. In the event Licensee prepares a derivative work that is based on
+# or incorporates Python or any part thereof, and wants to make
+# the derivative work available to others as provided herein, then
+# Licensee hereby agrees to include in any such work a brief summary of
+# the changes made to Python.
+#
+# 4. PSF is making Python available to Licensee on an "AS IS"
+# basis.  PSF MAKES NO REPRESENTATIONS OR WARRANTIES, EXPRESS OR
+# IMPLIED.  BY WAY OF EXAMPLE, BUT NOT LIMITATION, PSF MAKES NO AND
+# DISCLAIMS ANY REPRESENTATION OR WARRANTY OF MERCHANTABILITY OR FITNESS
+# FOR ANY PARTICULAR PURPOSE OR THAT THE USE OF PYTHON WILL NOT
+# INFRINGE ANY THIRD PARTY RIGHTS.
+#
+# 5. PSF SHALL NOT BE LIABLE TO LICENSEE OR ANY OTHER USERS OF PYTHON
+# FOR ANY INCIDENTAL, SPECIAL, OR CONSEQUENTIAL DAMAGES OR LOSS AS
+# A RESULT OF MODIFYING, DISTRIBUTING, OR OTHERWISE USING PYTHON,
+# OR ANY DERIVATIVE THEREOF, EVEN IF ADVISED OF THE POSSIBILITY THEREOF.
+#
+# 6. This License Agreement will automatically terminate upon a material
+# breach of its terms and conditions.
+#
+# 7. Nothing in this License Agreement shall be deemed to create any
+# relationship of agency, partnership, or joint venture between PSF and
+# Licensee.  This License Agreement does not grant permission to use PSF
+# trademarks or trade name in a trademark sense to endorse or promote
+# products or services of Licensee, or any third party.
+#
+# 8. By copying, installing or otherwise using Python, Licensee
+# agrees to be bound by the terms and conditions of this License
+# Agreement.
+#
+#
+# BEOPEN.COM LICENSE AGREEMENT FOR PYTHON 2.0
+# -------------------------------------------
+#
+# BEOPEN PYTHON OPEN SOURCE LICENSE AGREEMENT VERSION 1
+#
+# 1. This LICENSE AGREEMENT is between BeOpen.com ("BeOpen"), having an
+# office at 160 Saratoga Avenue, Santa Clara, CA 95051, and the
+# Individual or Organization ("Licensee") accessing and otherwise using
+# this software in source or binary form and its associated
+# documentation ("the Software").
+#
+# 2. Subject to the terms and conditions of this BeOpen Python License
+# Agreement, BeOpen hereby grants Licensee a non-exclusive,
+# royalty-free, world-wide license to reproduce, analyze, test, perform
+# and/or display publicly, prepare derivative works, distribute, and
+# otherwise use the Software alone or in any derivative version,
+# provided, however, that the BeOpen Python License is retained in the
+# Software, alone or in any derivative version prepared by Licensee.
+#
+# 3. BeOpen is making the Software available to Licensee on an "AS IS"
+# basis.  BEOPEN MAKES NO REPRESENTATIONS OR WARRANTIES, EXPRESS OR
+# IMPLIED.  BY WAY OF EXAMPLE, BUT NOT LIMITATION, BEOPEN MAKES NO AND
+# DISCLAIMS ANY REPRESENTATION OR WARRANTY OF MERCHANTABILITY OR FITNESS
+# FOR ANY PARTICULAR PURPOSE OR THAT THE USE OF THE SOFTWARE WILL NOT
+# INFRINGE ANY THIRD PARTY RIGHTS.
+#
+# 4. BEOPEN SHALL NOT BE LIABLE TO LICENSEE OR ANY OTHER USERS OF THE
+# SOFTWARE FOR ANY INCIDENTAL, SPECIAL, OR CONSEQUENTIAL DAMAGES OR LOSS
+# AS A RESULT OF USING, MODIFYING OR DISTRIBUTING THE SOFTWARE, OR ANY
+# DERIVATIVE THEREOF, EVEN IF ADVISED OF THE POSSIBILITY THEREOF.
+#
+# 5. This License Agreement will automatically terminate upon a material
+# breach of its terms and conditions.
+#
+# 6. This License Agreement shall be governed by and interpreted in all
+# respects by the law of the State of California, excluding conflict of
+# law provisions.  Nothing in this License Agreement shall be deemed to
+# create any relationship of agency, partnership, or joint venture
+# between BeOpen and Licensee.  This License Agreement does not grant
+# permission to use BeOpen trademarks or trade names in a trademark
+# sense to endorse or promote products or services of Licensee, or any
+# third party.  As an exception, the "BeOpen Python" logos available at
+# http://www.pythonlabs.com/logos.html may be used according to the
+# permissions granted on that web page.
+#
+# 7. By copying, installing or otherwise using the software, Licensee
+# agrees to be bound by the terms and conditions of this License
+# Agreement.
+#
+#
+# CNRI LICENSE AGREEMENT FOR PYTHON 1.6.1
+# ---------------------------------------
+#
+# 1. This LICENSE AGREEMENT is between the Corporation for National
+# Research Initiatives, having an office at 1895 Preston White Drive,
+# Reston, VA 20191 ("CNRI"), and the Individual or Organization
+# ("Licensee") accessing and otherwise using Python 1.6.1 software in
+# source or binary form and its associated documentation.
+#
+# 2. Subject to the terms and conditions of this License Agreement, CNRI
+# hereby grants Licensee a nonexclusive, royalty-free, world-wide
+# license to reproduce, analyze, test, perform and/or display publicly,
+# prepare derivative works, distribute, and otherwise use Python 1.6.1
+# alone or in any derivative version, provided, however, that CNRI's
+# License Agreement and CNRI's notice of copyright, i.e., "Copyright (c)
+# 1995-2001 Corporation for National Research Initiatives; All Rights
+# Reserved" are retained in Python 1.6.1 alone or in any derivative
+# version prepared by Licensee.  Alternately, in lieu of CNRI's License
+# Agreement, Licensee may substitute the following text (omitting the
+# quotes): "Python 1.6.1 is made available subject to the terms and
+# conditions in CNRI's License Agreement.  This Agreement together with
+# Python 1.6.1 may be located on the internet using the following
+# unique, persistent identifier (known as a handle): 1895.22/1013.  This
+# Agreement may also be obtained from a proxy server on the internet
+# using the following URL: http://hdl.handle.net/1895.22/1013".
+#
+# 3. In the event Licensee prepares a derivative work that is based on
+# or incorporates Python 1.6.1 or any part thereof, and wants to make
+# the derivative work available to others as provided herein, then
+# Licensee hereby agrees to include in any such work a brief summary of
+# the changes made to Python 1.6.1.
+#
+# 4. CNRI is making Python 1.6.1 available to Licensee on an "AS IS"
+# basis.  CNRI MAKES NO REPRESENTATIONS OR WARRANTIES, EXPRESS OR
+# IMPLIED.  BY WAY OF EXAMPLE, BUT NOT LIMITATION, CNRI MAKES NO AND
+# DISCLAIMS ANY REPRESENTATION OR WARRANTY OF MERCHANTABILITY OR FITNESS
+# FOR ANY PARTICULAR PURPOSE OR THAT THE USE OF PYTHON 1.6.1 WILL NOT
+# INFRINGE ANY THIRD PARTY RIGHTS.
+#
+# 5. CNRI SHALL NOT BE LIABLE TO LICENSEE OR ANY OTHER USERS OF PYTHON
+# 1.6.1 FOR ANY INCIDENTAL, SPECIAL, OR CONSEQUENTIAL DAMAGES OR LOSS AS
+# A RESULT OF MODIFYING, DISTRIBUTING, OR OTHERWISE USING PYTHON 1.6.1,
+# OR ANY DERIVATIVE THEREOF, EVEN IF ADVISED OF THE POSSIBILITY THEREOF.
+#
+# 6. This License Agreement will automatically terminate upon a material
+# breach of its terms and conditions.
+#
+# 7. This License Agreement shall be governed by the federal
+# intellectual property law of the United States, including without
+# limitation the federal copyright law, and, to the extent such
+# U.S. federal law does not apply, by the law of the Commonwealth of
+# Virginia, excluding Virginia's conflict of law provisions.
+# Notwithstanding the foregoing, with regard to derivative works based
+# on Python 1.6.1 that incorporate non-separable material that was
+# previously distributed under the GNU General Public License (GPL), the
+# law of the Commonwealth of Virginia shall govern this License
+# Agreement only as to issues arising under or with respect to
+# Paragraphs 4, 5, and 7 of this License Agreement.  Nothing in this
+# License Agreement shall be deemed to create any relationship of
+# agency, partnership, or joint venture between CNRI and Licensee.  This
+# License Agreement does not grant permission to use CNRI trademarks or
+# trade name in a trademark sense to endorse or promote products or
+# services of Licensee, or any third party.
+#
+# 8. By clicking on the "ACCEPT" button where indicated, or by copying,
+# installing or otherwise using Python 1.6.1, Licensee agrees to be
+# bound by the terms and conditions of this License Agreement.
+#
+#         ACCEPT
+#
+#
+# CWI LICENSE AGREEMENT FOR PYTHON 0.9.0 THROUGH 1.2
+# --------------------------------------------------
+#
+# Copyright (c) 1991 - 1995, Stichting Mathematisch Centrum Amsterdam,
+# The Netherlands.  All rights reserved.
+#
+# Permission to use, copy, modify, and distribute this software and its
+# documentation for any purpose and without fee is hereby granted,
+# provided that the above copyright notice appear in all copies and that
+# both that copyright notice and this permission notice appear in
+# supporting documentation, and that the name of Stichting Mathematisch
+# Centrum or CWI not be used in advertising or publicity pertaining to
+# distribution of the software without specific, written prior
+# permission.
+#
+# STICHTING MATHEMATISCH CENTRUM DISCLAIMS ALL WARRANTIES WITH REGARD TO
+# THIS SOFTWARE, INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+# FITNESS, IN NO EVENT SHALL STICHTING MATHEMATISCH CENTRUM BE LIABLE
+# FOR ANY SPECIAL, INDIRECT OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+# ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT
+# OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+#
+# ZERO-CLAUSE BSD LICENSE FOR CODE IN THE PYTHON DOCUMENTATION
+# ----------------------------------------------------------------------
+#
+# Permission to use, copy, modify, and/or distribute this software for any
+# purpose with or without fee is hereby granted.
+#
+# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+# REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY
+# AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+# INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM
+# LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR
+# OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+# PERFORMANCE OF THIS SOFTWARE.
+
+"""Interface to the libbzip2 compression library.
+
+This module provides a file interface, classes for incremental
+(de)compression, and functions for one-shot (de)compression.
+"""
+
+__all__ = ["BZ2File", "BZ2Compressor", "BZ2Decompressor",
+           "open", "compress", "decompress"]
+
+__author__ = "Nadeem Vawda <nadeem.vawda@gmail.com>"
+
+from builtins import open as _builtin_open
+from compression._common import _streams
+import io
+import os
+
+from _bz2 import BZ2Compressor, BZ2Decompressor
+
+
+# Value 0 no longer used
+_MODE_READ     = 1
+# Value 2 no longer used
+_MODE_WRITE    = 3
+
+
+class BZ2File(_streams.BaseStream):
+
+    """A file object providing transparent bzip2 (de)compression.
+
+    A BZ2File can act as a wrapper for an existing file object, or refer
+    directly to a named file on disk.
+
+    Note that BZ2File provides a *binary* file interface - data read is
+    returned as bytes, and data to be written should be given as bytes.
+    """
+
+    def __init__(self, filename, mode="r", *, compresslevel=9):
+        """Open a bzip2-compressed file.
+
+        If filename is a str, bytes, or PathLike object, it gives the
+        name of the file to be opened. Otherwise, it should be a file
+        object, which will be used to read or write the compressed data.
+
+        mode can be 'r' for reading (default), 'w' for (over)writing,
+        'x' for creating exclusively, or 'a' for appending. These can
+        equivalently be given as 'rb', 'wb', 'xb', and 'ab'.
+
+        If mode is 'w', 'x' or 'a', compresslevel can be a number between 1
+        and 9 specifying the level of compression: 1 produces the least
+        compression, and 9 (default) produces the most compression.
+
+        If mode is 'r', the input file may be the concatenation of
+        multiple compressed streams.
+        """
+        self._fp = None
+        self._closefp = False
+        self._mode = None
+
+        if not (1 <= compresslevel <= 9):
+            raise ValueError("compresslevel must be between 1 and 9")
+
+        if mode in ("", "r", "rb"):
+            mode = "rb"
+            mode_code = _MODE_READ
+        elif mode in ("w", "wb"):
+            mode = "wb"
+            mode_code = _MODE_WRITE
+            self._compressor = BZ2Compressor(compresslevel)
+        elif mode in ("x", "xb"):
+            mode = "xb"
+            mode_code = _MODE_WRITE
+            self._compressor = BZ2Compressor(compresslevel)
+        elif mode in ("a", "ab"):
+            mode = "ab"
+            mode_code = _MODE_WRITE
+            self._compressor = BZ2Compressor(compresslevel)
+        else:
+            raise ValueError("Invalid mode: %r" % (mode,))
+
+        if isinstance(filename, (str, bytes, os.PathLike)):
+            self._fp = _builtin_open(filename, mode)
+            self._closefp = True
+            self._mode = mode_code
+        elif hasattr(filename, "read") or hasattr(filename, "write"):
+            self._fp = filename
+            self._mode = mode_code
+        else:
+            raise TypeError("filename must be a str, bytes, file or PathLike object")
+
+        if self._mode == _MODE_READ:
+            raw = _streams.DecompressReader(self._fp,
+                BZ2Decompressor, trailing_error=OSError)
+            self._buffer = io.BufferedReader(raw)
+        else:
+            self._pos = 0
+
+    def close(self):
+        """Flush and close the file.
+
+        May be called more than once without error. Once the file is
+        closed, any other operation on it will raise a ValueError.
+        """
+        if self.closed:
+            return
+        try:
+            if self._mode == _MODE_READ:
+                self._buffer.close()
+            elif self._mode == _MODE_WRITE:
+                self._fp.write(self._compressor.flush())
+                self._compressor = None
+        finally:
+            try:
+                if self._closefp:
+                    self._fp.close()
+            finally:
+                self._fp = None
+                self._closefp = False
+                self._buffer = None
+
+    @property
+    def closed(self):
+        """True if this file is closed."""
+        return self._fp is None
+
+    @property
+    def name(self):
+        self._check_not_closed()
+        return self._fp.name
+
+    @property
+    def mode(self):
+        return 'wb' if self._mode == _MODE_WRITE else 'rb'
+
+    def fileno(self):
+        """Return the file descriptor for the underlying file."""
+        self._check_not_closed()
+        return self._fp.fileno()
+
+    def seekable(self):
+        """Return whether the file supports seeking."""
+        return self.readable() and self._buffer.seekable()
+
+    def readable(self):
+        """Return whether the file was opened for reading."""
+        self._check_not_closed()
+        return self._mode == _MODE_READ
+
+    def writable(self):
+        """Return whether the file was opened for writing."""
+        self._check_not_closed()
+        return self._mode == _MODE_WRITE
+
+    def peek(self, n=0):
+        """Return buffered data without advancing the file position.
+
+        Always returns at least one byte of data, unless at EOF.
+        The exact number of bytes returned is unspecified.
+        """
+        self._check_can_read()
+        # Relies on the undocumented fact that BufferedReader.peek()
+        # always returns at least one byte (except at EOF), independent
+        # of the value of n
+        return self._buffer.peek(n)
+
+    def read(self, size=-1):
+        """Read up to size uncompressed bytes from the file.
+
+        If size is negative or omitted, read until EOF is reached.
+        Returns b'' if the file is already at EOF.
+        """
+        self._check_can_read()
+        return self._buffer.read(size)
+
+    def read1(self, size=-1):
+        """Read up to size uncompressed bytes, while trying to avoid
+        making multiple reads from the underlying stream. Reads up to a
+        buffer's worth of data if size is negative.
+
+        Returns b'' if the file is at EOF.
+        """
+        self._check_can_read()
+        if size < 0:
+            size = io.DEFAULT_BUFFER_SIZE
+        return self._buffer.read1(size)
+
+    def readinto(self, b):
+        """Read bytes into b.
+
+        Returns the number of bytes read (0 for EOF).
+        """
+        self._check_can_read()
+        return self._buffer.readinto(b)
+
+    def readline(self, size=-1):
+        """Read a line of uncompressed bytes from the file.
+
+        The terminating newline (if present) is retained. If size is
+        non-negative, no more than size bytes will be read (in which
+        case the line may be incomplete). Returns b'' if already at EOF.
+        """
+        if not isinstance(size, int):
+            if not hasattr(size, "__index__"):
+                raise TypeError("Integer argument expected")
+            size = size.__index__()
+        self._check_can_read()
+        return self._buffer.readline(size)
+
+    def readlines(self, size=-1):
+        """Read a list of lines of uncompressed bytes from the file.
+
+        size can be specified to control the number of lines read: no
+        further lines will be read once the total size of the lines read
+        so far equals or exceeds size.
+        """
+        if not isinstance(size, int):
+            if not hasattr(size, "__index__"):
+                raise TypeError("Integer argument expected")
+            size = size.__index__()
+        self._check_can_read()
+        return self._buffer.readlines(size)
+
+    def write(self, data):
+        """Write a byte string to the file.
+
+        Returns the number of uncompressed bytes written, which is
+        always the length of data in bytes. Note that due to buffering,
+        the file on disk may not reflect the data written until close()
+        is called.
+        """
+        self._check_can_write()
+        if isinstance(data, (bytes, bytearray)):
+            length = len(data)
+        else:
+            # accept any data that supports the buffer protocol
+            data = memoryview(data)
+            length = data.nbytes
+
+        compressed = self._compressor.compress(data)
+        self._fp.write(compressed)
+        self._pos += length
+        return length
+
+    def writelines(self, seq):
+        """Write a sequence of byte strings to the file.
+
+        Returns the number of uncompressed bytes written.
+        seq can be any iterable yielding byte strings.
+
+        Line separators are not added between the written byte strings.
+        """
+        return _streams.BaseStream.writelines(self, seq)
+
+    def seek(self, offset, whence=io.SEEK_SET):
+        """Change the file position.
+
+        The new position is specified by offset, relative to the
+        position indicated by whence. Values for whence are:
+
+            0: start of stream (default); offset must not be negative
+            1: current stream position
+            2: end of stream; offset must not be positive
+
+        Returns the new file position.
+
+        Note that seeking is emulated, so depending on the parameters,
+        this operation may be extremely slow.
+        """
+        self._check_can_seek()
+        return self._buffer.seek(offset, whence)
+
+    def tell(self):
+        """Return the current file position."""
+        self._check_not_closed()
+        if self._mode == _MODE_READ:
+            return self._buffer.tell()
+        return self._pos
+
+
+def open(filename, mode="rb", compresslevel=9,
+         encoding=None, errors=None, newline=None):
+    """Open a bzip2-compressed file in binary or text mode.
+
+    The filename argument can be an actual filename (a str, bytes, or
+    PathLike object), or an existing file object to read from or write
+    to.
+
+    The mode argument can be "r", "rb", "w", "wb", "x", "xb", "a" or
+    "ab" for binary mode, or "rt", "wt", "xt" or "at" for text mode.
+    The default mode is "rb", and the default compresslevel is 9.
+
+    For binary mode, this function is equivalent to the BZ2File
+    constructor: BZ2File(filename, mode, compresslevel). In this case,
+    the encoding, errors and newline arguments must not be provided.
+
+    For text mode, a BZ2File object is created, and wrapped in an
+    io.TextIOWrapper instance with the specified encoding, error
+    handling behavior, and line ending(s).
+
+    """
+    if "t" in mode:
+        if "b" in mode:
+            raise ValueError("Invalid mode: %r" % (mode,))
+    else:
+        if encoding is not None:
+            raise ValueError("Argument 'encoding' not supported in binary mode")
+        if errors is not None:
+            raise ValueError("Argument 'errors' not supported in binary mode")
+        if newline is not None:
+            raise ValueError("Argument 'newline' not supported in binary mode")
+
+    bz_mode = mode.replace("t", "")
+    binary_file = BZ2File(filename, bz_mode, compresslevel=compresslevel)
+
+    if "t" in mode:
+        encoding = io.text_encoding(encoding)
+        return io.TextIOWrapper(binary_file, encoding, errors, newline)
+    else:
+        return binary_file
+
+
+def compress(data, compresslevel=9):
+    """Compress a block of data.
+
+    compresslevel, if given, must be a number between 1 and 9.
+
+    For incremental compression, use a BZ2Compressor object instead.
+    """
+    comp = BZ2Compressor(compresslevel)
+    return comp.compress(data) + comp.flush()
+
+
+def decompress(data):
+    """Decompress a block of data.
+
+    For incremental decompression, use a BZ2Decompressor object instead.
+    """
+    results = []
+    while data:
+        decomp = BZ2Decompressor()
+        try:
+            res = decomp.decompress(data)
+        except OSError:
+            if results:
+                break  # Leftover data is not a valid bzip2 stream; ignore it.
+            else:
+                raise  # Error on the first iteration; bail out.
+        results.append(res)
+        if not decomp.eof:
+            raise ValueError("Compressed data ended before the "
+                             "end-of-stream marker was reached")
+        data = decomp.unused_data
+    return b"".join(results)

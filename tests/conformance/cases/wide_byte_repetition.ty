@@ -1,0 +1,10 @@
+# typhon: int=bigint
+factor: int = 3
+blob: bytes = b'\x01x'
+
+def repeat(value, count):
+    return value * count, count * value
+
+print(blob * factor, factor * blob)
+print(repeat(blob, factor))
+print(repeat(blob, -factor))

@@ -114,7 +114,7 @@ namespace Typhon.Compiler.Emit
             definition = null;
             if (DottedName(e) is not string name || IsLocal(name.Split('.')[0]) ||
                 !TryResolveType(name, 0, out _, out var cls) || cls == null ||
-                !(IsObjectIntegerEnum(cls) || cls.Bases.Any(basis => DottedName(basis) is "Enum" or "enum.Enum" or "IntEnum" or "enum.IntEnum")))
+                !(IsObjectIntegerEnum(cls) || IsPlainObjectEnum(cls) || cls.Bases.Any(basis => DottedName(basis) is "Enum" or "enum.Enum" or "IntEnum" or "enum.IntEnum")))
                 return null;
             definition = cls;
             return StdlibTypeCode(null, cls) ?? Esc(cls.Name);
@@ -124,7 +124,8 @@ namespace Typhon.Compiler.Emit
         {
             // for kind in Color: an Enum class iterates its members in definition order
             if (EnumIterated(e, out var enumClass) is string enumType)
-                return IsObjectIntegerEnum(enumClass) ? $"{enumType}._value2member_map_.Values" : $"global::System.Enum.GetValues<{enumType}>()";
+                return IsObjectIntegerEnum(enumClass) ? $"{enumType}._value2member_map_.Values" :
+                    IsPlainObjectEnum(enumClass) ? $"{enumType}.__unique_members" : $"global::System.Enum.GetValues<{enumType}>()";
             string code = EmitExpr(e);
             // iterating a str yields one-character strs
             if (e is ConstExpr sc && sc.Kind == ConstKind.Str || e is FStringExpr) return $"{Rt("chars")}({code})";
@@ -302,8 +303,9 @@ namespace Typhon.Compiler.Emit
                     else literal.Add($"({EmitValue(d.Keys[i])}, {EmitValue(d.Values[i])})");
                 }
                 Flush();
+                string boxedParts = string.Join(", ", parts.Select(part => $"(object?){Paren(part)}"));
                 if (DictTypes(expectedType) is List<string> expected)
-                    return $"{Rt("__dict_merge_as")}<{expected[0]}, {expected[1]}>({string.Join(", ", parts)})";
+                    return $"{Rt("__dict_merge_as")}<{expected[0]}, {expected[1]}>({boxedParts})";
                 // parts of different key/value types: merged into the unified types
                 var kts = new List<string>(); var vts = new List<string>();
                 for (int i = 0; i < d.Keys.Count; i++)
@@ -321,7 +323,7 @@ namespace Typhon.Compiler.Emit
                     return ImplicitDynamic(d, what);
                 }
                 if (kts.Distinct().Count() > 1 || vts.Distinct().Count() > 1 || kts.Contains(null) || vts.Contains(null))
-                    return $"{Rt("__dict_merge_as")}<{Unify(kts, "the key type of a merged dict")}, {Unify(vts, "the value type of a merged dict")}>({string.Join(", ", parts)})";
+                    return $"{Rt("__dict_merge_as")}<{Unify(kts, "the key type of a merged dict")}, {Unify(vts, "the value type of a merged dict")}>({boxedParts})";
                 return $"{Rt("__dict_merge")}({string.Join(", ", parts)})";
             }
             var boundMethods = d.Values.Select(value => ClassBodyMethod(value) is string method
@@ -332,8 +334,10 @@ namespace Typhon.Compiler.Emit
                 string key = DictTypes(InferType(d))?[0] ?? "dynamic";
                 return $"new OrderedDictionary<{key}, dynamic> {{ {string.Join(", ", d.Keys.Select((k, i) => $"[{DictionaryKey(k)}] = {boundMethods[i] ?? EmitLooseValue(d.Values[i])}"))} }}";
             }
-            if (targetTyped && d.Keys.Count > 0 && DictTypes(InferType(d)) is List<string> tdk && tdk[1].StartsWith(PyTuplePrefix))
-                return "new() { " + string.Join(", ", d.Keys.Select((k, i) => $"[{DictionaryKey(k, targetTyped: true)}] = {EmitAsPyTuple(d.Values[i], tdk[1])}")) + " }";
+            if (targetTyped && d.Keys.Count > 0 && DictTypes(expectedType ?? InferType(d)) is List<string> tdk)
+                return "new() { " + string.Join(", ", d.Keys.Select((k, i) =>
+                    $"[{DictionaryKey(k, targetTyped: true)}] = {TupleLiteralValue(d.Values[i], tdk[1]) ??
+                        (tdk[1] == "dynamic" ? EmitLooseValue(d.Values[i]) : EmitExpr(d.Values[i], targetTyped: true))}")) + " }";
             if (targetTyped)
                 return d.Keys.Count == 0 ? "new()" : "new() { " + string.Join(", ", d.Keys.Select((k, i) => $"[{DictionaryKey(k, targetTyped: true)}] = {EmitExpr(d.Values[i], targetTyped: true)}")) + " }";
             if (d.Keys.Count == 0)
@@ -406,7 +410,8 @@ namespace Typhon.Compiler.Emit
             if (targetElem == null) return EmitValue(elt);
             if (targetElem == "dynamic") return $"(dynamic){Paren(EmitValue(elt))}";
             if (elt is ComprehensionExpr inner) return EmitComprehension(inner, targetElem);
-            if (targetElem == "double" && IsIntegral(InferType(elt)) && InferType(elt) != TypeInference.BigInt) return $"(double){Paren(EmitValue(elt))}";
+            if (targetElem == "double" && IsIntegral(InferType(elt)))
+                return InferType(elt) == TypeInference.BigInt ? $"{Rt("@float")}((object){Paren(EmitValue(elt))})" : $"(double){Paren(EmitValue(elt))}";
             // [0] for a list[float] element: a list of the declared type (a collection expression has no type in a lambda)
             if (elt is ListExpr le && targetElem.StartsWith("List<") && targetElem.EndsWith(">") && !le.Elts.Any(x => x is StarredExpr))
                 return $"new {targetElem} {{ {string.Join(", ", le.Elts.Select(x => EmitElementAs(x, GenericArg(targetElem))))} }}";
@@ -489,6 +494,13 @@ namespace Typhon.Compiler.Emit
                 if (i == c.Generators.Count - 1)
                 {
                     string elt = c.Kind == ComprehensionKind.Dict ? $"({EmitValue(c.Elt)}, {EmitValue(c.ValueElt)})" : EmitElementAs(c.Elt, targetElem);
+                    if (c.Kind != ComprehensionKind.Dict && IsDynamicallyDispatched(c.Elt))
+                    {
+                        // LINQ infers dynamic from late argument dispatch even when the callable's result type is known.
+                        string projection = targetElem ?? PyType(InferType(c.Elt));
+                        if (!IsUnknownType(projection) && projection != "void")
+                            elt = $"({projection}){Paren(elt)}";
+                    }
                     result = $"{Paren(seq)}.Select({Lambda(elt)})";
                 }
                 else result = $"{Paren(seq)}.SelectMany({Lambda(Gen(i + 1))})";

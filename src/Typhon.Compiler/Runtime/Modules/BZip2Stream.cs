@@ -15,16 +15,17 @@ namespace Typhon.Runtime
         const int GroupSize = 50, MaxSelectors = 18002, MaxCodeLength = 20;
         static readonly uint[] CrcTable = BuildCrcTable();
         readonly Stream _source;
+        readonly bool _singleMember;
         byte[] _block = Array.Empty<byte>();
         int _offset, _blockSize, _bits;
         uint _bitBuffer, _streamCrc;
         long _position;
         bool _finished, _disposed;
 
-        public BZip2Stream(Stream source)
+        public BZip2Stream(Stream source, bool singleMember = false)
         {
             _source = source;
-            ReadHeader(first: true);
+            _singleMember = singleMember;
         }
 
         bool ReadHeader(bool first)
@@ -88,7 +89,7 @@ namespace Typhon.Runtime
                     return true;
                 }
                 if (marker != EndMarker || expectedCrc != _streamCrc) throw Invalid("invalid end-of-stream marker or checksum");
-                if (!ReadHeader(first: false)) return false;
+                if (_singleMember || !ReadHeader(first: false)) return false;
             }
         }
 
@@ -176,7 +177,7 @@ namespace Typhon.Runtime
             return written;
         }
 
-        static byte MoveToFront(byte[] items, int position)
+        internal static byte MoveToFront(byte[] items, int position)
         {
             byte value = items[position];
             Array.Copy(items, 0, items, 1, position);
@@ -220,9 +221,11 @@ namespace Typhon.Runtime
             void Emit(byte value)
             {
                 result.WriteByte(value);
-                crc = (crc << 8) ^ CrcTable[(crc >> 24) ^ value];
+                crc = UpdateCrc(crc, value);
             }
         }
+
+        internal static uint UpdateCrc(uint crc, byte value) => (crc << 8) ^ CrcTable[(crc >> 24) ^ value];
 
         static uint[] BuildCrcTable()
         {
@@ -276,13 +279,39 @@ namespace Typhon.Runtime
 
         static IOException Invalid(string reason) => new IOException("Invalid bzip2 data: " + reason);
 
+        internal bool HasBufferedOutput => _offset < _block.Length;
+
+        bool PrepareRead()
+        {
+            if (_finished) return false;
+            if (_blockSize == 0) ReadHeader(first: true);
+            if (HasBufferedOutput || ReadBlock()) return true;
+            _finished = true;
+            return false;
+        }
+
+        // A partial block can be retried when more compressed bytes arrive. Publish
+        // decompressed bytes only after the complete block and its checksum agree.
+        internal bool? PrepareAvailable()
+        {
+            if (_finished || HasBufferedOutput) return !_finished;
+            long start = _source.Position;
+            var state = (_blockSize, _bits, _bitBuffer, _streamCrc);
+            try { return PrepareRead(); }
+            catch (EndOfStreamException)
+            {
+                _source.Position = start;
+                (_blockSize, _bits, _bitBuffer, _streamCrc) = state;
+                return null;
+            }
+        }
+
         public override int Read(byte[] buffer, int offset, int count) => Read(buffer.AsSpan(offset, count));
 
         public override int Read(Span<byte> buffer)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            if (buffer.IsEmpty || _finished) return 0;
-            if (_offset == _block.Length && !ReadBlock()) { _finished = true; return 0; }
+            if (buffer.IsEmpty || !PrepareRead()) return 0;
             int count = Math.Min(buffer.Length, _block.Length - _offset);
             _block.AsSpan(_offset, count).CopyTo(buffer);
             _offset += count;

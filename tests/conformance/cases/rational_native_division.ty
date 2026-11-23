@@ -1,0 +1,8 @@
+from fractions import Fraction
+
+def half(x, width):
+    return x / width, width / x
+
+print(Fraction(3, 4) / 2, 2 / Fraction(3, 4))
+print(half(Fraction(3, 4), 2))
+print(half(Fraction(3, 4), 2.0))

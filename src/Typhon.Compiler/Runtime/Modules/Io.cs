@@ -69,6 +69,7 @@ namespace Typhon.Stdlib
         {
             bool _closed;
             public IOBase() { }
+            public void __init__() { } // The inherited Python object initializer accepts no extra arguments.
             public virtual bool closed => _closed;
             /// <summary>Flushes and closes; later operations raise ValueError. Closing twice does nothing.</summary>
             public virtual void close()
@@ -108,31 +109,33 @@ namespace Typhon.Stdlib
             {
                 if (size < 0) return readall();
                 var b = new PyByteArray(new byte[size]);
-                long n = readinto(b);
-                return new PyBytes(b.ToArray().AsSpan(0, (int)n).ToArray());
+                long? n = readinto(b);
+                return n.HasValue ? new PyBytes(b.ToArray().AsSpan(0, (int)n.Value).ToArray()) : null!;
             }
             public virtual PyBytes readall()
             {
-                var ms = new System.IO.MemoryStream();
+                using var ms = new System.IO.MemoryStream();
                 while (true)
                 {
                     var chunk = read(DEFAULT_BUFFER_SIZE);
+                    if (chunk == null)
+                        return ms.Length == 0 ? null! : new PyBytes(ms.ToArray());
                     if (chunk.Count == 0) break;
                     ms.Write(chunk.Data);
                 }
                 return new PyBytes(ms.ToArray());
             }
-            public virtual long readinto(PyByteArray b) => throw Unsupported("readinto");
+            public virtual long? readinto(PyByteArray b) => throw Unsupported("readinto");
             /// <summary>readinto(memoryview): read through a bytearray of the view's size, then fill the view.</summary>
-            public long readinto(global::memoryview m)
+            public long? readinto(global::memoryview m)
             {
                 var tmp = new PyByteArray(new byte[m.nbytes]);
-                long n = readinto(tmp);
-                m.Fill(tmp.ToArray().AsSpan(0, (int)n));
+                long? n = readinto(tmp);
+                if (n.HasValue) m.Fill(tmp.ToArray().AsSpan(0, (int)n.Value));
                 return n;
             }
-            public virtual long write(PyBytes b) => throw Unsupported("write");
-            public long write(PyByteArray b) => write(new PyBytes(b.ToArray()));
+            public virtual long? write(PyBytes b) => throw Unsupported("write");
+            public long? write(PyByteArray b) => write(new PyBytes(b.ToArray()));
             public virtual PyBytes readline(long size = -1) => StreamOps.ReadLine(this, size);
             public List<PyBytes> readlines(long hint = -1) => StreamOps.ReadLines(this, hint);
             public void writelines(IEnumerable lines) { foreach (var l in lines) write(new PyBytes(ByteOps.From(l))); }
@@ -198,8 +201,12 @@ namespace Typhon.Stdlib
         {
             readonly System.IO.MemoryStream _ms;
             public BytesIO() { _ms = new System.IO.MemoryStream(); }
-            public BytesIO(PyBytes? initial_bytes) { _ms = new System.IO.MemoryStream(); if (initial_bytes != null) { _ms.Write(initial_bytes.Data); _ms.Position = 0; } }
-            public BytesIO(PyByteArray initial_bytes) : this(new PyBytes(initial_bytes.ToArray())) { }
+            public BytesIO(object? initial_bytes) : this()
+            {
+                if (initial_bytes == null) return;
+                _ms.Write(ByteOps.Buffer(initial_bytes));
+                _ms.Position = 0;
+            }
             internal override System.IO.Stream? __stream => _ms;
             System.IO.MemoryStream S { get { _checkClosed(); return _ms; } }
             public PyBytes getvalue() => new PyBytes(S.ToArray());
@@ -278,8 +285,8 @@ namespace Typhon.Stdlib
             System.IO.Stream S { get { _checkClosed(); return _s; } }
             public override PyBytes read(long size = -1) => StreamOps.Read(S, size);
             public override PyBytes readall() => StreamOps.Read(S, -1);
-            public override long readinto(PyByteArray b) => StreamOps.ReadInto(S, b);
-            public override long write(PyBytes b) => StreamOps.Write(S, b.Data);
+            public override long? readinto(PyByteArray b) => StreamOps.ReadInto(S, b);
+            public override long? write(PyBytes b) => StreamOps.Write(S, b.Data);
             public override long seek(long offset, long whence = 0) => S.Seek(offset, StreamOps.Origin(whence));
             public override long tell() => S.Position;
             public override dynamic? truncate(long? size = null) { long n = size ?? S.Position; S.SetLength(n); return n; }
@@ -832,8 +839,9 @@ namespace Typhon.Runtime
     internal sealed class PyObjectStream : System.IO.Stream
     {
         readonly object _o;
+        readonly bool _leaveOpen;
         bool _disposed;
-        public PyObjectStream(object o) { _o = o; }
+        public PyObjectStream(object o, bool leaveOpen = false) { _o = o; _leaveOpen = leaveOpen; }
         bool Has(string name) => Builtins.hasattr(_o, name);
         dynamic? Invoke(string method, params object?[] arguments) =>
             Builtins.__invoke((object?)Builtins.getattr(_o, method), arguments);
@@ -848,7 +856,7 @@ namespace Typhon.Runtime
             if (_o is io.RawIOBase raw)
             {
                 var ba = new PyByteArray(new byte[count]);
-                long n = raw.readinto(ba);
+                long n = raw.readinto(ba) ?? 0;
                 var got = ba.ToArray();
                 Array.Copy(got, 0, buffer, offset, n);
                 return (int)n;
@@ -861,7 +869,7 @@ namespace Typhon.Runtime
         public override void Write(byte[] buffer, int offset, int count)
         {
             var data = new PyBytes(buffer.AsSpan(offset, count).ToArray());
-            if (_o is io.RawIOBase raw) { int done = 0; while (done < count) { long n = raw.write(new PyBytes(buffer.AsSpan(offset + done, count - done).ToArray())); if (n <= 0) break; done += (int)n; } }
+            if (_o is io.RawIOBase raw) { int done = 0; while (done < count) { long n = raw.write(new PyBytes(buffer.AsSpan(offset + done, count - done).ToArray())) ?? 0; if (n <= 0) break; done += (int)n; } }
             else if (_o is io.BufferedIOBase bb) bb.write(data);
             else Invoke("write", data);
         }
@@ -873,7 +881,7 @@ namespace Typhon.Runtime
             if (disposing && !_disposed)
             {
                 _disposed = true;
-                if (Has("close")) Invoke("close");
+                if (!_leaveOpen && Has("close")) Invoke("close");
             }
             base.Dispose(disposing);
         }

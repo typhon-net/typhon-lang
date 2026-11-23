@@ -156,16 +156,18 @@ namespace Typhon.Runtime
             };
         }
 
-        /// <summary>Two numbers where one is a float and the other may be a BigInteger (no .NET operator mixes them): compared as numbers.</summary>
-        static bool MixedNumbers(object? a, object? b, out int cmp)
+        static bool MixedNumbers(object? a, object? b, out int? order)
         {
-            cmp = 0;
-            if (a is null || b is null || !(a is BigInteger || b is BigInteger) || !(a is BigInteger || IsNumber(a)) || !(b is BigInteger || IsNumber(b))) return false;
-            if (!(a is double || a is float || a is decimal) && !(b is double || b is float || b is decimal)) { cmp = ToBig(a).CompareTo(ToBig(b)); return true; }
-            cmp = ToDoubleAny(a).CompareTo(ToDoubleAny(b));
-            return true;
+            if (a is BigInteger left) return OrderInteger(left, b, out order);
+            if (b is BigInteger right && OrderInteger(right, a, out order))
+            {
+                order = -order;
+                return true;
+            }
+            order = null;
+            return false;
         }
-        static BigInteger ToBig(object o) => o is BigInteger b ? b : o is bool f ? (f ? 1 : 0) : new BigInteger(Convert.ToInt64(o, Inv));
+
         static double ToDoubleAny(object o) => o is BigInteger b ? (double)b : o is bool f ? (f ? 1 : 0) : Convert.ToDouble(o, Inv);
 
         /// <summary>Hashing and equality like Python's for values of mixed static types (1, 1.0 and True are one key).</summary>
@@ -227,22 +229,22 @@ namespace Typhon.Runtime
         public static bool gt(string a, string b) => string.CompareOrdinal(a, b) > 0;
         public static bool ge(string a, string b) => string.CompareOrdinal(a, b) >= 0;
         public static dynamic lt(object? a, object? b) => CompareDictSetViews(a, b, "<") is bool view ? view :
-            MixedNumbers(a, b, out int __c) ? __c < 0 : PyOrdered(a) || PyOrdered(b) ?
+            MixedNumbers(a, b, out int? __c) ? __c < 0 : PyOrdered(a) || PyOrdered(b) ?
                 (IsSet(a!) ? SetLe(a, b) && !eq(a, b) : compare(a, b) < 0) :
             TryRichComparison(a, b, "__lt__", "__gt__", "<", out var result) ? result! :
             TryIntegerEnumOrder(a, b, out var order) ? order < 0 : (dynamic)a! < (dynamic)b!;
         public static dynamic le(object? a, object? b) => CompareDictSetViews(a, b, "<=") is bool view ? view :
-            MixedNumbers(a, b, out int __c) ? __c <= 0 : PyOrdered(a) || PyOrdered(b) ?
+            MixedNumbers(a, b, out int? __c) ? __c <= 0 : PyOrdered(a) || PyOrdered(b) ?
                 (IsSet(a!) ? SetLe(a, b) : compare(a, b) <= 0) :
             TryRichComparison(a, b, "__le__", "__ge__", "<=", out var result) ? result! :
             TryIntegerEnumOrder(a, b, out var order) ? order <= 0 : (dynamic)a! <= (dynamic)b!;
         public static dynamic gt(object? a, object? b) => CompareDictSetViews(a, b, ">") is bool view ? view :
-            MixedNumbers(a, b, out int __c) ? __c > 0 : PyOrdered(a) || PyOrdered(b) ?
+            MixedNumbers(a, b, out int? __c) ? __c > 0 : PyOrdered(a) || PyOrdered(b) ?
                 (IsSet(a!) ? SetLe(b, a) && !eq(a, b) : compare(a, b) > 0) :
             TryRichComparison(a, b, "__gt__", "__lt__", ">", out var result) ? result! :
             TryIntegerEnumOrder(a, b, out var order) ? order > 0 : (dynamic)a! > (dynamic)b!;
         public static dynamic ge(object? a, object? b) => CompareDictSetViews(a, b, ">=") is bool view ? view :
-            MixedNumbers(a, b, out int __c) ? __c >= 0 : PyOrdered(a) || PyOrdered(b) ?
+            MixedNumbers(a, b, out int? __c) ? __c >= 0 : PyOrdered(a) || PyOrdered(b) ?
                 (IsSet(a!) ? SetLe(b, a) : compare(a, b) >= 0) :
             TryRichComparison(a, b, "__ge__", "__le__", ">=", out var result) ? result! :
             TryIntegerEnumOrder(a, b, out var order) ? order >= 0 : (dynamic)a! >= (dynamic)b!;
@@ -265,6 +267,13 @@ namespace Typhon.Runtime
             if (other is PyIntegerEnum member) { order = integer.CompareTo(member.Integer); return true; }
             if (other is BigInteger wide) { order = integer.CompareTo(wide); return true; }
             if (IntLike(other!, out long small)) { order = integer.CompareTo(small); return true; }
+            if (other is decimal exact)
+            {
+                decimal wholePart = decimal.Truncate(exact);
+                int compared = integer.CompareTo(new BigInteger(wholePart));
+                order = compared == 0 ? wholePart.CompareTo(exact) : compared;
+                return true;
+            }
             double? real = other switch { double value => value, float value => value, _ => null };
             order = null;
             if (real is not double number) return false;

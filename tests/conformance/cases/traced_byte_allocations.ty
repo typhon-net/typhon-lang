@@ -1,0 +1,16 @@
+#:pylib-source tracemalloc
+import tracemalloc
+
+tracemalloc.start(3)
+tracemalloc.clear_traces()
+before, _ = tracemalloc.get_traced_memory()
+block = bytearray(8192)
+current, peak = tracemalloc.get_traced_memory()
+print(tracemalloc.is_tracing(), tracemalloc.get_traceback_limit())
+print(current - before >= 8192, peak >= current)
+trace = tracemalloc.get_object_traceback(block)
+print(trace is not None, trace[-1].filename == __file__, trace[-1].lineno > 0)
+snapshot = tracemalloc.take_snapshot()
+print(bool(snapshot.traces), sum(item.size for item in snapshot.statistics("lineno")) >= len(block))
+tracemalloc.stop()
+print(tracemalloc.is_tracing(), tracemalloc.get_traced_memory(), tracemalloc.get_object_traceback(block))

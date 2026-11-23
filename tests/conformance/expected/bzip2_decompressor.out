@@ -1,0 +1,7 @@
+b'' True False
+b'' False False
+b'a' False False
+b'bc' False True b'other'
+finished
+truncated
+b'abcabc'

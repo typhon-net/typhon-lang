@@ -1,0 +1,4 @@
+head|b|c|d|e|f|g
+('head', ('b', 'c', 'd', 'e', 'f', 'g'))
+head|c|d
+head|b|c|d

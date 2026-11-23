@@ -1,0 +1,21 @@
+#:pylib-source shutil
+import os
+import shutil
+import tempfile
+
+with tempfile.TemporaryDirectory() as parent:
+    src = os.path.join(parent, "source")
+    dst = os.path.join(parent, "copied")
+    os.mkdir(src)
+    with open(os.path.join(src, "first.txt"), "w") as target:
+        target.write("keep me\n")
+    with open(os.path.join(src, "skip.tmp"), "w") as target:
+        target.write("skip me\n")
+    print(shutil.copytree(src, dst, ignore=shutil.ignore_patterns("*.tmp")) == dst)
+    print(sorted(os.listdir(dst)))
+    with open(os.path.join(dst, "first.txt")) as original:
+        print(original.read().strip())
+    renamed = os.path.join(parent, "moved")
+    print(shutil.move(dst, renamed) == renamed, os.path.isdir(renamed))
+    shutil.rmtree(renamed)
+    print(os.path.exists(renamed), os.path.exists(src))

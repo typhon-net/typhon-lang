@@ -1,0 +1,22 @@
+import codecs
+import unicodedata
+
+error = UnicodeEncodeError("ascii", "aé😀", 1, 3, "bad")
+for name in ("ignore", "replace", "xmlcharrefreplace", "backslashreplace", "namereplace"):
+    callback = codecs.lookup_error(name)
+    print(callback(error))
+print(codecs.lookup_error("replace")(UnicodeDecodeError("utf-8", b"\xff\xfe", 0, 2, "bad")))
+print(repr(codecs.lookup_error("surrogateescape")(UnicodeDecodeError("utf-8", b"\xff\xfe", 0, 2, "bad"))))
+print(codecs.lookup_error("surrogatepass")(UnicodeEncodeError("utf-8", "\udcff", 0, 1, "bad")))
+print(repr(codecs.lookup_error("surrogatepass")(UnicodeDecodeError("utf-16-le", b"\xff\xdc", 0, 2, "bad"))))
+try:
+    codecs.lookup_error("strict")(error)
+except UnicodeEncodeError as received:
+    print(received is error)
+
+def user_handler(received):
+    return ("user", received.end)
+
+codecs.register_error("typhon_fixture", user_handler)
+print(codecs.lookup_error("typhon_fixture")(error))
+print(unicodedata.name("飛"), unicodedata.name("힣"), unicodedata.name("\x00", "unnamed"))

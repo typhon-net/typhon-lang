@@ -31,6 +31,7 @@ namespace Typhon.Compiler.Emit
         public Scope Parent;
         public LocalsResult Locals;
         public readonly HashSet<string> Params = new HashSet<string>();
+        public HashSet<string> ClassDefaultParameters;
         public readonly Dictionary<string, string> Types = new Dictionary<string, string>();
         /// <summary>Nested functions used as values and the locals that hold their Python function objects.</summary>
         public readonly Dictionary<string, string> LocalFunctionObjects = new Dictionary<string, string>();

@@ -19,6 +19,9 @@ namespace Typhon.Runtime
 
     internal abstract class PyIntegerFlag : PyIntegerEnum, IEnumerable<PyIntegerFlag>, IPyLen
     {
+        protected PyIntegerFlag() { }
+        protected PyIntegerFlag(string? name, BigInteger integer) : base(name, integer) { }
+
         const BindingFlags StaticMembers = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
         static readonly ConditionalWeakTable<Type, ConcurrentDictionary<BigInteger, PyIntegerFlag>> Combinations = new();
 
@@ -33,10 +36,11 @@ namespace Typhon.Runtime
 
         static IEnumerable<PyIntegerFlag> NamedMembers(IDictionary members) => members.Values.Cast<PyIntegerFlag>();
 
-        static bool IsSingleBit(BigInteger bits) => bits.Sign > 0 && (bits & (bits - 1)).IsZero;
+        internal static bool IsSingleBit(BigInteger bits) => bits.Sign > 0 && (bits & (bits - 1)).IsZero;
 
         internal static PyIntegerFlag FromValue(Type type, BigInteger value)
         {
+            if (type is PyIntEnumType created) return created.FlagValue(value);
             IDictionary members = Members(type);
             if (members[value] is PyIntegerFlag named) return named;
 
@@ -44,22 +48,29 @@ namespace Typhon.Runtime
             if (type.GetField("__enum_complete", StaticMembers)?.GetValue(null) is not true)
                 return (PyIntegerFlag)Allocate(type, value);
 
-            if (value.Sign < 0)
+            value = NormalizeBits(value, NamedMembers(members));
+            if (members[value] is PyIntegerFlag normalized) return normalized;
+            return Combinations.GetOrCreateValue(type).GetOrAdd(value, bits =>
             {
-                BigInteger mask = NamedMembers(members).Aggregate(BigInteger.Zero, (bits, member) => bits | member.Integer);
-                int width = checked((int)Math.Max(mask.GetBitLength(), BigInteger.Abs(value).GetBitLength()));
-                value += BigInteger.One << width;
-                if (members[value] is PyIntegerFlag normalized) return normalized;
-            }
-            return Combinations.GetOrCreateValue(type).GetOrAdd(value, bits => CombineMembers(type, members, bits));
+                var flag = (PyIntegerFlag)Allocate(type, bits);
+                flag._name_ = CombinationName(NamedMembers(members), bits);
+                return flag;
+            });
         }
 
-        static PyIntegerFlag CombineMembers(Type type, IDictionary members, BigInteger bits)
+        internal static BigInteger NormalizeBits(BigInteger value, IEnumerable<PyIntegerFlag> members)
         {
-            var flag = (PyIntegerFlag)Allocate(type, bits);
+            if (value.Sign >= 0) return value;
+            BigInteger mask = members.Aggregate(BigInteger.Zero, (bits, member) => bits | member.Integer);
+            int width = checked((int)Math.Max(mask.GetBitLength(), BigInteger.Abs(value).GetBitLength()));
+            return value + (BigInteger.One << width);
+        }
+
+        internal static string? CombinationName(IEnumerable<PyIntegerFlag> members, BigInteger bits)
+        {
             var names = new List<string>();
             BigInteger covered = BigInteger.Zero;
-            var descriptors = NamedMembers(members).Where(member => member.Integer.Sign > 0 &&
+            var descriptors = members.Where(member => member.Integer.Sign > 0 &&
                 (member.Integer & bits) == member.Integer).OrderBy(member => !IsSingleBit(member.Integer));
             foreach (var member in descriptors)
             {
@@ -69,31 +80,36 @@ namespace Typhon.Runtime
             }
             BigInteger unknown = bits ^ covered;
             if (names.Count > 0 && !unknown.IsZero) names.Add(unknown.ToString(CultureInfo.InvariantCulture));
-            flag._name_ = names.Count == 0 ? null : string.Join("|", names);
-            return flag;
+            return names.Count == 0 ? null : string.Join("|", names);
         }
+
+        Type FlagType => DynamicEnumType ?? GetType();
 
         public bool __contains__(object? other)
         {
-            if (other is not PyIntegerFlag flag || flag.GetType() != GetType())
+            if (other is not PyIntegerFlag flag || flag.FlagType != FlagType)
                 throw new InvalidCastException($"unsupported operand for 'in': '{Builtins.PyTypeName(other?.GetType() ?? typeof(object))}'");
             return (Integer & flag.Integer) == flag.Integer;
         }
 
         public long __len__() => checked((long)BigInteger.PopCount(Integer));
-        public IEnumerator<PyIntegerFlag> GetEnumerator() => NamedMembers(Members(GetType()))
+        public IEnumerator<PyIntegerFlag> GetEnumerator() => (DynamicEnumType?.FlagMembers ?? NamedMembers(Members(GetType())))
             .Where(member => IsSingleBit(member.Integer) && (member.Integer & Integer) == member.Integer).GetEnumerator();
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 
         public static PyIntegerFlag operator |(PyIntegerFlag left, PyIntegerFlag right) => left | right.Integer;
-        public static PyIntegerFlag operator |(PyIntegerFlag left, BigInteger right) => FromValue(left.GetType(), left.Integer | right);
+        public static PyIntegerFlag operator |(PyIntegerFlag left, BigInteger right) => FromValue(left.FlagType, left.Integer | right);
         public static PyIntegerFlag operator |(BigInteger left, PyIntegerFlag right) => right | left;
         public static PyIntegerFlag operator &(PyIntegerFlag left, PyIntegerFlag right) => left & right.Integer;
-        public static PyIntegerFlag operator &(PyIntegerFlag left, BigInteger right) => FromValue(left.GetType(), left.Integer & right);
+        public static PyIntegerFlag operator &(PyIntegerFlag left, BigInteger right) => FromValue(left.FlagType, left.Integer & right);
         public static PyIntegerFlag operator &(BigInteger left, PyIntegerFlag right) => right & left;
         public static PyIntegerFlag operator ^(PyIntegerFlag left, PyIntegerFlag right) => left ^ right.Integer;
-        public static PyIntegerFlag operator ^(PyIntegerFlag left, BigInteger right) => FromValue(left.GetType(), left.Integer ^ right);
+        public static PyIntegerFlag operator ^(PyIntegerFlag left, BigInteger right) => FromValue(left.FlagType, left.Integer ^ right);
         public static PyIntegerFlag operator ^(BigInteger left, PyIntegerFlag right) => right ^ left;
-        public static PyIntegerFlag operator ~(PyIntegerFlag value) => FromValue(value.GetType(), ~value.Integer);
+        public static PyIntegerFlag operator ~(PyIntegerFlag value) => FromValue(value.FlagType, ~value.Integer);
+    }
+    internal sealed class PyIntFlagMember(PyIntEnumType owner, string? name, BigInteger value) : Typhon.Stdlib.@enum.IntFlag(name, value)
+    {
+        internal override PyIntEnumType DynamicEnumType => owner;
     }
 }

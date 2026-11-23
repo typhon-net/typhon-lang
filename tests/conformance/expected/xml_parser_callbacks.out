@@ -1,0 +1,7 @@
+entity greeting 0 hello
+start root {'a': 'b'} 2
+start empty {} 2
+end empty 2
+end root 2
+1
+hello False

@@ -1,0 +1,7 @@
+def put() -> dict[str, tuple[str, ...]]:
+    book: dict[str, tuple[str, ...]] = {"one": ("x", "y")}
+    book["two"] = ("z",)
+    book["one"] = ("a", "b")
+    return book
+
+print(put())

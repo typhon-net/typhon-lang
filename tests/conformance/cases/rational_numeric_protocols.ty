@@ -1,0 +1,21 @@
+# typhon: int=bigint
+from fractions import Fraction
+to_float = float
+to_int = int
+print(to_int(Fraction(-7, 3)), to_float(Fraction(3, 8)))
+huge = 10 ** 400
+print(to_float(Fraction(huge + 1, huge - 1)))
+print((huge + 1) / (huge - 1), 1 / (1 << 1074), -1 / (1 << 1075))
+print(huge.as_integer_ratio() == (huge, 1))
+try:
+    to_float(Fraction(huge, 1))
+except OverflowError:
+    print('too large')
+print(Fraction(3, 4) / 2, 2 / Fraction(3, 4))
+print(Fraction(3, 4) / Fraction(2, 3))
+print(Fraction(3, 4) / 2.0, 0.5 / Fraction(2, 3))
+
+def mixed(x, y):
+    return x - y, y - x, x + y, y * x
+
+print(mixed(10, 3.5))

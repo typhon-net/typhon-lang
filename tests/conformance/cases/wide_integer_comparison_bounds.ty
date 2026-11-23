@@ -1,0 +1,13 @@
+def compare(value: int, real: float) -> tuple:
+    return (-1 << 63 <= value < 1 << 64, value < 1 << 63, 1 << 64 == value,
+            (1 << 64) + 1 > real, real == 1 << 64, 1 << 64 < float('inf'),
+            1 << 64 > float('nan'))
+
+print(compare(6, float(2) ** 64))
+print(compare(-7, float('nan')))
+
+try:
+    stored = 1 << 64
+    print(stored.bit_length())
+except OverflowError:
+    print(65)

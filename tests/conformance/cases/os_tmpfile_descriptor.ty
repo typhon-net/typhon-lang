@@ -1,0 +1,23 @@
+import os
+import tempfile
+
+with tempfile.TemporaryDirectory() as directory:
+    flag = getattr(os, "O_TMPFILE", 0)
+    descriptor = None
+    if flag:
+        try:
+            descriptor = os.open(directory, flag | os.O_RDWR, 0o600)
+        except OSError:
+            pass
+    if descriptor is not None:
+        with os.fdopen(descriptor, "w+b") as stream:
+            print(stream.write(b"typhon"))
+            stream.seek(0)
+            print(stream.read())
+        print(os.listdir(directory))
+    else:
+        with tempfile.TemporaryFile(dir=directory) as stream:
+            print(stream.write(b"typhon"))
+            stream.seek(0)
+            print(stream.read())
+        print(os.listdir(directory))

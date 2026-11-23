@@ -1,0 +1,9 @@
+# typhon: int=bigint
+from io import BytesIO
+from typing import Any
+
+def move(stream: Any, offset: Any):
+    stream.seek(offset, 2)
+    return stream.read(2)
+
+print(move(BytesIO(b'abcdef'), -3))

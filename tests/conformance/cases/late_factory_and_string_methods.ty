@@ -1,0 +1,13 @@
+import itertools
+
+factory = getattr(itertools, "chain")
+create = getattr(factory, "from_iterable")
+print(list(create([[1, 2], [], [3]])), create.__name__)
+
+separator = getattr("--", "join")
+print(separator(iter(["one", "two"])))
+print(separator("abc"))
+try:
+    separator(["one", 2])
+except TypeError as error:
+    print(error)

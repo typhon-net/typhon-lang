@@ -1,0 +1,19 @@
+class Factory:
+    def acquire():
+        return "ready"
+
+    @classmethod
+    def from_class(cls):
+        return getattr(cls, "acquire")()
+
+print(Factory.acquire(), Factory.from_class())
+factory = Factory()
+for method in (factory.acquire, getattr(factory, "acquire")):
+    try:
+        method()
+    except TypeError as error:
+        print(type(error).__name__)
+try:
+    factory.acquire()
+except TypeError as error:
+    print(type(error).__name__)

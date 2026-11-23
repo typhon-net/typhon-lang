@@ -1,0 +1,5 @@
+Format.XML 5 <Format.BINARY: 6>
+True True
+['XML', 'BINARY']
+['XML', 'BINARY'] __main__
+State.unknown True ['unknown', 'first']

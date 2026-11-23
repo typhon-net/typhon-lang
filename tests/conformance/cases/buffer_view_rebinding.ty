@@ -1,0 +1,12 @@
+import io
+
+class Buffered(io.BufferedIOBase):
+    def write(self, data):
+        if isinstance(data, (bytes, bytearray)):
+            length = len(data)
+        else:
+            data = memoryview(data)
+            length = data.nbytes
+        return length
+
+print(Buffered().write(b"abc"))

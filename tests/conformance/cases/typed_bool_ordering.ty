@@ -1,0 +1,5 @@
+def compare(left: bool, right: bool, integer: int, real: float) -> tuple:
+    return (left < right, right > integer, integer <= right, left >= real, real > left)
+
+print(compare(False, True, 0, 0.5))
+print(compare(True, False, 1, 0.5))

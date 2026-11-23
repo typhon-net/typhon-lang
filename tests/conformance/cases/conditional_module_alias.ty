@@ -1,0 +1,12 @@
+import sys
+
+if sys.platform == "win32":
+    import ntpath as path
+else:
+    import posixpath as path
+
+def use_path():
+    return path.basename("dir/file.txt") == "file.txt"
+
+print(use_path(), path is sys.modules[path.__name__])
+print(path.__name__ == ("ntpath" if sys.platform == "win32" else "posixpath"))

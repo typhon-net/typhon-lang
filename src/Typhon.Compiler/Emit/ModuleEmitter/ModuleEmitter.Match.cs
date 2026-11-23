@@ -45,7 +45,13 @@ namespace Typhon.Compiler.Emit
             return ps.Count == 0 ? "true" : string.Join(" && ", ps.Select(x => x.Contains("||") && !(x.StartsWith("(") && x.EndsWith(")")) ? "(" + x + ")" : x));
         }
 
-        string Bind(string name, string value) => $"((bool){Rt("__bind")}(out {EmitName(new NameExpr { Id = name })}, {value}))";
+        string Bind(string name, string value)
+        {
+            string target = EmitName(new NameExpr { Id = name });
+            if (!IsLocal(name) && _lateModuleFields.Contains(name))
+                return $"(({target} = (object?){Paren(value)}) is var _)";
+            return $"((bool){Rt("__bind")}(out {target}, {value}))";
+        }
 
         static readonly HashSet<string> PrimitiveCsTypes = new HashSet<string> { "long", "int", "double", "float", "bool", "string", "char", "decimal" };
 

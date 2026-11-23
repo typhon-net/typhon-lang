@@ -44,6 +44,11 @@ namespace Typhon.Compiler.Emit
         /// Result types of standard-library functions whose C# signatures are generic (the element type follows the argument):
         /// permutations(xs) → tuples of xs's elements, product(a, b) → (A, B) pairs, Counter(xs) → a Counter of xs's elements, ...
         /// </summary>
+        bool IsTypeAccumulator(Expr expression) =>
+            expression is NameExpr name && BuiltinTypeValue(name) != null ||
+            InferType(expression) is "System.Type" or "global::System.Type" ||
+            ModuleOrClassValue(expression)?.StartsWith("typeof(", StringComparison.Ordinal) == true;
+
         string StdlibCallType(CallExpr call)
         {
             string module = StdlibModuleOf(call, out string name);
@@ -64,11 +69,12 @@ namespace Typhon.Compiler.Emit
                 case "Typhon.Stdlib.itertools.combinations_with_replacement": case "Typhon.Stdlib.itertools.batched":
                     return Wrap(Elem(0), "IEnumerable<global::Typhon.Runtime.PyTuple<{0}>>");
                 case "Typhon.Stdlib.itertools.product":
-                    if (call.Args.Any(a => a.Name == "repeat") || pos.Count > 3) return Wrap(Elem(0), "IEnumerable<global::Typhon.Runtime.PyTuple<{0}>>");
+                    if (call.Args.Any(a => a.Star || a.DoubleStar || a.Name != null)) return "dynamic";
+                    if (pos.Count > 3) return Wrap(Elem(0), "IEnumerable<global::Typhon.Runtime.PyTuple<{0}>>");
                     var es = Enumerable.Range(0, pos.Count).Select(Elem).ToList();
                     return es.Count >= 2 && es.All(e => e != null && e != TypeInference.Pending) ? $"IEnumerable<({string.Join(", ", es)})>" : es.Contains(TypeInference.Pending) ? TypeInference.Pending : null;
                 case "Typhon.Stdlib.itertools.count":
-                    return pos.Any(p => InferType(p) == "double") ? "IEnumerable<double>" : $"IEnumerable<{IntT}>";
+                    return call.Args.Any(argument => InferType(argument.Value) == "double") ? "IEnumerable<double>" : $"IEnumerable<{IntT}>";
                 case "Typhon.Stdlib.itertools.chain":
                     return $"global::Typhon.Runtime.PyIterator<{(pos.Count == call.Args.Count ? ChainElementType(pos) : "dynamic")}>";
                 case "Typhon.Stdlib.itertools.cycle": case "Typhon.Stdlib.itertools.islice": case "Typhon.Stdlib.itertools.accumulate":
@@ -78,11 +84,16 @@ namespace Typhon.Compiler.Emit
                 case "Typhon.Stdlib.itertools.compress": return Wrap(Elem(0), "IEnumerable<{0}>");
                 case "Typhon.Stdlib.itertools.pairwise": return Wrap(Elem(0), "IEnumerable<({0}, {0})>");
                 case "Typhon.Stdlib.itertools.repeat": return pos.Count > 0 ? Wrap(PyType(InferType(pos[0])), "IEnumerable<{0}>") : null;
-                case "Typhon.Stdlib.itertools.groupby": return pos.Count == 1 ? Wrap(Elem(0), "IEnumerable<({0}, List<{0}>)>") : null;
+                case "Typhon.Stdlib.itertools.groupby":
+                    if (pos.Count != 1 || call.Args.Count != 1) return "dynamic";
+                    return Wrap(InferType(pos[0]) == "string" ? "string" : Elem(0),
+                        "global::Typhon.Runtime.PyIterator<({0}, global::Typhon.Runtime.PyIterator<{0}>)>");
                 case "Typhon.Stdlib.collections.Counter": return Wrap(pos.Count == 1 && InferType(pos[0]) == "string" ? "string" : Elem(0), "global::Typhon.Runtime.Counter<{0}>");
                 case "Typhon.Stdlib.collections.deque": return pos.Count >= 1 ? Wrap(InferType(pos[0]) == "string" ? "string" : Elem(0), "global::Typhon.Runtime.deque<{0}>") : null;
                 case "Typhon.Stdlib.functools.reduce":
-                    return pos.Count == 3 ? PyType(InferType(pos[2])) : Elem(1);
+                    var initial = call.Args.FirstOrDefault(argument => argument.Name == "initial")?.Value
+                        ?? (pos.Count == 3 ? pos[2] : null);
+                    return initial == null ? Elem(1) : IsTypeAccumulator(initial) ? "dynamic" : PyType(InferType(initial));
                 case "Typhon.Stdlib.re.compile":
                 {
                     var pattern = FirstArg("pattern");

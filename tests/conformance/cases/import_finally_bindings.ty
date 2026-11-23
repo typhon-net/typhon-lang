@@ -1,0 +1,15 @@
+def choose():
+    events: list[str] = []
+    found = True
+    try:
+        import typhon_optional_provider_missing as reader
+        errors = (reader.error,)
+    except ModuleNotFoundError:
+        found = False
+    finally:
+        events.append("complete")
+    if found:
+        return reader, errors
+    return events
+
+print(choose())

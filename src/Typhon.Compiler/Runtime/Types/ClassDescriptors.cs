@@ -22,7 +22,7 @@ namespace Typhon.Runtime
             BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.DeclaredOnly)!;
     }
 
-    internal enum PyDescriptorKind { Property, StaticMethod, ClassMethod, CachedProperty, NamedTupleField }
+    internal enum PyDescriptorKind { Property, StaticMethod, ClassMethod, CachedProperty, NamedTupleField, ZeroParameterFunction }
 
     [AttributeUsage(AttributeTargets.Method | AttributeTargets.Property, Inherited = false)]
     internal sealed class PyDescriptorAttribute(PyDescriptorKind kind, string? getter = null, int index = -1) : Attribute
@@ -177,7 +177,7 @@ namespace Typhon.Runtime
             return false;
         }
 
-        internal static bool TryGetAttribute(Type type, string name, out object? value, bool instance = false)
+        internal static bool TryGetAttribute(Type type, string name, out object? value, object? instance = null)
         {
             for (Type? declaration = type; declaration != null; declaration = declaration.BaseType)
             {
@@ -186,7 +186,7 @@ namespace Typhon.Runtime
                 if (!ns.TryRead(name, out var binding)) continue;
                 if (ns.Descriptors.TryGetValue(name, out value))
                 {
-                    if (instance && value is not builtins.MethodDescriptor) break;
+                    if (instance != null && value is not builtins.MethodDescriptor) break;
                     value = value switch
                     {
                         builtins.staticmethod method => method.__get__(null, type),
@@ -195,7 +195,15 @@ namespace Typhon.Runtime
                     };
                     return true;
                 }
-                if (instance) break;
+                if (instance != null)
+                {
+                    if (ns.ZeroParameterFunctions.Contains(name) && binding != null)
+                    {
+                        value = new types.MethodType(binding, instance);
+                        return true;
+                    }
+                    break;
+                }
                 value = PyMetaclasses.Bind(binding, null, type);
                 return true;
             }
@@ -269,6 +277,7 @@ namespace Typhon.Runtime
             readonly Dictionary<string, Func<object?>> _bindings = new(StringComparer.Ordinal);
             readonly OrderedDictionary<string, object?> _added = new(StringComparer.Ordinal);
             internal readonly Dictionary<string, object?> Descriptors = new(StringComparer.Ordinal);
+            internal readonly HashSet<string> ZeroParameterFunctions = new(StringComparer.Ordinal);
 
             internal ClassNamespace(Type type)
             {
@@ -341,6 +350,12 @@ namespace Typhon.Runtime
                         var implementations = type.GetMethods(Declared).Where(m => m.Name == spec.Getter).ToArray();
                         AddDescriptor(method.Name, new builtins.classmethod(Callable(type, method.Name, metadata, method,
                             (a, kw) => Invoke(implementations, method.Name, null, a, kw))));
+                    }
+                    else if (spec?.Kind == PyDescriptorKind.ZeroParameterFunction)
+                    {
+                        ZeroParameterFunctions.Add(method.Name);
+                        _bindings[method.Name] = Bind(Callable(type, method.Name, metadata, method,
+                            (arguments, keywords) => Invoke(methods, method.Name, null, arguments, keywords)));
                     }
                     else
                         _bindings[method.Name] = Bind(InstanceFunction(type, method.Name, methods, metadata));

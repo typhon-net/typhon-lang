@@ -53,6 +53,9 @@ namespace Typhon.Stdlib
             public string east_asian_width(string chr) => Properties(chr).Width;
             public long mirrored(string chr) => Properties(chr).Mirrored;
             public string decomposition(string chr) => Data.Decompositions.GetValueOrDefault(Codepoint(chr), "");
+            public string name(string chr) => CharacterName(chr) ?? throw new ArgumentException("no such name");
+            public dynamic? name(string chr, object? @default) => (object?)CharacterName(chr) ?? @default;
+            string? CharacterName(string chr) => (unidata_version == "3.2.0" ? LegacyCharacterNames : Names).Value.NameOf(Codepoint(chr));
 
             public long @decimal(string chr) => Numbers(chr) is Numbers { Decimal: >= 0 } value
                 ? value.Decimal : throw new ArgumentException("not a decimal");

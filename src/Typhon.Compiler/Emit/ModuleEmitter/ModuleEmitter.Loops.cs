@@ -199,6 +199,7 @@ namespace Typhon.Compiler.Emit
             string iterType = f.IsAsync ? null : InferType(f.Iter);
             // (items unpacked into names: only items C# can deconstruct, not late-bound ones)
             if (!traced && iterType != null && iterType.StartsWith("List<") &&
+                !IsDynamicallyDispatched(f.Iter) &&
                 (f.Target is NameExpr || f.Target is TupleExpr tt0 && tt0.Elts.Count >= 2 &&
                  tt0.Elts.All(e => e is NameExpr) && !IsUnknownType(ElementTypeOf(iterType)) &&
                  !NeedsLateUnpackRebinding(tt0.Elts, ElementTypeOf(iterType), f)))
@@ -248,7 +249,8 @@ namespace Typhon.Compiler.Emit
                     string wider = ConflictType(n.Id);
                     SetType(n.Id, wider ?? loopType);
                     _w.Line($"{kw} (var {item} in {iter})");
-                    EmitBlock(f.Body, $"{wider ?? "var"} {Esc(n.Id)} = {item};");
+                    string storage = wider ?? (loopType == "dynamic" ? "dynamic" : "var");
+                    EmitBlock(f.Body, $"{storage} {Esc(n.Id)} = {item};");
                 }
                 else if (IsInline(f, n.Id)) { SetType(n.Id, loopType); _w.Line($"{kw} (var {Esc(n.Id)} in {iter})"); EmitBlock(f.Body); }
                 else

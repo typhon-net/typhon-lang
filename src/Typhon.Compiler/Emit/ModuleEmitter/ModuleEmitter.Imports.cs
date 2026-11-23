@@ -215,12 +215,14 @@ namespace Typhon.Compiler.Emit
             return Enumerable.Empty<ModuleInfo>();
         }
 
+        static bool IsPlatformModule(string name) => name is "termios" or "msvcrt" or "posix" or "nt" or "_winapi";
+
         IEnumerable<string> PlatformModules(Stmt statement)
         {
             if (statement is ImportStmt direct)
-                return direct.Names.Select(alias => alias.Name).Where(name => name is "termios" or "msvcrt" && ResolvePsModule(name) == null);
+                return direct.Names.Select(alias => alias.Name).Where(name => IsPlatformModule(name) && ResolvePsModule(name) == null);
             if (statement is ImportFromStmt from && _m.ResolveImport(from.Module, from.Level) is string module &&
-                module is "termios" or "msvcrt" && ResolvePsModule(module) == null) return new[] { module };
+                IsPlatformModule(module) && ResolvePsModule(module) == null) return new[] { module };
             return Enumerable.Empty<string>();
         }
 
@@ -248,7 +250,7 @@ namespace Typhon.Compiler.Emit
             foreach (var module in PlatformModules(stmt))
                 _w.Line($"global::Typhon.Runtime.Builtins.__import_platform_module({CsString(module)});");
             foreach (var module in ProjectImports(stmt))
-                _w.Line($"_ = {ImportModule(module)};");
+                _w.Line($"{ImportModule(module)};");
             if ((_nativeImportsInNamespace || _m.ConditionalImportBindings.Count > 0) &&
                 (_scopeKey == TypeInference.FuncKey(_m, null, "<main>") ||
                  _scopeKey == TypeInference.FuncKey(_m, null, "<module>")))
@@ -573,7 +575,7 @@ namespace Typhon.Compiler.Emit
             ["_json"] = "json", ["_statistics"] = "statistics", ["_string"] = "string", ["_csv"] = "csv",
             ["_collections"] = "collections", ["_contextvars"] = "contextvars",
             ["_md5"] = "hashlib", ["_sha1"] = "hashlib", ["_pydecimal"] = "decimal",
-            ["_decimal"] = "decimal", ["_bz2"] = "bz2", ["_lzma"] = "lzma", ["_locale"] = "locale",
+            ["_codecs"] = "codecs", ["_decimal"] = "decimal", ["_bz2"] = "bz2", ["_lzma"] = "lzma", ["_locale"] = "locale",
             ["_stat"] = "stat", ["_warnings"] = "warnings", ["_py_warnings"] = "warnings", ["_queue"] = "queue", ["_socket"] = "socket",
         };
 
@@ -633,7 +635,8 @@ namespace Typhon.Compiler.Emit
         /// </summary>
         bool HasOnlyResolvedImports(TryStmt statement) =>
             statement.Handlers.Count > 0 && statement.FinalBody.Count == 0 &&
-            statement.Handlers.All(handler => handler.Type != null && handler.Name == null &&
+            statement.Handlers.All(handler => handler.Type != null &&
+                (handler.Name == null || statement.Body.All(IsNativeImport)) &&
                 (handler.Type is TupleExpr tuple ? tuple.Elts : new List<Expr> { handler.Type })
                     .All(e => e is NameExpr n && n.Id is "ImportError" or "ModuleNotFoundError")) &&
             statement.Body.Count > 0 && statement.Body.All(s => s switch
@@ -646,6 +649,18 @@ namespace Typhon.Compiler.Emit
             !statement.Body.Any(s => PlatformModules(s).Any()) &&
             !statement.Body.OfType<ImportFromStmt>().Any(from => _m.ResolveImport(from.Module, from.Level) is string absolute &&
                 ResolvePsModule(absolute) is ModuleInfo source && from.Names.Any(a => a.Name != "*" && UsesRuntimeProjectMember(source, a.Name)));
+
+        bool IsNativeImport(Stmt statement)
+        {
+            bool IsNative(string module) => module != null && ResolvePsModule(module) == null && StdlibType(module) != null;
+            return statement switch
+            {
+                ImportStmt direct => direct.Names.All(alias => IsNative(alias.Name)),
+                ImportFromStmt from => IsNative(_m.ResolveImport(from.Module, from.Level)),
+                PassStmt => true,
+                _ => false,
+            };
+        }
 
         // The selected class must enter the project class model before consumers resolve its bases and metaclass.
         internal void PrepareImportClassBindings()
@@ -691,11 +706,7 @@ namespace Typhon.Compiler.Emit
                         if (handler != null && failing >= 0 && handler.Name == null &&
                             !t.Body.Take(failing).Any(st => st is ImportStmt || st is ImportFromStmt || st is FunctionDef || st is ClassDef))
                         {
-                            if (moduleScope && t.Body[failing] is ImportStmt { Names.Count: 1 } unavailable)
-                            {
-                                var alias = unavailable.Names[0];
-                                _m.Ast.FailedModuleImports.Add(alias.AsName ?? alias.Name.Split('.')[0]);
-                            }
+                            if (moduleScope) RememberUnavailableBindings(t.Body[failing]);
                             var replacement = t.Body.Take(failing).Concat(handler.Body).ToList();
                             body.RemoveAt(i);
                             body.InsertRange(i, replacement);
@@ -710,6 +721,8 @@ namespace Typhon.Compiler.Emit
                         break;
                     }
                     case TryStmt t2:
+                        if (!_m.IsGdScript && t2.FinalBody.Count != 0 && t2.Handlers.Any(HandlesMissingImport))
+                            LowerRuntimeImports(t2.Body, moduleScope: moduleScope);
                         ResolveFailingImports(t2.Body, moduleScope, optional || t2.Handlers.Any(HandlesMissingImport));
                         foreach (var h in t2.Handlers) ResolveFailingImports(h.Body, moduleScope, optional);
                         ResolveFailingImports(t2.OrElse, moduleScope, optional);
@@ -729,12 +742,26 @@ namespace Typhon.Compiler.Emit
                         ReplaceUnavailableImport(body, i, import, "ModuleNotFoundError", $"No module named '{missing.Name}'");
                         break;
                     case ImportFromStmt from when optional && !ImportFromResolves(from):
+                        if (moduleScope) RememberUnavailableBindings(from);
                         ReplaceUnavailableImport(body, i, from, "ImportError", $"cannot import name from '{from.Module}'");
                         break;
                     case FunctionDef fd: ResolveFailingImports(fd.Body, moduleScope: false); break;
                     case ClassDef cd: ResolveFailingImports(cd.Body, moduleScope: false); break;
                 }
             }
+        }
+
+        void RememberUnavailableBindings(Stmt statement)
+        {
+            if (statement is ImportStmt { Names.Count: 1 } unavailable)
+            {
+                var alias = unavailable.Names[0];
+                _m.Ast.FailedModuleImports.Add(alias.AsName ?? alias.Name.Split('.')[0]);
+            }
+            else if (statement is ImportFromStmt from &&
+                (_m.ResolveImport(from.Module, from.Level) is not string absolute || !ModuleExists(absolute)))
+                _m.Ast.FailedModuleImports.UnionWith(from.Names.Where(alias => alias.Name != "*")
+                    .Select(alias => alias.AsName ?? alias.Name));
         }
 
         void MaterializeNativeTypeExports(List<Stmt> body)

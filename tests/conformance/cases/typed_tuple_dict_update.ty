@@ -1,0 +1,4 @@
+records: dict[str, tuple[str, object]] = {"old": ("number", 9)}
+updates: dict[str, tuple[str, str]] = {"new": ("text", "value")}
+records.update(updates)
+print(sorted(records.items()))

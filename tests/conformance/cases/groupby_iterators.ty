@@ -1,0 +1,18 @@
+import random
+from itertools import groupby
+from operator import itemgetter
+
+alias = random
+print(alias is random)
+print([(k.__name__, list(values)) for k, values in groupby([1, 2, 'x', 3], type)])
+pairs = [('a', 1), ('a', 2), ('b', 3), ('a', 4)]
+print([(k, list(values)) for k, values in groupby(pairs, key=itemgetter(0))])
+outer = groupby('aabcc')
+first, values = next(outer)
+print(first, next(values))
+second, second_values = next(outer)
+print(second, list(values), list(second_values))
+print([(k, list(values)) for k, values in outer])
+
+items = (v for v in [1.25, 2.5])
+print(sum(items, 1))

@@ -12,9 +12,19 @@ namespace Typhon.Stdlib
     using System.Text;
     using Typhon.Runtime;
 
-    internal static class codecs
+    internal static partial class codecs
     {
         public static readonly PyBytes BOM_UTF8 = new([0xef, 0xbb, 0xbf]);
+        public static readonly PyBytes BOM_UTF16_LE = new([0xff, 0xfe]);
+        public static readonly PyBytes BOM_UTF16_BE = new([0xfe, 0xff]);
+        public static readonly PyBytes BOM_UTF32_LE = new([0xff, 0xfe, 0x00, 0x00]);
+        public static readonly PyBytes BOM_UTF32_BE = new([0x00, 0x00, 0xfe, 0xff]);
+        public static readonly PyBytes BOM_UTF16 = BitConverter.IsLittleEndian ? BOM_UTF16_LE : BOM_UTF16_BE;
+        public static readonly PyBytes BOM_UTF32 = BitConverter.IsLittleEndian ? BOM_UTF32_LE : BOM_UTF32_BE;
+        public static readonly PyBytes BOM = BOM_UTF16;
+        public static readonly PyBytes BOM_LE = BOM_UTF16_LE, BOM32_LE = BOM_UTF16_LE;
+        public static readonly PyBytes BOM_BE = BOM_UTF16_BE, BOM32_BE = BOM_UTF16_BE;
+        public static readonly PyBytes BOM64_LE = BOM_UTF32_LE, BOM64_BE = BOM_UTF32_BE;
 
         public static PyBytes encode(string obj, string encoding = "utf-8", string errors = "strict") =>
             lookup(encoding).encode(obj, errors).Item1;

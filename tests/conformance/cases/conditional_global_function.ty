@@ -1,0 +1,18 @@
+import sys
+
+if sys.platform:
+    def describe():
+        return "ready"
+
+class Controller:
+    def open(self):
+        return describe()
+
+print(Controller().open())
+try:
+    if not sys.platform:
+        def absent():
+            return "unreachable"
+    absent()
+except NameError as error:
+    print(error.name)

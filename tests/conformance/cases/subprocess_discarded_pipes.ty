@@ -1,0 +1,12 @@
+import os
+import subprocess
+import sys
+
+python = os.environ.get('TYPHON_CPYTHON', sys.executable)
+process = subprocess.Popen(
+    [python, '-c', "import sys; sys.stdout.buffer.write(b'x' * 262144); sys.stderr.buffer.write(b'y' * 262144)"],
+    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+)
+print(process.wait(timeout=8))
+print(process.communicate())
+print(subprocess.check_call([python, '-c', 'pass']))

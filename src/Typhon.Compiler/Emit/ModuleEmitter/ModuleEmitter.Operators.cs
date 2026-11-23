@@ -328,26 +328,39 @@ namespace Typhon.Compiler.Emit
         string EmitComparison(Expr left, string op, Expr right)
         {
             bool identity = op is "is" or "is not";
-            string l = identity || op is "in" or "not in" ? EmitValue(left) : EmitExpr(left);
-            string r = identity ? EmitValue(right) : EmitExpr(right);
-            string lt = InferType(left), rt = InferType(right);
-            // big-int mode: an int compared with a float compares as floats (C# does not convert BigInteger implicitly)
-            if (lt == TypeInference.BigInt && (rt == "double" || rt == "float")) l = $"((double){Paren(l)})";
-            if (rt == TypeInference.BigInt && (lt == "double" || lt == "float")) r = $"((double){Paren(r)})";
+            bool numericComparison = op is "==" or "!=" or "<" or "<=" or ">" or ">=";
+            (string Code, string Type) CompareOperand(Expr expression, bool asValue)
+            {
+                // A constant bound can exceed the default integer storage width.
+                // Compare to its Python value without storing it in a long.
+                if (numericComparison && !_big && !_m.IsGdScript && expression is BinOpExpr or UnaryExpr &&
+                    FoldInt(expression) is BigInteger integer && (integer < long.MinValue || integer > long.MaxValue))
+                    return ($"global::System.Numerics.BigInteger.Parse({CsString(integer.ToString(System.Globalization.CultureInfo.InvariantCulture))})", TypeInference.BigInt);
+                return (asValue ? EmitValue(expression) : EmitExpr(expression), InferType(expression));
+            }
+            var (l, lt) = CompareOperand(left, identity || op is "in" or "not in");
+            var (r, rt) = CompareOperand(right, identity);
+            bool wideWithReal = lt == TypeInference.BigInt && (rt is "double" or "float" or "decimal") ||
+                rt == TypeInference.BigInt && (lt is "double" or "float" or "decimal");
             if (op == "==" || op == "!=")
             {
                 // Python compares containers and tuples by contents, C# by reference: eq() unless both sides agree
-                if (NativeEquality(left, right, lt, rt)) return $"({l} {op} {r})";
+                if (!wideWithReal && NativeEquality(left, right, lt, rt)) return $"({l} {op} {r})";
                 return op == "==" ? $"{Rt("eq")}({l}, {r})" : $"!{Rt("eq")}({l}, {r})";
             }
             if (op == "<" || op == "<=" || op == ">" || op == ">=")
             {
                 if (lt == "string" && rt == "string") return $"(string.CompareOrdinal({l}, {r}) {op} 0)";
+                if ((lt == "bool" || rt == "bool") && (lt == "bool" || IsNumeric(lt)) && (rt == "bool" || IsNumeric(rt)))
+                {
+                    if (lt == "bool") l = $"({l} ? 1 : 0)";
+                    if (rt == "bool") r = $"({r} ? 1 : 0)";
+                }
                 // Python's own containers order by Python's rules (sequences and tuples lexicographically, sets by inclusion);
                 // values of unknown type decide at run time; every other type keeps its own operators (classes, ndarray, decimal)
                 string helper = op == "<" ? "lt" : op == "<=" ? "le" : op == ">" ? "gt" : "ge";
                 string reflected = op == "<" ? "gt" : op == "<=" ? "ge" : op == ">" ? "lt" : "le";
-                if (PythonOrdered(lt) || PythonOrdered(rt) || MayBeDictView(lt) || MayBeDictView(rt) ||
+                if (wideWithReal || PythonOrdered(lt) || PythonOrdered(rt) || MayBeDictView(lt) || MayBeDictView(rt) ||
                     IsUnknownType(lt) || IsUnknownType(rt) || lt == "object?" || rt == "object?" ||
                     IsObjectIntegerEnumType(lt) || IsObjectIntegerEnumType(rt) ||
                     HasClassAssignedOperator(lt, "__" + helper + "__") || HasClassAssignedOperator(rt, "__" + reflected + "__"))

@@ -635,6 +635,14 @@ namespace Typhon.Compiler.Emit
             int positional = call.Args.Count(arg => arg.Name == null && !arg.Star && !arg.DoubleStar);
             var named = call.Args.Where(arg => arg.Name != null).Select(arg => arg.Name).ToList();
             var overloads = DotNetOverloads(call);
+            if (!_m.IsGdScript && call.Func is AttributeExpr container && RuntimeExtensionMethods.Contains(container.Name) &&
+                IsPythonContainer(InferType(container.Target)) && call.Args.All(arg => !arg.Star && !arg.DoubleStar))
+            {
+                var extensionMethods = _r.GetMembers("Typhon.Runtime.Builtins", container.Name)
+                    .Where(method => method.IsMethod && method.IsStatic && Applicable(method, positional + 1, named)).ToList();
+                if (extensionMethods.Count > 0 && extensionMethods.All(method => method.ReturnsVoid))
+                    return true;
+            }
             if (overloads == null && call.Func is NameExpr name && !IsShadowed(name.Id))
                 overloads = _r.GetMembers("Typhon.Runtime.Builtins", name.Id).Where(m => m.IsMethod && m.IsStatic).ToList();
             var methods = overloads?.Where(method => Applicable(method, positional, named)).ToList();

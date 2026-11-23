@@ -46,7 +46,8 @@ namespace Typhon.Runtime
         {
             if (value == null) return typeof(Typhon.Stdlib.types.NoneType);
             if (value is PyLocalClassInstance instance) return instance.PythonType;
-            if (value is PyIntEnumMember enumMember) return enumMember.Owner;
+            if (value is PyIntegerEnum { DynamicEnumType: { } enumType }) return enumType;
+            if (value is PyPlainEnumMember plainEnum) return plainEnum.Owner;
             if (value is Type type) return PyMetaclasses.Of(type);
             if (value is PyModule) return typeof(Typhon.Stdlib.types.ModuleType);
             if (value is ReprDescriptor) return typeof(Typhon.Stdlib.types.WrapperDescriptorType);
@@ -238,8 +239,12 @@ namespace Typhon.Runtime
         {
             if (of == typeof(object)) return true;
             if (cls == of) return true;
-            if ((cls is PyIntEnumType || typeof(PyIntegerEnum).IsAssignableFrom(cls)) &&
-                (of == typeof(Typhon.Stdlib.@enum.IntEnum) || of == typeof(long) || of == typeof(BigInteger))) return true;
+            if (cls is PyIntEnumType || typeof(PyIntegerEnum).IsAssignableFrom(cls))
+            {
+                if (of == typeof(long) || of == typeof(BigInteger)) return true;
+                if (of == typeof(Typhon.Stdlib.@enum.IntEnum) &&
+                    cls.BaseType != typeof(Typhon.Stdlib.@enum.IntFlag) && !typeof(PyIntegerFlag).IsAssignableFrom(cls)) return true;
+            }
             if (of == typeof(string) && (typeof(PyString).IsAssignableFrom(cls) || typeof(PyStrEnum).IsAssignableFrom(cls))) return true;
             if (of == typeof(Type) && PyMetaclasses.IsMetaclass(cls)) return true;
             if (PyDictViews.Name(cls) is string view && (PyDictViews.Name(of) == view ||

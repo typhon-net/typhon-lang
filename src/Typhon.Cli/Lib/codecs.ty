@@ -1,0 +1,1407 @@
+# Source: CPython 3.15.2, Lib/codecs.py
+# https://github.com/python/cpython/blob/v3.15.2/Lib/codecs.py
+# The original source follows the license below without changes.
+#
+# A. HISTORY OF THE SOFTWARE
+# ==========================
+#
+# Python was created in the early 1990s by Guido van Rossum at Stichting
+# Mathematisch Centrum (CWI, see https://www.cwi.nl) in the Netherlands
+# as a successor of a language called ABC.  Guido remains Python's
+# principal author, although it includes many contributions from others.
+#
+# In 1995, Guido continued his work on Python at the Corporation for
+# National Research Initiatives (CNRI, see https://www.cnri.reston.va.us)
+# in Reston, Virginia where he released several versions of the
+# software.
+#
+# In May 2000, Guido and the Python core development team moved to
+# BeOpen.com to form the BeOpen PythonLabs team.  In October of the same
+# year, the PythonLabs team moved to Digital Creations, which became
+# Zope Corporation.  In 2001, the Python Software Foundation (PSF, see
+# https://www.python.org/psf/) was formed, a non-profit organization
+# created specifically to own Python-related Intellectual Property.
+# Zope Corporation was a sponsoring member of the PSF.
+#
+# All Python releases are Open Source (see https://opensource.org for
+# the Open Source Definition).  Historically, most, but not all, Python
+# releases have also been GPL-compatible; the table below summarizes
+# the various releases.
+#
+#     Release         Derived     Year        Owner       GPL-
+#                     from                                compatible? (1)
+#
+#     0.9.0 thru 1.2              1991-1995   CWI         yes
+#     1.3 thru 1.5.2  1.2         1995-1999   CNRI        yes
+#     1.6             1.5.2       2000        CNRI        no
+#     2.0             1.6         2000        BeOpen.com  no
+#     1.6.1           1.6         2001        CNRI        yes (2)
+#     2.1             2.0+1.6.1   2001        PSF         no
+#     2.0.1           2.0+1.6.1   2001        PSF         yes
+#     2.1.1           2.1+2.0.1   2001        PSF         yes
+#     2.1.2           2.1.1       2002        PSF         yes
+#     2.1.3           2.1.2       2002        PSF         yes
+#     2.2 and above   2.1.1       2001-now    PSF         yes
+#
+# Footnotes:
+#
+# (1) GPL-compatible doesn't mean that we're distributing Python under
+#     the GPL.  All Python licenses, unlike the GPL, let you distribute
+#     a modified version without making your changes open source.  The
+#     GPL-compatible licenses make it possible to combine Python with
+#     other software that is released under the GPL; the others don't.
+#
+# (2) According to Richard Stallman, 1.6.1 is not GPL-compatible,
+#     because its license has a choice of law clause.  According to
+#     CNRI, however, Stallman's lawyer has told CNRI's lawyer that 1.6.1
+#     is "not incompatible" with the GPL.
+#
+# Thanks to the many outside volunteers who have worked under Guido's
+# direction to make these releases possible.
+#
+#
+# B. TERMS AND CONDITIONS FOR ACCESSING OR OTHERWISE USING PYTHON
+# ===============================================================
+#
+# Python software and documentation are licensed under the
+# Python Software Foundation License Version 2.
+#
+# Starting with Python 3.8.6, examples, recipes, and other code in
+# the documentation are dual licensed under the PSF License Version 2
+# and the Zero-Clause BSD license.
+#
+# Some software incorporated into Python is under different licenses.
+# The licenses are listed with code falling under that license.
+#
+#
+# PYTHON SOFTWARE FOUNDATION LICENSE VERSION 2
+# --------------------------------------------
+#
+# 1. This LICENSE AGREEMENT is between the Python Software Foundation
+# ("PSF"), and the Individual or Organization ("Licensee") accessing and
+# otherwise using this software ("Python") in source or binary form and
+# its associated documentation.
+#
+# 2. Subject to the terms and conditions of this License Agreement, PSF hereby
+# grants Licensee a nonexclusive, royalty-free, world-wide license to reproduce,
+# analyze, test, perform and/or display publicly, prepare derivative works,
+# distribute, and otherwise use Python alone or in any derivative version,
+# provided, however, that PSF's License Agreement and PSF's notice of copyright,
+# i.e., "Copyright (c) 2001 Python Software Foundation; All Rights Reserved"
+# are retained in Python alone or in any derivative version prepared by Licensee.
+#
+# 3. In the event Licensee prepares a derivative work that is based on
+# or incorporates Python or any part thereof, and wants to make
+# the derivative work available to others as provided herein, then
+# Licensee hereby agrees to include in any such work a brief summary of
+# the changes made to Python.
+#
+# 4. PSF is making Python available to Licensee on an "AS IS"
+# basis.  PSF MAKES NO REPRESENTATIONS OR WARRANTIES, EXPRESS OR
+# IMPLIED.  BY WAY OF EXAMPLE, BUT NOT LIMITATION, PSF MAKES NO AND
+# DISCLAIMS ANY REPRESENTATION OR WARRANTY OF MERCHANTABILITY OR FITNESS
+# FOR ANY PARTICULAR PURPOSE OR THAT THE USE OF PYTHON WILL NOT
+# INFRINGE ANY THIRD PARTY RIGHTS.
+#
+# 5. PSF SHALL NOT BE LIABLE TO LICENSEE OR ANY OTHER USERS OF PYTHON
+# FOR ANY INCIDENTAL, SPECIAL, OR CONSEQUENTIAL DAMAGES OR LOSS AS
+# A RESULT OF MODIFYING, DISTRIBUTING, OR OTHERWISE USING PYTHON,
+# OR ANY DERIVATIVE THEREOF, EVEN IF ADVISED OF THE POSSIBILITY THEREOF.
+#
+# 6. This License Agreement will automatically terminate upon a material
+# breach of its terms and conditions.
+#
+# 7. Nothing in this License Agreement shall be deemed to create any
+# relationship of agency, partnership, or joint venture between PSF and
+# Licensee.  This License Agreement does not grant permission to use PSF
+# trademarks or trade name in a trademark sense to endorse or promote
+# products or services of Licensee, or any third party.
+#
+# 8. By copying, installing or otherwise using Python, Licensee
+# agrees to be bound by the terms and conditions of this License
+# Agreement.
+#
+#
+# BEOPEN.COM LICENSE AGREEMENT FOR PYTHON 2.0
+# -------------------------------------------
+#
+# BEOPEN PYTHON OPEN SOURCE LICENSE AGREEMENT VERSION 1
+#
+# 1. This LICENSE AGREEMENT is between BeOpen.com ("BeOpen"), having an
+# office at 160 Saratoga Avenue, Santa Clara, CA 95051, and the
+# Individual or Organization ("Licensee") accessing and otherwise using
+# this software in source or binary form and its associated
+# documentation ("the Software").
+#
+# 2. Subject to the terms and conditions of this BeOpen Python License
+# Agreement, BeOpen hereby grants Licensee a non-exclusive,
+# royalty-free, world-wide license to reproduce, analyze, test, perform
+# and/or display publicly, prepare derivative works, distribute, and
+# otherwise use the Software alone or in any derivative version,
+# provided, however, that the BeOpen Python License is retained in the
+# Software, alone or in any derivative version prepared by Licensee.
+#
+# 3. BeOpen is making the Software available to Licensee on an "AS IS"
+# basis.  BEOPEN MAKES NO REPRESENTATIONS OR WARRANTIES, EXPRESS OR
+# IMPLIED.  BY WAY OF EXAMPLE, BUT NOT LIMITATION, BEOPEN MAKES NO AND
+# DISCLAIMS ANY REPRESENTATION OR WARRANTY OF MERCHANTABILITY OR FITNESS
+# FOR ANY PARTICULAR PURPOSE OR THAT THE USE OF THE SOFTWARE WILL NOT
+# INFRINGE ANY THIRD PARTY RIGHTS.
+#
+# 4. BEOPEN SHALL NOT BE LIABLE TO LICENSEE OR ANY OTHER USERS OF THE
+# SOFTWARE FOR ANY INCIDENTAL, SPECIAL, OR CONSEQUENTIAL DAMAGES OR LOSS
+# AS A RESULT OF USING, MODIFYING OR DISTRIBUTING THE SOFTWARE, OR ANY
+# DERIVATIVE THEREOF, EVEN IF ADVISED OF THE POSSIBILITY THEREOF.
+#
+# 5. This License Agreement will automatically terminate upon a material
+# breach of its terms and conditions.
+#
+# 6. This License Agreement shall be governed by and interpreted in all
+# respects by the law of the State of California, excluding conflict of
+# law provisions.  Nothing in this License Agreement shall be deemed to
+# create any relationship of agency, partnership, or joint venture
+# between BeOpen and Licensee.  This License Agreement does not grant
+# permission to use BeOpen trademarks or trade names in a trademark
+# sense to endorse or promote products or services of Licensee, or any
+# third party.  As an exception, the "BeOpen Python" logos available at
+# http://www.pythonlabs.com/logos.html may be used according to the
+# permissions granted on that web page.
+#
+# 7. By copying, installing or otherwise using the software, Licensee
+# agrees to be bound by the terms and conditions of this License
+# Agreement.
+#
+#
+# CNRI LICENSE AGREEMENT FOR PYTHON 1.6.1
+# ---------------------------------------
+#
+# 1. This LICENSE AGREEMENT is between the Corporation for National
+# Research Initiatives, having an office at 1895 Preston White Drive,
+# Reston, VA 20191 ("CNRI"), and the Individual or Organization
+# ("Licensee") accessing and otherwise using Python 1.6.1 software in
+# source or binary form and its associated documentation.
+#
+# 2. Subject to the terms and conditions of this License Agreement, CNRI
+# hereby grants Licensee a nonexclusive, royalty-free, world-wide
+# license to reproduce, analyze, test, perform and/or display publicly,
+# prepare derivative works, distribute, and otherwise use Python 1.6.1
+# alone or in any derivative version, provided, however, that CNRI's
+# License Agreement and CNRI's notice of copyright, i.e., "Copyright (c)
+# 1995-2001 Corporation for National Research Initiatives; All Rights
+# Reserved" are retained in Python 1.6.1 alone or in any derivative
+# version prepared by Licensee.  Alternately, in lieu of CNRI's License
+# Agreement, Licensee may substitute the following text (omitting the
+# quotes): "Python 1.6.1 is made available subject to the terms and
+# conditions in CNRI's License Agreement.  This Agreement together with
+# Python 1.6.1 may be located on the internet using the following
+# unique, persistent identifier (known as a handle): 1895.22/1013.  This
+# Agreement may also be obtained from a proxy server on the internet
+# using the following URL: http://hdl.handle.net/1895.22/1013".
+#
+# 3. In the event Licensee prepares a derivative work that is based on
+# or incorporates Python 1.6.1 or any part thereof, and wants to make
+# the derivative work available to others as provided herein, then
+# Licensee hereby agrees to include in any such work a brief summary of
+# the changes made to Python 1.6.1.
+#
+# 4. CNRI is making Python 1.6.1 available to Licensee on an "AS IS"
+# basis.  CNRI MAKES NO REPRESENTATIONS OR WARRANTIES, EXPRESS OR
+# IMPLIED.  BY WAY OF EXAMPLE, BUT NOT LIMITATION, CNRI MAKES NO AND
+# DISCLAIMS ANY REPRESENTATION OR WARRANTY OF MERCHANTABILITY OR FITNESS
+# FOR ANY PARTICULAR PURPOSE OR THAT THE USE OF PYTHON 1.6.1 WILL NOT
+# INFRINGE ANY THIRD PARTY RIGHTS.
+#
+# 5. CNRI SHALL NOT BE LIABLE TO LICENSEE OR ANY OTHER USERS OF PYTHON
+# 1.6.1 FOR ANY INCIDENTAL, SPECIAL, OR CONSEQUENTIAL DAMAGES OR LOSS AS
+# A RESULT OF MODIFYING, DISTRIBUTING, OR OTHERWISE USING PYTHON 1.6.1,
+# OR ANY DERIVATIVE THEREOF, EVEN IF ADVISED OF THE POSSIBILITY THEREOF.
+#
+# 6. This License Agreement will automatically terminate upon a material
+# breach of its terms and conditions.
+#
+# 7. This License Agreement shall be governed by the federal
+# intellectual property law of the United States, including without
+# limitation the federal copyright law, and, to the extent such
+# U.S. federal law does not apply, by the law of the Commonwealth of
+# Virginia, excluding Virginia's conflict of law provisions.
+# Notwithstanding the foregoing, with regard to derivative works based
+# on Python 1.6.1 that incorporate non-separable material that was
+# previously distributed under the GNU General Public License (GPL), the
+# law of the Commonwealth of Virginia shall govern this License
+# Agreement only as to issues arising under or with respect to
+# Paragraphs 4, 5, and 7 of this License Agreement.  Nothing in this
+# License Agreement shall be deemed to create any relationship of
+# agency, partnership, or joint venture between CNRI and Licensee.  This
+# License Agreement does not grant permission to use CNRI trademarks or
+# trade name in a trademark sense to endorse or promote products or
+# services of Licensee, or any third party.
+#
+# 8. By clicking on the "ACCEPT" button where indicated, or by copying,
+# installing or otherwise using Python 1.6.1, Licensee agrees to be
+# bound by the terms and conditions of this License Agreement.
+#
+#         ACCEPT
+#
+#
+# CWI LICENSE AGREEMENT FOR PYTHON 0.9.0 THROUGH 1.2
+# --------------------------------------------------
+#
+# Copyright (c) 1991 - 1995, Stichting Mathematisch Centrum Amsterdam,
+# The Netherlands.  All rights reserved.
+#
+# Permission to use, copy, modify, and distribute this software and its
+# documentation for any purpose and without fee is hereby granted,
+# provided that the above copyright notice appear in all copies and that
+# both that copyright notice and this permission notice appear in
+# supporting documentation, and that the name of Stichting Mathematisch
+# Centrum or CWI not be used in advertising or publicity pertaining to
+# distribution of the software without specific, written prior
+# permission.
+#
+# STICHTING MATHEMATISCH CENTRUM DISCLAIMS ALL WARRANTIES WITH REGARD TO
+# THIS SOFTWARE, INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+# FITNESS, IN NO EVENT SHALL STICHTING MATHEMATISCH CENTRUM BE LIABLE
+# FOR ANY SPECIAL, INDIRECT OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+# ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT
+# OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+#
+# ZERO-CLAUSE BSD LICENSE FOR CODE IN THE PYTHON DOCUMENTATION
+# ----------------------------------------------------------------------
+#
+# Permission to use, copy, modify, and/or distribute this software for any
+# purpose with or without fee is hereby granted.
+#
+# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+# REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY
+# AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+# INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM
+# LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR
+# OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+# PERFORMANCE OF THIS SOFTWARE.
+
+""" codecs -- Python Codec Registry, API and helpers.
+
+
+Written by Marc-Andre Lemburg (mal@lemburg.com).
+
+(c) Copyright CNRI, All Rights Reserved. NO WARRANTY.
+
+"""
+
+import builtins
+import sys
+
+### Registry and builtin stateless codec functions
+
+try:
+    from _codecs import *
+except ImportError as why:
+    raise SystemError('Failed to load the builtin codecs: %s' % why)
+
+__all__ = ["register", "lookup", "open", "EncodedFile", "BOM", "BOM_BE",
+           "BOM_LE", "BOM32_BE", "BOM32_LE", "BOM64_BE", "BOM64_LE",
+           "BOM_UTF8", "BOM_UTF16", "BOM_UTF16_LE", "BOM_UTF16_BE",
+           "BOM_UTF32", "BOM_UTF32_LE", "BOM_UTF32_BE",
+           "CodecInfo", "Codec", "IncrementalEncoder", "IncrementalDecoder",
+           "StreamReader", "StreamWriter",
+           "StreamReaderWriter", "StreamRecoder",
+           "getencoder", "getdecoder", "getincrementalencoder",
+           "getincrementaldecoder", "getreader", "getwriter",
+           "encode", "decode", "iterencode", "iterdecode",
+           "strict_errors", "ignore_errors", "replace_errors",
+           "xmlcharrefreplace_errors",
+           "backslashreplace_errors", "namereplace_errors",
+           "register_error", "lookup_error"]
+
+### Constants
+
+#
+# Byte Order Mark (BOM = ZERO WIDTH NO-BREAK SPACE = U+FEFF)
+# and its possible byte string values
+# for UTF8/UTF16/UTF32 output and little/big endian machines
+#
+
+# UTF-8
+BOM_UTF8 = b'\xef\xbb\xbf'
+
+# UTF-16, little endian
+BOM_LE = BOM_UTF16_LE = b'\xff\xfe'
+
+# UTF-16, big endian
+BOM_BE = BOM_UTF16_BE = b'\xfe\xff'
+
+# UTF-32, little endian
+BOM_UTF32_LE = b'\xff\xfe\x00\x00'
+
+# UTF-32, big endian
+BOM_UTF32_BE = b'\x00\x00\xfe\xff'
+
+if sys.byteorder == 'little':
+
+    # UTF-16, native endianness
+    BOM = BOM_UTF16 = BOM_UTF16_LE
+
+    # UTF-32, native endianness
+    BOM_UTF32 = BOM_UTF32_LE
+
+else:
+
+    # UTF-16, native endianness
+    BOM = BOM_UTF16 = BOM_UTF16_BE
+
+    # UTF-32, native endianness
+    BOM_UTF32 = BOM_UTF32_BE
+
+# Old broken names (don't use in new code)
+BOM32_LE = BOM_UTF16_LE
+BOM32_BE = BOM_UTF16_BE
+BOM64_LE = BOM_UTF32_LE
+BOM64_BE = BOM_UTF32_BE
+
+
+### Codec base classes (defining the API)
+
+class CodecInfo(tuple):
+    """Codec details when looking up the codec registry"""
+
+    # Private API to allow Python 3.4 to denylist the known non-Unicode
+    # codecs in the standard library. A more general mechanism to
+    # reliably distinguish test encodings from other codecs will hopefully
+    # be defined for Python 3.5
+    #
+    # See http://bugs.python.org/issue19619
+    _is_text_encoding = True # Assume codecs are text encodings by default
+
+    def __new__(cls, encode, decode, streamreader=None, streamwriter=None,
+        incrementalencoder=None, incrementaldecoder=None, name=None,
+        *, _is_text_encoding=None):
+        self = tuple.__new__(cls, (encode, decode, streamreader, streamwriter))
+        self.name = name
+        self.encode = encode
+        self.decode = decode
+        self.incrementalencoder = incrementalencoder
+        self.incrementaldecoder = incrementaldecoder
+        self.streamwriter = streamwriter
+        self.streamreader = streamreader
+        if _is_text_encoding is not None:
+            self._is_text_encoding = _is_text_encoding
+        return self
+
+    def __repr__(self):
+        return "<%s.%s object for encoding %s at %#x>" % \
+                (self.__class__.__module__, self.__class__.__qualname__,
+                 self.name, id(self))
+
+    def __getnewargs__(self):
+        return tuple(self)
+
+class Codec:
+
+    """ Defines the interface for stateless encoders/decoders.
+
+        The .encode()/.decode() methods may use different error
+        handling schemes by providing the errors argument. These
+        string values are predefined:
+
+         'strict' - raise a ValueError error (or a subclass)
+         'ignore' - ignore the character and continue with the next
+         'replace' - replace with a suitable replacement character;
+                    Python will use the official U+FFFD REPLACEMENT
+                    CHARACTER for the builtin Unicode codecs on
+                    decoding and '?' on encoding.
+         'surrogateescape' - replace with private code points U+DCnn.
+         'xmlcharrefreplace' - Replace with the appropriate XML
+                               character reference (only for encoding).
+         'backslashreplace'  - Replace with backslashed escape sequences.
+         'namereplace'       - Replace with \\N{...} escape sequences
+                               (only for encoding).
+
+        The set of allowed values can be extended via register_error.
+
+    """
+    def encode(self, input, errors='strict'):
+
+        """ Encodes the object input and returns a tuple (output
+            object, length consumed).
+
+            errors defines the error handling to apply. It defaults to
+            'strict' handling.
+
+            The method may not store state in the Codec instance. Use
+            StreamWriter for codecs which have to keep state in order to
+            make encoding efficient.
+
+            The encoder must be able to handle zero length input and
+            return an empty object of the output object type in this
+            situation.
+
+        """
+        raise NotImplementedError
+
+    def decode(self, input, errors='strict'):
+
+        """ Decodes the object input and returns a tuple (output
+            object, length consumed).
+
+            input must be an object which provides the bf_getreadbuf
+            buffer slot. Python strings, buffer objects and memory
+            mapped files are examples of objects providing this slot.
+
+            errors defines the error handling to apply. It defaults to
+            'strict' handling.
+
+            The method may not store state in the Codec instance. Use
+            StreamReader for codecs which have to keep state in order to
+            make decoding efficient.
+
+            The decoder must be able to handle zero length input and
+            return an empty object of the output object type in this
+            situation.
+
+        """
+        raise NotImplementedError
+
+class IncrementalEncoder(object):
+    """
+    An IncrementalEncoder encodes an input in multiple steps. The input can
+    be passed piece by piece to the encode() method. The IncrementalEncoder
+    remembers the state of the encoding process between calls to encode().
+    """
+    def __init__(self, errors='strict'):
+        """
+        Creates an IncrementalEncoder instance.
+
+        The IncrementalEncoder may use different error handling schemes by
+        providing the errors keyword argument. See the module docstring
+        for a list of possible values.
+        """
+        self.errors = errors
+        self.buffer = ""
+
+    def encode(self, input, final=False):
+        """
+        Encodes input and returns the resulting object.
+        """
+        raise NotImplementedError
+
+    def reset(self):
+        """
+        Resets the encoder to the initial state.
+        """
+
+    def getstate(self):
+        """
+        Return the current state of the encoder.
+        """
+        return 0
+
+    def setstate(self, state):
+        """
+        Set the current state of the encoder. state must have been
+        returned by getstate().
+        """
+
+class BufferedIncrementalEncoder(IncrementalEncoder):
+    """
+    This subclass of IncrementalEncoder can be used as the baseclass for an
+    incremental encoder if the encoder must keep some of the output in a
+    buffer between calls to encode().
+    """
+    def __init__(self, errors='strict'):
+        IncrementalEncoder.__init__(self, errors)
+        # unencoded input that is kept between calls to encode()
+        self.buffer = ""
+
+    def _buffer_encode(self, input, errors, final):
+        # Overwrite this method in subclasses: It must encode input
+        # and return an (output, length consumed) tuple
+        raise NotImplementedError
+
+    def encode(self, input, final=False):
+        # encode input (taking the buffer into account)
+        data = self.buffer + input
+        (result, consumed) = self._buffer_encode(data, self.errors, final)
+        # keep unencoded input until the next call
+        self.buffer = data[consumed:]
+        return result
+
+    def reset(self):
+        IncrementalEncoder.reset(self)
+        self.buffer = ""
+
+    def getstate(self):
+        return self.buffer or 0
+
+    def setstate(self, state):
+        self.buffer = state or ""
+
+class IncrementalDecoder(object):
+    """
+    An IncrementalDecoder decodes an input in multiple steps. The input can
+    be passed piece by piece to the decode() method. The IncrementalDecoder
+    remembers the state of the decoding process between calls to decode().
+    """
+    def __init__(self, errors='strict'):
+        """
+        Create an IncrementalDecoder instance.
+
+        The IncrementalDecoder may use different error handling schemes by
+        providing the errors keyword argument. See the module docstring
+        for a list of possible values.
+        """
+        self.errors = errors
+
+    def decode(self, input, final=False):
+        """
+        Decode input and returns the resulting object.
+        """
+        raise NotImplementedError
+
+    def reset(self):
+        """
+        Reset the decoder to the initial state.
+        """
+
+    def getstate(self):
+        """
+        Return the current state of the decoder.
+
+        This must be a (buffered_input, additional_state_info) tuple.
+        buffered_input must be a bytes object containing bytes that
+        were passed to decode() that have not yet been converted.
+        additional_state_info must be a non-negative integer
+        representing the state of the decoder WITHOUT yet having
+        processed the contents of buffered_input.  In the initial state
+        and after reset(), getstate() must return (b"", 0).
+        """
+        return (b"", 0)
+
+    def setstate(self, state):
+        """
+        Set the current state of the decoder.
+
+        state must have been returned by getstate().  The effect of
+        setstate((b"", 0)) must be equivalent to reset().
+        """
+
+class BufferedIncrementalDecoder(IncrementalDecoder):
+    """
+    This subclass of IncrementalDecoder can be used as the baseclass for an
+    incremental decoder if the decoder must be able to handle incomplete
+    byte sequences.
+    """
+    def __init__(self, errors='strict'):
+        IncrementalDecoder.__init__(self, errors)
+        # undecoded input that is kept between calls to decode()
+        self.buffer = b""
+
+    def _buffer_decode(self, input, errors, final):
+        # Overwrite this method in subclasses: It must decode input
+        # and return an (output, length consumed) tuple
+        raise NotImplementedError
+
+    def decode(self, input, final=False):
+        # decode input (taking the buffer into account)
+        data = self.buffer + input
+        (result, consumed) = self._buffer_decode(data, self.errors, final)
+        # keep undecoded input until the next call
+        self.buffer = data[consumed:]
+        return result
+
+    def reset(self):
+        IncrementalDecoder.reset(self)
+        self.buffer = b""
+
+    def getstate(self):
+        # additional state info is always 0
+        return (self.buffer, 0)
+
+    def setstate(self, state):
+        # ignore additional state info
+        self.buffer = state[0]
+
+#
+# The StreamWriter and StreamReader class provide generic working
+# interfaces which can be used to implement new encoding submodules
+# very easily. See encodings/utf_8.py for an example on how this is
+# done.
+#
+
+class StreamWriter(Codec):
+
+    def __init__(self, stream, errors='strict'):
+
+        """ Creates a StreamWriter instance.
+
+            stream must be a file-like object open for writing.
+
+            The StreamWriter may use different error handling
+            schemes by providing the errors keyword argument. These
+            parameters are predefined:
+
+             'strict' - raise a ValueError (or a subclass)
+             'ignore' - ignore the character and continue with the next
+             'replace'- replace with a suitable replacement character
+             'xmlcharrefreplace' - Replace with the appropriate XML
+                                   character reference.
+             'backslashreplace'  - Replace with backslashed escape
+                                   sequences.
+             'namereplace'       - Replace with \\N{...} escape sequences.
+
+            The set of allowed parameter values can be extended via
+            register_error.
+        """
+        self.stream = stream
+        self.errors = errors
+
+    def write(self, object):
+
+        """ Writes the object's contents encoded to self.stream.
+        """
+        data, consumed = self.encode(object, self.errors)
+        self.stream.write(data)
+
+    def writelines(self, list):
+
+        """ Writes the concatenated list of strings to the stream
+            using .write().
+        """
+        self.write(''.join(list))
+
+    def reset(self):
+
+        """ Resets the codec buffers used for keeping internal state.
+
+            Calling this method should ensure that the data on the
+            output is put into a clean state, that allows appending
+            of new fresh data without having to rescan the whole
+            stream to recover state.
+
+        """
+        pass
+
+    def seek(self, offset, whence=0):
+        self.stream.seek(offset, whence)
+        if whence == 0 and offset == 0:
+            self.reset()
+
+    def __getattr__(self, name,
+                    getattr=getattr):
+
+        """ Inherit all other methods from the underlying stream.
+        """
+        return getattr(self.stream, name)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, type, value, tb):
+        self.stream.close()
+
+    def __reduce_ex__(self, proto):
+        raise TypeError("can't serialize %s" % self.__class__.__name__)
+
+###
+
+class StreamReader(Codec):
+
+    charbuffertype = str
+
+    def __init__(self, stream, errors='strict'):
+
+        """ Creates a StreamReader instance.
+
+            stream must be a file-like object open for reading.
+
+            The StreamReader may use different error handling
+            schemes by providing the errors keyword argument. These
+            parameters are predefined:
+
+             'strict' - raise a ValueError (or a subclass)
+             'ignore' - ignore the character and continue with the next
+             'replace'- replace with a suitable replacement character
+             'backslashreplace' - Replace with backslashed escape sequences;
+
+            The set of allowed parameter values can be extended via
+            register_error.
+        """
+        self.stream = stream
+        self.errors = errors
+        self.bytebuffer = b""
+        self._empty_charbuffer = self.charbuffertype()
+        self.charbuffer = self._empty_charbuffer
+        self.linebuffer = None
+
+    def decode(self, input, errors='strict'):
+        raise NotImplementedError
+
+    def read(self, size=-1, chars=-1, firstline=False):
+
+        """ Decodes data from the stream self.stream and returns the
+            resulting object.
+
+            chars indicates the number of decoded code points or bytes to
+            return. read() will never return more data than requested,
+            but it might return less, if there is not enough available.
+
+            size indicates the approximate maximum number of decoded
+            bytes or code points to read for decoding. The decoder
+            can modify this setting as appropriate. The default value
+            -1 indicates to read and decode as much as possible.  size
+            is intended to prevent having to decode huge files in one
+            step.
+
+            If firstline is true, and a UnicodeDecodeError happens
+            after the first line terminator in the input only the first line
+            will be returned, the rest of the input will be kept until the
+            next call to read().
+
+            The method should use a greedy read strategy, meaning that
+            it should read as much data as is allowed within the
+            definition of the encoding and the given size, e.g.  if
+            optional encoding endings or state markers are available
+            on the stream, these should be read too.
+        """
+        # If we have lines cached, first merge them back into characters
+        if self.linebuffer:
+            self.charbuffer = self._empty_charbuffer.join(self.linebuffer)
+            self.linebuffer = None
+
+        if chars < 0:
+            # For compatibility with other read() methods that take a
+            # single argument
+            chars = size
+
+        # read until we get the required number of characters (if available)
+        while True:
+            # can the request be satisfied from the character buffer?
+            if chars >= 0:
+                if len(self.charbuffer) >= chars:
+                    break
+            # we need more data
+            if size < 0:
+                newdata = self.stream.read()
+            else:
+                newdata = self.stream.read(size)
+            # decode bytes (those remaining from the last call included)
+            data = self.bytebuffer + newdata
+            if not data:
+                break
+            try:
+                newchars, decodedbytes = self.decode(data, self.errors)
+            except UnicodeDecodeError as exc:
+                if firstline:
+                    newchars, decodedbytes = \
+                        self.decode(data[:exc.start], self.errors)
+                    lines = newchars.splitlines(keepends=True)
+                    if len(lines)<=1:
+                        raise
+                else:
+                    raise
+            # keep undecoded bytes until the next call
+            self.bytebuffer = data[decodedbytes:]
+            # put new characters in the character buffer
+            self.charbuffer += newchars
+            # there was no data available
+            if not newdata:
+                break
+        if chars < 0:
+            # Return everything we've got
+            result = self.charbuffer
+            self.charbuffer = self._empty_charbuffer
+        else:
+            # Return the first chars characters
+            result = self.charbuffer[:chars]
+            self.charbuffer = self.charbuffer[chars:]
+        return result
+
+    def readline(self, size=None, keepends=True):
+
+        """ Read one line from the input stream and return the
+            decoded data.
+
+            size, if given, is passed as size argument to the
+            read() method.
+
+        """
+        # If we have lines cached from an earlier read, return
+        # them unconditionally
+        if self.linebuffer:
+            line = self.linebuffer[0]
+            del self.linebuffer[0]
+            if len(self.linebuffer) == 1:
+                # revert to charbuffer mode; we might need more data
+                # next time
+                self.charbuffer = self.linebuffer[0]
+                self.linebuffer = None
+            if not keepends:
+                line = line.splitlines(keepends=False)[0]
+            return line
+
+        readsize = size or 72
+        line = self._empty_charbuffer
+        # If size is given, we call read() only once
+        while True:
+            data = self.read(readsize, firstline=True)
+            if data:
+                # If we're at a "\r" read one extra character (which might
+                # be a "\n") to get a proper line ending. If the stream is
+                # temporarily exhausted we return the wrong line ending.
+                if (isinstance(data, str) and data.endswith("\r")) or \
+                   (isinstance(data, bytes) and data.endswith(b"\r")):
+                    data += self.read(size=1, chars=1)
+
+            line += data
+            lines = line.splitlines(keepends=True)
+            if lines:
+                if len(lines) > 1:
+                    # More than one line result; the first line is a full line
+                    # to return
+                    line = lines[0]
+                    del lines[0]
+                    if len(lines) > 1:
+                        # cache the remaining lines
+                        lines[-1] += self.charbuffer
+                        self.linebuffer = lines
+                        self.charbuffer = None
+                    else:
+                        # only one remaining line, put it back into charbuffer
+                        self.charbuffer = lines[0] + self.charbuffer
+                    if not keepends:
+                        line = line.splitlines(keepends=False)[0]
+                    break
+                line0withend = lines[0]
+                line0withoutend = lines[0].splitlines(keepends=False)[0]
+                if line0withend != line0withoutend: # We really have a line end
+                    # Put the rest back together and keep it until the next call
+                    self.charbuffer = self._empty_charbuffer.join(lines[1:]) + \
+                                      self.charbuffer
+                    if keepends:
+                        line = line0withend
+                    else:
+                        line = line0withoutend
+                    break
+            # we didn't get anything or this was our only try
+            if not data or size is not None:
+                if line and not keepends:
+                    line = line.splitlines(keepends=False)[0]
+                break
+            if readsize < 8000:
+                readsize *= 2
+        return line
+
+    def readlines(self, sizehint=None, keepends=True):
+
+        """ Read all lines available on the input stream
+            and return them as a list.
+
+            Line breaks are implemented using the codec's decoder
+            method and are included in the list entries.
+
+            sizehint, if given, is ignored since there is no efficient
+            way of finding the true end-of-line.
+
+        """
+        data = self.read()
+        return data.splitlines(keepends)
+
+    def reset(self):
+
+        """ Resets the codec buffers used for keeping internal state.
+
+            Note that no stream repositioning should take place.
+            This method is primarily intended to be able to recover
+            from decoding errors.
+
+        """
+        self.bytebuffer = b""
+        self.charbuffer = self._empty_charbuffer
+        self.linebuffer = None
+
+    def seek(self, offset, whence=0):
+        """ Set the input stream's current position.
+
+            Resets the codec buffers used for keeping state.
+        """
+        self.stream.seek(offset, whence)
+        self.reset()
+
+    def __next__(self):
+
+        """ Return the next decoded line from the input stream."""
+        line = self.readline()
+        if line:
+            return line
+        raise StopIteration
+
+    def __iter__(self):
+        return self
+
+    def __getattr__(self, name,
+                    getattr=getattr):
+
+        """ Inherit all other methods from the underlying stream.
+        """
+        return getattr(self.stream, name)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, type, value, tb):
+        self.stream.close()
+
+    def __reduce_ex__(self, proto):
+        raise TypeError("can't serialize %s" % self.__class__.__name__)
+
+###
+
+class StreamReaderWriter:
+
+    """ StreamReaderWriter instances allow wrapping streams which
+        work in both read and write modes.
+
+        The design is such that one can use the factory functions
+        returned by the codec.lookup() function to construct the
+        instance.
+
+    """
+    # Optional attributes set by the file wrappers below
+    encoding = 'unknown'
+
+    def __init__(self, stream, Reader, Writer, errors='strict'):
+
+        """ Creates a StreamReaderWriter instance.
+
+            stream must be a Stream-like object.
+
+            Reader, Writer must be factory functions or classes
+            providing the StreamReader, StreamWriter interface resp.
+
+            Error handling is done in the same way as defined for the
+            StreamWriter/Readers.
+
+        """
+        self.stream = stream
+        self.reader = Reader(stream, errors)
+        self.writer = Writer(stream, errors)
+        self.errors = errors
+
+    def read(self, size=-1):
+
+        return self.reader.read(size)
+
+    def readline(self, size=None, keepends=True):
+
+        return self.reader.readline(size, keepends)
+
+    def readlines(self, sizehint=None, keepends=True):
+
+        return self.reader.readlines(sizehint, keepends)
+
+    def __next__(self):
+
+        """ Return the next decoded line from the input stream."""
+        return next(self.reader)
+
+    def __iter__(self):
+        return self
+
+    def write(self, data):
+
+        return self.writer.write(data)
+
+    def writelines(self, list):
+
+        return self.writer.writelines(list)
+
+    def reset(self):
+
+        self.reader.reset()
+        self.writer.reset()
+
+    def seek(self, offset, whence=0):
+        self.stream.seek(offset, whence)
+        self.reader.reset()
+        if whence == 0 and offset == 0:
+            self.writer.reset()
+
+    def __getattr__(self, name,
+                    getattr=getattr):
+
+        """ Inherit all other methods from the underlying stream.
+        """
+        return getattr(self.stream, name)
+
+    # these are needed to make "with StreamReaderWriter(...)" work properly
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, type, value, tb):
+        self.stream.close()
+
+    def __reduce_ex__(self, proto):
+        raise TypeError("can't serialize %s" % self.__class__.__name__)
+
+###
+
+class StreamRecoder:
+
+    """ StreamRecoder instances translate data from one encoding to another.
+
+        They use the complete set of APIs returned by the
+        codecs.lookup() function to implement their task.
+
+        Data written to the StreamRecoder is first decoded into an
+        intermediate format (depending on the "decode" codec) and then
+        written to the underlying stream using an instance of the provided
+        Writer class.
+
+        In the other direction, data is read from the underlying stream using
+        a Reader instance and then encoded and returned to the caller.
+
+    """
+    # Optional attributes set by the file wrappers below
+    data_encoding = 'unknown'
+    file_encoding = 'unknown'
+
+    def __init__(self, stream, encode, decode, Reader, Writer,
+                 errors='strict'):
+
+        """ Creates a StreamRecoder instance which implements a two-way
+            conversion: encode and decode work on the frontend (the
+            data visible to .read() and .write()) while Reader and Writer
+            work on the backend (the data in stream).
+
+            You can use these objects to do transparent
+            transcodings from e.g. latin-1 to utf-8 and back.
+
+            stream must be a file-like object.
+
+            encode and decode must adhere to the Codec interface; Reader and
+            Writer must be factory functions or classes providing the
+            StreamReader and StreamWriter interfaces resp.
+
+            Error handling is done in the same way as defined for the
+            StreamWriter/Readers.
+
+        """
+        self.stream = stream
+        self.encode = encode
+        self.decode = decode
+        self.reader = Reader(stream, errors)
+        self.writer = Writer(stream, errors)
+        self.errors = errors
+
+    def read(self, size=-1):
+
+        data = self.reader.read(size)
+        data, bytesencoded = self.encode(data, self.errors)
+        return data
+
+    def readline(self, size=None):
+
+        if size is None:
+            data = self.reader.readline()
+        else:
+            data = self.reader.readline(size)
+        data, bytesencoded = self.encode(data, self.errors)
+        return data
+
+    def readlines(self, sizehint=None):
+
+        data = self.reader.read()
+        data, bytesencoded = self.encode(data, self.errors)
+        return data.splitlines(keepends=True)
+
+    def __next__(self):
+
+        """ Return the next decoded line from the input stream."""
+        data = next(self.reader)
+        data, bytesencoded = self.encode(data, self.errors)
+        return data
+
+    def __iter__(self):
+        return self
+
+    def write(self, data):
+
+        data, bytesdecoded = self.decode(data, self.errors)
+        return self.writer.write(data)
+
+    def writelines(self, list):
+
+        data = b''.join(list)
+        data, bytesdecoded = self.decode(data, self.errors)
+        return self.writer.write(data)
+
+    def reset(self):
+
+        self.reader.reset()
+        self.writer.reset()
+
+    def seek(self, offset, whence=0):
+        # Seeks must be propagated to both the readers and writers
+        # as they might need to reset their internal buffers.
+        self.reader.seek(offset, whence)
+        self.writer.seek(offset, whence)
+
+    def __getattr__(self, name,
+                    getattr=getattr):
+
+        """ Inherit all other methods from the underlying stream.
+        """
+        return getattr(self.stream, name)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, type, value, tb):
+        self.stream.close()
+
+    def __reduce_ex__(self, proto):
+        raise TypeError("can't serialize %s" % self.__class__.__name__)
+
+### Shortcuts
+
+def open(filename, mode='r', encoding=None, errors='strict', buffering=-1):
+    """ Open an encoded file using the given mode and return
+        a wrapped version providing transparent encoding/decoding.
+
+        Note: The wrapped version will only accept the object format
+        defined by the codecs, i.e. Unicode objects for most builtin
+        codecs. Output is also codec dependent and will usually be
+        Unicode as well.
+
+        If encoding is not None, then the
+        underlying encoded files are always opened in binary mode.
+        The default file mode is 'r', meaning to open the file in read mode.
+
+        encoding specifies the encoding which is to be used for the
+        file.
+
+        errors may be given to define the error handling. It defaults
+        to 'strict' which causes ValueErrors to be raised in case an
+        encoding error occurs.
+
+        buffering has the same meaning as for the builtin open() API.
+        It defaults to -1 which means that the default buffer size will
+        be used.
+
+        The returned wrapped file object provides an extra attribute
+        .encoding which allows querying the used encoding. This
+        attribute is only available if an encoding was specified as
+        parameter.
+    """
+    import warnings
+    warnings.warn("codecs.open() is deprecated. Use open() instead.",
+                  DeprecationWarning, stacklevel=2)
+
+    if encoding is not None and \
+       'b' not in mode:
+        # Force opening of the file in binary mode
+        mode = mode + 'b'
+    file = builtins.open(filename, mode, buffering)
+    if encoding is None:
+        return file
+
+    try:
+        info = lookup(encoding)
+        srw = StreamReaderWriter(file, info.streamreader, info.streamwriter, errors)
+        # Add attributes to simplify introspection
+        srw.encoding = encoding
+        return srw
+    except:
+        file.close()
+        raise
+
+def EncodedFile(file, data_encoding, file_encoding=None, errors='strict'):
+
+    """ Return a wrapped version of file which provides transparent
+        encoding translation.
+
+        Data written to the wrapped file is decoded according
+        to the given data_encoding and then encoded to the underlying
+        file using file_encoding. The intermediate data type
+        will usually be Unicode but depends on the specified codecs.
+
+        Bytes read from the file are decoded using file_encoding and then
+        passed back to the caller encoded using data_encoding.
+
+        If file_encoding is not given, it defaults to data_encoding.
+
+        errors may be given to define the error handling. It defaults
+        to 'strict' which causes ValueErrors to be raised in case an
+        encoding error occurs.
+
+        The returned wrapped file object provides two extra attributes
+        .data_encoding and .file_encoding which reflect the given
+        parameters of the same name. The attributes can be used for
+        introspection by Python programs.
+
+    """
+    if file_encoding is None:
+        file_encoding = data_encoding
+    data_info = lookup(data_encoding)
+    file_info = lookup(file_encoding)
+    sr = StreamRecoder(file, data_info.encode, data_info.decode,
+                       file_info.streamreader, file_info.streamwriter, errors)
+    # Add attributes to simplify introspection
+    sr.data_encoding = data_encoding
+    sr.file_encoding = file_encoding
+    return sr
+
+### Helpers for codec lookup
+
+def getencoder(encoding):
+
+    """ Lookup up the codec for the given encoding and return
+        its encoder function.
+
+        Raises a LookupError in case the encoding cannot be found.
+
+    """
+    return lookup(encoding).encode
+
+def getdecoder(encoding):
+
+    """ Lookup up the codec for the given encoding and return
+        its decoder function.
+
+        Raises a LookupError in case the encoding cannot be found.
+
+    """
+    return lookup(encoding).decode
+
+def getincrementalencoder(encoding):
+
+    """ Lookup up the codec for the given encoding and return
+        its IncrementalEncoder class or factory function.
+
+        Raises a LookupError in case the encoding cannot be found
+        or the codecs doesn't provide an incremental encoder.
+
+    """
+    encoder = lookup(encoding).incrementalencoder
+    if encoder is None:
+        raise LookupError(encoding)
+    return encoder
+
+def getincrementaldecoder(encoding):
+
+    """ Lookup up the codec for the given encoding and return
+        its IncrementalDecoder class or factory function.
+
+        Raises a LookupError in case the encoding cannot be found
+        or the codecs doesn't provide an incremental decoder.
+
+    """
+    decoder = lookup(encoding).incrementaldecoder
+    if decoder is None:
+        raise LookupError(encoding)
+    return decoder
+
+def getreader(encoding):
+
+    """ Lookup up the codec for the given encoding and return
+        its StreamReader class or factory function.
+
+        Raises a LookupError in case the encoding cannot be found.
+
+    """
+    return lookup(encoding).streamreader
+
+def getwriter(encoding):
+
+    """ Lookup up the codec for the given encoding and return
+        its StreamWriter class or factory function.
+
+        Raises a LookupError in case the encoding cannot be found.
+
+    """
+    return lookup(encoding).streamwriter
+
+def iterencode(iterator, encoding, errors='strict', **kwargs):
+    """
+    Encoding iterator.
+
+    Encodes the input strings from the iterator using an IncrementalEncoder.
+
+    errors and kwargs are passed through to the IncrementalEncoder
+    constructor.
+    """
+    encoder = getincrementalencoder(encoding)(errors, **kwargs)
+    for input in iterator:
+        output = encoder.encode(input)
+        if output:
+            yield output
+    output = encoder.encode("", True)
+    if output:
+        yield output
+
+def iterdecode(iterator, encoding, errors='strict', **kwargs):
+    """
+    Decoding iterator.
+
+    Decodes the input strings from the iterator using an IncrementalDecoder.
+
+    errors and kwargs are passed through to the IncrementalDecoder
+    constructor.
+    """
+    decoder = getincrementaldecoder(encoding)(errors, **kwargs)
+    for input in iterator:
+        output = decoder.decode(input)
+        if output:
+            yield output
+    output = decoder.decode(b"", True)
+    if output:
+        yield output
+
+### Helpers for charmap-based codecs
+
+def make_identity_dict(rng):
+
+    """ make_identity_dict(rng) -> dict
+
+        Return a dictionary where elements of the rng sequence are
+        mapped to themselves.
+
+    """
+    return {i:i for i in rng}
+
+def make_encoding_map(decoding_map):
+
+    """ Creates an encoding map from a decoding map.
+
+        If a target mapping in the decoding map occurs multiple
+        times, then that target is mapped to None (undefined mapping),
+        causing an exception when encountered by the charmap codec
+        during translation.
+
+        One example where this happens is cp875.py which decodes
+        multiple character to \\u001a.
+
+    """
+    m = {}
+    for k,v in decoding_map.items():
+        if not v in m:
+            m[v] = k
+        else:
+            m[v] = None
+    return m
+
+### error handlers
+
+strict_errors = lookup_error("strict")
+ignore_errors = lookup_error("ignore")
+replace_errors = lookup_error("replace")
+xmlcharrefreplace_errors = lookup_error("xmlcharrefreplace")
+backslashreplace_errors = lookup_error("backslashreplace")
+namereplace_errors = lookup_error("namereplace")
+
+# Tell modulefinder that using codecs probably needs the encodings
+# package
+_false = 0
+if _false:
+    import encodings  # noqa: F401

@@ -8,6 +8,7 @@ namespace Typhon.Runtime
 {
     using System;
     using System.Collections;
+    using System.Collections.Concurrent;
     using System.Collections.Generic;
     using System.Linq;
     using System.Numerics;
@@ -16,21 +17,25 @@ namespace Typhon.Runtime
     using System.Globalization;
     using Typhon.Stdlib;
 
-    internal sealed class PyIntEnumType : TypeDelegator, IPyKeywordCallable, IEnumerable<PyIntEnumMember>, IPyLen
+    internal sealed class PyIntEnumType : TypeDelegator, IPyKeywordCallable, IEnumerable<PyIntegerEnum>, IPyLen
     {
         readonly string _name;
         internal readonly string Module;
         readonly OrderedDictionary<string, object?> _members = new(StringComparer.Ordinal);
-        readonly Dictionary<BigInteger, PyIntEnumMember> _values = new();
+        readonly Dictionary<BigInteger, PyIntegerEnum> _values = new();
+        readonly ConcurrentDictionary<BigInteger, PyIntegerFlag> _combinations = new();
+        readonly bool _isFlag;
 
-        internal PyIntEnumType(string name, string module, IEnumerable<(string Name, BigInteger Value)> members) : base(typeof(PyIntEnumMember))
+        internal PyIntEnumType(string name, string module, IEnumerable<(string Name, BigInteger Value)> members,
+            bool isFlag = false) : base(isFlag ? typeof(PyIntFlagMember) : typeof(PyIntEnumMember))
         {
+            _isFlag = isFlag;
             _name = name;
             Module = module;
             foreach (var (key, value) in members)
             {
                 if (!_values.TryGetValue(value, out var member))
-                    _values[value] = member = new PyIntEnumMember(this, key, value);
+                    _values[value] = member = isFlag ? new PyIntFlagMember(this, key, value) : new PyIntEnumMember(this, key, value);
                 _members.Add(key, member);
             }
         }
@@ -38,7 +43,7 @@ namespace Typhon.Runtime
         internal IEnumerable<KeyValuePair<string, object?>> Members => _members;
         public override string Name => _name;
         public override string FullName => Module + "." + _name;
-        public override Type? BaseType => typeof(Typhon.Stdlib.@enum.IntEnum);
+        public override Type? BaseType => _isFlag ? typeof(@enum.IntFlag) : typeof(@enum.IntEnum);
         public override Type UnderlyingSystemType => this;
         public override ConstructorInfo[] GetConstructors(BindingFlags flags) => [];
         public override bool Equals(Type? other) => ReferenceEquals(this, other);
@@ -61,10 +66,12 @@ namespace Typhon.Runtime
                 (0, 1) when kwargs!.TryGetValue("value", out var value) => value,
                 _ => throw new InvalidCastException($"{Name}() needs one value"),
             };
-            if (input is PyIntEnumMember member && member.Owner == this) return member;
+            if (input is PyIntegerEnum member && member.DynamicEnumType == this) return member;
             try
             {
-                if (_values.TryGetValue(Integer(input), out var existing)) return existing;
+                BigInteger value = Integer(input);
+                if (_isFlag) return FlagValue(value);
+                if (_values.TryGetValue(value, out var existing)) return existing;
             }
             catch (InvalidCastException) { }
             throw new ArgumentException($"{Builtins.repr(input)} is not a valid {Name}");
@@ -77,23 +84,38 @@ namespace Typhon.Runtime
             return index is BigInteger wide ? wide : (long)index;
         }
 
-        public IEnumerator<PyIntEnumMember> GetEnumerator() => _values.Values.GetEnumerator();
+        internal IEnumerable<PyIntegerFlag> FlagMembers => _values.Values.Cast<PyIntegerFlag>();
+
+        internal PyIntegerFlag FlagValue(BigInteger value)
+        {
+            if (_values.TryGetValue(value, out var exact)) return (PyIntegerFlag)exact;
+            value = PyIntegerFlag.NormalizeBits(value, FlagMembers);
+            if (_values.TryGetValue(value, out var normalized)) return (PyIntegerFlag)normalized;
+            return _combinations.GetOrAdd(value, bits =>
+                new PyIntFlagMember(this, PyIntegerFlag.CombinationName(FlagMembers, bits), bits));
+        }
+
+        IEnumerable<PyIntegerEnum> IterableMembers => _isFlag
+            ? _values.Values.Where(member => PyIntegerFlag.IsSingleBit(member.Integer))
+            : _values.Values;
+        public IEnumerator<PyIntegerEnum> GetEnumerator() => IterableMembers.GetEnumerator();
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
-        public long __len__() => _values.Count;
+        public long __len__() => IterableMembers.LongCount();
     }
 
     internal abstract class PyIntegerEnum : IPyRepr, IComparable
     {
         internal BigInteger Integer { get; private set; }
         internal string? _name_ = "";
-        internal virtual string EnumName => GetType().Name;
+        internal virtual PyIntEnumType? DynamicEnumType => null;
+        internal virtual string EnumName => DynamicEnumType?.Name ?? GetType().Name;
         protected virtual string? EnumReprModule => null;
         public string? name => _name_;
         public dynamic value => Integer >= long.MinValue && Integer <= long.MaxValue ? (object)(long)Integer : Integer;
 
         protected PyIntegerEnum() { }
 
-        protected PyIntegerEnum(string name, BigInteger integer)
+        protected PyIntegerEnum(string? name, BigInteger integer)
         {
             _name_ = name;
             Integer = integer;
@@ -144,8 +166,7 @@ namespace Typhon.Runtime
 
     internal sealed class PyIntEnumMember(PyIntEnumType owner, string name, BigInteger integer) : PyIntegerEnum(name, integer)
     {
-        internal PyIntEnumType Owner => owner;
-        internal override string EnumName => owner.Name;
+        internal override PyIntEnumType DynamicEnumType => owner;
     }
 }
 
@@ -158,25 +179,66 @@ namespace Typhon.Stdlib
 
     internal static class @enum
     {
-        internal abstract class IntFlag : PyIntegerFlag { }
+        internal abstract class Enum : PyPlainEnum
+        {
+            public static Type __typhon_factory__(string value, object names, [PyKeywordOnly] string? module = null,
+                [PyKeywordOnly] string? qualname = null, [PyKeywordOnly] long start = 1)
+            {
+                if (names is string text)
+                    names = text.Replace(',', ' ').Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+                return new PyPlainEnumType(value, module ?? "__main__", qualname ?? value, Members());
+
+                IEnumerable<(string, object?)> Members()
+                {
+                    if (names is System.Collections.IDictionary mapping)
+                    {
+                        foreach (var pair in Builtins.ReadDictItems(mapping)) yield return ((string)pair.Key, pair.Value);
+                        yield break;
+                    }
+                    foreach (object? name in Builtins.__iter_dyn(names))
+                    {
+                        if (name is string key)
+                        {
+                            yield return (key, start);
+                            start = checked(start + 1);
+                            continue;
+                        }
+                        var pair = Builtins.__unpack_items(Builtins.__iter_dyn(name), 2);
+                        yield return ((string)pair[0], pair[1]);
+                    }
+                }
+            }
+        }
+        internal abstract class IntFlag : PyIntegerFlag
+        {
+            protected IntFlag() { }
+            protected IntFlag(string? name, System.Numerics.BigInteger value) : base(name, value) { }
+
+            public static Type _convert_(string name, string module, object filter, object? source = null,
+                [PyKeywordOnly] object? boundary = null, [PyKeywordOnly] bool as_global = false) =>
+                ConvertIntegerConstants(name, module, filter, source, isFlag: true);
+        }
 
         internal static class IntEnum
         {
             public static Type _convert_(string name, string module, object filter, object? source = null,
-                object? boundary = null, [PyKeywordOnly] bool as_global = false)
-            {
-                if (!sys_.modules.TryGetValue(module, out var target) || target == null)
-                    throw new KeyNotFoundException(module);
-                var globals = (IDictionary<string, object?>)(object)Builtins.getattr(target, "__dict__");
-                var from = source == null ? globals : (IDictionary<string, object?>)(object)Builtins.getattr(source, "__dict__");
-                var members = from.Where(pair => Builtins.truthy((object?)Builtins.__invoke(filter, [pair.Key])))
-                    .Select(pair => (pair.Key, PyIntEnumType.Integer(pair.Value)))
-                    .OrderBy(item => item.Item2).ThenBy(item => item.Key, StringComparer.Ordinal).ToList();
-                var created = new PyIntEnumType(name, module, members);
-                foreach (var member in created.Members) globals[member.Key] = member.Value;
-                globals[name] = created;
-                return created;
-            }
+                [PyKeywordOnly] object? boundary = null, [PyKeywordOnly] bool as_global = false) =>
+                ConvertIntegerConstants(name, module, filter, source, isFlag: false);
+        }
+
+        static Type ConvertIntegerConstants(string name, string module, object filter, object? source, bool isFlag)
+        {
+            if (!sys_.modules.TryGetValue(module, out var target) || target == null)
+                throw new KeyNotFoundException(module);
+            var globals = (IDictionary<string, object?>)Builtins.getattr(target, "__dict__")!;
+            var from = source == null ? globals : (IDictionary<string, object?>)Builtins.getattr(source, "__dict__")!;
+            var members = from.Where(pair => Builtins.truthy((object?)Builtins.__invoke(filter, [pair.Key])))
+                .Select(pair => (pair.Key, PyIntEnumType.Integer(pair.Value)))
+                .OrderBy(item => item.Item2).ThenBy(item => item.Key, StringComparer.Ordinal).ToList();
+            var created = new PyIntEnumType(name, module, members, isFlag);
+            foreach (var member in created.Members) globals[member.Key] = member.Value;
+            globals[name] = created;
+            return created;
         }
     }
 }

@@ -335,7 +335,7 @@ namespace Typhon.Compiler.Emit
                 if (twoPhase)
                 {
                     if (!ctx.NoInitDone) { _w.Line($"private protected {Esc(ctx.Name)}({NoInitType} _){alloc} {{ }}"); ctx.NoInitDone = true; }
-                    _w.Line($"{SurfaceVisibility("public", sig.Params)} {Esc(ctx.Name)}({sig.Params}){alloc} {{ __init__({string.Join(", ", f.Params.Skip(1).Select(x => Esc(x.Name)))}); }}");
+                    _w.Line($"{SurfaceVisibility("public", sig.Params)} {Esc(ctx.Name)}({sig.Params}){alloc} {{ __init__({sig.ForwardedConstructorArguments}); }}");
                     LineDirective(f);
                     string visibility = SurfaceVisibility("protected", sig.Params) == "internal" ? "private protected" : "protected";
                     _w.Line($"{visibility} {(NearestInitAncestor(ctx.Def) != null ? "new " : "")}void __init__({sig.Params})");

@@ -1,0 +1,19 @@
+from collections import namedtuple
+from itertools import chain
+
+class Record(namedtuple("Fields", "left right")):
+    _fields = ("left", "right", "extra")
+
+    def __iter__(self):
+        return chain(super().__iter__(), ("x",))
+
+    def __len__(self):
+        return len(tuple(iter(self)))
+
+    @classmethod
+    def _make(cls, items):
+        return cls(*items)
+
+record = Record._make(("a", "b"))
+print(record._fields, len(record), tuple(record))
+print(list(filter(len, ("", "a", "", "abc"))))

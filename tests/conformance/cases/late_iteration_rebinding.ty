@@ -1,0 +1,15 @@
+import re
+from typing import Any
+
+def split_numbers(text: Any):
+    pattern = re.compile("([0-9]+)")
+    parts = []
+    for part in pattern.split(text):
+        try:
+            part = int(part)
+        except ValueError:
+            pass
+        parts.append(part)
+    return parts
+
+print(split_numbers("one22two333"))

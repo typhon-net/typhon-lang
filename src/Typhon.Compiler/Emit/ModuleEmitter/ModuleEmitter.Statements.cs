@@ -63,7 +63,7 @@ namespace Typhon.Compiler.Emit
             if (t.StartsWith("List<") && v.StartsWith("IEnumerable<")) return true;
             if (t.StartsWith(PyGeneratorPrefix) && (v.StartsWith("IEnumerable<") || v.StartsWith("global::Typhon.Runtime.PyIterator<"))) return true;
             bool Plain(string x) => IsIntegral(x) || PrimitiveCsTypes.Contains(x) || x.StartsWith("List<") || x.StartsWith("HashSet<") || IsDictType(x) || TupleElementTypes(x) != null ||
-                                    x is "global::Typhon.Runtime.PyAttrDict" or "global::Typhon.Runtime.PyBytes" or "global::Typhon.Runtime.PyByteArray" ||
+                                    x is "global::Typhon.Runtime.PyAttrDict" or "global::Typhon.Runtime.PyBytes" or "global::Typhon.Runtime.PyByteArray" or "global::memoryview" or "memoryview" ||
                                     x is "global::System.Type" or "System.Type" ||
                                     x is "global::Typhon.Stdlib.re.Match" or "global::Typhon.Stdlib.re.BytesMatch" ||
                                     x.StartsWith("global::Typhon.Runtime.PyTuple<") || x.StartsWith("global::Typhon.Runtime.PyIterator<");
@@ -215,6 +215,10 @@ namespace Typhon.Compiler.Emit
         bool KnownNoneResult(CallExpr call)
         {
             if (TryTypeExpr(call.Func, out _)) return false;
+            if (TryBaseQualifiedMember(call, out var member, out var targetClass, out var targetMeta, out bool directBase) &&
+                directBase && call.Args.All(argument => !argument.Star && !argument.DoubleStar) &&
+                BaseQualifiedNativeOverloads(targetClass, targetMeta, member.Name) is { Count: > 0 } inheritedOverloads)
+                return inheritedOverloads.All(method => method.ReturnsVoid);
             if (!_m.IsGdScript && _cls != null && !IsShadowed("super") &&
                 call.Func is AttributeExpr { Target: CallExpr { Func: NameExpr { Id: "super" }, Args.Count: 0 } } inherited &&
                 InheritedDotNetOverloads(_cls.Def, inherited.Name, fromSuper: true) is { Count: > 0 } baseOverloads)
@@ -259,6 +263,9 @@ namespace Typhon.Compiler.Emit
             string bound = rt is null or "dynamic" or "object" ? BoundMethodValue(r.Value) : null;
             var call = r.Value as CallExpr;
             bool returnsNone = call != null && KnownNoneResult(call);
+            if (Obs != null && rt?.StartsWith("List<", StringComparison.Ordinal) == true &&
+                ElementKey(r.Value, out char kind) is string key && kind == 'l' && !UnsureType(GenericArg(rt)))
+                Obs.AddExpectedElement(key, GenericArg(rt));
             if (Obs != null && _retKey != null)
                 Obs.AddReturn(_retKey, r.Value == null || IsNone(r.Value) || returnsNone ? TypeInference.NoneType :
                     bound != null ? "dynamic" : PyType(InferType(r.Value)) ?? TypeInference.Unknown);
@@ -275,7 +282,8 @@ namespace Typhon.Compiler.Emit
                 return;
             }
             string result = TupleLiteralValue(r.Value, rt) ?? FrozenSetReturn(r.Value, rt) ??
-                (rt == "dynamic" && r.Value is LambdaExpr lambda ? EmitRuntimeLambda(lambda) :
+                (r.Value is ComprehensionExpr comprehension ? EmitComprehension(comprehension, rt) :
+                    rt == "dynamic" && r.Value is LambdaExpr lambda ? EmitRuntimeLambda(lambda) :
                     EmitExpr(r.Value, targetTyped: rt != null && rt != "dynamic" && rt != "void"));
             _w.Line($"return {ProfileReturn(result)};");
 
@@ -388,19 +396,27 @@ namespace Typhon.Compiler.Emit
             if (test is not CallExpr { Func: NameExpr { Id: "isinstance" }, Args.Count: 2 } check ||
                 IsShadowed("isinstance") || check.Args.Any(argument => argument.Star || argument.DoubleStar || argument.Name != null) ||
                 check.Args[0].Value is not NameExpr receiver || !IsLocal(receiver.Id)) return null;
-            Expr tested = check.Args[1].Value;
             string actual = KnownType(receiver.Id);
-            if (tested is NameExpr { Id: "str" or "bytes" or "bytearray" or "tuple" } builtin && !IsShadowed(builtin.Id))
+            bool sealedTextOrBytes = actual == "string" || IsBytesType(actual);
+            return IsDisjoint(check.Args[1].Value) ? false : null;
+
+            bool IsDisjoint(Expr expectedType)
             {
-                if (builtin.Id == "tuple" && actual is ("System.Type" or "global::System.Type")) return false;
-                return (actual == "string" || IsBytesType(actual)) && actual != MapType(builtin, test) ? false : (bool?)null;
+                if (expectedType is TupleExpr tuple)
+                    return tuple.Elts.All(IsDisjoint);
+                if (expectedType is NameExpr builtin && !IsShadowed(builtin.Id))
+                {
+                    if (builtin.Id == "tuple" && actual is ("System.Type" or "global::System.Type")) return true;
+                    if (sealedTextOrBytes && builtin.Id is "int" or "float" or "bool" or "complex") return true;
+                    if (builtin.Id is "str" or "bytes" or "bytearray" or "tuple")
+                        return sealedTextOrBytes && actual != MapType(builtin, test);
+                }
+                return sealedTextOrBytes && DotNetMeta(actual) is string actualMeta &&
+                    DottedName(expectedType) is string expectedName &&
+                    TryResolveType(expectedName, 0, out string expected, out var declared) &&
+                    declared == null && expected != null && IsRuntimeClassMeta(expected) && !MayHaveVirtualSubclasses(expected, declared) &&
+                    _r is RoslynTypeResolver resolver && resolver.RuntimeTypeMatches(actualMeta, expected, requireSealed: true) == false;
             }
-            if ((actual == "string" || IsBytesType(actual)) && DotNetMeta(actual) is string actualMeta &&
-                DottedName(tested) is string testedName && TryResolveType(testedName, 0, out string expected, out var declared) &&
-                declared == null && expected != null && IsRuntimeClassMeta(expected) && !MayHaveVirtualSubclasses(expected, declared) &&
-                _r is RoslynTypeResolver resolver && resolver.RuntimeTypeMatches(actualMeta, expected, requireSealed: true) == false)
-                return false;
-            return null;
         }
 
         void EmitIf(IfStmt i, bool isElif)

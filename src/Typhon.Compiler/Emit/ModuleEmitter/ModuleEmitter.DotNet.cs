@@ -55,6 +55,10 @@ namespace Typhon.Compiler.Emit
             return TryResolveType(dotted, 0, out var meta, out _) ? meta : null;
         }
 
+        bool HasNativeClassFactory(Expr target) =>
+            DotNetStaticMeta(target) is string metadata && metadata.StartsWith("Typhon.Stdlib.", StringComparison.Ordinal) &&
+            _r.GetMembers(metadata, "__typhon_factory__").Any(member => member.IsMethod && member.IsStatic);
+
         IReadOnlyList<Semantics.MemberSig> DotNetConstructors(Expr func)
         {
             Expr target = func is SubscriptExpr s ? s.Target : func;
@@ -131,7 +135,7 @@ namespace Typhon.Compiler.Emit
             if (depth > 20 || !fromSuper && cls.Body.OfType<FunctionDef>().Any(f => f.Name == name)) return null;
             foreach (var b in cls.Bases)
             {
-                if (!ResolveBase(b, out var py, out var meta)) continue;
+                if (!ClassDeclarationResolver(cls).ResolveBase(b, out var py, out var meta)) continue;
                 if (py != null)
                 {
                     if (DefinesInHierarchy(py, name)) return null;

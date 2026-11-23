@@ -1,0 +1,30 @@
+from math import fsum, sumprod
+
+values: list[float] = [1e16, 1.0, -1e16]
+ones: list[int] = [1, 1, 1]
+print(fsum(x for x in values))
+print(sumprod(values, ones))
+print(sumprod(iter([1, 2, 3]), iter([4, 5, 6])))
+print(sumprod([True, False], [5, 9]))
+print(sumprod([], []))
+try:
+    sumprod([1], [])
+except ValueError as exc:
+    print(str(exc))
+try:
+    fsum([1e308, 1e308, -1e308])
+except OverflowError as exc:
+    print(str(exc))
+try:
+    fsum([float('inf'), float('-inf')])
+except ValueError as exc:
+    print(str(exc))
+try:
+    fsum(['1'])
+except TypeError as exc:
+    print(str(exc))
+print(fsum([1e308, float('inf'), 1e308]))
+print(fsum([1.0, 2.0 ** -53, 2.0 ** -1074]))
+print(sumprod([0.0, -0.0], [2, 3]))
+print(sumprod([1.0 + 2.0 ** -27, 1.0], [1.0 - 2.0 ** -27, -1.0]))
+print(sumprod([1e308, -1e308], [2, 2]))

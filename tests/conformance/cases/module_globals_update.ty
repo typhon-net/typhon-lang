@@ -1,0 +1,9 @@
+def current():
+    return generated
+
+namespace = globals()
+key = ''.join(('gen', 'erated'))
+namespace.update({key: 17})
+print(generated, current())
+namespace.update([(key, 31)])
+print(generated, current())

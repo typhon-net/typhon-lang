@@ -1,0 +1,11 @@
+import errno
+
+def report(error: Exception):
+    error.filename2 = 'right'
+    print(error.errno, error.strerror, error.filename, error.filename2)
+    print(error.args)
+
+try:
+    raise OSError(errno.ENOENT, 'Missing', 'left')
+except OSError as error:
+    report(error)

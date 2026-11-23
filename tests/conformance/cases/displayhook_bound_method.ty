@@ -1,0 +1,19 @@
+import sys
+
+class Display:
+    def __init__(self):
+        self.values = []
+
+    def show(self, value):
+        self.values.append(value)
+
+display = Display()
+original = sys.displayhook
+try:
+    sys.displayhook = display.show
+    sys.displayhook("text")
+    sys.displayhook(None)
+    print(display.values)
+finally:
+    sys.displayhook = original
+print(sys.displayhook is original)

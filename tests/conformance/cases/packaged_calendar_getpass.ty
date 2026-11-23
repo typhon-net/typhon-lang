@@ -1,0 +1,8 @@
+import calendar
+import getpass
+import os
+
+print(calendar.monthrange(2024, 2), calendar.isleap(2000), calendar.isleap(1900))
+print(list(calendar.Calendar(firstweekday=6).iterweekdays()))
+os.environ['LOGNAME'] = 'typhon-test-user'
+print(getpass.getuser())

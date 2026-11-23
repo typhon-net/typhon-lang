@@ -1,0 +1,16 @@
+from io import BytesIO
+import tarfile
+
+stream = BytesIO()
+payload = b'hello from the archive'
+with tarfile.open(fileobj=stream, mode='w') as archive:
+    member = tarfile.TarInfo('data.txt')
+    member.size = len(payload)
+    archive.addfile(member, BytesIO(payload))
+
+stream.seek(0)
+with tarfile.open(fileobj=stream, mode='r') as archive:
+    print(archive.getnames())
+    print(archive.getmember('data.txt').size)
+    print(archive.extractfile('data.txt').read())
+print(stream.closed)

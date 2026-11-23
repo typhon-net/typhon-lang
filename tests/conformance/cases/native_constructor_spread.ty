@@ -1,0 +1,9 @@
+from datetime import datetime, timezone
+
+date_parts = [2026, 11, 23, 8, 45]
+print(datetime(*date_parts))
+print(datetime(*date_parts, tzinfo=timezone.utc).isoformat())
+try:
+    raise OverflowError(42)
+except OverflowError as error:
+    print(str(error), error.args)

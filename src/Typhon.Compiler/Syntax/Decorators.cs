@@ -55,6 +55,9 @@ namespace Typhon.Compiler.Syntax
         internal static bool IsIntegerEnumDecorator(Expr expression) =>
             SimpleEnumBase(expression) is "IntEnum" or "enum.IntEnum";
 
+        internal static bool IsPlainEnumDecorator(Expr expression) =>
+            SimpleEnumBase(expression) is "Enum" or "enum.Enum";
+
         static string SimpleEnumBase(Expr expression) =>
             expression is CallExpr { Args.Count: 1 } decorator &&
             Name(decorator.Func) is "_simple_enum" or "enum._simple_enum"
@@ -147,7 +150,7 @@ namespace Typhon.Compiler.Syntax
                         foreach (var nested in c.Body.OfType<ClassDef>()) Rewrite(new List<Stmt> { nested }, names, module);
                         // a class decorator runs where the class is defined, with the class (registries, markers); its result
                         // must be the class itself (Typhon classes are not rebound)
-                        var classPython = c.Decorators.Where(d => !IsStringEnumDecorator(d) && !IsIntegerEnumDecorator(d) && IsPythonDecorator(d, names)).ToList();
+                        var classPython = c.Decorators.Where(d => !IsStringEnumDecorator(d) && !IsIntegerEnumDecorator(d) && !IsPlainEnumDecorator(d) && IsPythonDecorator(d, names)).ToList();
                         if (classPython.Count > 0)
                         {
                             c.HasPythonClassDecorators = true;

@@ -1,0 +1,16 @@
+# typhon: int=bigint
+from struct import error, pack
+
+class Index:
+    def __init__(self, value: int):
+        self.value = value
+
+    def __index__(self) -> int:
+        return self.value
+
+print(pack('>BbQ', Index(255), Index(-2), Index(1 << 63)).hex())
+for invalid in (3.5, '10', None):
+    try:
+        pack('>B', invalid)
+    except error as exc:
+        print(str(exc))

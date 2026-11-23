@@ -8,6 +8,7 @@ namespace Typhon.Stdlib
 {
     using System;
     using System.Collections.Generic;
+    using System.Collections.Concurrent;
     using System.Globalization;
     using System.Linq;
     using System.Net;
@@ -59,21 +60,55 @@ namespace Typhon.Stdlib
 
         internal partial class socket : IDisposable
         {
-            readonly Socket _handle;
+            static readonly ConcurrentDictionary<long, Socket> AcceptedSockets = new();
+            Socket _handle = null!;
             double? _timeout;
-            public long family { get; }
-            public long type { get; }
-            public long proto { get; }
+            public long family { get; private set; }
+            public long type { get; private set; }
+            public long proto { get; private set; }
 
-            public socket(long family = -1, long type = -1, long proto = -1, object? fileno = null)
+            // A Python subclass calls __init__ after CLR allocation.
+            protected socket() { }
+
+            public socket(long family = -1, long type = -1, long proto = -1, object? fileno = null) =>
+                __init__(family, type, proto, fileno);
+
+            public void __init__(object family, object type, object proto, object? fileno)
             {
-                if (fileno != null) throw new NotImplementedException("adopting socket file descriptors is not supported");
-                this.family = family == -1 ? AF_INET : family;
-                this.type = type == -1 ? SOCK_STREAM : type;
-                this.proto = proto == -1 ? 0 : proto;
-                try { _handle = new Socket(NetFamily(this.family), NetType(this.type), (ProtocolType)this.proto); }
-                catch (SocketException e) { throw SocketFailure(e); }
+                long familyNumber = Integer(family), typeNumber = Integer(type), protocolNumber = Integer(proto);
+                Socket selected;
+                if (fileno == null)
+                {
+                    familyNumber = familyNumber == -1 ? AF_INET : familyNumber;
+                    typeNumber = typeNumber == -1 ? SOCK_STREAM : typeNumber;
+                    protocolNumber = protocolNumber == -1 ? 0 : protocolNumber;
+                    try { selected = new Socket(NetFamily(familyNumber), NetType(typeNumber), (ProtocolType)protocolNumber); }
+                    catch (SocketException e) { throw SocketFailure(e); }
+                }
+                else
+                {
+                    long descriptor = Integer(fileno);
+                    if (!AcceptedSockets.TryRemove(descriptor, out var accepted))
+                        throw new PyOSError(errno.EBADF, "Bad file descriptor");
+                    selected = accepted;
+                    familyNumber = familyNumber == -1 ? PythonFamily(selected.AddressFamily) : familyNumber;
+                    typeNumber = typeNumber == -1 ? (long)selected.SocketType : typeNumber;
+                    protocolNumber = protocolNumber == -1 ? (long)selected.ProtocolType : protocolNumber;
+                }
+                _handle?.Dispose();
+                _handle = selected;
+                this.family = familyNumber;
+                this.type = typeNumber;
+                this.proto = protocolNumber;
+                _closeRequested = false;
                 ConfigureNewSocket();
+            }
+
+            internal static void CloseDetached(long descriptor)
+            {
+                if (!AcceptedSockets.TryRemove(descriptor, out var handle))
+                    throw new PyOSError(errno.EBADF, "Bad file descriptor");
+                handle.Dispose();
             }
 
             socket(Socket handle, socket listener)
@@ -136,20 +171,35 @@ namespace Typhon.Stdlib
             public void bind(object address) => Run(s => s.Bind(ToEndPoint(address, s.AddressFamily)));
             public void listen(long backlog = 128) => Run(s => s.Listen(checked((int)Math.Max(0, backlog))));
 
+            Socket AcceptConnection() => Run(s =>
+            {
+                if (_timeout is double seconds && seconds > 0)
+                {
+                    using var deadline = new CancellationTokenSource(TimeoutMilliseconds(seconds));
+                    return s.AcceptAsync(deadline.Token).AsTask().GetAwaiter().GetResult();
+                }
+                return s.Accept();
+            });
+
             public (socket, dynamic) accept()
             {
-                Socket connected = Run(s =>
-                {
-                    if (_timeout is double seconds && seconds > 0)
-                    {
-                        using var deadline = new CancellationTokenSource(TimeoutMilliseconds(seconds));
-                        return s.AcceptAsync(deadline.Token).AsTask().GetAwaiter().GetResult();
-                    }
-                    return s.Accept();
-                });
-                var peer = new socket(connected, this);
+                var peer = new socket(AcceptConnection(), this);
                 try { return (peer, peer.getpeername()); }
                 catch { peer.close(); throw; }
+            }
+
+            public (long, object) _accept()
+            {
+                Socket connected = AcceptConnection();
+                try
+                {
+                    object address = PythonAddress(connected.RemoteEndPoint!);
+                    long descriptor = connected.Handle.ToInt64();
+                    if (!AcceptedSockets.TryAdd(descriptor, connected))
+                        throw new InvalidOperationException("socket handle is already registered");
+                    return (descriptor, address);
+                }
+                catch { connected.Dispose(); throw; }
             }
 
             public void connect(object address)
@@ -201,6 +251,24 @@ namespace Typhon.Stdlib
                 var bytes = new byte[checked((int)bufsize)];
                 int read = Run(s => s.Receive(bytes, netFlags));
                 return new PyBytes(read == bytes.Length ? bytes : bytes[..read]);
+            }
+
+            public long recv_into(object buffer, long nbytes = 0, long flags = 0)
+            {
+                long capacity = buffer switch
+                {
+                    PyByteArray bytes => bytes.Count,
+                    global::memoryview view when !view.@readonly => view.nbytes,
+                    _ => throw new InvalidCastException("recv_into() requires a writable buffer"),
+                };
+                long count = nbytes == 0 ? capacity : nbytes;
+                if (count < 0 || count > capacity) throw new ArgumentException("buffer too small for requested bytes");
+                var received = recv(count, flags);
+                if (buffer is PyByteArray array)
+                    received.Data.AsSpan().CopyTo(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(array.Buffer));
+                else
+                    ((global::memoryview)buffer).Fill(received.Data);
+                return received.Count;
             }
 
             public long sendto(object data, object address) => sendto(data, 0, address);
@@ -282,6 +350,12 @@ namespace Typhon.Stdlib
             }
             throw last ?? new gaierror(-2L, "getaddrinfo returned no addresses");
         }
+
+        public static void close(object fd) => socket.CloseDetached(Integer(fd));
+
+        public static List<(long, long, long, string, dynamic)> getaddrinfo(object? host, object? port,
+            object family, object type, object proto, object flags) =>
+            getaddrinfo(host, port, Integer(family), Integer(type), Integer(proto), Integer(flags));
 
         public static List<(long, long, long, string, dynamic)> getaddrinfo(object? host, object? port,
             long family = AF_UNSPEC, long type = 0, long proto = 0, long flags = 0)
@@ -385,6 +459,7 @@ namespace Typhon.Stdlib
             int number => number,
             bool flag => flag ? 1L : 0L,
             BigInteger number => checked((long)number),
+            PyIntegerEnum member => checked((long)member.Integer),
             _ => throw new InvalidCastException("an integer is required"),
         };
 

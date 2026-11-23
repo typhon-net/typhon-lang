@@ -231,10 +231,8 @@ namespace Typhon.Stdlib
         static T WithUnixDescriptor<T>(long descriptor, Stream stream, Func<int, T> operation, Func<Exception> badDescriptor)
         {
             if (descriptor is >= 0 and <= 2 && stream is not FileStream) return operation((int)descriptor);
-            if (stream is not FileStream file) throw badDescriptor();
-
             SafeFileHandle handle;
-            try { handle = file.SafeFileHandle; }
+            try { handle = DescriptorHandle(stream) ?? throw badDescriptor(); }
             catch (ObjectDisposedException) { throw badDescriptor(); }
             bool referenced = false;
             try
@@ -334,7 +332,8 @@ namespace Typhon.Runtime
             bool available = name switch
             {
                 "termios" => Typhon.Stdlib.termios.Available,
-                "msvcrt" => System.OperatingSystem.IsWindows(),
+                "msvcrt" or "nt" or "_winapi" => System.OperatingSystem.IsWindows(),
+                "posix" => !System.OperatingSystem.IsWindows(),
                 _ => true,
             };
             if (!available) throw new ModuleNotFoundError($"No module named '{name}'");

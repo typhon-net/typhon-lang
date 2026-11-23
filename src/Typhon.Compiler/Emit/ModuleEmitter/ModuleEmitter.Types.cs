@@ -162,6 +162,9 @@ namespace Typhon.Compiler.Emit
                     if (!IsLocal(n.Id) && _runtimeProjectBindings.TryGetValue(n.Id, out var imported))
                         return ConditionalModuleClass(imported.Owner, imported.Name) ? "global::System.Type" : "dynamic";
                     if (!IsLocal(n.Id) && ConditionalModuleClass(_m, n.Id)) return "global::System.Type";
+                    if (!IsShadowed(n.Id) && StdlibOwner(n.Id) is string nativeOwner &&
+                        _r.GetMembers(nativeOwner, n.Id).FirstOrDefault(member => member.IsStatic && !member.IsMethod)?.Type is string nativeType)
+                        return nativeType;
                     return MayReadComputedGlobal(n) || MayReadRuntimeGlobal(n) ? "dynamic" : null;
                 }
                 case AttributeExpr component when UsesComplexComponent(component): return "double";
@@ -262,6 +265,7 @@ namespace Typhon.Compiler.Emit
                 case CallExpr { Func: NameExpr { Id: "frozendict" } frozen } keywordCall when !_m.IsGdScript &&
                     !IsShadowed(frozen.Id) && keywordCall.Args.Any(argument => argument.Name != null || argument.DoubleStar):
                     return BuiltinTypeValues[frozen.Id];
+                case CallExpr { Func: NameExpr { Id: "__typhon_source_import" } }: return "dynamic";
                 case CallExpr call: return CallType(call);
                 case BinOpExpr pf when pf.Op == "%" && (pf.Left is ConstExpr pfc && pfc.Kind == ConstKind.Str || InferType(pf.Left) == "string"): return "string";
                 case BinOpExpr lc when lc.Op == "+" && ListConcatMismatch(lc): return "List<dynamic>";
@@ -403,7 +407,7 @@ namespace Typhon.Compiler.Emit
             if (!_m.IsGdScript && (BuiltinTypeBase(call.Func) && call.Args.Count == 3 || IsMetaclassExpression(call.Func)))
                 return "dynamic";
             if (CustomAllocatorTarget(call.Func, out _) ||
-                call.Func is AttributeExpr allocator && (BaseObjectMethod(allocator) is "__object_new" or "__dict_new" ||
+                call.Func is AttributeExpr allocator && (BaseObjectMethod(allocator) is "__object_new" or "__dict_new" or "__tuple_new" ||
                     allocator.Name == "__new__" && CustomAllocatorTarget(allocator.Target, out _)))
                 return "dynamic";
             if (SuperListAppend(call) != null || ConditionalClassReference(call.Func)) return "dynamic";
@@ -496,6 +500,7 @@ namespace Typhon.Compiler.Emit
                     };
                     case "bytes": return PyBytesType;
                     case "bytearray": return PyByteArrayType;
+                    case "memoryview": return "global::memoryview";
                     case "type" when call.Args.Count == 1: return "global::System.Type";
                     case "slice": return "global::Typhon.Runtime.PySlice";
                     case "iter":
@@ -591,6 +596,7 @@ namespace Typhon.Compiler.Emit
                     }
                 }
             }
+            if (HasNativeClassFactory(call.Func)) return "global::System.Type";
             if (TryTypeExpr(call.Func, out var code)) return code;
             return null;
         }

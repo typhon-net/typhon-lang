@@ -1,0 +1,6 @@
+
+from _sitebuiltins import Quitter, _Helper
+
+quit = Quitter("quit", "Ctrl-D")
+print(repr(quit))
+print(repr(_Helper()))

@@ -68,7 +68,8 @@ namespace Typhon.Runtime
                 throw new OverflowException($"int too large for 64 bits: {t} (use big-int mode: typhon --bigint)");
             throw new ArgumentException($"invalid literal for int() with base 10: {repr(s)}");
         }
-        public static long @int(string s, long @base) => Convert.ToInt64(s.Trim().Replace("_", ""), checked((int)@base));
+        public static long @int(string s, long @base) => checked((long)__bigint(s, @base));
+        public static long @int(object text, long @base) => checked((long)__bigint(text, @base));
         public static long @int(char c) => @int(c.ToString());
         public static long @int(double d) => double.IsNaN(d) ? throw new ArgumentException("cannot convert float NaN to integer")
             : double.IsInfinity(d) ? throw new OverflowException("cannot convert float infinity to integer") : checked((long)Math.Truncate(d));
@@ -207,6 +208,11 @@ namespace Typhon.Runtime
         public static double truediv(double a, double b) => b == 0 ? throw new DivideByZeroException("float division by zero") : a / b;
         public static float truediv(float a, float b) => a / b;
         public static decimal truediv(decimal a, decimal b) => a / b;
+        public static Fraction truediv(Fraction a, Fraction b) => a / b;
+        public static Fraction truediv(Fraction a, long b) => a / (Fraction)b;
+        public static Fraction truediv(long a, Fraction b) => (Fraction)a / b;
+        public static Fraction truediv(Fraction a, BigInteger b) => a / (Fraction)b;
+        public static Fraction truediv(BigInteger a, Fraction b) => (Fraction)a / b;
         public static T truediv<T>(T a, T b) where T : IDivisionOperators<T, T, T> => a / b;
         public static T truediv<T>(T a, double b) where T : IDivisionOperators<T, double, T> => a / b;
         /// <summary>a / b on late-bound values: ints and floats divide as floats (Python's true division), others use their own /.</summary>
@@ -448,26 +454,66 @@ namespace Typhon.Runtime
             var t = s.Trim().Replace("_", "");
             return BigInteger.TryParse(t, NumberStyles.AllowLeadingSign, Inv, out var v) ? v : throw new ArgumentException($"invalid literal for int() with base 10: {repr(s)}");
         }
-        public static BigInteger __bigint(string s, long @base)
-        {
-            var t = s.Trim().Replace("_", "").ToLowerInvariant();
-            bool neg = t.StartsWith("-"); if (neg || t.StartsWith("+")) t = t.Substring(1);
-            if (t.StartsWith("0x") || t.StartsWith("0o") || t.StartsWith("0b")) t = t.Substring(2);
-            BigInteger v = 0;
-            foreach (char c in t)
-            {
-                int d = char.IsDigit(c) ? c - '0' : c >= 'a' && c <= 'z' ? c - 'a' + 10 : 99;
-                if (d >= @base) throw new ArgumentException($"invalid literal for int() with base {@base}: {repr(s)}");
-                v = v * @base + d;
-            }
-            return neg ? -v : v;
-        }
+        public static BigInteger __bigint(string s, long @base) => ParseIntegerLiteral(s.Trim(), @base, s);
         public static BigInteger __bigint(object text, long @base) => text switch
         {
             string value => __bigint(value, @base),
-            PyBytes or PyByteArray => __bigint(Encoding.ASCII.GetString(ByteOps.From(text)), @base),
+            PyBytes or PyByteArray => ParseByteInteger(text, @base),
             _ => throw new InvalidCastException("int() can't convert non-string with explicit base"),
         };
+
+        static BigInteger ParseIntegerLiteral(string text, long requestedBase, object argument)
+        {
+            if (requestedBase != 0 && (requestedBase < 2 || requestedBase > 36))
+                throw new ArgumentException("int() base must be >= 2 and <= 36, or 0");
+            ArgumentException InvalidLiteral() => new($"invalid literal for int() with base {requestedBase}: {repr(argument)}");
+            if (text.Length == 0) throw InvalidLiteral();
+
+            bool negative = text[0] == '-';
+            int start = text[0] is '+' or '-' ? 1 : 0;
+            int numberBase = requestedBase == 0 ? 10 : (int)requestedBase;
+            bool zeroOnly = false;
+            if (start < text.Length && IntegerDigit(text, start) == 0)
+            {
+                int prefixBase = start + 1 < text.Length ? text[start + 1] switch
+                {
+                    'b' or 'B' => 2, 'o' or 'O' => 8, 'x' or 'X' => 16, _ => 0,
+                } : 0;
+                if (prefixBase != 0 && (requestedBase == 0 || requestedBase == prefixBase))
+                {
+                    numberBase = prefixBase;
+                    start += 2;
+                    if (start < text.Length && text[start] == '_') start++;
+                }
+                else zeroOnly = requestedBase == 0;
+            }
+
+            BigInteger result = 0;
+            bool previousDigit = false;
+            for (int i = start; i < text.Length; i++)
+            {
+                if (text[i] == '_' && previousDigit)
+                {
+                    previousDigit = false;
+                    continue;
+                }
+                int digit = IntegerDigit(text, i);
+                if (digit < 0 || digit >= numberBase || zeroOnly && digit != 0) throw InvalidLiteral();
+                result = result * numberBase + digit;
+                previousDigit = true;
+                if (char.IsSurrogatePair(text, i)) i++;
+            }
+            if (!previousDigit) throw InvalidLiteral();
+            return negative ? -result : result;
+        }
+
+        static int IntegerDigit(string text, int index)
+        {
+            char current = text[index];
+            if (current is >= 'a' and <= 'z') return 10 + current - 'a';
+            if (current is >= 'A' and <= 'Z') return 10 + current - 'A';
+            return CharUnicodeInfo.GetDecimalDigitValue(text, index);
+        }
 
         public static BigInteger __bigint(char c) => __bigint(c.ToString());
         public static BigInteger __bigint(decimal m) => new BigInteger(Math.Truncate(m));
@@ -514,20 +560,10 @@ namespace Typhon.Runtime
             throw new InvalidCastException($"'{(value == null ? "NoneType" : PyTypeName(value.GetType()))}' object cannot be interpreted as an integer");
         }
 
-        static BigInteger ParseByteInteger(object buffer)
+        static BigInteger ParseByteInteger(object buffer, long numberBase = 10)
         {
             string text = Encoding.ASCII.GetString(ByteOps.From(buffer)).Trim(' ', '\t', '\n', '\v', '\f', '\r');
-            ArgumentException InvalidLiteral() => new ArgumentException($"invalid literal for int() with base 10: {repr(buffer)}");
-            int start = text.Length != 0 && text[0] is '+' or '-' ? 1 : 0;
-            if (start == text.Length) throw InvalidLiteral();
-            for (int i = start; i < text.Length; i++)
-            {
-                if (char.IsAsciiDigit(text[i])) continue;
-                if (text[i] != '_' || i == start || i + 1 == text.Length ||
-                    !char.IsAsciiDigit(text[i - 1]) || !char.IsAsciiDigit(text[i + 1]))
-                    throw InvalidLiteral();
-            }
-            return __bigint(text);
+            return ParseIntegerLiteral(text, numberBase, buffer);
         }
 
         public static BigInteger floordiv(BigInteger a, BigInteger b) { var q = BigInteger.DivRem(a, b, out var r); return !r.IsZero && (r.Sign < 0) != (b.Sign < 0) ? q - 1 : q; }
@@ -543,7 +579,34 @@ namespace Typhon.Runtime
             var r = BigInteger.ModPow(e.Sign >= 0 ? b : ModInverse(b, BigInteger.Abs(m)), BigInteger.Abs(e), BigInteger.Abs(m));
             return !r.IsZero && (r.Sign < 0) != (m.Sign < 0) ? r + m : r;
         }
-        public static double truediv(BigInteger a, BigInteger b) => b.IsZero ? throw new DivideByZeroException("division by zero") : (double)a / (double)b;
+        public static double truediv(BigInteger a, BigInteger b)
+        {
+            if (b.IsZero) throw new DivideByZeroException("division by zero");
+            bool negative = a.Sign < 0 != b.Sign < 0;
+            BigInteger numerator = BigInteger.Abs(a), denominator = BigInteger.Abs(b);
+            long exponent = numerator.GetBitLength() - denominator.GetBitLength();
+            if (numerator.IsZero || exponent < -1075) return negative ? -0.0 : 0.0;
+            if (exponent > 1024) throw IntegerDivisionOverflow();
+
+            // Place the leading bit and round once with the exact remainder.
+            bool belowPower = exponent < 0 ? numerator << (int)-exponent < denominator :
+                numerator < denominator << (int)exponent;
+            if (belowPower) exponent--;
+            if (exponent < -1075) return negative ? -0.0 : 0.0;
+            if (exponent >= 1024) throw IntegerDivisionOverflow();
+
+            int unit = (int)Math.Max(-1074, exponent - 52);
+            if (unit < 0) numerator <<= -unit;
+            else denominator <<= unit;
+            BigInteger quotient = BigInteger.DivRem(numerator, denominator, out var remainder);
+            int midpoint = (remainder << 1).CompareTo(denominator);
+            if (midpoint > 0 || midpoint == 0 && !quotient.IsEven) quotient++;
+            double result = Math.ScaleB((double)quotient, unit);
+            if (double.IsInfinity(result)) throw IntegerDivisionOverflow();
+            return negative ? -result : result;
+
+            static OverflowException IntegerDivisionOverflow() => new("integer division result too large for a float");
+        }
         public static BigInteger lshift(BigInteger a, BigInteger n) => n.Sign < 0 ? throw new ArgumentException("negative shift count") : a << checked((int)n);
         public static BigInteger rshift(BigInteger a, BigInteger n) => n.Sign < 0 ? throw new ArgumentException("negative shift count") : n > int.MaxValue ? (a.Sign < 0 ? -1 : 0) : a >> (int)n;
         public static (BigInteger, BigInteger) divmod(BigInteger a, BigInteger b) => (floordiv(a, b), mod(a, b));
@@ -664,6 +727,7 @@ namespace Typhon.Runtime
             if (TryClassBinaryOp(oa, ob, "mul", "*", out var result)) return result!;
             oa = NumericOperand(oa)!;
             ob = NumericOperand(ob)!;
+            PromoteMixedFloat(ref oa, ref ob);
             if (oa is string s1 && TryRepeatCount(ob, out var n1)) return __repeat(s1, n1);
             if (ob is string s2 && TryRepeatCount(oa, out var n2)) return __repeat(s2, n2);
             if (oa is IList l1 && TryRepeatCount(ob, out var n3)) return RepeatList(l1, n3);
@@ -672,6 +736,12 @@ namespace Typhon.Runtime
             if (ob is ITuple && TryRepeatCount(oa, out var swappedCount)) return __tuprep<object?>(ob, swappedCount);
             if (AsInt(oa, out var x) && AsInt(ob, out var y)) return checked(x * y);
             return checked((dynamic)oa * (dynamic)ob);
+        }
+
+        static void PromoteMixedFloat(ref object left, ref object right)
+        {
+            if (left is BigInteger && right is double or float) left = RealToDouble(left);
+            else if (right is BigInteger && left is double or float) right = RealToDouble(right);
         }
 
         static bool TryRepeatCount(object? value, out long count)
@@ -688,8 +758,11 @@ namespace Typhon.Runtime
         public static dynamic add(dynamic a, dynamic b)
         {
             if (TryClassBinaryOp((object?)a, (object?)b, "add", "+", out var result)) return result!;
-            a = NumericOperand((object?)a)!;
-            b = NumericOperand((object?)b)!;
+            object left = NumericOperand((object?)a)!;
+            object right = NumericOperand((object?)b)!;
+            PromoteMixedFloat(ref left, ref right);
+            a = left;
+            b = right;
             if (a is ITuple && b is ITuple) return __tupcat<object?>((object)a, (object)b);
             if (a is IList la && b is IList lb && !(a is string) && !(a is IDictionary))
             {
@@ -722,6 +795,7 @@ namespace Typhon.Runtime
         public static bool is_integer(this double d) => !double.IsInfinity(d) && d == Math.Floor(d);
         public static bool is_integer(this long x) => true;
         public static (long, long) as_integer_ratio(this long x) => (x, 1);
+        public static (BigInteger, BigInteger) as_integer_ratio(this BigInteger x) => (x, BigInteger.One);
         public static (long, long) as_integer_ratio(this double d)
         {
             if (double.IsNaN(d) || double.IsInfinity(d)) throw new OverflowException("cannot convert to an integer ratio");

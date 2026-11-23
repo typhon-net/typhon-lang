@@ -1,0 +1,9 @@
+def parse(value):
+    if isinstance(value, (bytes, (int, float))):
+        return round(value)
+    elif isinstance(value, str):
+        return value.upper()
+    return "other"
+
+print(parse("typhon"))
+print(parse(2.75))

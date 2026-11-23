@@ -1,0 +1,14 @@
+import io
+import json
+
+for encoding in ("utf-8", "utf-8-sig", "utf-16-be", "utf-16-le", "utf-16",
+                 "utf-32-be", "utf-32-le", "utf-32"):
+    data = '{"name": "café"}'.encode(encoding)
+    print(encoding, json.loads(data)["name"])
+print(json.loads(bytearray(b"[1, 2]")))
+print(json.load(io.BytesIO(b"[3, 4]")))
+print(ord(json.loads(b'"\xed\xa0\x80"')))
+try:
+    json.loads(b'\xff')
+except UnicodeDecodeError as error:
+    print(error.encoding, error.start, error.end)

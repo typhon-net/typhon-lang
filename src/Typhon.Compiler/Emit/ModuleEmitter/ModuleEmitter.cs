@@ -94,6 +94,11 @@ namespace Typhon.Compiler.Emit
         {
             if (_m.RuntimeCodeMode != null) LowerRuntimeImports(_m.Ast.Body);
             ResolveFailingImports(_m.Ast.Body);
+            if (_m.RuntimeCodeMode == null && !_m.IsGdScript)
+            {
+                FindConditionalImportAliases(_m.Ast.Body);
+                LowerRuntimeImports(_m.Ast.Body, allowImports: false);
+            }
             MaterializeNativeTypeExports(_m.Ast.Body);
             RemoveResolvedImportBindings();
             foreach (var n in AllNodes(_m.Ast.Body))
@@ -305,6 +310,23 @@ namespace Typhon.Compiler.Emit
                         if (emptyType != null && (emptyType.Contains("dynamic") || emptyType.Contains(TypeInference.Pending) && !_dry)) emptyType = null;
                     }
                     string type = ann != null ? MapType(ann, s) : emptyType ?? (PyType(InferType(value)) ?? ImplicitDynamic(s, $"module variable '{fieldName}'"));
+                    if (ann == null && value is DictExpr { Keys.Count: > 0 } literal && literal.Keys.All(key => key != null))
+                    {
+                        var slots = DictTypes(type);
+                        if (slots == null)
+                        {
+                            var keyTypes = literal.Keys.Select(key => PyType(InferType(key))).Distinct().ToList();
+                            string keyType = keyTypes.Count == 1 && !IsUnknownType(keyTypes[0]) ? keyTypes[0] : "dynamic";
+                            type = $"OrderedDictionary<{keyType}, dynamic>";
+                            slots = new List<string> { keyType, "dynamic" };
+                        }
+                        _emptyModuleFields[fieldName] = 'd';
+                        string key = ModuleFieldKey(fieldName);
+                        _seededModuleMappings[key] = slots;
+                        Obs?.AddElement(key, slots[0] + "→" + slots[1]);
+                        if (Ti?.Elements.ContainsKey(key) == true)
+                            type = EmptyContainerType(key, 'd') ?? type;
+                    }
                     if (ann == null && type != "dynamic" && (_m.GlobalsReboundThroughNamespace.Contains(fieldName) ||
                         moduleAssignments[fieldName].Any(statement => statement != s && ModuleAssignmentChangesType(statement.Value, type))))
                         type = "dynamic";
@@ -321,7 +343,9 @@ namespace Typhon.Compiler.Emit
                         {
                             string initial = value is ComprehensionExpr comprehension && !TypeInference.IsNonePlaceholder(comprehension)
                                 ? EmitComprehension(comprehension, type)
-                                : type != "dynamic" ? EmitExpr(value, targetTyped: true) : EmitLooseValue(value);
+                                : value is DictExpr mapping && _seededModuleMappings.ContainsKey(ModuleFieldKey(fieldName)) && IsDictType(type)
+                                    ? EmitDict(mapping, targetTyped: true, expectedType: type)
+                                    : type != "dynamic" ? EmitExpr(value, targetTyped: true) : EmitLooseValue(value);
                             _w.Line($"{vis} static {type} {Esc(fieldName)} = {Checked(initial)};");
                         }
                         finally { _globalsBeforeFieldInitializer = null; }
@@ -357,9 +381,11 @@ namespace Typhon.Compiler.Emit
             }
             if (!runtimeCode)
             {
+                var topLevelFunctions = new HashSet<string>(body.OfType<FunctionDef>().Select(function => function.Name));
                 foreach (var name in _m.ConditionalGlobals.OrderBy(n => n, StringComparer.Ordinal))
                 {
-                    if (fields.ContainsKey(name) || isEntryModule && !exposesGlobals && !usedInDefs.Contains(name)) continue;
+                    if (fields.ContainsKey(name) || topLevelFunctions.Contains(name) || isEntryModule && !exposesGlobals &&
+                        !usedInDefs.Contains(name) && !_m.ConditionalFunctions.Contains(name)) continue;
                     EmitLateModuleField(name, fields);
                 }
             }
@@ -446,6 +472,7 @@ namespace Typhon.Compiler.Emit
 
         /// <summary>Module fields that start as an empty container (their element types come from what the module adds).</summary>
         readonly Dictionary<string, char> _emptyModuleFields = new Dictionary<string, char>();
+        readonly Dictionary<string, List<string>> _seededModuleMappings = new Dictionary<string, List<string>>();
         bool ModuleAssignmentChangesType(Expr value, string initialType)
         {
             if (IsNone(value)) return IsValueTypeName(initialType) && !initialType.EndsWith("?");

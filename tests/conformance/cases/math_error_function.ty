@@ -1,0 +1,4 @@
+from math import erfc, inf, isnan, nan
+for x in [0.0, 0.3, 1.0, 1.03125, 2.0, 10.0, 26.0, -1.25]:
+    print(f'{erfc(x):.13e}')
+print(erfc(inf), erfc(-inf), isnan(erfc(nan)))

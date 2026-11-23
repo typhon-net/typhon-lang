@@ -123,6 +123,7 @@ internal static class CliCompiler
         string? aspNetReason = null;
         // #:pylib: modules neither the folder nor the runtime has come from CPython's standard library source
         string? pylib = null;
+        bool useSourceFallback = false;
         string bundledLib = Path.Combine(AppContext.BaseDirectory, "Lib");
         var sourceBackends = new HashSet<string>(StringComparer.Ordinal);
         bool ProvidedByTyphon(string name) => PyLib.ProvidedByTyphon(name, project.BigInts, sourceBackends.Contains(name));
@@ -132,15 +133,20 @@ internal static class CliCompiler
             if (aspNetReason == null && SharedFrameworks.HasWebSdkDirective(source)) aspNetReason = $"{Path.GetFileName(path)} has #:sdk Microsoft.NET.Sdk.Web";
             foreach (var package in Packages.Directives(source))
                 if (!output.Packages.Any(x => string.Equals(x.Id, package.Id, StringComparison.OrdinalIgnoreCase))) output.Packages.Add(package);
-            if (name == "__main__" && PyLib.Requested(source, dir, out var givenLib))
+            if (name == "__main__")
             {
                 sourceBackends.UnionWith(PyLib.SelectedSources(source));
-                pylib = PyLib.Resolve(givenLib);
-                if (pylib != null) pylib = Path.TrimEndingDirectorySeparator(Path.GetFullPath(pylib));
-                if (pylib == null) output.Messages.Add($"{path}: warning TY0102: #:pylib: no CPython standard library found (give #:pylib DIR or set TYPHON_PYLIB)");
+                useSourceFallback = PyLib.Requested(source, dir, out var givenLib);
+                if (useSourceFallback || sourceBackends.Count > 0)
+                {
+                    pylib = PyLib.Resolve(givenLib);
+                    if (pylib != null) pylib = Path.TrimEndingDirectorySeparator(Path.GetFullPath(pylib));
+                    if (pylib == null && useSourceFallback)
+                        output.Messages.Add($"{path}: warning TY0102: #:pylib: no CPython standard library found (give #:pylib DIR or set TYPHON_PYLIB)");
+                }
             }
             var m = TyphonCompiler.Parse(path, source, name, "");
-            if (name == "__main__" && pylib != null)
+            if (name == "__main__" && useSourceFallback && pylib != null)
                 foreach (var import in TyphonCompiler.Imports(m))
                 {
                     IEnumerable<string> names = import switch
@@ -188,14 +194,29 @@ internal static class CliCompiler
             int dot = name.LastIndexOf('.');
             string parentName = dot < 0 ? "" : name[..dot];
             var parent = dot < 0 ? null : Discover(parentName);
+            var bundled = PyLib.SourceCandidates(bundledLib, name, TyphonCompiler.FileExtension);
+            IEnumerable<(string Path, bool Package)> ManagedBundle()
+            {
+                foreach (var candidate in bundled)
+                {
+                    if (!File.Exists(candidate.Path))
+                        output.Probes.Add(new SourceProbe(candidate.Path, null));
+                    else if (ReadSource(candidate.Path, output.Probes).StartsWith("#:stdlib-managed", StringComparison.Ordinal))
+                        yield return candidate;
+                }
+            }
             IEnumerable<(string Path, bool Package)> choices = PyLib.SourceCandidates(dir, name, TyphonCompiler.FileExtension);
-            // A library child may be supplied by source even if its package is provided by the runtime.
-            if (pylib != null && !ProvidedByTyphon(name) &&
-                (dot < 0 || parent?.IsPackage == true && parent.Path.StartsWith(Path.EndsInDirectorySeparator(pylib) ? pylib : pylib + Path.DirectorySeparatorChar, StringComparison.Ordinal) ||
-                 parent == null && IsRuntimePackage(parentName)))
+            if (pylib != null && !sourceBackends.Contains(name) && !ProvidedByTyphon(name))
+                choices = choices.Concat(ManagedBundle());
+            // Keep submodules with the library package they belong to. Named selections
+            // only reach the installed library for the named modules and their children.
+            bool sourcePackage = pylib != null && parent?.IsPackage == true &&
+                parent.Path.StartsWith(Path.EndsInDirectorySeparator(pylib) ? pylib : pylib + Path.DirectorySeparatorChar, StringComparison.Ordinal);
+            if (pylib != null && (useSourceFallback || sourceBackends.Contains(name) || sourcePackage) && !ProvidedByTyphon(name) &&
+                (dot < 0 || sourcePackage || parent == null && IsRuntimePackage(parentName)))
                 choices = choices.Concat(PyLib.SourceCandidates(pylib, name));
             if (!ProvidedByTyphon(name))
-                choices = choices.Concat(PyLib.SourceCandidates(bundledLib, name, TyphonCompiler.FileExtension));
+                choices = choices.Concat(bundled);
             foreach (var (candidate, package) in choices)
             {
                 if (File.Exists(candidate))

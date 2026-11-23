@@ -157,8 +157,12 @@ namespace Typhon.Runtime
 
         public void update(object? other)
         {
-            if (other is IDictionary d) { var en = d.GetEnumerator(); while (en.MoveNext()) this[(string)en.Key] = en.Value; }
-            else if (other is IEnumerable<KeyValuePair<string, object?>> kvs) foreach (var kv in kvs) this[kv.Key] = kv.Value;
+            if (other is IEnumerable<KeyValuePair<string, object?>> pairs && other is not IDictionary)
+            {
+                foreach (var pair in pairs) this[pair.Key] = pair.Value;
+                return;
+            }
+            Builtins.update((IDictionary)this, other);
         }
         public object? get(string key, object? @default = null) => TryGetValue(key, out var v) ? v : @default;
         public object? setdefault(string key, object? @default = null) => Builtins.setdefault(this, key, @default);

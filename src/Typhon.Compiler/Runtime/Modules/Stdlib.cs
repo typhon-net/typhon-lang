@@ -236,11 +236,18 @@ namespace Typhon.Runtime
         internal BigInteger Den => _den;
         public static implicit operator Fraction(long n) => new Fraction(n, 1);
         public static implicit operator Fraction(BigInteger n) => new Fraction(n, 1);
-        public static explicit operator double(Fraction f) => (double)f._num / (double)f._den;
+        public double __float__() => Builtins.truediv(_num, _den);
+        public BigInteger __int__() => _num / _den;
+        public (BigInteger, BigInteger) as_integer_ratio() => (_num, _den);
+        public static explicit operator double(Fraction f) => f.__float__();
         public static Fraction operator +(Fraction a, Fraction b) => new Fraction(a._num * b._den + b._num * a._den, a._den * b._den);
         public static Fraction operator -(Fraction a, Fraction b) => new Fraction(a._num * b._den - b._num * a._den, a._den * b._den);
         public static Fraction operator *(Fraction a, Fraction b) => new Fraction(a._num * b._num, a._den * b._den);
         public static Fraction operator /(Fraction a, Fraction b) => new Fraction(a._num * b._den, a._den * b._num);
+        public static Fraction operator /(Fraction a, long b) => a / (Fraction)b;
+        public static Fraction operator /(long a, Fraction b) => (Fraction)a / b;
+        public static double operator /(Fraction a, double b) => Builtins.truediv(a.__float__(), b);
+        public static double operator /(double a, Fraction b) => Builtins.truediv(a, b.__float__());
         public static Fraction operator -(Fraction a) => new Fraction(-a._num, a._den);
         public static bool operator <(Fraction a, Fraction b) => a.CompareTo(b) < 0;
         public static bool operator >(Fraction a, Fraction b) => a.CompareTo(b) > 0;
@@ -532,6 +539,34 @@ namespace Typhon.Stdlib
         }
         public static IEnumerable<PyTuple<T>> product<T>(IEnumerable<T> a, long repeat) => product(Enumerable.Repeat(a.ToList(), (int)repeat).ToArray());
         public static IEnumerable<PyTuple<string>> product(string a, long repeat) => product(Chars(a), repeat);
+        public static PyIterator<PyTuple<object?>> product(
+            [PyPackedArguments] object?[] iterables, [PyKeywordOnly] long repeat = 1)
+        {
+            if (repeat < 0) throw new ArgumentException("repeat argument cannot be negative");
+            var pools = repeat == 0 ? Array.Empty<object?[]>() :
+                iterables.Select(value => Builtins.__iter_dyn(value).ToArray()).ToArray();
+            return new PyIterator<PyTuple<object?>>(ProductRows(pools, repeat).GetEnumerator());
+        }
+
+        static IEnumerable<PyTuple<object?>> ProductRows(object?[][] pools, long repeat)
+        {
+            if (pools.Any(pool => pool.Length == 0)) yield break;
+            var indices = new int[checked((int)(pools.LongLength * repeat))];
+            while (true)
+            {
+                var row = new object?[indices.Length];
+                for (int i = 0; i < row.Length; i++) row[i] = pools[i % pools.Length][indices[i]];
+                yield return new PyTuple<object?>(row);
+                int column = indices.Length - 1;
+                while (column >= 0 && ++indices[column] == pools[column % pools.Length].Length)
+                {
+                    indices[column] = 0;
+                    column--;
+                }
+                if (column < 0) yield break;
+            }
+        }
+
         public static IEnumerable<PyTuple<T>> product<T>(params IEnumerable<T>[] iterables)
         {
             var pools = iterables.Select(p => p.ToArray()).ToArray();
@@ -614,6 +649,7 @@ namespace Typhon.Stdlib
             }
         }
         public static PyIterator<T> chain<T>(params IEnumerable<T>[] iterables) => chain_from_iterable(iterables);
+        [PyFactoryMember("from_iterable", nameof(chain_from_iterable))]
         public static PyIterator<dynamic> chain(params object?[] iterables) =>
             chain_from_iterable(iterables.Select(iterator => Builtins.__iter_dyn(iterator)));
 
@@ -667,7 +703,8 @@ namespace Typhon.Stdlib
         public static IEnumerable<dynamic> filterfalse(object? predicate, object? iterable) =>
             filterfalse(predicate, Builtins.__iter_dyn(iterable));
         public static IEnumerable<T> compress<T>(IEnumerable<T> data, IEnumerable<bool> selectors) => data.Zip(selectors).Where(p => p.Second).Select(p => p.First);
-        public static IEnumerable<T> compress<T>(IEnumerable<T> data, IEnumerable<long> selectors) => data.Zip(selectors).Where(p => p.Second != 0).Select(p => p.First);
+        public static IEnumerable<T> compress<T, TSelector>(IEnumerable<T> data, IEnumerable<TSelector> selectors) =>
+            data.Zip(selectors).Where(pair => Builtins.truthy(pair.Second)).Select(pair => pair.First);
         public static IEnumerable<(T, T)> pairwise<T>(IEnumerable<T> iterable)
         {
             bool first = true; T prev = default!;
@@ -675,20 +712,54 @@ namespace Typhon.Stdlib
         }
         public static IEnumerable<(string, string)> pairwise(string s) => pairwise(Chars(s));
         public static IEnumerable<PyTuple<T>> batched<T>(IEnumerable<T> iterable, long n) => iterable.Chunk((int)n).Select(c => new PyTuple<T>(c));
-        public static IEnumerable<(K, List<T>)> groupby<T, K>(IEnumerable<T> iterable, Func<T, K> key)
+        public static PyIterator<(K, PyIterator<T>)> groupby<T, K>(IEnumerable<T> iterable, Func<T, K> key)
         {
-            List<T>? group = null; K current = default!;
-            foreach (var x in iterable)
+            var source = iterable.GetEnumerator();
+            return new(Groups().GetEnumerator());
+
+            IEnumerable<(K, PyIterator<T>)> Groups()
             {
-                var k = key(x);
-                if (group != null && Builtins.eq(k, current)) { group.Add(x); continue; }
-                if (group != null) yield return (current, group);
-                current = k; group = new List<T> { x };
+                using (source)
+                {
+                    bool available = false;
+                    K currentKey = default!;
+                    long generation = 0;
+                    Advance();
+                    while (available)
+                    {
+                        K groupKey = currentKey;
+                        yield return (groupKey, new PyIterator<T>(ReadGroup(groupKey, generation).GetEnumerator()));
+                        generation++;
+                        while (available && SameKey(groupKey)) Advance();
+                    }
+
+                    void Advance()
+                    {
+                        available = source.MoveNext();
+                        if (available) currentKey = key(source.Current);
+                    }
+
+                    bool SameKey(K groupKey) => ReferenceEquals(groupKey, currentKey) || Builtins.eq(groupKey, currentKey);
+
+                    IEnumerable<T> ReadGroup(K groupKey, long expectedGeneration)
+                    {
+                        while (generation == expectedGeneration && available && SameKey(groupKey))
+                        {
+                            yield return source.Current;
+                            if (generation == expectedGeneration) Advance();
+                        }
+                    }
+                }
             }
-            if (group != null) yield return (current, group);
         }
-        public static IEnumerable<(T, List<T>)> groupby<T>(IEnumerable<T> iterable) => groupby(iterable, x => x);
-        public static IEnumerable<(string, List<string>)> groupby(string s) => groupby(Chars(s), x => x);
+
+        public static PyIterator<(T, PyIterator<T>)> groupby<T>(IEnumerable<T> iterable) => groupby(iterable, x => x);
+        public static PyIterator<(string, PyIterator<string>)> groupby(string iterable) => groupby(Chars(iterable));
+        public static PyIterator<(object?, PyIterator<T>)> groupby<T>(IEnumerable<T> iterable, object? key) =>
+            groupby(iterable, (Func<T, object?>)(value => key == null ? value : Builtins.__invoke(key, [value])));
+        public static PyIterator<(object?, PyIterator<object>)> groupby(object iterable, object? key = null) =>
+            groupby(Builtins.__iter_dyn(iterable), key);
+
         public static PyTuple<IEnumerable<T>> tee<T>(IEnumerable<T> iterable, long n = 2) { var items = iterable.ToList(); return new PyTuple<IEnumerable<T>>(Enumerable.Range(0, (int)n).Select(_ => (IEnumerable<T>)items)); }
     }
 
@@ -841,8 +912,6 @@ namespace Typhon.Stdlib
         public static dynamic or_(object? a, object? b) => Builtins.or_((dynamic)a!, (dynamic)b!);
         public static readonly Func<object?, object?, dynamic?> getitem = Builtins.__getitem;
         public static long xor(long a, long b) => a ^ b;
-        public static Func<IList<T>, T> itemgetter<T>(long i) => xs => xs[(int)i];
-
         public static dynamic itemgetter([PyPositionalOnly] object? item, params object?[] more) =>
             new PyClosure("itemgetter", (args, keywords) =>
             {

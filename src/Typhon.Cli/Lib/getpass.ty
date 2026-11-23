@@ -1,0 +1,732 @@
+# Source: CPython 3.15.2, Lib/getpass.py
+# https://github.com/python/cpython/blob/v3.15.2/Lib/getpass.py
+# The original source follows the license below without changes.
+#
+# A. HISTORY OF THE SOFTWARE
+# ==========================
+#
+# Python was created in the early 1990s by Guido van Rossum at Stichting
+# Mathematisch Centrum (CWI, see https://www.cwi.nl) in the Netherlands
+# as a successor of a language called ABC.  Guido remains Python's
+# principal author, although it includes many contributions from others.
+#
+# In 1995, Guido continued his work on Python at the Corporation for
+# National Research Initiatives (CNRI, see https://www.cnri.reston.va.us)
+# in Reston, Virginia where he released several versions of the
+# software.
+#
+# In May 2000, Guido and the Python core development team moved to
+# BeOpen.com to form the BeOpen PythonLabs team.  In October of the same
+# year, the PythonLabs team moved to Digital Creations, which became
+# Zope Corporation.  In 2001, the Python Software Foundation (PSF, see
+# https://www.python.org/psf/) was formed, a non-profit organization
+# created specifically to own Python-related Intellectual Property.
+# Zope Corporation was a sponsoring member of the PSF.
+#
+# All Python releases are Open Source (see https://opensource.org for
+# the Open Source Definition).  Historically, most, but not all, Python
+# releases have also been GPL-compatible; the table below summarizes
+# the various releases.
+#
+#     Release         Derived     Year        Owner       GPL-
+#                     from                                compatible? (1)
+#
+#     0.9.0 thru 1.2              1991-1995   CWI         yes
+#     1.3 thru 1.5.2  1.2         1995-1999   CNRI        yes
+#     1.6             1.5.2       2000        CNRI        no
+#     2.0             1.6         2000        BeOpen.com  no
+#     1.6.1           1.6         2001        CNRI        yes (2)
+#     2.1             2.0+1.6.1   2001        PSF         no
+#     2.0.1           2.0+1.6.1   2001        PSF         yes
+#     2.1.1           2.1+2.0.1   2001        PSF         yes
+#     2.1.2           2.1.1       2002        PSF         yes
+#     2.1.3           2.1.2       2002        PSF         yes
+#     2.2 and above   2.1.1       2001-now    PSF         yes
+#
+# Footnotes:
+#
+# (1) GPL-compatible doesn't mean that we're distributing Python under
+#     the GPL.  All Python licenses, unlike the GPL, let you distribute
+#     a modified version without making your changes open source.  The
+#     GPL-compatible licenses make it possible to combine Python with
+#     other software that is released under the GPL; the others don't.
+#
+# (2) According to Richard Stallman, 1.6.1 is not GPL-compatible,
+#     because its license has a choice of law clause.  According to
+#     CNRI, however, Stallman's lawyer has told CNRI's lawyer that 1.6.1
+#     is "not incompatible" with the GPL.
+#
+# Thanks to the many outside volunteers who have worked under Guido's
+# direction to make these releases possible.
+#
+#
+# B. TERMS AND CONDITIONS FOR ACCESSING OR OTHERWISE USING PYTHON
+# ===============================================================
+#
+# Python software and documentation are licensed under the
+# Python Software Foundation License Version 2.
+#
+# Starting with Python 3.8.6, examples, recipes, and other code in
+# the documentation are dual licensed under the PSF License Version 2
+# and the Zero-Clause BSD license.
+#
+# Some software incorporated into Python is under different licenses.
+# The licenses are listed with code falling under that license.
+#
+#
+# PYTHON SOFTWARE FOUNDATION LICENSE VERSION 2
+# --------------------------------------------
+#
+# 1. This LICENSE AGREEMENT is between the Python Software Foundation
+# ("PSF"), and the Individual or Organization ("Licensee") accessing and
+# otherwise using this software ("Python") in source or binary form and
+# its associated documentation.
+#
+# 2. Subject to the terms and conditions of this License Agreement, PSF hereby
+# grants Licensee a nonexclusive, royalty-free, world-wide license to reproduce,
+# analyze, test, perform and/or display publicly, prepare derivative works,
+# distribute, and otherwise use Python alone or in any derivative version,
+# provided, however, that PSF's License Agreement and PSF's notice of copyright,
+# i.e., "Copyright (c) 2001 Python Software Foundation; All Rights Reserved"
+# are retained in Python alone or in any derivative version prepared by Licensee.
+#
+# 3. In the event Licensee prepares a derivative work that is based on
+# or incorporates Python or any part thereof, and wants to make
+# the derivative work available to others as provided herein, then
+# Licensee hereby agrees to include in any such work a brief summary of
+# the changes made to Python.
+#
+# 4. PSF is making Python available to Licensee on an "AS IS"
+# basis.  PSF MAKES NO REPRESENTATIONS OR WARRANTIES, EXPRESS OR
+# IMPLIED.  BY WAY OF EXAMPLE, BUT NOT LIMITATION, PSF MAKES NO AND
+# DISCLAIMS ANY REPRESENTATION OR WARRANTY OF MERCHANTABILITY OR FITNESS
+# FOR ANY PARTICULAR PURPOSE OR THAT THE USE OF PYTHON WILL NOT
+# INFRINGE ANY THIRD PARTY RIGHTS.
+#
+# 5. PSF SHALL NOT BE LIABLE TO LICENSEE OR ANY OTHER USERS OF PYTHON
+# FOR ANY INCIDENTAL, SPECIAL, OR CONSEQUENTIAL DAMAGES OR LOSS AS
+# A RESULT OF MODIFYING, DISTRIBUTING, OR OTHERWISE USING PYTHON,
+# OR ANY DERIVATIVE THEREOF, EVEN IF ADVISED OF THE POSSIBILITY THEREOF.
+#
+# 6. This License Agreement will automatically terminate upon a material
+# breach of its terms and conditions.
+#
+# 7. Nothing in this License Agreement shall be deemed to create any
+# relationship of agency, partnership, or joint venture between PSF and
+# Licensee.  This License Agreement does not grant permission to use PSF
+# trademarks or trade name in a trademark sense to endorse or promote
+# products or services of Licensee, or any third party.
+#
+# 8. By copying, installing or otherwise using Python, Licensee
+# agrees to be bound by the terms and conditions of this License
+# Agreement.
+#
+#
+# BEOPEN.COM LICENSE AGREEMENT FOR PYTHON 2.0
+# -------------------------------------------
+#
+# BEOPEN PYTHON OPEN SOURCE LICENSE AGREEMENT VERSION 1
+#
+# 1. This LICENSE AGREEMENT is between BeOpen.com ("BeOpen"), having an
+# office at 160 Saratoga Avenue, Santa Clara, CA 95051, and the
+# Individual or Organization ("Licensee") accessing and otherwise using
+# this software in source or binary form and its associated
+# documentation ("the Software").
+#
+# 2. Subject to the terms and conditions of this BeOpen Python License
+# Agreement, BeOpen hereby grants Licensee a non-exclusive,
+# royalty-free, world-wide license to reproduce, analyze, test, perform
+# and/or display publicly, prepare derivative works, distribute, and
+# otherwise use the Software alone or in any derivative version,
+# provided, however, that the BeOpen Python License is retained in the
+# Software, alone or in any derivative version prepared by Licensee.
+#
+# 3. BeOpen is making the Software available to Licensee on an "AS IS"
+# basis.  BEOPEN MAKES NO REPRESENTATIONS OR WARRANTIES, EXPRESS OR
+# IMPLIED.  BY WAY OF EXAMPLE, BUT NOT LIMITATION, BEOPEN MAKES NO AND
+# DISCLAIMS ANY REPRESENTATION OR WARRANTY OF MERCHANTABILITY OR FITNESS
+# FOR ANY PARTICULAR PURPOSE OR THAT THE USE OF THE SOFTWARE WILL NOT
+# INFRINGE ANY THIRD PARTY RIGHTS.
+#
+# 4. BEOPEN SHALL NOT BE LIABLE TO LICENSEE OR ANY OTHER USERS OF THE
+# SOFTWARE FOR ANY INCIDENTAL, SPECIAL, OR CONSEQUENTIAL DAMAGES OR LOSS
+# AS A RESULT OF USING, MODIFYING OR DISTRIBUTING THE SOFTWARE, OR ANY
+# DERIVATIVE THEREOF, EVEN IF ADVISED OF THE POSSIBILITY THEREOF.
+#
+# 5. This License Agreement will automatically terminate upon a material
+# breach of its terms and conditions.
+#
+# 6. This License Agreement shall be governed by and interpreted in all
+# respects by the law of the State of California, excluding conflict of
+# law provisions.  Nothing in this License Agreement shall be deemed to
+# create any relationship of agency, partnership, or joint venture
+# between BeOpen and Licensee.  This License Agreement does not grant
+# permission to use BeOpen trademarks or trade names in a trademark
+# sense to endorse or promote products or services of Licensee, or any
+# third party.  As an exception, the "BeOpen Python" logos available at
+# http://www.pythonlabs.com/logos.html may be used according to the
+# permissions granted on that web page.
+#
+# 7. By copying, installing or otherwise using the software, Licensee
+# agrees to be bound by the terms and conditions of this License
+# Agreement.
+#
+#
+# CNRI LICENSE AGREEMENT FOR PYTHON 1.6.1
+# ---------------------------------------
+#
+# 1. This LICENSE AGREEMENT is between the Corporation for National
+# Research Initiatives, having an office at 1895 Preston White Drive,
+# Reston, VA 20191 ("CNRI"), and the Individual or Organization
+# ("Licensee") accessing and otherwise using Python 1.6.1 software in
+# source or binary form and its associated documentation.
+#
+# 2. Subject to the terms and conditions of this License Agreement, CNRI
+# hereby grants Licensee a nonexclusive, royalty-free, world-wide
+# license to reproduce, analyze, test, perform and/or display publicly,
+# prepare derivative works, distribute, and otherwise use Python 1.6.1
+# alone or in any derivative version, provided, however, that CNRI's
+# License Agreement and CNRI's notice of copyright, i.e., "Copyright (c)
+# 1995-2001 Corporation for National Research Initiatives; All Rights
+# Reserved" are retained in Python 1.6.1 alone or in any derivative
+# version prepared by Licensee.  Alternately, in lieu of CNRI's License
+# Agreement, Licensee may substitute the following text (omitting the
+# quotes): "Python 1.6.1 is made available subject to the terms and
+# conditions in CNRI's License Agreement.  This Agreement together with
+# Python 1.6.1 may be located on the internet using the following
+# unique, persistent identifier (known as a handle): 1895.22/1013.  This
+# Agreement may also be obtained from a proxy server on the internet
+# using the following URL: http://hdl.handle.net/1895.22/1013".
+#
+# 3. In the event Licensee prepares a derivative work that is based on
+# or incorporates Python 1.6.1 or any part thereof, and wants to make
+# the derivative work available to others as provided herein, then
+# Licensee hereby agrees to include in any such work a brief summary of
+# the changes made to Python 1.6.1.
+#
+# 4. CNRI is making Python 1.6.1 available to Licensee on an "AS IS"
+# basis.  CNRI MAKES NO REPRESENTATIONS OR WARRANTIES, EXPRESS OR
+# IMPLIED.  BY WAY OF EXAMPLE, BUT NOT LIMITATION, CNRI MAKES NO AND
+# DISCLAIMS ANY REPRESENTATION OR WARRANTY OF MERCHANTABILITY OR FITNESS
+# FOR ANY PARTICULAR PURPOSE OR THAT THE USE OF PYTHON 1.6.1 WILL NOT
+# INFRINGE ANY THIRD PARTY RIGHTS.
+#
+# 5. CNRI SHALL NOT BE LIABLE TO LICENSEE OR ANY OTHER USERS OF PYTHON
+# 1.6.1 FOR ANY INCIDENTAL, SPECIAL, OR CONSEQUENTIAL DAMAGES OR LOSS AS
+# A RESULT OF MODIFYING, DISTRIBUTING, OR OTHERWISE USING PYTHON 1.6.1,
+# OR ANY DERIVATIVE THEREOF, EVEN IF ADVISED OF THE POSSIBILITY THEREOF.
+#
+# 6. This License Agreement will automatically terminate upon a material
+# breach of its terms and conditions.
+#
+# 7. This License Agreement shall be governed by the federal
+# intellectual property law of the United States, including without
+# limitation the federal copyright law, and, to the extent such
+# U.S. federal law does not apply, by the law of the Commonwealth of
+# Virginia, excluding Virginia's conflict of law provisions.
+# Notwithstanding the foregoing, with regard to derivative works based
+# on Python 1.6.1 that incorporate non-separable material that was
+# previously distributed under the GNU General Public License (GPL), the
+# law of the Commonwealth of Virginia shall govern this License
+# Agreement only as to issues arising under or with respect to
+# Paragraphs 4, 5, and 7 of this License Agreement.  Nothing in this
+# License Agreement shall be deemed to create any relationship of
+# agency, partnership, or joint venture between CNRI and Licensee.  This
+# License Agreement does not grant permission to use CNRI trademarks or
+# trade name in a trademark sense to endorse or promote products or
+# services of Licensee, or any third party.
+#
+# 8. By clicking on the "ACCEPT" button where indicated, or by copying,
+# installing or otherwise using Python 1.6.1, Licensee agrees to be
+# bound by the terms and conditions of this License Agreement.
+#
+#         ACCEPT
+#
+#
+# CWI LICENSE AGREEMENT FOR PYTHON 0.9.0 THROUGH 1.2
+# --------------------------------------------------
+#
+# Copyright (c) 1991 - 1995, Stichting Mathematisch Centrum Amsterdam,
+# The Netherlands.  All rights reserved.
+#
+# Permission to use, copy, modify, and distribute this software and its
+# documentation for any purpose and without fee is hereby granted,
+# provided that the above copyright notice appear in all copies and that
+# both that copyright notice and this permission notice appear in
+# supporting documentation, and that the name of Stichting Mathematisch
+# Centrum or CWI not be used in advertising or publicity pertaining to
+# distribution of the software without specific, written prior
+# permission.
+#
+# STICHTING MATHEMATISCH CENTRUM DISCLAIMS ALL WARRANTIES WITH REGARD TO
+# THIS SOFTWARE, INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+# FITNESS, IN NO EVENT SHALL STICHTING MATHEMATISCH CENTRUM BE LIABLE
+# FOR ANY SPECIAL, INDIRECT OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+# ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT
+# OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+#
+# ZERO-CLAUSE BSD LICENSE FOR CODE IN THE PYTHON DOCUMENTATION
+# ----------------------------------------------------------------------
+#
+# Permission to use, copy, modify, and/or distribute this software for any
+# purpose with or without fee is hereby granted.
+#
+# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+# REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY
+# AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+# INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM
+# LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR
+# OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+# PERFORMANCE OF THIS SOFTWARE.
+
+"""Utilities to get a password and/or the current user name.
+
+getpass(prompt[, stream[, echo_char]]) - Prompt for a password, with echo
+turned off and optional keyboard feedback.
+getuser() - Get the user name from the environment or password database.
+
+GetPassWarning - This UserWarning is issued when getpass() cannot prevent
+                 echoing of the password contents while reading.
+
+On Windows, the msvcrt module will be used.
+
+"""
+
+# Authors: Piers Lauder (original)
+#          Guido van Rossum (Windows support and cleanup)
+#          Gregory P. Smith (tty support & GetPassWarning)
+
+import contextlib
+import io
+import os
+import sys
+
+__all__ = ["getpass","getuser","GetPassWarning"]
+
+
+class GetPassWarning(UserWarning): pass
+
+
+# Default POSIX control character mappings
+_POSIX_CTRL_CHARS = frozendict({
+    'BS': '\x08',      # Backspace
+    'ERASE': '\x7f',   # DEL
+    'KILL': '\x15',    # Ctrl+U - kill line
+    'WERASE': '\x17',  # Ctrl+W - erase word
+    'LNEXT': '\x16',   # Ctrl+V - literal next
+    'EOF': '\x04',     # Ctrl+D - EOF
+    'INTR': '\x03',    # Ctrl+C - interrupt
+    'SOH': '\x01',     # Ctrl+A - start of heading (beginning of line)
+    'ENQ': '\x05',     # Ctrl+E - enquiry (end of line)
+    'VT': '\x0b',      # Ctrl+K - vertical tab (kill forward)
+})
+
+
+def _get_terminal_ctrl_chars(fd):
+    """Extract control characters from terminal settings.
+
+    Returns a dict mapping control char names to their str values.
+
+    Falls back to POSIX defaults if termios is not available
+    or if the control character is not supported by termios.
+    """
+    ctrl = dict(_POSIX_CTRL_CHARS)
+    try:
+        old = termios.tcgetattr(fd)
+        cc = old[6]  # Index 6 is the control characters array
+    except (termios.error, OSError):
+        return ctrl
+
+    # Use defaults for Backspace (BS) and Ctrl+A/E/K (SOH/ENQ/VT)
+    # as they are not in the termios control characters array.
+    for name in ('ERASE', 'KILL', 'WERASE', 'LNEXT', 'EOF', 'INTR'):
+        cap = getattr(termios, f'V{name}')
+        if cap < len(cc):
+            ctrl[name] = cc[cap].decode('latin-1')
+    return ctrl
+
+
+def unix_getpass(prompt='Password: ', stream=None, *, echo_char=None):
+    """Prompt for a password, with echo turned off.
+
+    Args:
+      prompt: Written on stream to ask for the input.  Default: 'Password: '
+      stream: A writable file object to display the prompt.  Defaults to
+              the tty.  If no tty is available defaults to sys.stderr.
+      echo_char: A single ASCII character to mask input (e.g., '*').
+              If None, input is hidden.
+    Returns:
+      The seKr3t input.
+    Raises:
+      EOFError: If our input tty or stdin was closed.
+      GetPassWarning: When we were unable to turn echo off on the input.
+
+    Always restores terminal settings before returning.
+    """
+    _check_echo_char(echo_char)
+
+    passwd = None
+    with contextlib.ExitStack() as stack:
+        try:
+            # Always try reading and writing directly on the tty first.
+            fd = os.open('/dev/tty', os.O_RDWR|os.O_NOCTTY)
+            tty = io.FileIO(fd, 'w+')
+            stack.enter_context(tty)
+            input = io.TextIOWrapper(tty)
+            stack.enter_context(input)
+            if not stream:
+                stream = input
+        except OSError:
+            # If that fails, see if stdin can be controlled.
+            stack.close()
+            try:
+                fd = sys.stdin.fileno()
+            except (AttributeError, ValueError):
+                fd = None
+                passwd = fallback_getpass(prompt, stream)
+            input = sys.stdin
+            if not stream:
+                stream = sys.stderr
+
+        if fd is not None:
+            try:
+                old = termios.tcgetattr(fd)     # a copy to save
+                new = old[:]
+                new[3] &= ~termios.ECHO  # 3 == 'lflags'
+                # Extract control characters before changing terminal mode.
+                term_ctrl_chars = None
+                if echo_char:
+                    # ICANON enables canonical (line-buffered) mode where
+                    # the terminal handles line editing. Disable it so we
+                    # can read input char by char and handle editing ourselves.
+                    new[3] &= ~termios.ICANON
+                    # IEXTEN enables implementation-defined input processing
+                    # such as LNEXT (Ctrl+V). Disable it so the terminal
+                    # driver does not intercept these characters before our
+                    # code can handle them.
+                    new[3] &= ~termios.IEXTEN
+                    term_ctrl_chars = _get_terminal_ctrl_chars(fd)
+                tcsetattr_flags = termios.TCSAFLUSH
+                if hasattr(termios, 'TCSASOFT'):
+                    tcsetattr_flags |= termios.TCSASOFT
+                try:
+                    termios.tcsetattr(fd, tcsetattr_flags, new)
+                    passwd = _raw_input(prompt, stream, input=input,
+                                        echo_char=echo_char,
+                                        term_ctrl_chars=term_ctrl_chars)
+
+                finally:
+                    termios.tcsetattr(fd, tcsetattr_flags, old)
+                    stream.flush()  # issue7208
+            except termios.error:
+                if passwd is not None:
+                    # _raw_input succeeded.  The final tcsetattr failed.  Reraise
+                    # instead of leaving the terminal in an unknown state.
+                    raise
+                # We can't control the tty or stdin.  Give up and use normal IO.
+                # fallback_getpass() raises an appropriate warning.
+                if stream is not input:
+                    # clean up unused file objects before blocking
+                    stack.close()
+                passwd = fallback_getpass(prompt, stream)
+
+        stream.write('\n')
+        return passwd
+
+
+def win_getpass(prompt='Password: ', stream=None, *, echo_char=None):
+    """Prompt for password with echo off, using Windows getwch()."""
+    if sys.stdin is not sys.__stdin__:
+        return fallback_getpass(prompt, stream)
+    _check_echo_char(echo_char)
+
+    for c in prompt:
+        msvcrt.putwch(c)
+    pw = ""
+    while 1:
+        c = msvcrt.getwch()
+        if c == '\r' or c == '\n':
+            break
+        if c == '\003':
+            raise KeyboardInterrupt
+        if c == '\b':
+            if echo_char and pw:
+                msvcrt.putwch('\b')
+                msvcrt.putwch(' ')
+                msvcrt.putwch('\b')
+            pw = pw[:-1]
+        else:
+            pw = pw + c
+            if echo_char:
+                msvcrt.putwch(echo_char)
+    msvcrt.putwch('\r')
+    msvcrt.putwch('\n')
+    return pw
+
+
+def fallback_getpass(prompt='Password: ', stream=None, *, echo_char=None):
+    _check_echo_char(echo_char)
+    import warnings
+    warnings.warn("Can not control echo on the terminal.", GetPassWarning,
+                  stacklevel=2)
+    if not stream:
+        stream = sys.stderr
+    print("Warning: Password input may be echoed.", file=stream)
+    return _raw_input(prompt, stream, echo_char=echo_char)
+
+
+def _check_echo_char(echo_char):
+    # Single-character ASCII excluding control characters
+    if echo_char is None:
+        return
+    if not isinstance(echo_char, str):
+        raise TypeError("'echo_char' must be a str or None, not "
+                        f"{type(echo_char).__name__}")
+    if not (
+        len(echo_char) == 1
+        and echo_char.isprintable()
+        and echo_char.isascii()
+    ):
+        raise ValueError("'echo_char' must be a single printable ASCII "
+                         f"character, got: {echo_char!r}")
+
+
+def _raw_input(prompt="", stream=None, input=None, echo_char=None,
+               term_ctrl_chars=None):
+    # This doesn't save the string in the GNU readline history.
+    if not stream:
+        stream = sys.stderr
+    if not input:
+        input = sys.stdin
+    prompt = str(prompt)
+    if prompt:
+        try:
+            stream.write(prompt)
+        except UnicodeEncodeError:
+            # Use replace error handler to get as much as possible printed.
+            prompt = prompt.encode(stream.encoding, 'replace')
+            prompt = prompt.decode(stream.encoding)
+            stream.write(prompt)
+        stream.flush()
+    # NOTE: The Python C API calls flockfile() (and unlock) during readline.
+    if echo_char:
+        return _readline_with_echo_char(stream, input, echo_char,
+                                        term_ctrl_chars, prompt)
+    line = input.readline()
+    if not line:
+        raise EOFError
+    if line[-1] == '\n':
+        line = line[:-1]
+    return line
+
+
+def _readline_with_echo_char(stream, input, echo_char, term_ctrl_chars=None,
+                             prompt=""):
+    """Read password with echo character and line editing support."""
+    if term_ctrl_chars is None:
+        term_ctrl_chars = _POSIX_CTRL_CHARS
+
+    editor = _PasswordLineEditor(stream, echo_char, term_ctrl_chars, prompt)
+    return editor.readline(input)
+
+
+class _PasswordLineEditor:
+    """Handles line editing for password input with echo character."""
+
+    def __init__(self, stream, echo_char, ctrl_chars, prompt=""):
+        self.stream = stream
+        self.echo_char = echo_char
+        self.prompt = prompt
+        self.password = []
+        self.cursor_pos = 0
+        self.eof_pressed = False
+        self.literal_next = False
+        self.ctrl = ctrl_chars
+        self.dispatch = {
+            ctrl_chars['SOH']: self.handle_move_start,      # Ctrl+A
+            ctrl_chars['ENQ']: self.handle_move_end,        # Ctrl+E
+            ctrl_chars['VT']: self.handle_kill_forward,     # Ctrl+K
+            ctrl_chars['KILL']: self.handle_kill_line,      # Ctrl+U
+            ctrl_chars['WERASE']: self.handle_erase_word,   # Ctrl+W
+            ctrl_chars['ERASE']: self.handle_erase,         # DEL
+            ctrl_chars['BS']: self.handle_erase,            # Backspace
+            # special characters
+            ctrl_chars['LNEXT']: self.handle_literal_next,  # Ctrl+V
+            ctrl_chars['EOF']: self.handle_eof,             # Ctrl+D
+            ctrl_chars['INTR']: self.handle_interrupt,      # Ctrl+C
+            '\x00': self.handle_nop,                        # ignore NUL
+        }
+
+    def refresh_display(self, prev_len=None):
+        """Redraw the entire password line with *echo_char*.
+
+        If *prev_len* is not specified, the current password length is used.
+        """
+        prompt_len = len(self.prompt)
+        clear_len = prev_len if prev_len is not None else len(self.password)
+        # Clear the entire line (prompt + password) and rewrite.
+        self.stream.write('\r' + ' ' * (prompt_len + clear_len) + '\r')
+        self.stream.write(self.prompt + self.echo_char * len(self.password))
+        if self.cursor_pos < len(self.password):
+            self.stream.write('\b' * (len(self.password) - self.cursor_pos))
+        self.stream.flush()
+
+    def insert_char(self, char):
+        """Insert *char* at cursor position."""
+        self.password.insert(self.cursor_pos, char)
+        self.cursor_pos += 1
+        # Only refresh if inserting in middle.
+        if self.cursor_pos < len(self.password):
+            self.refresh_display()
+        else:
+            self.stream.write(self.echo_char)
+            self.stream.flush()
+
+    def is_eol(self, char):
+        """Check if *char* is a line terminator."""
+        return char in ('\r', '\n')
+
+    def is_eof(self, char):
+        """Check if *char* is a file terminator."""
+        return char == self.ctrl['EOF']
+
+    def handle_move_start(self):
+        """Move cursor to beginning (Ctrl+A)."""
+        self.cursor_pos = 0
+        self.refresh_display()
+
+    def handle_move_end(self):
+        """Move cursor to end (Ctrl+E)."""
+        self.cursor_pos = len(self.password)
+        self.refresh_display()
+
+    def handle_erase(self):
+        """Delete character before cursor (Backspace/DEL)."""
+        if self.cursor_pos == 0:
+            return
+        assert self.cursor_pos > 0
+        self.cursor_pos -= 1
+        prev_len = len(self.password)
+        del self.password[self.cursor_pos]
+        self.refresh_display(prev_len)
+
+    def handle_kill_line(self):
+        """Erase entire line (Ctrl+U)."""
+        prev_len = len(self.password)
+        self.password.clear()
+        self.cursor_pos = 0
+        self.refresh_display(prev_len)
+
+    def handle_kill_forward(self):
+        """Kill from cursor to end (Ctrl+K)."""
+        prev_len = len(self.password)
+        del self.password[self.cursor_pos:]
+        self.refresh_display(prev_len)
+
+    def handle_erase_word(self):
+        """Erase previous word (Ctrl+W)."""
+        old_cursor = self.cursor_pos
+        # Calculate the starting position of the previous word,
+        # ignoring trailing whitespaces.
+        while self.cursor_pos > 0 and self.password[self.cursor_pos - 1] == ' ':
+            self.cursor_pos -= 1
+        while self.cursor_pos > 0 and self.password[self.cursor_pos - 1] != ' ':
+            self.cursor_pos -= 1
+        # Delete the previous word and refresh the screen.
+        prev_len = len(self.password)
+        del self.password[self.cursor_pos:old_cursor]
+        self.refresh_display(prev_len)
+
+    def handle_literal_next(self):
+        """State transition to indicate that the next character is literal."""
+        assert self.literal_next is False
+        self.literal_next = True
+
+    def handle_eof(self):
+        """State transition to indicate that the pressed character was EOF."""
+        assert self.eof_pressed is False
+        self.eof_pressed = True
+
+    def handle_interrupt(self):
+        """Raise a KeyboardInterrupt after Ctrl+C has been received."""
+        raise KeyboardInterrupt
+
+    def handle_nop(self):
+        """Handler for an ignored character."""
+
+    def handle(self, char):
+        """Handle a single character input. Returns True if handled."""
+        handler = self.dispatch.get(char)
+        if handler:
+            handler()
+            return True
+        return False
+
+    def readline(self, input):
+        """Read a line of password input with echo character support."""
+        while True:
+            assert self.cursor_pos >= 0
+            char = input.read(1)
+            if self.is_eol(char):
+                break
+            # Handle literal next mode first as Ctrl+V quotes characters.
+            elif self.literal_next:
+                self.insert_char(char)
+                self.literal_next = False
+            # Handle EOF now as Ctrl+D must be pressed twice
+            # consecutively to stop reading from the input.
+            elif self.is_eof(char):
+                if self.eof_pressed:
+                    break
+            elif self.handle(char):
+                # Dispatched to handler.
+                pass
+            else:
+                # Insert as normal character.
+                self.insert_char(char)
+
+            self.eof_pressed = self.is_eof(char)
+
+        return ''.join(self.password)
+
+
+def getuser():
+    """Get the username from the environment or password database.
+
+    First try various environment variables, then the password
+    database.  This works on Windows as long as USERNAME is set.
+    Any failure to find a username raises OSError.
+
+    .. versionchanged:: 3.13
+        Previously, various exceptions beyond just :exc:`OSError`
+        were raised.
+    """
+
+    for name in ('LOGNAME', 'USER', 'LNAME', 'USERNAME'):
+        user = os.environ.get(name)
+        if user:
+            return user
+
+    try:
+        import pwd
+        return pwd.getpwuid(os.getuid())[0]
+    except (ImportError, KeyError) as e:
+        raise OSError('No username set in the environment') from e
+
+
+# Bind the name getpass to the appropriate function
+try:
+    import termios
+    # it's possible there is an incompatible termios from the
+    # McMillan Installer, make sure we have a UNIX-compatible termios
+    termios.tcgetattr, termios.tcsetattr
+except (ImportError, AttributeError):
+    try:
+        import msvcrt
+    except ImportError:
+        getpass = fallback_getpass
+    else:
+        getpass = win_getpass
+else:
+    getpass = unix_getpass

@@ -1,0 +1,19 @@
+#:pylib-source site
+import os
+import site
+import sys
+import tempfile
+
+before = list(sys.path)
+with tempfile.TemporaryDirectory() as root:
+    extra = os.path.join(root, "extra")
+    os.mkdir(extra)
+    with open(os.path.join(root, "typhon-site-fixture.pth"), "w", encoding="utf-8") as pth:
+        pth.write("\n# ignored\nextra\nmissing\n")
+    try:
+        site.addsitedir(root)
+        site.addsitedir(root)
+        print(sys.path.count(root), sys.path.count(extra))
+        print(os.path.join(root, "missing") in sys.path)
+    finally:
+        sys.path[:] = before

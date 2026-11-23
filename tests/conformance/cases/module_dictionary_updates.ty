@@ -1,0 +1,18 @@
+def first():
+    return "first"
+
+def second():
+    return "second"
+
+handlers = {"default": (first, [("param", None)], "first handler")}
+if True:
+    handlers["other"] = (first, [("param", "new")], "other values")
+    handlers["secondary"] = (second, [], "second handler")
+
+def add(key, function, options):
+    handlers[key] = (function, options, "registered")
+
+add("third", second, [("number", 3)])
+for key in handlers:
+    factory, options, description = handlers[key]
+    print(key, factory(), options, description)

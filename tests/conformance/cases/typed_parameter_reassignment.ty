@@ -1,0 +1,12 @@
+from argparse import ArgumentParser
+
+def parse(values):
+    parser = ArgumentParser()
+    parser.add_argument("item")
+    return parser.parse_args(values)
+
+def run(values: list[str] | None = None):
+    values = parse(values)
+    print(values.item)
+
+run(["typhon"])

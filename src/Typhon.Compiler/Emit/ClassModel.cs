@@ -384,7 +384,7 @@ namespace Typhon.Compiler.Emit
                     {
                         c.Bases.Remove(ntBase);
                         MakeNamedTuple(c, bf, ntBase.Args.FirstOrDefault(x => x.Name == "defaults")?.Value, annotated: null);
-                        RewriteNamedTupleSuperRepr(c);
+                        RewriteNamedTupleSuperMethods(c);
                         known[c.Name] = bf;
                         continue;
                     }
@@ -553,21 +553,28 @@ namespace Typhon.Compiler.Emit
         }
 
         internal const string NamedTupleRepr = "__typhon_namedtuple_repr__";
+        internal const string NamedTupleBaseIterator = "__typhon_namedtuple_base_iterator__";
 
         /// <summary>A namedtuple factory base is represented by the same CLR class as its subclass.</summary>
-        static void RewriteNamedTupleSuperRepr(ClassDef c)
+        static void RewriteNamedTupleSuperMethods(ClassDef c)
         {
-            var repr = c.Body.OfType<FunctionDef>().FirstOrDefault(f => f.Name == "__repr__" && f.Params.Count != 0);
-            if (repr == null) return;
-            AstWalker.VisitAll(repr.Body, n =>
+            foreach (var method in c.Body.OfType<FunctionDef>())
             {
-                if (n is CallExpr { Args.Count: 0, Func: AttributeExpr { Name: "__repr__", Target: CallExpr { Func: NameExpr { Id: "super" }, Args.Count: 0 } } } call)
-                    call.Func = new AttributeExpr
-                    {
-                        Target = new NameExpr { Id = repr.Params[0].Name, Line = call.Line, Col = call.Col },
-                        Name = NamedTupleRepr, Line = call.Line, Col = call.Col,
-                    };
-            });
+                string helper = method.Name is "__repr__" ? NamedTupleRepr :
+                    method.Name is "__iter__" ? NamedTupleBaseIterator : null;
+                if (helper == null || method.Params.Count == 0) continue;
+                AstWalker.VisitAll(method.Body, n =>
+                {
+                    if (n is CallExpr { Args.Count: 0, Func: AttributeExpr
+                        { Target: CallExpr { Func: NameExpr { Id: "super" }, Args.Count: 0 } } member } call &&
+                        member.Name == method.Name)
+                        call.Func = new AttributeExpr
+                        {
+                            Target = new NameExpr { Id = method.Params[0].Name, Line = call.Line, Col = call.Col },
+                            Name = helper, Line = call.Line, Col = call.Col,
+                        };
+                });
+            }
         }
 
         /// <summary>Does a class body bind the name itself (a method parameter or local, a class variable)?</summary>

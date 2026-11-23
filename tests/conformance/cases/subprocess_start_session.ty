@@ -1,0 +1,9 @@
+import os
+from subprocess import check_output
+
+if os.name == "posix":
+    command = ["sh", "-c", 'test "$$" = "$(ps -o sid= -p $$ | tr -d \' \')" && echo yes']
+    output = check_output(command, start_new_session=True, text=True)
+    print(output.strip() == "yes")
+else:
+    print(check_output("echo yes", shell=True, start_new_session=True, text=True).strip() == "yes")

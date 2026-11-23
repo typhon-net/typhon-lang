@@ -1,0 +1,14 @@
+import codecs
+import sys
+
+for marker, encoding in (
+    (codecs.BOM_UTF8, 'utf-8'),
+    (codecs.BOM_UTF16_LE, 'utf-16-le'),
+    (codecs.BOM_UTF16_BE, 'utf-16-be'),
+    (codecs.BOM_UTF32_LE, 'utf-32-le'),
+    (codecs.BOM_UTF32_BE, 'utf-32-be'),
+):
+    print(encoding, marker.hex())
+print(codecs.BOM is codecs.BOM_UTF16)
+print(codecs.BOM_UTF16 is (codecs.BOM_UTF16_LE if sys.byteorder == 'little' else codecs.BOM_UTF16_BE))
+print(codecs.BOM32_LE is codecs.BOM_LE, codecs.BOM64_BE is codecs.BOM_UTF32_BE)

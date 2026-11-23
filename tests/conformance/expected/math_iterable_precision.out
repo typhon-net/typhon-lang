@@ -1,0 +1,14 @@
+1.0
+1.0
+32
+5
+0
+Inputs are not the same length
+intermediate overflow in fsum
+-inf + inf in fsum
+must be real number, not str
+inf
+1.0000000000000002
+0.0
+-5.551115123125783e-17
+nan

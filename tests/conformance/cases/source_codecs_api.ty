@@ -1,0 +1,15 @@
+#:pylib-source codecs
+import codecs
+
+def write(value: str):
+    return value.encode("ascii"), len(value)
+
+def read(value: bytes):
+    return value.decode("ascii"), len(value)
+
+info = codecs.CodecInfo(write, read, name="typhon")
+print(info.name, isinstance(info, tuple), len(info))
+print(info.encode("abc"), info.decode(b"xyz"))
+print(info[0] is info.encode, info[1] is info.decode)
+print(codecs.lookup("ascii").name)
+print(codecs.replace_errors(UnicodeEncodeError("ascii", "é", 0, 1, "bad")))

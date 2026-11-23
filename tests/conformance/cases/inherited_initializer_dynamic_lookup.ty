@@ -1,0 +1,19 @@
+DEFAULT_PORT = 143
+
+class Base:
+    def __init__(self, host="local", port=DEFAULT_PORT, timeout=None):
+        self.values = (host, port, timeout)
+
+    def __getattr__(self, name):
+        raise AttributeError(name)
+
+class WithoutBaseInit(Base):
+    def __init__(self):
+        self.values = ("self", 0, None)
+
+class Inherited(Base):
+    pass
+
+print(Inherited().values)
+print(Inherited("different", 1, False).values)
+print(WithoutBaseInit().values)

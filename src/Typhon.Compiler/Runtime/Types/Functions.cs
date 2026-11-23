@@ -17,9 +17,18 @@ namespace Typhon.Runtime
     using System.Globalization;
     using System.Linq;
     using System.Numerics;
+    using System.Reflection;
     using System.Runtime.CompilerServices;
     using System.Text;
     using System.Threading.Tasks;
+
+    // Exposes a Python factory's methods on its callable runtime representation.
+    [AttributeUsage(AttributeTargets.Method, AllowMultiple = true)]
+    internal sealed class PyFactoryMemberAttribute(string name, string implementation) : Attribute
+    {
+        public string Name { get; } = name;
+        public string Implementation { get; } = implementation;
+    }
 
     /// <summary>
     /// A .NET object's method used as a value (pack = struct.Struct(">B").pack): callable with Python's arguments, the
@@ -32,15 +41,20 @@ namespace Typhon.Runtime
         internal string Name => _name;
         internal Type? BuiltinOwner { get; }
         readonly string? _nativeModule;
+        readonly string? _displayName;
+        readonly bool _packedOnly;
         internal bool IsBuiltinModuleFunction => _nativeModule != null;
         internal bool IncludesNonPublic => (_visibility & System.Reflection.BindingFlags.NonPublic) != 0;
         readonly System.Reflection.BindingFlags _visibility;
-        public PyBoundMethod(object target, string name, bool includeNonPublic = false, Type? builtinOwner = null, string? nativeModule = null)
+        public PyBoundMethod(object target, string name, bool includeNonPublic = false, Type? builtinOwner = null,
+            string? nativeModule = null, string? displayName = null, bool packedOnly = false)
         {
             _target = target;
+            _packedOnly = packedOnly;
             _name = name;
             BuiltinOwner = builtinOwner;
             _nativeModule = nativeModule;
+            _displayName = displayName;
             _visibility = System.Reflection.BindingFlags.Public;
             if (includeNonPublic) _visibility |= System.Reflection.BindingFlags.NonPublic;
         }
@@ -51,7 +65,7 @@ namespace Typhon.Runtime
             .Select(method => method.GetCustomAttributes(typeof(PySourceAttribute), false).OfType<PySourceAttribute>().FirstOrDefault())
             .FirstOrDefault(attribute => attribute != null);
 
-        public string __name__ => BuiltinOwner != null ? "__new__" : _name;
+        public string __name__ => BuiltinOwner != null ? "__new__" : _displayName ?? _name;
         public string? __doc__ => Source?.DocString;
         public string __module__ => _nativeModule ?? Source?.Module ?? Builtins.__module_of(_target as Type ?? _target.GetType());
         public Typhon.Stdlib.types.CodeType? __code__ => Source is { } source ? new Typhon.Stdlib.types.CodeType(_name, source.Filename, source.Line) : null;
@@ -100,7 +114,9 @@ namespace Typhon.Runtime
         }
         bool IsPythonMethod(System.Reflection.MethodInfo method) =>
             method.Name == _name && !method.IsDefined(typeof(PyOverrideBridgeAttribute), false) &&
-            !method.IsDefined(typeof(PyMissingMethodAttribute), false);
+            !method.IsDefined(typeof(PyMissingMethodAttribute), false) &&
+            (!_packedOnly || method.GetParameters().Any(parameter =>
+                parameter.IsDefined(typeof(PyPackedArgumentsAttribute), false)));
 
         /// <summary>obj.m(x, **kwargs): the method whose parameters take these arguments, positional ones first, then by name.</summary>
         public dynamic? __call_kw__(object?[] args, IDictionary<string, object?>? kw)
@@ -226,6 +242,18 @@ namespace Typhon.Runtime
             {
                 result = function;
                 return true;
+            }
+            if (_target is Type owner)
+            {
+                var member = owner.GetMethods(_visibility | System.Reflection.BindingFlags.Static)
+                    .Where(method => method.Name == _name)
+                    .SelectMany(method => method.GetCustomAttributes<PyFactoryMemberAttribute>())
+                    .FirstOrDefault(candidate => candidate.Name == name);
+                if (member != null)
+                {
+                    result = new PyBoundMethod(owner, member.Implementation, nativeModule: _nativeModule, displayName: name);
+                    return true;
+                }
             }
             result = null;
             return false;
@@ -365,7 +393,31 @@ namespace Typhon.Runtime
             var underlying = Nullable.GetUnderlyingType(target) ?? target;
             if (value is BigInteger integer && TryIntegralArgument(integer, underlying, out var converted))
                 return converted;
+            if (value is ITuple tuple && IsValueTupleType(underlying))
+            {
+                int index = 0;
+                object result = ConvertValueTuple(tuple, underlying, ref index);
+                if (index != tuple.Length) throw new InvalidCastException("tuple has the wrong number of items");
+                return result;
+            }
             return Convert.ChangeType(value, underlying, CultureInfo.InvariantCulture);
+        }
+
+        internal static bool IsValueTupleType(Type type) => type == typeof(ValueTuple) ||
+            type.IsGenericType && type.Namespace == "System" && type.Name.StartsWith("ValueTuple`", StringComparison.Ordinal);
+
+        static object ConvertValueTuple(ITuple value, Type type, ref int offset)
+        {
+            if (type == typeof(ValueTuple)) return default(ValueTuple);
+            var elementTypes = type.GetGenericArguments();
+            var arguments = new object?[elementTypes.Length];
+            int direct = Math.Min(7, elementTypes.Length);
+            if (offset + direct > value.Length) throw new InvalidCastException("tuple has the wrong number of items");
+            for (int part = 0; part < direct; part++)
+                arguments[part] = ConvertArgument(value[offset++], elementTypes[part]);
+            if (elementTypes.Length == 8)
+                arguments[7] = ConvertValueTuple(value, elementTypes[7], ref offset);
+            return Activator.CreateInstance(type, arguments)!;
         }
 
         static bool TryIntegralArgument(BigInteger value, Type target, out object? converted)
@@ -426,8 +478,14 @@ namespace Typhon.Runtime
             return false;
         }
 
+        static PyBoundMethod? NativeClassFactory(Type type) =>
+            type.Namespace == "Typhon.Stdlib" &&
+            type.GetMethod("__typhon_factory__", BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly) != null
+                ? new PyBoundMethod(type, "__typhon_factory__") : null;
+
         static object? Construct(Type t, object?[] args)
         {
+            if (NativeClassFactory(t) is PyBoundMethod factory) return factory.__call__(args);
             if (TryCustomAllocation(t, args, null, out var allocated)) return allocated;
             if (TryAddedInitializer(t, args, null, out allocated)) return allocated;
             Typhon.Stdlib._abc.CheckAbstract(t);
@@ -440,6 +498,11 @@ namespace Typhon.Runtime
             {
                 if (args.Length != 1) throw new InvalidCastException($"{t.Name}() expected one value");
                 return PyStrEnum.Lookup(t, args[0]);
+            }
+            if (typeof(PyPlainEnum).IsAssignableFrom(t))
+            {
+                if (args.Length != 1) throw new InvalidCastException($"{t.Name}() expected one value");
+                return PyPlainEnum.Lookup(t, args[0]);
             }
             if (TryConstructCollectionClass(t, args, null, out var collection)) return collection;
             if (t == typeof(frozendict<object, object>)) return ConstructFrozenDict(args, null);
@@ -542,6 +605,8 @@ namespace Typhon.Runtime
             if (t.DeclaringType == typeof(Typhon.Stdlib.collections.abc)) return "collections.abc";
             if (t.DeclaringType == typeof(Typhon.Stdlib.@operator)) return "operator";
             if (t is PyLocalDataClass local) return local.PythonModule;
+            if (t is PyPlainEnumType enumeration) return enumeration.PythonModule;
+            if (t is PyIntEnumType integerEnumeration) return integerEnumeration.Module;
             var definitionType = t.IsGenericType ? t.GetGenericTypeDefinition() : t;
             if (ClassModuleNames.TryGetValue(definitionType, out var capturedName)) return capturedName;
             var outer = t;
@@ -637,6 +702,7 @@ namespace Typhon.Runtime
             }
             if (f is Type t)
             {
+                if (NativeClassFactory(t) is PyBoundMethod classFactory) return classFactory.__call_kw__(args, kw);
                 if (PyMetaclasses.IsMetaclass(t) || t == typeof(Type) && args.Length != 1)
                     return PyMetaclasses.Create(t, args, kw);
                 if (TryCustomAllocation(t, args, kw, out var allocated)) return allocated;

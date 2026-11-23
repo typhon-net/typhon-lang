@@ -1,0 +1,11 @@
+from os import mkdir, walk
+from os.path import join, relpath
+from tempfile import TemporaryDirectory
+
+def directory_name(path: str) -> str:
+    return relpath(path, root).replace("\\", "/")
+
+with TemporaryDirectory() as root:
+    mkdir(join(root, "nested"))
+    names = [directory_name(path) for path, _, _ in walk(join(root, "."), topdown=False)]
+    print(names)

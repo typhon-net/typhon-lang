@@ -1,0 +1,10 @@
+#:pylib-source platform
+import os
+import platform
+
+u = platform.uname()
+print(u.system == platform.system(), isinstance(u.machine, str), isinstance(u.processor, str))
+print(len(u), len(tuple(u)), len(u._fields))
+print(u[0] == platform.system(), u.machine == platform.machine())
+print(platform.system() == ("Windows" if os.name == "nt" else os.uname().sysname))
+print(len(platform.python_version_tuple()), bool(platform.python_implementation()))

@@ -1,0 +1,20 @@
+class TuplePayload(tuple):
+    def __new__(cls, values, *, note="tag"):
+        instance = tuple.__new__(cls, values)
+        instance.note = note
+        return instance
+
+class Inherited(TuplePayload):
+    pass
+
+class Plain(tuple):
+    pass
+
+a = TuplePayload([1, 2], note="value")
+b = Inherited([3, 4])
+print(a, a.note, len(a), a[0], a[-1])
+print(b, b.note, isinstance(b, tuple), type(b).__name__)
+print(a == (1, 2), a < (2, 0), list(b))
+print(Plain("ab"), Plain(), type(Plain([1])).__name__)
+allocate = getattr(tuple, "__new__")
+print(allocate(Plain, [5, 6]), type(allocate(Plain, [5])).__name__)

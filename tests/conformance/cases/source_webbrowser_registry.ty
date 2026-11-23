@@ -1,0 +1,13 @@
+#:pylib-source webbrowser
+import webbrowser
+
+class Controller:
+    def open(self, url, new=0, autoraise=True):
+        print(url, new, autoraise)
+        return True
+
+controller = Controller()
+webbrowser._tryorder = []
+webbrowser.register("typhon-test-controller", None, controller, preferred=True)
+print(webbrowser.get("typhon-test-controller") is controller)
+print(webbrowser.open("https://example.invalid/typhon", new=2, autoraise=False))

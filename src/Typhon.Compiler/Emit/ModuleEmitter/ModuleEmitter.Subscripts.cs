@@ -90,9 +90,7 @@ namespace Typhon.Compiler.Emit
             // (also a late-bound key on a container of a type Typhon does not know: C# would bind its indexer at run time to an int)
             bool untypedLambdaParameter = targetType == null && s.Target is NameExpr parameter &&
                 _lambdaParams.Any(scope => scope.ContainsKey(parameter.Id));
-            bool lateResult = IsDynamicallyDispatched(s.Target) ||
-                targetType == null && s.Target is CallExpr call &&
-                (MaybeLateBound(call) || !store && DotNetOverloads(call)?.Any(overload => TupleElementTypes(overload.Type) != null) == true);
+            bool lateResult = LateSubscriptTarget(s.Target, targetType, store);
             bool untypedModuleField = targetType == null && s.Target is AttributeExpr member &&
                 DottedName(member.Target) is string moduleName && ModuleRef(moduleName) is ModuleInfo module &&
                 ProjectExport(module, member.Name) is var exported && exported.Member != null &&
@@ -331,6 +329,11 @@ namespace Typhon.Compiler.Emit
             bool narrow = sequence ? !IsSmallInt(it) : it == "long" || it == "ulong" || it == TypeInference.BigInt;
             return narrow ? $"checked((int)({code}))" : code;
         }
+
+        bool LateSubscriptTarget(Expr receiver, string type, bool store = false) =>
+            IsDynamicallyDispatched(receiver) ||
+            type == null && receiver is CallExpr call &&
+            (MaybeLateBound(call) || !store && DotNetOverloads(call)?.Any(overload => TupleElementTypes(overload.Type) != null) == true);
 
         bool UsesRuntimeSubscriptReceiver(Expr receiver, string type) =>
             type is "dynamic" or "object" or "object?" ||

@@ -1,0 +1,11 @@
+import plistlib as plist
+
+value = {'payload': b'\x01\x02', 'name': 'café', 'items': [1, True, 4.5]}
+xml_data = plist.dumps(value)
+print(xml_data.startswith(b'<?xml'), plist.loads(xml_data) == value)
+print(plist.loads(xml_data.decode('utf-8').replace('UTF-8', 'UTF-16').encode('utf-16')) == value)
+binary_data = plist.dumps(value, fmt=plist.FMT_BINARY)
+print(binary_data[:8], plist.loads(binary_data) == value)
+payload = plist.dumps({'id': plist.UID(19)}, fmt=plist.FMT_BINARY)
+print(plist.loads(payload)['id'] == plist.UID(19))
+print(plist.PlistFormat['FMT_XML'] is plist.FMT_XML)

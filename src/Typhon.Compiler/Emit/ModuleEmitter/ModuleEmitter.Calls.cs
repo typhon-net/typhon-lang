@@ -99,9 +99,10 @@ namespace Typhon.Compiler.Emit
             if (callee == null) return null;
             var ps = callee.Params.Skip(implicitParams).ToList();
             var kw = ps.FirstOrDefault(p => p.Kind == ParamKind.KwArgs);
-            if (kw == null && !NeedsPackedVarArgs(callee)) return null;
-            if (kw == null && args.Any(a => a.DoubleStar)) return null;
             var va = ps.FirstOrDefault(p => p.Kind == ParamKind.VarArgs);
+            bool packsStar = va != null && args.Any(a => a.Star);
+            if (kw == null && !NeedsPackedVarArgs(callee) && !packsStar) return null;
+            if (kw == null && args.Any(a => a.DoubleStar)) return null;
             var fixedPs = ps.Where(p => p.Kind == ParamKind.Normal).ToList();
             // parameters after *args are keyword-only: positional arguments fill only those before it
             var positionalPs = va == null ? fixedPs : ps.TakeWhile(p => p.Kind == ParamKind.Normal).ToList();
@@ -112,7 +113,10 @@ namespace Typhon.Compiler.Emit
                 string type = parameter.Annotation != null ? MapType(parameter.Annotation, parameter) : null;
                 string value = TupleLiteralValue(arg.Value, type) ??
                     (type is null or "dynamic" or "object" or "object?" ? EmitLooseValue(arg.Value) : EmitValue(arg.Value));
-                if (!constructorInitializer || InferType(arg.Value) != "dynamic") return value;
+                // The packed C# argument name is not a Python keyword. Resolve
+                // this call statically before it can reach Python's argument binder.
+                if ((!constructorInitializer && !packsStar) ||
+                    (InferType(arg.Value) != "dynamic" && !IsDynamicallyDispatched(arg.Value))) return value;
                 return $"({(type is null or "dynamic" ? "object?" : type)}){Paren(value)}";
             }
             void AddRest(string argument)
@@ -163,16 +167,16 @@ namespace Typhon.Compiler.Emit
         {
             if (!c.Args.Any(a => a.Star)) return null;
             var callee = TyphonCallee(c, out int implicitParams);
-            if (callee == null || c.Args.Count(a => a.Star) != 1 || c.Args.Any(a => a.DoubleStar)) return null;
+            if (callee == null || c.Args.Any(a => a.DoubleStar)) return null;
             var fixedParams = callee.Params.Skip(implicitParams).TakeWhile(p => p.Kind == ParamKind.Normal).ToList();
             bool hasVarArgs = callee.Params.Any(p => p.Kind == ParamKind.VarArgs);
             int starAt = c.Args.FindIndex(a => a.Star);
             var before = c.Args.Take(starAt).ToList();
             var after = c.Args.Skip(starAt + 1).ToList();
+            if (hasVarArgs && before.Count < fixedParams.Count)
+                return KwargsSpreadCall(c, bindPositionalSpread: true);
             if (before.Any(a => a.Name != null) || after.Any(a => a.Name == null)) return null;
             var star = c.Args[starAt].Value;
-            if (hasVarArgs && before.Count >= fixedParams.Count)
-                return null; // spreads into the function's own *args: the params array takes the sequence as is
             // the parameters the star fills: a tuple's arity is known; a list fills the remaining required parameters
             var remaining = fixedParams.Skip(before.Count).Where(p => !after.Any(a => a.Name == p.Name)).ToList();
             var tupleTypes = TupleElementTypes(InferType(star));
@@ -594,13 +598,17 @@ namespace Typhon.Compiler.Emit
         string EmitCall(CallExpr c, bool targetTyped)
         {
             if (!_m.IsGdScript && c.Func is NameExpr exception &&
-                exception.Id is "TypeError" or "ValueError" or "RuntimeError" or "Exception" or "BaseException" &&
-                !IsShadowed(exception.Id) && c.Args.Count > 1 && c.Args.All(argument => argument.Name == null && !argument.Star && !argument.DoubleStar))
+                (exception.Id == "OverflowError" && c.Args.Count > 0 ||
+                    exception.Id is "TypeError" or "ValueError" or "RuntimeError" or "Exception" or "BaseException" && c.Args.Count > 1) &&
+                !IsShadowed(exception.Id) && c.Args.All(argument => argument.Name == null && !argument.Star && !argument.DoubleStar))
             {
                 var values = c.Args.Select(argument => $"(object?){Paren(EmitLooseValue(argument.Value))}");
                 return $"{Rt("__exception_args")}<{ExceptionMap[exception.Id]}>([{string.Join(", ", values)}])";
             }
             if (!_m.IsGdScript && EmitTypeSlotCall(c) is string typeSlot) return typeSlot;
+            if (_big && c.Args.Count == 0 && StdlibModuleOf(c, out string iteratorName) == "Typhon.Stdlib.itertools" &&
+                iteratorName == "count")
+                return "global::Typhon.Stdlib.itertools.count(global::System.Numerics.BigInteger.Zero)";
             if (!_m.IsGdScript && c.Func is AttributeExpr overridden &&
                 overridden.Target is not CallExpr { Func: NameExpr { Id: "super" } } &&
                 TyphonCallee(c, out int boundParameters) is FunctionDef { NeedsOverrideBinding: true } && boundParameters == 1)
@@ -694,12 +702,18 @@ namespace Typhon.Compiler.Emit
                 Obs.AddLambdaCall(_scopeKey + "|λ" + lfn.Id, c.Args.Count == lcalled.Params.Count && c.Args.All(a => a.Name == null && !a.Star)
                     ? c.Args.Select(a => TypeInference.Settled(PyType(InferType(a.Value)) ?? TypeInference.Unknown)).ToArray() : null);
             if (c.Func is NameExpr gfn && gfn.Id == "globals" && c.Args.Count == 0 && !IsShadowed("globals")) return EmitGlobals();
+            if (c.Func is NameExpr { Id: "__typhon_source_import" })
+            {
+                string globals = _m.RuntimeCodeMode == null ? ModuleObject(_m) + ".__dict__" : "__typhon_execution.Globals";
+                // The relative import level is compiler metadata even in Python big-integer mode.
+                string arguments = string.Join(", ", c.Args.Select((argument, index) =>
+                    index == 1 ? $"(long){Paren(EmitValue(argument.Value))}" : EmitValue(argument.Value)));
+                return $"global::Typhon.Runtime.Builtins.__runtime_source_import({globals}, {arguments})";
+            }
             if (_m.RuntimeCodeMode != null && c.Func is NameExpr specialName)
             {
                 if (specialName.Id == "__typhon_export")
                     return $"__typhon_execution.Export({EmitValue(c.Args[0].Value)}, {EmitLooseValue(c.Args[1].Value)})";
-                if (specialName.Id == "__typhon_source_import")
-                    return $"global::Typhon.Runtime.Builtins.__runtime_source_import(__typhon_execution.Globals, {string.Join(", ", c.Args.Select(a => EmitValue(a.Value)))})";
                 if (specialName.Id == "locals" && c.Args.Count == 0 && !IsShadowed("locals") && AtRuntimeModuleScope)
                     return "((dynamic)__typhon_execution.Locals)";
             }
@@ -874,6 +888,8 @@ namespace Typhon.Compiler.Emit
                     NameExpr name => NativeImportedMethodValue(name),
                     _ => null,
                 };
+                if (callable == null && c.Args.Count == 3 && IsTypeAccumulator(c.Args[2].Value))
+                    callable = $"(object?){Paren(EmitLooseValue(c.Args[0].Value))}";
                 if (callable != null)
                 {
                     string Argument(Arg arg) => $"(object?){Paren(EmitValue(arg.Value))}";
@@ -1032,7 +1048,7 @@ namespace Typhon.Compiler.Emit
                         {
                             var pos = c.Args.Where(a => a.Name == null).Select(a => a.Star ? ".. " + EmitIterable(a.Value) : EmitExpr(a.Value));
                             var kws = c.Args.Where(a => a.Name == "sep" || a.Name == "end" || a.Name == "file" || a.Name == "flush").Select(a => $"{a.Name}: {(a.Name == "file" ? "(object?)" + Paren(EmitExpr(a.Value)) : EmitExpr(a.Value))}");
-                            return $"{Rt("print_kw")}([{string.Join(", ", pos)}]{string.Concat(kws.Select(k => ", " + k))})";
+                            return $"{Rt("print_kw")}((object?[])[{string.Join(", ", pos)}]{string.Concat(kws.Select(k => ", " + k))})";
                         }
                         break;
                     case "object":
@@ -1120,13 +1136,30 @@ namespace Typhon.Compiler.Emit
 
 
         /// <summary>Base.method(self, ...): an explicit call of the direct base implementation.</summary>
+        bool TryBaseQualifiedMember(CallExpr call, out AttributeExpr member, out ClassDef targetClass, out string targetMeta, out bool directBase)
+        {
+            member = call.Func as AttributeExpr;
+            targetClass = null;
+            targetMeta = null;
+            directBase = false;
+            if (_cls == null || !HasSelfInScope() || _cls.Def.Bases.Count == 0 ||
+                member == null || DottedName(member.Target) is not string qualifier ||
+                call.Args.Count == 0 || call.Args[0].Value is not NameExpr { Id: "self" } ||
+                IsReboundReceiver(call.Args[0].Value) || call.Args[0].Name != null ||
+                !TryResolveType(qualifier, 0, out targetMeta, out targetClass) ||
+                !ResolveBase(_cls.Def.Bases[0], out var parentClass, out var parentMeta)) return false;
+            directBase = targetMeta == parentMeta && targetClass == parentClass;
+            return true;
+        }
+
+        IReadOnlyList<Semantics.MemberSig> BaseQualifiedNativeOverloads(ClassDef targetClass, string targetMeta, string name) =>
+            targetMeta != null ? _r.GetMembers(targetMeta, name).Where(m => m.IsMethod && !m.IsStatic).ToList() :
+            targetClass != null ? InheritedDotNetOverloads(targetClass, name) : null;
+
         string BaseQualifiedCall(CallExpr call)
         {
-            if (_cls == null || !HasSelfInScope() || _cls.Def.Bases.Count == 0 ||
-                !(call.Func is AttributeExpr member) || DottedName(member.Target) is not string qualifier ||
-                call.Args.Count == 0 || !(call.Args[0].Value is NameExpr { Id: "self" }) || IsReboundReceiver(call.Args[0].Value) ||
-                call.Args[0].Name != null || !TryResolveType(qualifier, 0, out var targetMeta, out var targetClass) ||
-                !ResolveBase(_cls.Def.Bases[0], out var parentClass, out var parentMeta)) return null;
+            if (!TryBaseQualifiedMember(call, out var member, out var targetClass, out var targetMeta, out bool directBase))
+                return null;
             if (targetClass != null && member.Name == "__init__" &&
                 TwoPhaseClasses.Contains(targetClass) && Defines(targetClass, "__init__") && targetClass.TypeParams.Count == 0 &&
                 DerivesFrom(_cls.Def, targetClass) &&
@@ -1137,14 +1170,15 @@ namespace Typhon.Compiler.Emit
                                             : $"(object?){Paren(EmitLooseValue(arg.Value))}");
                 return $"{Rt("__base_init")}(this, typeof({ancestor}), [{string.Join(", ", positional)}], {KeywordArgs(call.Args.Skip(1).ToList())})";
             }
-            if (targetMeta != parentMeta || targetClass != parentClass || call.Args.Any(arg => arg.Star || arg.DoubleStar)) return null;
+            if (!directBase || call.Args.Any(arg => arg.Star || arg.DoubleStar)) return null;
 
-            var overloads = parentMeta == null ? null :
-                _r.GetMembers(parentMeta, member.Name).Where(m => m.IsMethod && !m.IsStatic).ToList();
-            if (parentClass == null && overloads?.Count is not > 0) return null;
-            if (parentClass != null && (MethodInHierarchy(parentClass, member.Name) is not FunctionDef method ||
-                HasDecorator(method.Decorators, "staticmethod") || HasDecorator(method.Decorators, "classmethod") ||
-                HasDecorator(method.Decorators, "property"))) return null;
+            var overloads = BaseQualifiedNativeOverloads(targetClass, targetMeta, member.Name);
+            if (targetClass != null && MethodInHierarchy(targetClass, member.Name) is FunctionDef method)
+            {
+                if (HasDecorator(method.Decorators, "staticmethod") || HasDecorator(method.Decorators, "classmethod") ||
+                    HasDecorator(method.Decorators, "property")) return null;
+            }
+            else if (overloads?.Count is not > 0) return null;
             var arguments = call.Args.Skip(1).ToList();
             if (!arguments.Any(a => InferType(a.Value) == "dynamic" || IsDynamicallyDispatched(a.Value)))
                 return $"base.{Esc(member.Name)}({EmitArgs(arguments, overloads: overloads)})";
@@ -1157,7 +1191,9 @@ namespace Typhon.Compiler.Emit
                     string type = ParamTypeOf(call, index + 1, arg.Name) ??
                         overloads?.Select(m => arg.Name == null ? ParamAt(m, index)?.GenericType :
                             m.Parameters.FirstOrDefault(p => p.Name == arg.Name)?.GenericType).FirstOrDefault(t => t != null);
-                    code = $"({(type == null || type == "dynamic" ? "object?" : type)}){Paren(code)}";
+                    code = type is "System.Collections.IEnumerable" or "global::System.Collections.IEnumerable"
+                        ? $"{Rt("__iter_dyn")}((object?){Paren(code)})"
+                        : $"({(type == null || type == "dynamic" ? "object?" : type)}){Paren(code)}";
                 }
                 return arg.Name == null ? code : $"{Esc(arg.Name)}: {code}";
             }
@@ -1417,23 +1453,27 @@ namespace Typhon.Compiler.Emit
             return $"global::Typhon.Stdlib.functools.__partial_kw((object?){Paren(EmitLooseValue(c.Args[0].Value))}, [{string.Join(", ", positional)}], {KeywordArgs(c.Args)})";
         }
 
-        string RuntimeStarCall(CallExpr call)
+        string NativeUnpackCall(CallExpr call)
         {
-            if (!call.Args.Any(a => a.Star) || StdlibModuleOf(call, out string name) is not string owner)
-                return null;
+            bool unpack = call.Args.Any(argument => argument.Star || argument.DoubleStar);
+            if (!unpack && !call.Args.Any(argument => argument.Name != null)) return null;
+            if (StdlibModuleOf(call, out string name) is not string owner) return null;
             var members = _r.GetMembers(owner, name).Where(member => member.IsStatic).ToList();
+            bool packed = members.Any(member => member.Parameters.Any(parameter => parameter.IsPackedArguments));
             bool value = members.Any(member => !member.IsMethod);
+            if (!packed && !call.Args.Any(argument => argument.Star)) return null;
             int positionalPrefix = call.Args.TakeWhile(argument => !argument.Star)
                 .Count(argument => argument.Name == null && !argument.DoubleStar);
             // A CLR params array can only spread values after the fixed parameters.
-            if (!value && (members.All(member => member.TypeParams?.Count > 0) ||
+            if (!value && !packed && (members.All(member => member.TypeParams?.Count > 0) ||
                 members.Any(member => member.Parameters.LastOrDefault()?.IsParams == true &&
                     member.Parameters.Count - 1 <= positionalPrefix)))
                 return null;
             var positional = call.Args.Where(a => a.Name == null && !a.DoubleStar)
                 .Select(a => a.Star ? $".. {Rt("__iter_dyn")}((object?){Paren(EmitExpr(a.Value))})"
                                    : $"(object?){Paren(EmitLooseValue(a.Value))}");
-            string bound = $"new global::Typhon.Runtime.PyBoundMethod(typeof({CsTypeName(owner)}), {CsString(name)})";
+            string packedBinding = packed ? ", packedOnly: true" : "";
+            string bound = $"new global::Typhon.Runtime.PyBoundMethod(typeof({CsTypeName(owner)}), {CsString(name)}{packedBinding})";
             string args = $"[{string.Join(", ", positional)}]";
             bool keywords = call.Args.Any(a => a.Name != null || a.DoubleStar);
             if (value)
@@ -1479,6 +1519,10 @@ namespace Typhon.Compiler.Emit
         {
             if (StringFormatCall(c) is string stringFormat) return stringFormat;
 
+            if (!_m.IsGdScript && c.Func is AttributeExpr { Name: "__index__" } index && c.Args.Count == 0 &&
+                InferType(index.Target) is string numeric && (IsIntegral(numeric) || numeric == "bool"))
+                return $"global::Typhon.Stdlib.@operator.index({EmitExpr(index.Target)})";
+
             if (c.Func is AttributeExpr { Name: "register" } reg && DottedName(reg.Target) is string name &&
                 TryResolveType(name, 0, out _, out var abc) && abc != null && HasVirtualSubclasses(abc) &&
                 !DefinesInHierarchy(abc, "register") && c.Args.Count == 1 &&
@@ -1506,7 +1550,7 @@ namespace Typhon.Compiler.Emit
             if (DotNetKwargsCall(c) is string kwargsCall) return kwargsCall;
             if (ExpandStarArgs(c) is string expanded) return expanded;
             if (KwargsSpreadCall(c) is string spreadCall) return spreadCall;
-            if (RuntimeStarCall(c) is string runtimeStar) return runtimeStar;
+            if (NativeUnpackCall(c) is string runtimeStar) return runtimeStar;
             // table[name](x, *rest) / cls(n, n) with cls a late-bound parameter: the callable is known only at run time (a
             // function value, a bound method, a delegate or a class), so the call is made there
             // (also f(*args, **kwargs) / f(x, key=v) on such a callable, and f(*args) on a value of a function type: a
@@ -1546,8 +1590,22 @@ namespace Typhon.Compiler.Emit
             if (c.Func is AttributeExpr spreadMethod && InferType(spreadMethod.Target) == "dynamic" &&
                 c.Args.Any(arg => arg.Star) && !c.Args.Any(arg => arg.Name != null || arg.DoubleStar))
                 return InvokeLogicalMethod(spreadMethod, $"(object?){Paren(EmitExpr(spreadMethod.Target))}", c.Args);
+            if (_big && !_m.IsGdScript && c.Func is AttributeExpr numericMethod && LatePythonMethodReceiver(numericMethod.Target) &&
+                c.Args.Any(argument => InferType(argument.Value) is TypeInference.BigInt or "dynamic"))
+                return InvokeLogicalMethod(numericMethod, $"(object?){Paren(EmitExpr(numericMethod.Target))}", c.Args);
+
             if (TryTypeExpr(c.Func, out var typeCode))
             {
+                if (HasNativeClassFactory(c.Func) &&
+                    KwargsSpreadCall(c, bindPositionalSpread: true) is string classFactory)
+                    return classFactory;
+                int firstSpread = c.Args.FindIndex(argument => argument.Star);
+                if (firstSpread >= 0 && !_m.IsGdScript && DotNetConstructors(c.Func) is { Count: > 0 } constructors &&
+                    !constructors.Any(member => member.Parameters.LastOrDefault()?.IsParams == true &&
+                        member.Parameters.Count - 1 <= firstSpread) &&
+                    KwargsSpreadCall(c, bindPositionalSpread: true) is string spreadConstructor)
+                    return spreadConstructor;
+
                 if (DottedName(c.Func) is string decoratedName &&
                     TryResolveType(decoratedName, 0, out _, out var decorated) && decorated?.HasPythonClassDecorators == true)
                 {
@@ -1558,10 +1616,12 @@ namespace Typhon.Compiler.Emit
                 }
                 if (c.Args.Count == 1 && c.Args[0] is Arg { Name: null or "value", Star: false, DoubleStar: false } enumValue &&
                     DottedName(c.Func) is string enumName && TryResolveType(enumName, 0, out _, out var enumClass) &&
-                    enumClass != null && (IsStringEnum(enumClass) || IsObjectIntegerEnum(enumClass)))
+                    enumClass != null && (IsStringEnum(enumClass) || IsObjectIntegerEnum(enumClass) || IsPlainObjectEnum(enumClass)))
                 {
-                    string runtimeClass = IsObjectIntegerEnum(enumClass) ? "PyIntegerEnum" : "PyStrEnum";
-                    return $"(({typeCode})global::Typhon.Runtime.{runtimeClass}.Lookup(typeof({typeCode}), (object?){Paren(EmitValue(enumValue.Value))}))";
+                    string runtimeClass = IsObjectIntegerEnum(enumClass) ? "PyIntegerEnum" :
+                        IsPlainObjectEnum(enumClass) ? "PyPlainEnum" : "PyStrEnum";
+                    string lookup = $"global::Typhon.Runtime.{runtimeClass}.Lookup(typeof({typeCode}), (object?){Paren(EmitValue(enumValue.Value))})";
+                    return _statementCall == c ? lookup : $"(({typeCode}){lookup})";
                 }
                 if (Obs != null && TryDataclassConstructor(c, out _))
                     for (int i = 0; i < c.Args.Count; i++)
@@ -1791,7 +1851,7 @@ namespace Typhon.Compiler.Emit
                     HasDecorator(f.Decorators, "staticmethod")).Select(f => f.Name));
             }
             bool packedMethod = _packedMethodNames.Contains(method.Name);
-            bool classMethod = _classMethodNames.Contains(method.Name);
+            bool classMethod = _classMethodNames.Contains(method.Name) || ClassDefaultReceiver(method.Target);
             if (!packedMethod && !classMethod) return null;
 
             string receiver = $"(object?){Paren(EmitExpr(method.Target))}";
@@ -1806,6 +1866,18 @@ namespace Typhon.Compiler.Emit
             return _statementCall == call
                 ? $"{{ var {temporary} = {receiver}; if ({requiresBinding}) _ = {python}; else {ordinary}; }}"
                 : $"(({receiver} is var {temporary} && ({requiresBinding})) ? {python} : {ordinary})";
+        }
+
+        bool ClassDefaultReceiver(Expr receiver)
+        {
+            if (receiver is not NameExpr name || _lambdaParams.Any(parameters => parameters.ContainsKey(name.Id))) return false;
+            for (var scope = _scope; scope != null; scope = scope.Parent)
+            {
+                if (scope.Params.Contains(name.Id)) return scope.ClassDefaultParameters?.Contains(name.Id) == true;
+                if (scope.Locals?.AllLocals.Contains(name.Id) == true ||
+                    scope.Locals?.LocalFunctions.Contains(name.Id) == true) return false;
+            }
+            return false;
         }
 
         bool IsLateRuntimeMethodCall(CallExpr call, out AttributeExpr method)
@@ -1830,10 +1902,14 @@ namespace Typhon.Compiler.Emit
             // Late subscripts, on the other hand, explicitly return dynamic from the runtime.
             if (type is ("dynamic" or "object" or "object?") || receiver is CallExpr call &&
                 (MaybeLateBound(call) || UsesMethodDefaultArguments(call))) return true;
-            if (receiver is SubscriptExpr item && (UsesRuntimeSubscriptReceiver(item.Target, InferType(item.Target)) ||
-                IsDynamicallyDispatched(item.Target))) return true;
+            if (receiver is SubscriptExpr item)
+            {
+                string containerType = InferType(item.Target);
+                if (UsesRuntimeSubscriptReceiver(item.Target, containerType) || LateSubscriptTarget(item.Target, containerType)) return true;
+            }
             if (type != null || receiver is not AttributeExpr attribute) return false;
-            return DottedName(attribute) is string dotted && IsLocal(dotted.Split('.')[0]) ||
+            return attribute.Target is CallExpr nativeCall && StdlibModuleOf(nativeCall, out _) != null ||
+                DottedName(attribute) is string dotted && IsLocal(dotted.Split('.')[0]) ||
                 statement && attribute.Target is not NameExpr { Id: "self" } && InferType(attribute.Target) == null;
         }
 

@@ -1,0 +1,9 @@
+import io
+
+def print_to(stream, end, *items):
+    print(*items, end=end, file=stream)
+
+stream = io.StringIO()
+print_to(stream, "!", 1, 2)
+print_to(stream, None, "x")
+print(repr(stream.getvalue()))

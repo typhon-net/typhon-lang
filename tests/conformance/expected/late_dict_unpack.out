@@ -1,0 +1,3 @@
+['a-first', 'a-second']
+{'a-custom': False, None: True}
+'list' object is not a mapping

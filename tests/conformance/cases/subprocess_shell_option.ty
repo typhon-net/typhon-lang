@@ -1,0 +1,4 @@
+from subprocess import check_call, check_output, run
+print(check_output("echo typhon", shell=True, text=True).strip())
+print(run("echo runtime", shell=True, text=True, capture_output=True, check=True).stdout.strip())
+print(check_call("echo ok", shell=True, stdout=-3))

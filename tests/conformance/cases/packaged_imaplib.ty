@@ -1,0 +1,6 @@
+import imaplib
+
+print(imaplib.Int2AP(0), imaplib.Int2AP(-4096), imaplib.Int2AP(65535))
+print(imaplib.ParseFlags(b"FLAGS (\\Seen \\Answered)"))
+print(imaplib.ParseFlags(b"UNKNOWN"), imaplib.Internaldate2tuple(b"invalid"))
+print(imaplib.Time2Internaldate('"02-Jan-2020 03:04:05 +0100"'))

@@ -1,0 +1,12 @@
+('', 3)
+('??', 3)
+('&#233;&#128512;', 3)
+('\\xe9\\U0001f600', 3)
+('\\N{LATIN SMALL LETTER E WITH ACUTE}\\N{GRINNING FACE}', 3)
+('�', 2)
+('\udcff\udcfe', 2)
+(b'\xed\xb3\xbf', 1)
+('\udcff', 2)
+True
+('user', 3)
+CJK UNIFIED IDEOGRAPH-98DB HANGUL SYLLABLE HIH unnamed

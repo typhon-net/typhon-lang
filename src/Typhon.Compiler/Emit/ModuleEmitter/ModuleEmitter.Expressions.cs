@@ -94,6 +94,7 @@ namespace Typhon.Compiler.Emit
                 case NameExpr bt when !Receivers.Contains(bt) && BuiltinTypeValue(bt) is string builtinValue:
                     return builtinValue;
                 case NameExpr pm when !Receivers.Contains(pm) && ProjectModuleValue(pm) is string moduleValue: return moduleValue;
+                case NameExpr rm when !Receivers.Contains(rm) && RuntimeModuleValue(rm) is string runtimeModule: return runtimeModule;
                 case NameExpr printer when IsBuiltinPrintValue(printer):
                     return $"(dynamic){Rt("__print_value")}()";
                 case NameExpr n: return EmitName(n);
@@ -729,6 +730,7 @@ namespace Typhon.Compiler.Emit
             attr is { Target: NameExpr { Id: "int" }, Name: "__new__" } && !IsShadowed("int") ?
                 (_cls != null && IsObjectIntegerEnum(_cls.Def) ? "__int_enum_new" : _big ? "__bigint_new" : "__int_new") :
             attr is { Target: NameExpr { Id: "str" }, Name: "__new__" } && !IsShadowed("str") ? "__str_new" :
+            attr is { Target: NameExpr { Id: "tuple" }, Name: "__new__" } && !IsShadowed("tuple") ? "__tuple_new" :
             attr.Target is NameExpr { Id: "object" } && !IsShadowed("object") ? attr.Name switch
             {
                 "__new__" => "__object_new",
@@ -752,6 +754,7 @@ namespace Typhon.Compiler.Emit
                 case "__cause__": case "__context__": case "__suppress_context__": case "__traceback__": case "with_traceback": case "__notes__":
                     string type = InferType(attribute.Target);
                     return IsUnknownType(type) || IsExceptionType(type);
+                case "errno": case "strerror": case "filename2": case "winerror":
                 case "filename": case "lineno": case "offset": case "text":
                 case "end_lineno": case "end_offset": case "msg": case "print_file_and_line":
                     return IsExceptionType(InferType(attribute.Target));
@@ -894,6 +897,9 @@ namespace Typhon.Compiler.Emit
                 if (!IsAttributeStore(a) && UsesRuntimeProjectMember(projectModule, a.Name)) return RuntimeProjectMember(projectModule, a.Name);
                 if (ProjectModuleMember(prefix + "." + a.Name) is string member) return member;
             }
+            if (a.Name == "itemsize" && !IsAttributeStore(a) &&
+                InferType(a.Target)?.StartsWith("List<", StringComparison.Ordinal) == true)
+                return $"global::Typhon.Runtime.Builtins.itemsize({EmitExpr(a.Target)})";
             if (a.Name is "errno" or "strerror" or "filename" or "filename2" or "winerror" &&
                 InferType(a.Target) is ("global::System.IO.IOException" or "System.IO.IOException"))
                 return $"{Rt("getattr")}((object?){Paren(EmitExpr(a.Target))}, {CsString(a.Name)})";
@@ -904,7 +910,9 @@ namespace Typhon.Compiler.Emit
             if (a.Name is ("__getitem__" or "__contains__") && !Receivers.Contains(a) && !IsAttributeStore(a) &&
                 TupleElementTypes(InferType(a.Target)) != null)
                 return $"{Rt("getattr")}((object?){Paren(EmitValue(a.Target))}, {CsString(a.Name)})";
-            if (a.Name == "_fields" && !IsAttributeStore(a) && NamedTupleOf(InferType(a.Target)) != null)
+            if (a.Name == "_fields" && !IsAttributeStore(a) &&
+                (IsUnknownType(InferType(a.Target)) || InferType(a.Target) == "object?" || NamedTupleOf(InferType(a.Target)) != null) &&
+                !TryTypeExpr(a.Target, out _))
                 return $"{Rt("getattr")}((object?){Paren(EmitValue(a.Target))}, {CsString(a.Name)})";
             // frozenset(kwlist).__contains__ / table.__getitem__ as a value (not called here): a function of the container
             if ((a.Name == "__contains__" || a.Name == "__getitem__") && !Receivers.Contains(a) && InferType(a.Target) is string ct && ct != "dynamic" &&
@@ -985,6 +993,8 @@ namespace Typhon.Compiler.Emit
                 return $"{Rt("getattr")}({builtinReceiver}, {CsString(a.Name)})";
             if (!IsAttributeStore(a) && a.Target is NameExpr classArgument && IsClassArgument(classArgument.Id))
                 return $"{Rt("getattr")}((object?){Paren(EmitName(classArgument))}, {CsString(a.Name)})";
+            if (!_m.IsGdScript && !IsAttributeStore(a) && MayBindZeroParameterFunction(a))
+                return $"{Rt("getattr")}((object?){Paren(EmitExpr(a.Target))}, {CsString(a.Name)})";
             if (TupleFieldOwner(a) is string tupleType)
                 return $"((global::Typhon.Runtime.PyTupleGetter){Rt("getattr")}(typeof({tupleType}), {CsString(a.Name)}))";
             if (!IsAttributeStore(a) && (IsInstanceClassDefault(a) || TypeObjectMember(a) || IsNarrowedInstanceAttribute(a)))

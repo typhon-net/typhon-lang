@@ -179,6 +179,9 @@ namespace Typhon.Compiler.Emit
             // Cross-module fields still need observation when all parameters and return types are declared.
             if (p.Modules.Count <= 1 && ti.Targets.Count == 0 &&
                 !p.Modules.Values.Any(m => HasEmptyContainers(m) || HasRebinding(m) || HasLambdaLocals(m) || HasExternalAttributes(m))) { ti.Converged = true; return; }
+#pragma warning disable RS1035 // a developer switch, read by the CLI process only
+            bool debug = Environment.GetEnvironmentVariable("TYPHON_INFER_DEBUG") == "1";
+#pragma warning restore RS1035
             for (int pass = 0; pass < MaxPasses; pass++)
             {
                 ti.Passes = pass + 1;
@@ -189,18 +192,14 @@ namespace Typhon.Compiler.Emit
                     try { new ModuleEmitter(m, p, new List<TyDiagnostic>(), dryRun: true).Emit(); }
                     catch (Exception) { /* the real emission reports the problem */ }
                 }
-                var before = ti.Snapshot();
+                var before = debug ? ti.Snapshot() : null;
                 bool changed = ti.Derive();
-#pragma warning disable RS1035
-                if (changed && Environment.GetEnvironmentVariable("TYPHON_INFER_DEBUG") == "1")
-#pragma warning restore RS1035
+                if (changed && debug)
                     foreach (var line in ti.Snapshot().Except(before)) Console.Error.WriteLine($"[infer] pass {pass + 1} + {line}");
                 ti.Obs = null;
                 if (!changed) { ti.Converged = true; break; }
             }
-#pragma warning disable RS1035 // a developer switch, read by the CLI process only
-            if (Environment.GetEnvironmentVariable("TYPHON_INFER_DEBUG") == "1")
-#pragma warning restore RS1035
+            if (debug)
             {
                 Console.Error.WriteLine($"[infer] passes={ti.Passes} converged={ti.Converged}");
                 foreach (var kv in ti.Signatures) Console.Error.WriteLine($"[infer] sig {kv.Key}: {string.Join(" | ", kv.Value.Select(SigKey))}");
@@ -256,6 +255,14 @@ namespace Typhon.Compiler.Emit
             // [None for _ in range(n)]
             e is ComprehensionExpr c && c.Kind == ComprehensionKind.List && c.Elt is ConstExpr ce && ce.Kind == ConstKind.None &&
             c.Generators.Count == 1 && c.Generators[0].Ifs.Count == 0 && !c.Generators[0].IsAsync;
+
+        internal static ListExpr NumericListSeed(Expr value)
+        {
+            if (value is not BinOpExpr { Op: "*" } repeat) return null;
+            var seed = (repeat.Left is ListExpr ? repeat.Left : repeat.Right) as ListExpr;
+            return seed is { Elts.Count: 1 } && seed.Elts[0] is ConstExpr { Kind: ConstKind.Int or ConstKind.Float }
+                ? seed : null;
+        }
 
         static bool IsNoneList(Expr e) => e is ListExpr l && l.Elts.Count == 1 && l.Elts[0] is ConstExpr c && c.Kind == ConstKind.None;
 
@@ -327,7 +334,7 @@ namespace Typhon.Compiler.Emit
         static bool HasEmptyContainers(ModuleInfo m)
         {
             bool found = false;
-            if (m.Ast != null) AstWalker.VisitAll(m.Ast.Body, n => { if (n is Expr e && IsEmptyContainer(e)) found = true; });
+            if (m.Ast != null) AstWalker.VisitAll(m.Ast.Body, n => { if (n is Expr e && (IsEmptyContainer(e) || NumericListSeed(e) != null)) found = true; });
             return found;
         }
 

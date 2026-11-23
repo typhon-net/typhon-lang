@@ -811,8 +811,9 @@ namespace Typhon.Runtime
             PyAttrDict attrs => attrs.Keys,
             IDictionary d => DictionaryKeys(d),
             IList list => IterateList(list),
-            ITuple t => Enumerable.Range(0, t.Length).Select(i => t[i]!),
+            Type enumType when typeof(PyPlainEnum).IsAssignableFrom(enumType) => PyPlainEnum.Members(enumType),
             IEnumerable e => e.Cast<object>(),
+            ITuple t => Enumerable.Range(0, t.Length).Select(i => t[i]!),
             _ => IteratePythonObject(o),
         };
         static IEnumerable<dynamic> IteratePythonObject(object? value)
@@ -912,7 +913,17 @@ namespace Typhon.Runtime
             return (parts1 < 0 ? s.Split(sep) : s.Split(sep, parts1)).ToList();
         }
         public static List<string> splitlines(this string s) => s.Replace("\r\n", "\n").Split('\n').ToList() is var l && l.Count > 0 && l[^1] == "" ? l.Take(l.Count - 1).ToList() : s.Replace("\r\n", "\n").Split('\n').ToList();
-        public static string join<T>(this string sep, IEnumerable<T> items) => string.Join(sep, items.Select(x => str(x)));
+        public static string join<T>(this string sep, IEnumerable<T> items) =>
+            string.Join(sep, items.Select((item, index) => JoinItem(item, index)));
+        public static string join(this string sep, [PyPositionalOnly] object? items) => join(sep, __iter_dyn(items));
+
+        static string JoinItem(object? value, int index) => value switch
+        {
+            string text => text,
+            PyString text => text.Text,
+            char character => character.ToString(),
+            _ => throw new InvalidCastException($"sequence item {index}: expected str instance, {(value == null ? "NoneType" : PyTypeName(value.GetType()))} found"),
+        };
         public static bool startswith(this string s, string prefix) => s.StartsWith(prefix, StringComparison.Ordinal);
         public static bool endswith(this string s, string suffix) => s.EndsWith(suffix, StringComparison.Ordinal);
         public static PyBytes translate(this PyBytes value, object? table, object? delete = null) => value.translate(table, delete);

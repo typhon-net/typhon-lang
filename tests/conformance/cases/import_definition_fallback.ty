@@ -1,0 +1,7 @@
+try:
+    from typhon_missing_callable_fixture import fallback
+except ImportError:
+    def fallback():
+        return "local"
+
+print(fallback())

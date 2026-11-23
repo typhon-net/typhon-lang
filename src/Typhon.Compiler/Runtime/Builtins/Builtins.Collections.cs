@@ -90,6 +90,13 @@ namespace Typhon.Runtime
             throw new InvalidCastException($"object of type '{t.Name}' has no len()");
         }
 
+        public static long __length_result(object? value)
+        {
+            object index = __index_value(value);
+            long length = index is BigInteger wide ? checked((long)wide) : (long)index;
+            return length >= 0 ? length : throw new ArgumentException("__len__() should return >= 0");
+        }
+
         public static bool contains(string s, string sub) => s.Contains(sub, StringComparison.Ordinal);
         public static bool contains(PyBytes b, long x) => b.__contains__(x);
         public static bool contains(PyBytes b, PyBytes x) => b.__contains__(x);
@@ -331,16 +338,23 @@ namespace Typhon.Runtime
         {
             if (Typhon.Stdlib.codecs.IsRawUnicodeEscape(encoding)) return Typhon.Stdlib.codecs.raw_unicode_escape_encode(s, errors).Item1;
             if (ByteOps.EncodeSingleByte(s, encoding, errors) is PyBytes encoded) return encoded;
-            try { return new PyBytes(ByteOps.EncodingOf(encoding, errors).GetBytes(s)); }
+            try { return new PyBytes(ByteOps.Encode(s, encoding, errors)); }
             catch (EncoderFallbackException e) { throw new ArgumentException($"'{encoding}' codec can't encode character: {e.Message}"); }
         }
         public static PyBytes fromhex(string s) => PyBytes.fromhex(s);
         public static PyBytes slice(PyBytes b, long? start, long? stop, long step = 1) => b.Slice(start, stop, step);
         public static PyByteArray slice(PyByteArray b, long? start, long? stop, long step = 1) => b.Slice(start, stop, step);
         /// <summary>int.from_bytes(b, "big"/"little", signed=False)</summary>
-        public static long from_bytes(object b, string byteorder = "big", bool signed = false) => (long)from_bytes_big(b, byteorder, signed);
-        public static BigInteger from_bytes_big(object b, string byteorder = "big", bool signed = false) =>
-            new BigInteger(ByteOps.From(b), isUnsigned: !signed, isBigEndian: byteorder == "big");
+        public static long from_bytes(object bytes, string byteorder = "big", [PyKeywordOnly] bool signed = false) =>
+            (long)from_bytes_big(bytes, byteorder, signed);
+        public static BigInteger from_bytes_big(object bytes, string byteorder = "big", [PyKeywordOnly] bool signed = false)
+        {
+            if (byteorder is not ("big" or "little"))
+                throw new ArgumentException("byteorder must be either 'little' or 'big'");
+            if (bytes is null or string or bool or int or long or BigInteger or double or float)
+                throw new InvalidCastException($"cannot convert '{PyTypeName(__type_of(bytes))}' object to bytes");
+            return new BigInteger(ByteOps.From(bytes), isUnsigned: !signed, isBigEndian: byteorder == "big");
+        }
         /// <summary>(n).to_bytes(length, "big"/"little", signed=False)</summary>
         public static PyBytes to_bytes(this long n, long length = 1, string byteorder = "big", bool signed = false) => to_bytes(new BigInteger(n), length, byteorder, signed);
         public static PyBytes to_bytes(this BigInteger n, BigInteger length, string byteorder = "big", bool signed = false) =>
@@ -368,9 +382,10 @@ namespace Typhon.Runtime
         {
             if (TryClassBinaryOp((object?)a, (object?)b, "sub", "-", out var result)) return result!;
             if (IsSet((object)a)) return SetOp((object)a, (object)b, '-');
-            a = NumericOperand((object?)a)!;
-            b = NumericOperand((object?)b)!;
-            return checked(a - b);
+            object left = NumericOperand((object?)a)!;
+            object right = NumericOperand((object?)b)!;
+            PromoteMixedFloat(ref left, ref right);
+            return checked((dynamic)left - (dynamic)right);
         }
         public static dynamic __key_difference(object? mapping, object? other)
         {
@@ -423,7 +438,7 @@ namespace Typhon.Runtime
         }
 
 
-        internal static IEnumerable<KeyValuePair<object, object?>> ReadDictItems(object source)
+        internal static IEnumerable<KeyValuePair<object, object?>> ReadDictItems(object? source, bool requireMapping = false)
         {
             if (source is IDictionary dictionary)
             {
@@ -437,6 +452,7 @@ namespace Typhon.Runtime
                 yield break;
             }
 
+            if (requireMapping) throw new InvalidCastException($"'{PyTypeName(__type_of(source))}' object is not a mapping");
             IEnumerable<dynamic> pairs;
             try { pairs = __iter_dyn(source); }
             catch (InvalidCastException)
@@ -565,7 +581,15 @@ namespace Typhon.Runtime
         public static void __dict_update<K, V, SourceKey, SourceValue>(
             IDictionary<K, V> target, IEnumerable<KeyValuePair<SourceKey, SourceValue>> source)
         {
-            foreach (var item in source) target[__key<K>(item.Key)] = (V)(dynamic?)item.Value!;
+            var valueType = typeof(V);
+            bool tupleValues = PyArgs.IsValueTupleType(Nullable.GetUnderlyingType(valueType) ?? valueType);
+            foreach (var item in source)
+            {
+                V value = tupleValues && item.Value is ITuple tuple
+                    ? (V)PyArgs.ConvertArgument(tuple, valueType)!
+                    : (V)(dynamic?)item.Value!;
+                target[__key<K>(item.Key)] = value;
+            }
         }
         public static OrderedDictionary<K, V> fromkeys<K, V>(IEnumerable<K> keys, V value) where K : notnull { var d = new OrderedDictionary<K, V>(); foreach (var k in keys) d[PyNoneDictKey.Store(k)] = value; return d; }
         public static OrderedDictionary<K, object?> fromkeys<K>(IEnumerable<K> keys) where K : notnull => fromkeys<K, object?>(keys, null);

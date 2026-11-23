@@ -1,0 +1,12 @@
+from io import BytesIO
+
+print(BytesIO(memoryview(b'abcdef')[1:4]).read())
+print(BytesIO(bytearray(b'xyz')).tell())
+print(BytesIO(None).read())
+print(int(b' -0x_ff ', 0), int(bytearray(b'+4_2'), 10), int(b'101', 2))
+print(int('0b10', 16), int(' z ', 36), int('١٢', 10))
+for value in (b'1__2', b'010', b'0x', b'\xff', b'000_0', b'+0b_11'):
+    try:
+        print(int(value, 0))
+    except ValueError:
+        print('invalid')

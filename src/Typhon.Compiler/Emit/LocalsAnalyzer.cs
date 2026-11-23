@@ -381,7 +381,7 @@ namespace Typhon.Compiler.Emit
                     else if (ann == null && occs.All(o => o.Kind == Kind.Load || o.Kind == Kind.LoopTarget || o.Kind == Kind.OtherStore))
                         _r.HoistedLoops[name] = occs.Where(o => o.Kind == Kind.LoopTarget && o.Stmt is ForStmt fs && fs.Target is NameExpr)
                                                     .Select(o => (ForStmt)o.Stmt).Distinct().ToList();
-                    _r.HoistedValues[name] = occs.Where(o => (o.Kind == Kind.DeclStore || o.Kind == Kind.ExprStore) && o.Value != null).Select(o => o.Value).ToList();
+                    _r.HoistedValues[name] = occs.Where(o => o.Kind == Kind.DeclStore || o.Kind == Kind.ExprStore).Select(o => o.Value).ToList();
                     if (occs.Any(o => o.Kind == Kind.ExprStore)) _r.HoistedCaptures[name] = occs.Where(o => o.Kind == Kind.ExprStore).Select(o => o.Value).ToList();
                     if (ann == null && occs.All(o => o.Kind == Kind.Load || o.Kind == Kind.DeclStore && o.Value != null && o.Stmt is AssignStmt pa &&
                                                      pa.Targets.All(t => t is NameExpr tn && tn.Id == name)))

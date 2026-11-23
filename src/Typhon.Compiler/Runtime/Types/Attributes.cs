@@ -91,6 +91,7 @@ namespace Typhon.Runtime
             }
             if (o is PyLocalClassInstance instance) return instance.TryRead(name, out value);
             if (o is PyIntEnumType intEnum && intEnum.TryRead(name, out value)) return true;
+            if (o is PyPlainEnumType plainEnum && plainEnum.TryRead(name, out value)) return true;
             if (o is Type t)
             {
                 if (t == typeof(Type) && PyMetaclasses.TypeCheckSlot(name) is PyClosure typeCheck) { value = typeCheck; return true; }
@@ -150,10 +151,16 @@ namespace Typhon.Runtime
                     if (t == typeof(long)) { value = __object_method("__int_new"); return true; }
                     if (t == typeof(BigInteger)) { value = __object_method("__bigint_new"); return true; }
                     if (t == typeof(string)) { value = __object_method("__str_new"); return true; }
+                    if (t == typeof(ITuple)) { value = __object_method("__tuple_new"); return true; }
                     if (t == typeof(OrderedDictionary<object, object>)) { value = __object_method("__dict_new"); return true; }
                     if (t == typeof(object) || t.IsDefined(typeof(PySourceAttribute), false) &&
                         !typeof(System.Runtime.CompilerServices.ITuple).IsAssignableFrom(t))
                     { value = __object_method("__object_new"); return true; }
+                }
+                if (name == "from_bytes" && (t == typeof(long) || t == typeof(BigInteger)))
+                {
+                    value = __object_method(t == typeof(BigInteger) ? nameof(from_bytes_big) : nameof(from_bytes));
+                    return true;
                 }
                 if (FindNestedType(t, name) is Type nested) { value = nested; return true; }
                 if (TryBuiltinClassMethod(t, name, out value)) return true;
@@ -210,7 +217,7 @@ namespace Typhon.Runtime
                 catch (MissingMemberException) when (lateAttribute) { return false; }
             }
             if (type.GetField(name, InstanceMembers) is FieldInfo f) { value = f.GetValue(o); return true; }
-            if (o is System.IO.IOException ioError && name is ("errno" or "strerror" or "filename" or "filename2" or "winerror"))
+            if (o is Exception ioError && (ioError is System.IO.IOException or UnauthorizedAccessException) && IsOSErrorMember(name))
             {
                 if (name == "winerror" && !ioError.Data.Contains(name)) { value = null; return false; }
                 value = ioError.Data[name];
@@ -242,7 +249,7 @@ namespace Typhon.Runtime
                     value = new PyBoundMethod(o, name, includeNonPublic: true);
                 return true;
             }
-            if (PyClassDescriptors.TryGetAttribute(type, name, out value, instance: true)) return true;
+            if (PyClassDescriptors.TryGetAttribute(type, name, out value, instance: o)) return true;
             // A method stored in a Python class takes precedence over the native container's extensions.
             bool sourceInstance = type.IsDefined(typeof(PySourceAttribute), false);
             if (sourceInstance && name == "__doc__") { value = ClassDocumentation(type); return true; }
@@ -503,6 +510,7 @@ namespace Typhon.Runtime
                 "__int_new" => typeof(long),
                 "__bigint_new" => typeof(BigInteger),
                 "__str_new" => typeof(string),
+                "__tuple_new" => typeof(ITuple),
                 "__dict_new" => typeof(OrderedDictionary<object, object>),
                 _ => null,
             }));
@@ -656,6 +664,8 @@ namespace Typhon.Runtime
         /// <summary>setattr(obj, name, value): a declared property or field (converted to its type), else an attribute kept beside the object.</summary>
         public static void setattr(object? o, string name, object? value) => SetAttribute(o, name, value, freshEmptyDict: false);
 
+        static bool IsOSErrorMember(string name) => name is "errno" or "strerror" or "filename" or "filename2" or "winerror";
+
         static void SetAttribute(object? o, string name, object? value, bool freshEmptyDict)
         {
             if (o == null) throw MissingAttribute(null, name);
@@ -700,6 +710,11 @@ namespace Typhon.Runtime
             }
             if (NamedProperty(type, name, InstanceMembers) is PropertyInfo p && p.CanWrite) { p.SetValue(o, AttributeValue(value, p.PropertyType, freshEmptyDict)); return; }
             if (type.GetField(name, InstanceMembers) is FieldInfo f && !f.IsInitOnly) { f.SetValue(o, AttributeValue(value, f.FieldType, freshEmptyDict)); return; }
+            if (o is Exception ioError && (ioError is System.IO.IOException or UnauthorizedAccessException) && IsOSErrorMember(name))
+            {
+                ioError.Data[name] = value;
+                return;
+            }
             if (o is IPyInstanceAttributes attributes) attributes.SetAttribute(name, value);
             else new PyAttrDict(o)[name] = value;
         }

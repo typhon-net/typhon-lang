@@ -1,0 +1,13 @@
+# typhon: int=bigint
+#:pylib-source uuid
+import uuid
+
+value = uuid.UUID('00112233-4455-6677-8899-aabbccddeeff')
+print(str(value), value.hex, value.urn)
+print(value.bytes.hex(), value.bytes_le.hex(), value.fields)
+print(uuid.UUID(bytes=value.bytes) == value, uuid.UUID(int=value.int) == value)
+print(uuid.uuid3(uuid.NAMESPACE_DNS, 'python.org'))
+print(uuid.uuid5(uuid.NAMESPACE_DNS, 'python.org'))
+print(value.variant, value.version, value.is_safe.name)
+print(uuid.SafeUUID(None) is uuid.SafeUUID.unknown)
+print(uuid.NIL.int, str(uuid.MAX), uuid.UUID(int=0, version=4).version)

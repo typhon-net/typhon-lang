@@ -1,0 +1,13 @@
+from functools import reduce
+from itertools import groupby
+
+def coerce(left, right):
+    if left is right:
+        return left
+    return right
+
+types = set()
+types_add = types.add
+for kind, values in groupby([1, 2, 3], type):
+    types_add(kind)
+print(reduce(coerce, types, int) is int, list(types))

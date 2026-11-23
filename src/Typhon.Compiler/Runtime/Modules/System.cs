@@ -120,7 +120,9 @@ namespace Typhon.Stdlib
         public static readonly OrderedDictionary<string, object?> _xoptions = new OrderedDictionary<string, object?>();
         /// <summary>The program's executable (the .NET host under `typhon run`).</summary>
         public static readonly string executable = Environment.ProcessPath ?? "";
-        public static readonly string _base_executable = Environment.ProcessPath ?? "";
+        public static string _base_executable = Environment.ProcessPath ?? "";
+        public static string? _home;
+        public static dynamic? __interactivehook__;
         /// <summary>The installation prefixes: the program's directory (there is no separate library tree).</summary>
         public static readonly string prefix = AppContext.BaseDirectory.TrimEnd('/', '\\'), exec_prefix = prefix, base_prefix = prefix, base_exec_prefix = prefix;
         /// <summary>The module search path: the script's directory (imports are resolved when compiling).</summary>
@@ -209,7 +211,7 @@ namespace Typhon.Stdlib
             builtins._ = value;
         }
         public static readonly Action<object?> __displayhook__ = DefaultDisplayHook;
-        public static Action<object?> displayhook = __displayhook__;
+        public static dynamic? displayhook = __displayhook__;
         /// <summary>The interactive prompts (CPython defines them only in interactive mode; code.InteractiveConsole sets them).</summary>
         [PyOptionalModuleMember]
         public static dynamic ps1 = PyModule.Unbound, ps2 = PyModule.Unbound;

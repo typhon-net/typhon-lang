@@ -1,0 +1,7 @@
+# typhon: int=bigint
+from itertools import count
+labels = ['b', 'a']
+pairs = sorted(zip(labels, count()), reverse=True)
+for label, index in pairs:
+    print(label, index)
+print(next(count(1 << 80)))

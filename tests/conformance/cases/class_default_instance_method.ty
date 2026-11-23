@@ -1,0 +1,25 @@
+from _socket import socket
+
+class Closing(socket):
+    def close(self, base=socket):
+        base.close(self)
+
+value = Closing()
+try:
+    value.close()
+    print(value.fileno())
+finally:
+    value.close()
+
+class Base:
+    def describe(self, suffix):
+        return "base" + suffix
+
+class Other:
+    def describe(self, suffix):
+        return "other" + suffix
+
+def call_with_class(receiver, cls=Base):
+    return cls.describe(receiver, "!")
+
+print(call_with_class(Base()), call_with_class(Other(), Other))

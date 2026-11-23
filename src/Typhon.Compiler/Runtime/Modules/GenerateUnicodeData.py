@@ -149,3 +149,34 @@ def pack_grapheme_properties():
 graphemes = " +\n".join(f'            "{line}"' for line in textwrap.wrap(pack_grapheme_properties(), 120))
 source = header + "        const string GraphemeData =\n" + graphemes + ";\n    }\n}\n"
 Path(__file__).with_name("UnicodeData.Graphemes.Generated.cs").write_text(source, encoding="utf-8", newline="\n")
+
+
+def pack_names(database):
+    ranges = []
+    names = []
+    for cp in range(0x110000):
+        name = database.name(chr(cp), None)
+        if name is None:
+            continue
+        suffix = f"-{cp:04X}"
+        if name.endswith(suffix):
+            prefix = name[:-len(suffix) + 1]
+            if ranges and ranges[-1][1] + 1 == cp and ranges[-1][2] == prefix:
+                ranges[-1] = (ranges[-1][0], cp, prefix)
+            else:
+                ranges.append((cp, cp, prefix))
+        else:
+            names.append((cp, name))
+    records = [f"{start:X}-{end:X}\t{prefix}\n" for start, end, prefix in ranges]
+    records.extend(f"{cp:X}\t{name}\n" for cp, name in names)
+    encoded = gzip.compress("".join(records).encode("ascii"), mtime=0)
+    return base64.b64encode(encoded).decode("ascii")
+
+
+source = header
+for name, database in (("CurrentNames", unicodedata), ("LegacyNames", unicodedata.ucd_3_2_0)):
+    rows = textwrap.wrap(pack_names(database), 120)
+    source += f"        const string {name} =\n"
+    source += " +\n".join(f'            "{row}"' for row in rows) + ";\n\n"
+source += "    }\n}\n"
+Path(__file__).with_name("UnicodeData.Names.Generated.cs").write_text(source, encoding="utf-8", newline="\n")

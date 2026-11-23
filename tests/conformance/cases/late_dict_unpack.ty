@@ -1,0 +1,17 @@
+def copy_and_list(first, second):
+    merged = {**first, **second}
+    return [key for key in merged.keys() if key.startswith("a")]
+
+class Mapping:
+    def keys(self):
+        return ["a-custom", None]
+
+    def __getitem__(self, key):
+        return key == None
+
+print(copy_and_list({"a-first": 1, "skip": 2}, {"a-second": 3, "a-first": 4}))
+print({**Mapping()})
+try:
+    print(copy_and_list([("a", 1)], {}))
+except TypeError as error:
+    print(str(error))

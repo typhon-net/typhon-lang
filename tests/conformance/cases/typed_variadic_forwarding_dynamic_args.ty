@@ -1,0 +1,15 @@
+from typing import Any
+
+class Pipeline:
+    def __getattr__(self, name):
+        raise AttributeError(name)
+
+    def inner(self, command, *parts):
+        return command, parts
+
+    def outer(self, command: Any, *parts):
+        return self.inner(command, *parts)
+
+pipeline = Pipeline()
+print(pipeline.outer("command"))
+print(pipeline.outer("command", "one", 2))

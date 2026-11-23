@@ -1,0 +1,15 @@
+import os
+import subprocess
+import sys
+
+python = os.environ.get('TYPHON_CPYTHON', sys.executable)
+command = [python, '-c', 'import sys; sys.stdout.buffer.write(sys.stdin.buffer.read()[::-1])']
+with subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, bufsize=0) as process:
+    print(process.stdin.write(b'abc'))
+    process.stdin.close()
+    print(process.stdout.read())
+print(process.returncode)
+
+with subprocess.Popen('echo typhon-shell', shell=True, stdout=subprocess.PIPE, text=True) as process:
+    print(process.stdout.read().strip())
+print(process.returncode)

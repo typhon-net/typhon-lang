@@ -1,0 +1,21 @@
+import _socket
+from array import array
+from io import RawIOBase
+
+class WaitingIO(RawIOBase):
+    def readinto(self, buffer):
+        return None
+
+    def write(self, data):
+        return None
+
+print(WaitingIO().read(1) is None, WaitingIO().read() is None)
+print(WaitingIO().readinto(bytearray(1)) is None, WaitingIO().write(b"x") is None)
+print(array("i").itemsize == len(array("i", [1]).tobytes()))
+
+def numeric_addresses(host, port):
+    for row in _socket.getaddrinfo(host, port, _socket.AF_INET, _socket.SOCK_STREAM):
+        family, kind, protocol, canonical, endpoint = row
+        print(family == _socket.AF_INET, kind == _socket.SOCK_STREAM, endpoint)
+
+numeric_addresses("127.0.0.1", 12345)

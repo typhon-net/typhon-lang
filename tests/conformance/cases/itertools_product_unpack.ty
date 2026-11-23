@@ -1,0 +1,19 @@
+from itertools import product
+
+prefixes = [(letter, letter.upper()) for letter in "br"]
+print(["".join(parts) for parts in product(*prefixes)])
+print(list(product("x", *([1, 2],))))
+print(list(product(*[], repeat=3)))
+print(list(product(*[("a", "b")], repeat=2)))
+print(list(product(*[()])))
+print(list(product(*[()], repeat=0)))
+iterator = product(*[("a", "b")])
+print(next(iterator), list(iterator), list(iterator))
+
+pools = [[1, 2], [3, 4]]
+def run(inputs):
+    result = product(*inputs)
+    inputs[0].append(5)
+    print(next(result), list(result), list(result))
+
+run(pools)

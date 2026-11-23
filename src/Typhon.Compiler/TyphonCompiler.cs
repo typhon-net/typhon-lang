@@ -51,6 +51,7 @@ namespace Typhon.Compiler
         public readonly HashSet<string> Functions = new HashSet<string>();
         public readonly HashSet<string> Globals = new HashSet<string>();
         internal readonly HashSet<string> ConditionalGlobals = new HashSet<string>();
+        internal readonly HashSet<string> ConditionalFunctions = new HashSet<string>();
         internal readonly HashSet<string> ConditionalImportBindings = new HashSet<string>();
         internal readonly HashSet<string> ReboundFunctions = new HashSet<string>();
         internal readonly HashSet<string> ReboundClasses = new HashSet<string>();
@@ -440,12 +441,14 @@ namespace Typhon.Compiler
                         info.ConditionalImportBindings.UnionWith(from.Names.Where(alias => alias.Name != "*").Select(alias => alias.AsName ?? alias.Name));
                 }, includeNestedScopes: false);
 
-            var branches = info.Ast.Body.Where(s => s is IfStmt or TryStmt).ToList();
+            var branches = info.Ast.Body.Where(statement =>
+                statement is IfStmt or TryStmt or WithStmt or ForStmt or WhileStmt or MatchStmt).ToList();
             if (branches.Count > 0)
             {
                 var locals = LocalsAnalyzer.Analyze(branches, Enumerable.Empty<string>(), null);
                 info.ConditionalGlobals.UnionWith(locals.AllLocals);
-                info.ConditionalGlobals.ExceptWith(locals.LocalFunctions);
+                info.ConditionalFunctions.UnionWith(locals.LocalFunctions);
+                info.ConditionalGlobals.UnionWith(info.ConditionalFunctions);
             }
             if (!runtimeCode && !info.IsGdScript)
                 AstWalker.VisitAll(info.Ast.Body, node =>
@@ -494,14 +497,19 @@ namespace Typhon.Compiler
                 if (info.Functions.Contains(key.Str) || info.Classes.ContainsKey(key.Str)) return;
                 if (info.Globals.Add(key.Str)) info.ConditionalGlobals.Add(key.Str);
             }
-            var intEnumImports = new HashSet<string>(info.Ast.Body.OfType<ImportFromStmt>()
+            var integerEnumImports = new HashSet<string>(info.Ast.Body.OfType<ImportFromStmt>()
                 .Where(statement => statement.Level == 0 && statement.Module == "enum")
-                .SelectMany(statement => statement.Names).Where(alias => alias.Name == "IntEnum")
+                .SelectMany(statement => statement.Names).Where(alias => alias.Name is "IntEnum" or "IntFlag")
                 .Select(alias => alias.AsName ?? alias.Name));
+            var enumModules = new HashSet<string>(info.Ast.Body.OfType<ImportStmt>().SelectMany(statement => statement.Names)
+                .Where(alias => alias.Name == "enum").Select(alias => alias.AsName ?? alias.Name));
+            bool IsNativeIntegerEnum(Expr expression) =>
+                expression is NameExpr direct && integerEnumImports.Contains(direct.Id) ||
+                expression is AttributeExpr { Name: "IntEnum" or "IntFlag", Target: NameExpr owner } && enumModules.Contains(owner.Id);
             AstWalker.VisitAll(info.Ast.Body, statement =>
             {
-                if (statement is CallExpr { Func: AttributeExpr { Name: "_convert_", Target: NameExpr enumName } } conversion &&
-                    intEnumImports.Contains(enumName.Id) && conversion.Args.Count >= 2 &&
+                if (statement is CallExpr { Func: AttributeExpr { Name: "_convert_", Target: var enumType } } conversion &&
+                    IsNativeIntegerEnum(enumType) && conversion.Args.Count >= 2 &&
                     conversion.Args[0].Value is ConstExpr { Kind: ConstKind.Str } className &&
                     conversion.Args[1].Value is NameExpr { Id: "__name__" })
                 {
@@ -510,6 +518,11 @@ namespace Typhon.Compiler
                     info.GlobalsReboundThroughNamespace.UnionWith(info.Globals);
                     info.ConditionalGlobals.Add(className.Str);
                     info.Globals.Add(className.Str);
+                }
+                if (statement is CallExpr { Func: AttributeExpr { Name: "update" } update } && IsModuleNamespace(update.Target))
+                {
+                    info.WritesModuleGlobals = true;
+                    info.RebindsUnknownGlobals = true;
                 }
                 if (statement is AssignStmt assign)
                     foreach (var target in assign.Targets) NoteNamespaceWrite(target);

@@ -1,0 +1,11 @@
+#:pylib-source statistics
+import statistics as stats
+
+print(stats.fmean([1, 2, 3]), stats.fmean([1, 2, 10], [1, 2, 1]))
+print(stats.mean([1, 4, 5, 6]), stats.median([6, 4, 5, 1]))
+print(stats.variance([1, 2, 3, 4]), stats.pvariance([1, 2, 3, 4]))
+print(stats.multimode(['b', 'a', 'b', 'a', 'c']))
+print(stats.correlation([2, 3, 5, 9], [4, 6, 10, 18]))
+print(stats.correlation([2, 3, 5, 9], [1, 0, 3, 2], method='ranked'))
+normal = stats.NormalDist(2, 3)
+print(normal.mean, normal.stdev, f'{normal.cdf(4):.12f}', f'{normal.pdf(4):.12f}')

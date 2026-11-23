@@ -40,7 +40,8 @@ namespace Typhon.Runtime
 
         internal static string QualifiedName(Type type) =>
             Definitions.TryGetValue(type, out var definition) ? definition.QualName :
-                type is PyLocalDataClass local ? local.QualName : Builtins.PyTypeName(type);
+                type is PyLocalDataClass local ? local.QualName :
+                type is PyPlainEnumType enumeration ? enumeration.PythonQualification : Builtins.PyTypeName(type);
 
         internal static Type[] Bases(Type type) => Definitions.TryGetValue(type, out var definition)
             ? definition.Bases.Length == 0 ? [typeof(object)] : definition.Bases

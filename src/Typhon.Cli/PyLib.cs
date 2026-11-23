@@ -31,7 +31,7 @@ internal static class PyLib
     {
         dir = null;
         var m = Directive.Match(source);
-        if (!m.Success) return SourceDirective.IsMatch(source);
+        if (!m.Success) return false;
         string given = m.Groups["dir"].Value.Trim();
         if (given.Length > 0) dir = Path.GetFullPath(Path.Combine(sourceDir, given));
         return true;

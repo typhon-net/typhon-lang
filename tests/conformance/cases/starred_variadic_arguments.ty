@@ -1,0 +1,13 @@
+def collect(head: str, *parts: str) -> str:
+    return head + "|" + "|".join(parts)
+
+class Collector:
+    def collect(self, head: str, *parts) -> tuple:
+        return (head, parts)
+
+items: tuple[str, ...] = ("c", "d")
+more: list[str] = ["f", "g"]
+print(collect("head", "b", *items, "e", *more))
+print(Collector().collect("head", "b", *items, "e", *more))
+print(collect("head", *items))
+print(collect(*("head", "b"), *items))

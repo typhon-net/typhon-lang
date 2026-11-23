@@ -1,0 +1,25 @@
+from io import BytesIO
+from xml.parsers.expat import ParserCreate
+
+parser = ParserCreate()
+text: list[str] = []
+
+def start(name, attrs):
+    print('start', name, attrs, parser.CurrentLineNumber)
+
+def end(name):
+    print('end', name, parser.CurrentLineNumber)
+
+def character_data(value):
+    text.append(value)
+
+def declaration(name, parameter, value, base, system_id, public_id, notation):
+    print('entity', name, parameter, value)
+
+parser.StartElementHandler = start
+parser.EndElementHandler = end
+parser.CharacterDataHandler = character_data
+parser.EntityDeclHandler = declaration
+source = BytesIO(b'<!DOCTYPE root [<!ENTITY greeting "hello">]>\n<root a="b">&greeting;<empty/></root>')
+print(parser.ParseFile(source))
+print(''.join(text), source.closed)

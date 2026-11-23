@@ -1,0 +1,17 @@
+try:
+    from typhon_optional_absent_module import optional_api as api, other
+except ImportError:
+    pass
+
+def use_api():
+    try:
+        api()
+    except NameError as error:
+        print(error.name)
+
+use_api()
+
+try:
+    print(other)
+except NameError as error:
+    print(error.name)

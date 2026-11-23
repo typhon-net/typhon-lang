@@ -132,7 +132,7 @@ namespace Typhon.Stdlib
                 case Type t:
                     if (t == typeof(_typing.Any)) throw new InvalidCastException("typing.Any cannot be used with isinstance()");
                     if (t == typeof(types.MethodType) && obj is PyBoundMethod method) return inspect.ismethod(method);
-                    Type actual = obj is PyIntEnumMember member ? member.Owner :
+                    Type actual = obj is PyIntegerEnum { DynamicEnumType: { } enumType } ? enumType :
                         obj is Type cls ? PyMetaclasses.Of(cls) : obj?.GetType() ?? typeof(types.NoneType);
                     if (actual == t || Builtins.__type_of(obj) == t) return true;
                     if (PyMetaclasses.TryBindMember(t, "__instancecheck__", out var check))

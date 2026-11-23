@@ -1,0 +1,17 @@
+#:pylib-source socket
+import socket
+
+addresses = socket.getaddrinfo("127.0.0.1", 12345, socket.AF_INET, socket.SOCK_STREAM)
+family, kind, proto, canonical, endpoint = addresses[0]
+print(family is socket.AF_INET, kind is socket.SOCK_STREAM, proto, canonical == "", endpoint)
+
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+    listener.bind(("127.0.0.1", 0))
+    listener.listen()
+    with socket.create_connection(listener.getsockname(), timeout=2) as client:
+        server, _ = listener.accept()
+        with server:
+            print(server.family is socket.AF_INET, server.type is socket.SOCK_STREAM)
+            client.sendall(b"typhon")
+            with server.makefile("rb") as received:
+                print(received.read(6))

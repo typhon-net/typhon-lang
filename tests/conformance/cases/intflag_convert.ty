@@ -1,0 +1,13 @@
+from enum import IntFlag
+
+F_NONE = 0
+F_READ = 1
+F_WRITE = 2
+F_ALL = 3
+F_ALIAS = 3
+
+Access = IntFlag._convert_("Access", __name__, lambda name: name.startswith("F_"))
+print(type(F_READ) is Access, isinstance(F_READ, IntFlag), isinstance(F_READ, Access))
+print(F_ALL is F_ALIAS, Access(3) is F_ALL, [member.name for member in Access])
+print(repr(F_READ | F_WRITE), repr(F_READ | 8), repr(~F_READ))
+print(F_READ in F_ALL, len(F_ALL), [member.name for member in F_ALL])

@@ -1,0 +1,4 @@
+[1, 2, 3] from_iterable
+one--two
+a--b--c
+sequence item 1: expected str instance, int found

@@ -1,0 +1,16 @@
+# typhon: int=bigint
+from io import BytesIO
+
+class Writer:
+    def __init__(self):
+        self.offsets = []
+        self.stream = BytesIO(b'abcde')
+
+    def record(self):
+        self.stream.seek(3)
+        self.offsets = [0]
+        incoming = getattr(self.stream, 'tell')()
+        self.offsets[0] = incoming
+        return self.offsets
+
+print(Writer().record())

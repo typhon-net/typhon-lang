@@ -1,0 +1,10 @@
+from enum import Enum
+
+Format = Enum('Format', 'XML BINARY', module=__name__, start=5)
+print(Format.XML, Format.XML.value, repr(Format.BINARY))
+print(Format['XML'] is Format(5), type(Format.BINARY) is Format)
+print([member.name for member in Format])
+print(list(Format.__members__), Format.__module__)
+factory = Enum
+State = factory('State', [('unknown', None), ('first', 'a'), ('alias', 'a')], module=__name__)
+print(State(None), State.alias is State.first, [member.name for member in State])

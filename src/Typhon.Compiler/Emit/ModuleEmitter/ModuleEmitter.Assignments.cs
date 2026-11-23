@@ -290,6 +290,22 @@ namespace Typhon.Compiler.Emit
                             else { _w.Line($"{t} {Esc(name)} = {EmitEmptyContainer(value, t, kind)};"); SetType(n.Id, t); }
                             if (t != null && t.Contains(TypeInference.Pending)) SetType(n.Id, t);
                         }
+                        else if (rawValue == null && TypeInference.NumericListSeed(value) is ListExpr seed && value is BinOpExpr repeat)
+                        {
+                            string key = _scopeKey + "|" + n.Id;
+                            _emptyContainers[n.Id] = 'l';
+                            string initial = PyType(InferType(seed.Elts[0]));
+                            Obs?.AddElement(key, initial);
+                            string listType = EmptyContainerType(key, 'l') ?? $"List<{initial}>";
+                            string itemType = GenericArg(listType);
+                            if (itemType == TypeInference.Pending) itemType = initial;
+                            string list = $"new List<{itemType}> {{ {EmitElementAs(seed.Elts[0], itemType)} }}";
+                            bool listFirst = ReferenceEquals(repeat.Left, seed);
+                            string count = EmitExpr(listFirst ? repeat.Right : repeat.Left);
+                            string arguments = listFirst ? $"{list}, {count}" : $"{count}, {list}";
+                            _w.Line($"var {Esc(name)} = {Rt("__repeat")}({arguments});");
+                            SetType(n.Id, listType);
+                        }
                         else if (rawValue == null && value is LambdaExpr lam)
                         {
                             // f = lambda x: ...: a delegate typed by the calls through f (late-bound until they are known)
@@ -391,7 +407,7 @@ namespace Typhon.Compiler.Emit
                             constructor.Id is "tuple" or "list" or "set" or "dict" && !IsShadowed(constructor.Id) &&
                             !ContainerMatches(constructor, known);
                         bool lateContainerRebinding = known != null && IsPythonContainer(known) && IsLocal(n.Id) &&
-                            !_scope.Params.Contains(n.Id) && _scope.Locals?.Annotations.ContainsKey(n.Id) != true &&
+                            _scope.Locals?.Annotations.ContainsKey(n.Id) != true &&
                             (valueType == "dynamic" || valueType == null && MaybeLateBound(value));
                         if (changesContainer || lateContainerRebinding) valueType = "dynamic";
                         // A loop can replace an initial scalar with a value whose type is only known at runtime.
@@ -439,8 +455,8 @@ namespace Typhon.Compiler.Emit
                             (_scope.Locals?.Annotations.ContainsKey(n.Id) == true || !IsLocal(n.Id) && _moduleFieldTypes.ContainsKey(n.Id)) &&
                             !TypeInference.IsNonePlaceholder(comprehension))
                             rawValue = EmitComprehension(comprehension, known);
-                        if (rawValue == null && typed && value is DictExpr mapping && mapping.Keys.Any(key => key == null) &&
-                            DictTypes(known) != null)
+                        if (rawValue == null && typed && value is DictExpr mapping && DictTypes(known) != null &&
+                            (mapping.Keys.Any(key => key == null) || !IsLocal(n.Id) && _seededModuleMappings.ContainsKey(ModuleFieldKey(n.Id))))
                             rawValue = EmitDict(mapping, targetTyped: true, expectedType: known);
                         // a lambda into a late-bound variable or field: a delegate of dynamic values
                         if (rawValue == null && value is LambdaExpr dl && !typed) { string dtype = EmitLambdaLocal(dl, null, out var dcode); rawValue = $"({dtype}){dcode}"; }
@@ -670,9 +686,17 @@ namespace Typhon.Compiler.Emit
                 case SubscriptExpr sub:
                 {
                     if (Obs != null && rawValue == null && ElementKey(sub.Target, out char kind) is string ekey)
+                    {
+                        string item = PyType(InferType(value)) ?? TypeInference.Unknown;
+                        // A seeded dictionary stores actual tuple and delegate objects. A later
+                        // write with a different representation cannot enter that CLR value slot.
+                        if (_seededModuleMappings.TryGetValue(ekey, out var seed) &&
+                            item != seed[1] && item != TypeInference.Pending)
+                            item = "dynamic";
                         Obs.AddElement(ekey, TypeInference.IsMappingKind(kind)
-                            ? (PyType(InferType(sub.Index)) ?? TypeInference.Unknown) + "→" + (kind == 'c' ? "long" : PyType(InferType(value)) ?? TypeInference.Unknown)
-                            : PyType(InferType(value)));
+                            ? (PyType(InferType(sub.Index)) ?? TypeInference.Unknown) + "→" + (kind == 'c' ? "long" : item)
+                            : item);
+                    }
                     string et = InferType(sub);
                     // xs[i] = [v] into a list of typed lists: the literal is built with that item type (C# lists are invariant)
                     if (rawValue == null && value is ListExpr sle && sle.Elts.Count > 0 && !sle.Elts.Any(x => x is StarredExpr) && et != null &&
@@ -695,7 +719,7 @@ namespace Typhon.Compiler.Emit
                         _w.Line($"{Rt("__setitem")}((object?){Paren(EmitExpr(sub.Target))}, (object?){Paren(key)}, {assigned});");
                         return;
                     }
-                    string assignedValue = rawValue ?? ModuleOrClassValue(value) ??
+                    string assignedValue = rawValue ?? ModuleOrClassValue(value) ?? TupleLiteralValue(value, et) ??
                         (et == null || et == "dynamic" ? EmitValue(value) : EmitExpr(value, targetTyped: IsEmptyLiteral(value)));
                     if (_classFieldInitializer && rawValue == null)
                     {
@@ -868,6 +892,8 @@ namespace Typhon.Compiler.Emit
             if (Obs != null && a.Target is SubscriptExpr asub && ElementKey(asub.Target, out char akind) is string akey && TypeInference.IsMappingKind(akind))
                 Obs.AddElement(akey, (PyType(InferType(asub.Index)) ?? TypeInference.Unknown) + "→" + (akind == 'c' ? "long" : PyType(vt) ?? TypeInference.Unknown));
             if (vt == "bool" && ArithmeticOps.Contains(a.Op)) value = $"({Paren(value)} ? 1L : 0L)";
+            if (_big && vt == TypeInference.BigInt && tt is ("double" or "float") && ArithmeticOps.Contains(a.Op))
+                value = $"{Rt("@float")}((object){Paren(value)})";
             if ((a.Op == "//" || a.Op == "%") && PowerOfTwoExponent(a.Value) > 0 && IsIntegral(InferType(a.Target)))
                 _w.Line($"{target} = {EmitBinOp(new BinOpExpr { Left = a.Target, Op = a.Op, Right = a.Value, Line = a.Line, Col = a.Col })};");
             else if (AugHelpers.TryGetValue(a.Op, out var helper)) _w.Line($"{target} = {Rt(helper)}({target}, {value});");
@@ -884,7 +910,8 @@ namespace Typhon.Compiler.Emit
             else if (a.Op == "+" && tt?.StartsWith(PyTuplePrefix) == true &&
                 (a.Value is TupleExpr || HomogeneousTupleItem(vt) != null || TupleElementTypes(vt) != null))
                 _w.Line($"{target} += {EmitAsPyTuple(a.Value, tt)};");
-            else if (a.Op == "+" && tt == "dynamic" && !IsNumeric(vt)) _w.Line($"{target} = {Rt("__iadd")}({target}, {value});");
+            else if (a.Op == "+" && tt == "dynamic" && (!IsNumeric(vt) || _big))
+                _w.Line($"{target} = {Rt("__iadd")}({target}, {value});");
             // String repetition returns a new string, including when a late-bound count is rebound to it.
             else if (a.Op == "*" && a.Target is NameExpr &&
                 (tt == "dynamic" && vt == "string" || tt == "string" && (IsIntegral(vt) || vt == "dynamic")))
@@ -904,12 +931,19 @@ namespace Typhon.Compiler.Emit
             if (a.Target is NameExpr n)
             {
                 string type = MapType(a.Annotation, a);
+                string InitialValue() => a.Value switch
+                {
+                    null => "default",
+                    ComprehensionExpr comprehension => EmitComprehension(comprehension, type),
+                    DictExpr mapping when IsDictType(type) => EmitDict(mapping, targetTyped: true, expectedType: type),
+                    _ => TupleLiteralValue(a.Value, type) ?? EmitExpr(a.Value, targetTyped: type != "dynamic"),
+                };
                 if (IsInline(a, n.Id))
                 {
-                    _w.Line($"{type} {Esc(n.Id)} = {(a.Value is ComprehensionExpr ac ? EmitComprehension(ac, type) : a.Value != null ? EmitExpr(a.Value, targetTyped: type != "dynamic") : "default")};");
+                    _w.Line($"{type} {Esc(n.Id)} = {InitialValue()};");
                     SetType(n.Id, type);
                 }
-                else if (a.Value != null) _w.Line($"{EmitName(n)} = {(a.Value is ComprehensionExpr ac2 ? EmitComprehension(ac2, type) : EmitExpr(a.Value, targetTyped: type != "dynamic"))};");
+                else if (a.Value != null) _w.Line($"{EmitName(n)} = {InitialValue()};");
                 return;
             }
             if (a.Target is AttributeExpr at)

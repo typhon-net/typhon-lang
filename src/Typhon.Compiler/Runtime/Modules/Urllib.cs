@@ -229,7 +229,7 @@ namespace Typhon.Stdlib
                 }
                 Encoding codec = Codec(normalized, errors);
                 if (codec is UTF8Encoding && errors is "surrogateescape" or "surrogatepass" or "strict")
-                    return DecodeUtf8(data, name, errors);
+                    return ByteOps.DecodeUtf8(data, name, errors);
                 if (codec.CodePage == Encoding.ASCII.CodePage && errors == "surrogateescape")
                     return string.Create(data.Length, data, (result, bytes) =>
                     {
@@ -244,40 +244,6 @@ namespace Typhon.Stdlib
                 }
             }
 
-            static string DecodeUtf8(byte[] data, string name, string errors)
-            {
-                var result = new StringBuilder(data.Length);
-                Span<char> utf16 = stackalloc char[2];
-                for (int index = 0; index < data.Length;)
-                {
-                    var input = data.AsSpan(index);
-                    OperationStatus status = Rune.DecodeFromUtf8(input, out Rune rune, out int consumed);
-                    if (status == OperationStatus.Done)
-                    {
-                        int width = rune.EncodeToUtf16(utf16);
-                        result.Append(utf16[..width]);
-                        index += consumed;
-                    }
-                    else if (errors == "surrogateescape")
-                    {
-                        result.Append((char)(0xdc00 + input[0]));
-                        index++;
-                    }
-                    else if (errors == "surrogatepass" && input.Length >= 3 &&
-                             input[0] == 0xed && input[1] is >= 0xa0 and <= 0xbf && input[2] is >= 0x80 and <= 0xbf)
-                    {
-                        result.Append((char)(((input[0] & 15) << 12) | ((input[1] & 63) << 6) | (input[2] & 63)));
-                        index += 3;
-                    }
-                    else
-                    {
-                        string reason = status == OperationStatus.NeedMoreData ? "unexpected end of data" :
-                            input[0] is < 0xc2 or > 0xf4 ? "invalid start byte" : "invalid continuation byte";
-                        throw new UnicodeDecodeError(name, new PyBytes(data), index, index + Math.Max(1, consumed), reason);
-                    }
-                }
-                return result.ToString();
-            }
         }
     }
 }

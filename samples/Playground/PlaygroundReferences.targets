@@ -16,7 +16,8 @@
     <PlaygroundFrameworkReference Include="System.Memory;System.Threading;System.Threading.Thread;System.Threading.ThreadPool;System.Runtime.InteropServices" />
     <PlaygroundFrameworkReference Include="System.Text.Encoding.Extensions;System.Text.Encoding.CodePages;System.Security.Cryptography;System.Diagnostics.StackTrace" />
     <PlaygroundFrameworkReference Include="System.IO.FileSystem.DriveInfo;System.Net.NetworkInformation;System.Numerics.Vectors;System.ObjectModel" />
-    <PlaygroundFrameworkReference Include="System.Diagnostics.Process;Microsoft.Win32.Primitives" />
+    <PlaygroundFrameworkReference Include="System.Diagnostics.Process;Microsoft.Win32.Primitives;System.ComponentModel.Primitives" />
+    <PlaygroundFrameworkReference Include="System.Xml.ReaderWriter" />
     <PlaygroundFrameworkReference Include="System.Net.Sockets;System.Net.Primitives;System.Net.NameResolution" />
     <PlaygroundFrameworkReference Include="System.Reflection.Emit.Lightweight;System.Reflection.Emit.ILGeneration;System.Reflection.Primitives;System.IO.Compression" />
 
