@@ -427,16 +427,43 @@ namespace Typhon.Stdlib
             return new PyTuple<object?>(bases.ToArray());
         }
 
-        /// <summary>prepare_class(name, bases=(), kwds=None): (metaclass, namespace, kwds) with type as the metaclass.</summary>
-        public static (object?, OrderedDictionary<string, object?>, OrderedDictionary<string, object?>) prepare_class(string name, object? bases = null, object? kwds = null)
+        public static (object?, IDictionary, OrderedDictionary<string, object?>) prepare_class(
+            string name, object? bases = null, object? kwds = null)
         {
-            var k = new OrderedDictionary<string, object?>();
-            if (kwds is IDictionary d) { var en = d.GetEnumerator(); while (en.MoveNext()) if (en.Key is string s && s != "metaclass") k[s] = en.Value; }
-            return (typeof(Type), new OrderedDictionary<string, object?>(), k);
+            var basis = ClassBaseTuple(bases);
+            var keywords = new OrderedDictionary<string, object?>();
+            object? metaclass = typeof(Type);
+            if (kwds is IDictionary options)
+            {
+                var entries = options.GetEnumerator();
+                while (entries.MoveNext())
+                {
+                    if (entries.Key is not string key) throw new InvalidCastException("keywords must be strings");
+                    if (key == "metaclass") metaclass = entries.Value;
+                    else keywords[key] = entries.Value;
+                }
+            }
+            else if (kwds != null) throw new InvalidCastException("class keywords must be a mapping");
+            if (metaclass is Type type) metaclass = PyMetaclasses.Select(type, PyMetaclasses.ClassBases(basis));
+            return (metaclass, PyMetaclasses.PrepareNamespace(metaclass, name, basis, keywords), keywords);
         }
 
-        /// <summary>new_class(name, ...): Typhon compiles classes ahead of time and cannot create one at run time.</summary>
-        public static dynamic new_class(string name, object? bases = null, object? kwds = null, object? exec_body = null) =>
-            throw new NotImplementedException($"types.new_class({Builtins.repr(name)}) is not supported: Typhon compiles classes ahead of time and cannot create one at run time");
+        static ITuple ClassBaseTuple(object? bases) => bases == null ? new PyTuple<object?>([]) :
+            bases as ITuple ?? throw new InvalidCastException("class bases must be a tuple");
+
+        public static dynamic? new_class(string name, object? bases = null, object? kwds = null, object? exec_body = null)
+        {
+            var originalBases = ClassBaseTuple(bases);
+            var resolvedBases = ClassBaseTuple((object?)resolve_bases(originalBases));
+            var (metaclass, members, keywords) = prepare_class(name, resolvedBases, kwds);
+            if (exec_body != null) Builtins.__invoke(exec_body, [members]);
+            if (!ReferenceEquals(resolvedBases, originalBases)) members["__orig_bases__"] = originalBases;
+            if (metaclass is Type type)
+            {
+                if (type == typeof(Type) && !members.Contains("__module__")) members["__module__"] = "types";
+                return PyMetaclasses.Create(type, [name, resolvedBases, members], keywords);
+            }
+            return Builtins.__invoke_kw(metaclass, [name, resolvedBases, members], keywords);
+        }
     }
 }

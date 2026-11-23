@@ -587,7 +587,8 @@ namespace Typhon.Runtime
             if (_type.GetMethods(Members).Any(m => m.Name == name && IsNamespaceMethod(m)))
             {
                 var fn = _type.GetNestedType("__fn_" + name, BindingFlags.NonPublic)?.GetField("Instance", BindingFlags.Public | BindingFlags.Static);
-                result = fn?.GetValue(null) ?? _methodValues.GetOrAdd(name, key => new PyBoundMethod(_type, key, includeNonPublic: true));
+                result = fn?.GetValue(null) ?? _methodValues.GetOrAdd(name, key =>
+                    new PyBoundMethod(_type, key, includeNonPublic: true, nativeModule: _source == null ? _name : null));
                 return true;
             }
             return false;

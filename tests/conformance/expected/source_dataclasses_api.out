@@ -1,0 +1,5 @@
+Point(x=3, y=2) True
+{'x': 3, 'y': 2}
+[('x', True), ('y', False)]
+Point(x=3, y=9)
+Record(value=7)

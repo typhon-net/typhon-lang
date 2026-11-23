@@ -18,8 +18,38 @@ namespace Typhon.Stdlib
     using Typhon.Runtime;
 
     /// <summary>CPython pickle data objects in protocol 4 and 5.</summary>
+    internal static class _pickle
+    {
+        public sealed class PickleBuffer
+        {
+            readonly global::memoryview _view;
+            bool _released;
+
+            public PickleBuffer(object? buffer) => _view = new global::memoryview(buffer);
+
+            internal global::memoryview View => _released
+                ? throw new ArgumentException("operation forbidden on released PickleBuffer object")
+                : _view;
+
+            public global::memoryview raw()
+            {
+                var view = View;
+                if (!view.contiguous)
+                    throw new BufferError("cannot extract raw buffer from non-contiguous buffer");
+                return view.cast("B");
+            }
+
+            public void release()
+            {
+                _view.release();
+                _released = true;
+            }
+        }
+    }
+
     internal static partial class pickle
     {
+        public static readonly Type PickleBuffer = typeof(_pickle.PickleBuffer);
         public const long DEFAULT_PROTOCOL = 5;
         public const long HIGHEST_PROTOCOL = 5;
 

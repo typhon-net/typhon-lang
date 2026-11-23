@@ -134,6 +134,7 @@ internal static class CliCompiler
                 if (!output.Packages.Any(x => string.Equals(x.Id, package.Id, StringComparison.OrdinalIgnoreCase))) output.Packages.Add(package);
             if (name == "__main__" && PyLib.Requested(source, dir, out var givenLib))
             {
+                sourceBackends.UnionWith(PyLib.SelectedSources(source));
                 pylib = PyLib.Resolve(givenLib);
                 if (pylib != null) pylib = Path.TrimEndingDirectorySeparator(Path.GetFullPath(pylib));
                 if (pylib == null) output.Messages.Add($"{path}: warning TY0102: #:pylib: no CPython standard library found (give #:pylib DIR or set TYPHON_PYLIB)");
@@ -150,7 +151,7 @@ internal static class CliCompiler
                     };
                     foreach (string imported in names)
                     {
-                        if (imported == "ast") sourceBackends.Add("ast");
+                        if (imported == "ast") sourceBackends.Add(imported);
                         if (imported is "opcode" or "dis")
                             sourceBackends.UnionWith(["opcode", "dis", "_opcode_metadata"]);
                     }

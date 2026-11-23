@@ -286,7 +286,7 @@ namespace Typhon.Compiler.Emit
             return $"{Rt("__list")}({string.Join(", ", elts)})";
         }
 
-        string EmitDict(DictExpr d, bool targetTyped)
+        string EmitDict(DictExpr d, bool targetTyped, string expectedType = null)
         {
             string DictionaryKey(Expr key, bool targetTyped = false) => IsNone(key)
                 ? $"{Rt("__key")}<object>(null)" : targetTyped ? EmitExpr(key, targetTyped: true) : EmitValue(key);
@@ -302,6 +302,8 @@ namespace Typhon.Compiler.Emit
                     else literal.Add($"({EmitValue(d.Keys[i])}, {EmitValue(d.Values[i])})");
                 }
                 Flush();
+                if (DictTypes(expectedType) is List<string> expected)
+                    return $"{Rt("__dict_merge_as")}<{expected[0]}, {expected[1]}>({string.Join(", ", parts)})";
                 // parts of different key/value types: merged into the unified types
                 var kts = new List<string>(); var vts = new List<string>();
                 for (int i = 0; i < d.Keys.Count; i++)

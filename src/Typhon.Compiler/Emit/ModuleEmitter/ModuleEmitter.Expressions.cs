@@ -398,8 +398,9 @@ namespace Typhon.Compiler.Emit
             bool declares = Ti != null && _p.TryFindClass(_m, c.Name, out var sc0, out var so0) && sc0 == c && Ti.ExternalFields.ContainsKey(TypeInference.ClassKey(so0, c.Name) + "|static|" + name) ||
                             ExecutableClassStatements(c).Any(st => NamesInClassStatement(st).Contains(name)) ||
                             c.Body.Any(st => st is AssignStmt sa && sa.Targets.SelectMany(NamesIn).Contains(name) ||
-                                             st is AnnAssignStmt aa && aa.Target is NameExpr an && an.Id == name && aa.Annotation is SubscriptExpr cv &&
-                                             (DottedName(cv.Target) == "ClassVar" || DottedName(cv.Target) == "typing.ClassVar"));
+                                             st is AnnAssignStmt aa && aa.Target is NameExpr an && an.Id == name &&
+                                             (HasAnnotatedClassDefault(c, aa) || aa.Annotation is SubscriptExpr cv &&
+                                              (DottedName(cv.Target) == "ClassVar" || DottedName(cv.Target) == "typing.ClassVar")));
             if (declares) return c;
             if (c.Body.Any(st => st is FunctionDef method && method.Name == name ||
                 st is AnnAssignStmt annotation && annotation.Target is NameExpr field && field.Id == name)) return null;
@@ -793,6 +794,9 @@ namespace Typhon.Compiler.Emit
             attribute.Target is NameExpr { Id: "self" } && _cls != null && !_cls.IsInterface &&
             HasSelfInScope() && SelfMemberUnknown(attribute.Name);
 
+        bool UsesBuiltinLength(AttributeExpr member) => !_m.IsGdScript && member.Name == "__len__" &&
+            (IsPythonContainer(InferType(member.Target)) || TupleElementTypes(InferType(member.Target)) != null);
+
         string EmitAttribute(AttributeExpr a, bool allowMethodGroup = false)
         {
             if (_privateClassDefaultReads.Contains(a) && TryTypeExpr(a.Target, out var declaringClass))
@@ -809,7 +813,8 @@ namespace Typhon.Compiler.Emit
                 return IsAttributeStore(a) ? $"((dynamic){Paren(receiver)}).{Esc(a.Name)}" :
                     $"{Rt("getattr")}((object?){Paren(receiver)}, {CsString(a.Name)})";
             }
-            if (!_m.IsGdScript && !allowMethodGroup && !IsAttributeStore(a) && a.Name == "__next__")
+            if (!IsAttributeStore(a) && (UsesBuiltinLength(a) ||
+                !_m.IsGdScript && !allowMethodGroup && a.Name == "__next__"))
                 return $"{Rt("getattr")}((object?){Paren(EmitValue(a.Target))}, {CsString(a.Name)})";
             if (!allowMethodGroup && !Receivers.Contains(a) && !IsAttributeStore(a) &&
                 BuiltinStringMethodValue(a) is string stringMethod) return stringMethod;

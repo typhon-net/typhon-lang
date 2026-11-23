@@ -28,6 +28,7 @@ internal sealed class memoryview : global::System.Collections.Generic.IEnumerabl
 
     public memoryview(object? @object)
     {
+        if (@object is global::Typhon.Stdlib._pickle.PickleBuffer buffer) @object = buffer.View;
         switch (@object)
         {
             case global::Typhon.Runtime.PyBytes b: _obj = b; _bytes = b.Data; _count = b.Data.Length; _readonly = true; break;

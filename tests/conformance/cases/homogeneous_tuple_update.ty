@@ -1,0 +1,10 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+names = ("a", "b", "c", "d", "e", "f", "g", "h")
+original = names
+names += ("third",)
+pair = ("fourth",)
+names += pair
+print(names)
+print(original)

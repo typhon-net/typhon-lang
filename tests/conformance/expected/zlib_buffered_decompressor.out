@@ -1,0 +1,7 @@
+True False
+b'' True False
+b'' False False
+b'hell' b'o wo' False
+True
+False True b'extra'
+EOFError

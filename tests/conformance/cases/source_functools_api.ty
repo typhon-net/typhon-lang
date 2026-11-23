@@ -1,0 +1,24 @@
+#:pylib-source functools
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import functools as tools
+
+def add(a: int, b: int, *, offset: int = 0) -> int:
+    return a + b + offset
+
+partial = tools.partial(add, 2, offset=3)
+print(partial(4), partial.func.__name__, partial.args)
+print(tools.reduce(add, [1, 2, 3], 4))
+
+@tools.wraps(add)
+def decorated(a: int, b: int) -> int:
+    return add(a, b)
+
+print(decorated.__name__, decorated(5, 6))
+
+@tools.lru_cache(maxsize=2)
+def square(value: int) -> int:
+    return value * value
+
+print(square(5), square(5), square.cache_info().hits)

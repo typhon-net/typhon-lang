@@ -214,7 +214,14 @@ namespace Typhon.Compiler.Emit
 
         bool KnownNoneResult(CallExpr call)
         {
-            if (TryTypeExpr(call.Func, out _) || TyphonCallee(call, out _) is not FunctionDef callee || callee.IsAsync ||
+            if (TryTypeExpr(call.Func, out _)) return false;
+            if (!_m.IsGdScript && _cls != null && !IsShadowed("super") &&
+                call.Func is AttributeExpr { Target: CallExpr { Func: NameExpr { Id: "super" }, Args.Count: 0 } } inherited &&
+                InheritedDotNetOverloads(_cls.Def, inherited.Name, fromSuper: true) is { Count: > 0 } baseOverloads)
+                return baseOverloads.All(method => method.ReturnsVoid);
+            if (TyphonCallee(call, out _) is not FunctionDef callee)
+                return DotNetOverloads(call) is { Count: > 0 } overloads && overloads.All(method => method.ReturnsVoid);
+            if (callee.IsAsync ||
                 _p.Modules.Values.Any(module => module.Ast?.MethodDecorators.ContainsKey(callee) == true) ||
                 AstWalker.ContainsOutsideNestedScopes(callee.Body, node => node is YieldExpr))
                 return false;

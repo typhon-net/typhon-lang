@@ -37,6 +37,30 @@ namespace Typhon.Runtime
             parent.GetMethods(BindingFlags.DeclaredOnly | BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
                 .Where(method => method.Name == "__init__" && !method.IsGenericMethodDefinition && !method.IsVirtual).ToList();
 
+        static bool TryAddedInitializer(Type type, object?[] args, IDictionary<string, object?>? keywords, out object? result)
+        {
+            result = null;
+            if (!PyClassDescriptors.HasWritableNamespace(type)) return false;
+            foreach (Type owner in PyMetaclasses.MethodOrder(type))
+            {
+                if (PyClassDescriptors.TryGetDeclaredAddedAttribute(owner, "__init__", out var initializer))
+                {
+                    result = __object_new(type);
+                    InvokeAddedInitializer(result, initializer, type, args, keywords);
+                    return true;
+                }
+                if (DeclaredInitializers(owner).Count != 0) return false;
+            }
+            return false;
+        }
+
+        static void InvokeAddedInitializer(object instance, object? initializer, Type type, object?[] args,
+            IDictionary<string, object?>? keywords)
+        {
+            if ((object?)__invoke_kw(PyMetaclasses.Bind(initializer, instance, type), args, keywords) != null)
+                throw new InvalidCastException("__init__() should return None");
+        }
+
         static void InitializeAllocated(object instance, object?[] args, IDictionary<string, object?>? kwargs)
         {
             for (Type? owner = instance.GetType(); owner != null; owner = owner.BaseType)

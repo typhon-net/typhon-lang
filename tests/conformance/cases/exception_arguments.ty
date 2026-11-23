@@ -1,0 +1,12 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+try:
+    raise TypeError("wrong type", 3, None)
+except TypeError as error:
+    print(error.args)
+    print(str(error))
+
+invalid = ValueError("wrong value", 5)
+print(invalid.args)
+print(str(invalid))

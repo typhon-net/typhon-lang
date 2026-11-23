@@ -125,9 +125,10 @@ namespace Typhon.Compiler.Emit
         }
 
         /// <summary>Instance members inherited from a .NET base, unless a Typhon class defines that member.</summary>
-        IReadOnlyList<Semantics.MemberSig> InheritedDotNetOverloads(ClassDef cls, string name, int depth = 0)
+        IReadOnlyList<Semantics.MemberSig> InheritedDotNetOverloads(
+            ClassDef cls, string name, int depth = 0, bool fromSuper = false)
         {
-            if (depth > 20 || cls.Body.OfType<FunctionDef>().Any(f => f.Name == name)) return null;
+            if (depth > 20 || !fromSuper && cls.Body.OfType<FunctionDef>().Any(f => f.Name == name)) return null;
             foreach (var b in cls.Bases)
             {
                 if (!ResolveBase(b, out var py, out var meta)) continue;

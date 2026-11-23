@@ -79,6 +79,7 @@ namespace Typhon.Compiler.Semantics
         public bool IsMethod;
         public bool IsStatic;
         public bool IsOptionalModuleMember;
+        public bool IsConstant;
         public bool IsProperty;
         public bool IsOverridable;
         public bool RequiresClrArguments;

@@ -1,0 +1,18 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+from operator import itemgetter
+
+def choose(keys: list[int], enabled: bool):
+    return itemgetter(*keys) if enabled else None
+
+selected = choose([2, 0], True)
+print(selected(["a", "b", "c"]))
+print(choose([1], True)(["a", "b", "c"]))
+print(choose([0], False))
+
+import operator as ops
+
+keys: list[int] = [1]
+print(ops.itemgetter(2, *keys)(["a", "b", "c"]))
+print(ops.itemgetter(*keys)(["a", "b", "c"]))

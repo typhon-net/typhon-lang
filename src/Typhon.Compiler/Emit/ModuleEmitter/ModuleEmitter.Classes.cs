@@ -89,6 +89,28 @@ namespace Typhon.Compiler.Emit
             _hasMultipleBuiltinExceptionBases ??= _p.Modules.Values.Any(module =>
                 module.Classes.Values.Any(definition => HasMultipleBuiltinExceptionBases(module, definition)));
 
+        bool HasAnnotatedClassDefault(ClassDef definition, AnnAssignStmt annotation)
+        {
+            if (_m.IsGdScript || annotation.Value == null || HasDecorator(definition.Decorators, "dataclass")) return false;
+            return !HasClrInstanceSurface(definition, new HashSet<ClassDef>());
+        }
+
+        bool HasClrInstanceSurface(ClassDef definition, HashSet<ClassDef> seen)
+        {
+            if (!seen.Add(definition)) return false;
+            var resolver = ClassDeclarationResolver(definition);
+            if (definition.Body.OfType<AnnAssignStmt>().Any(field => resolver.AnnotatedAttributes(field.Annotation).Any())) return true;
+            foreach (var basis in definition.Bases)
+            {
+                if (resolver.BuiltinTypeBase(basis) || basis is NameExpr name && ExceptionMap.ContainsKey(name.Id) &&
+                    !resolver.IsShadowed(name.Id)) continue;
+                if (!resolver.ResolveBase(basis, out var source, out var metadata)) continue;
+                if (source != null && HasClrInstanceSurface(source, seen) ||
+                    metadata != null && !metadata.StartsWith("Typhon.", System.StringComparison.Ordinal)) return true;
+            }
+            return false;
+        }
+
         void EmitClass(ClassDef c)
         {
             if (!_m.IsGdScript && IsStringEnum(c)) { EmitObjectEnum(c, integer: false); return; }
@@ -752,10 +774,11 @@ namespace Typhon.Compiler.Emit
             if (_m.IsGdScript || definition == null || IsUserMetaclass(definition) ||
                 definition.TypeParams.Count != 0 || definition.NamedTupleFields != null) return false;
             var allocator = MethodInHierarchy(definition, "__new__");
-            if (allocator == null ? !HasStringBase(definition) :
-                allocator.TypeParams.Count != 0 || allocator.IsAsync || allocator.Params.Count == 0 ||
-                allocator.Params[0].Kind != ParamKind.Normal ||
-                allocator.Decorators.Count > 0 && !(allocator.Decorators.Count == 1 && HasDecorator(allocator.Decorators, "staticmethod")))
+            if (ClassVariableOwner(definition, "__new__") == null &&
+                (allocator == null ? !HasStringBase(definition) :
+                    allocator.TypeParams.Count != 0 || allocator.IsAsync || allocator.Params.Count == 0 ||
+                    allocator.Params[0].Kind != ParamKind.Normal ||
+                    allocator.Decorators.Count > 0 && !(allocator.Decorators.Count == 1 && HasDecorator(allocator.Decorators, "staticmethod"))))
                 return false;
 
             var owner = CustomInitializerOwner(definition);
@@ -872,12 +895,17 @@ namespace Typhon.Compiler.Emit
                         LineDirective(s);
                         EmitAnnotatedAttributes(a.Annotation);
                         var fieldSpec = isDataclass && !isClassVar ? DataclassField(a) : null;
-                        string init = fieldSpec != null ? (fieldSpec.Default != null ? " = " + Checked(EmitExpr(fieldSpec.Default, targetTyped: true)) + ";"
-                                                           : fieldSpec.Factory != null ? " = " + FactoryCall(fieldSpec.Factory, type) + ";" : "")
-                            : a.Value != null ? " = " + Checked(EmitExpr(a.Value, targetTyped: true)) + ";" : "";
-                        if (isClassVar) _w.Line($"{SurfaceVisibility(Visibility(n.Id, false), type)} {GdStaticKeyword(c, n.Id, a.Value, type)} {type} {Esc(n.Id)}{(init.Length > 0 ? init : ";")}");
+                        if (isClassVar || HasAnnotatedClassDefault(c, a))
+                        {
+                            string classInit = a.Value == null ? "" : " = " +
+                                CaptureClassMember(ctx, n.Id, type, ClassFieldValue(a.Value, type));
+                            _w.Line($"{SurfaceVisibility(Visibility(n.Id, false), type)} {GdStaticKeyword(c, n.Id, a.Value, type)} {type} {Esc(n.Id)}{classInit};");
+                        }
                         else
                         {
+                            string init = fieldSpec != null ? (fieldSpec.Default != null ? " = " + Checked(EmitExpr(fieldSpec.Default, targetTyped: true)) + ";"
+                                                               : fieldSpec.Factory != null ? " = " + FactoryCall(fieldSpec.Factory, type) + ";" : "")
+                                : a.Value != null ? " = " + Checked(EmitExpr(a.Value, targetTyped: true)) + ";" : "";
                             if (_m.IsGdScript) GdFieldAttributes(c, n.Id, type);
                             if (fieldSpec?.Repr == false) _w.Line("[global::Typhon.Runtime.PyDataclassReprExcluded]");
                             _w.Line(InstanceStorage(n.Id, type, Visibility(n.Id, false), init));

@@ -1,0 +1,15 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+from typing import Any
+
+
+def choose(callback: Any, replace: bool):
+    result = NotImplemented
+    if replace:
+        result = callback()
+    return result
+
+
+print(choose(lambda: "supported", True))
+print(choose(lambda: "ignored", False) is NotImplemented)

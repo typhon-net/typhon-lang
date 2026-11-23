@@ -166,6 +166,44 @@ namespace Typhon.Stdlib
             }
         }
 
+        // The gzip reader uses the buffered variant of the decoder, with the same stream state.
+        public sealed class _ZlibDecompressor : IDisposable
+        {
+            readonly DecompressObject _decoder;
+            PyBytes _pending = PyBytes.Empty;
+
+            public _ZlibDecompressor(long wbits = MAX_WBITS) => _decoder = decompressobj(wbits);
+
+            public bool eof => _decoder.eof;
+            public bool needs_input => !eof && _pending.Count == 0 && _decoder.NeedsInput;
+            public PyBytes unused_data => _decoder.unused_data;
+
+            public PyBytes decompress(object data, long max_length = -1)
+            {
+                if (eof) throw new EndOfStreamException("End of stream already reached");
+                object input = data;
+                if (_pending.Count > 0 || max_length == 0)
+                {
+                    ReadOnlySpan<byte> incoming = ByteOps.Buffer(data);
+                    var combined = new byte[_pending.Count + incoming.Length];
+                    _pending.Data.CopyTo(combined, 0);
+                    incoming.CopyTo(combined.AsSpan(_pending.Count));
+                    input = new PyBytes(combined);
+                }
+                if (max_length == 0)
+                {
+                    _pending = (PyBytes)input;
+                    return PyBytes.Empty;
+                }
+
+                PyBytes result = _decoder.decompress(input, Math.Max(0, max_length));
+                _pending = _decoder.unconsumed_tail;
+                return result;
+            }
+
+            public void Dispose() => _decoder.Dispose();
+        }
+
         public sealed class DecompressObject : IDisposable
         {
             delegate OperationStatus DecodeBlock(ReadOnlySpan<byte> from, Span<byte> to, out int read, out int written);
@@ -177,6 +215,7 @@ namespace Typhon.Stdlib
             public bool eof { get; private set; }
             public PyBytes unused_data { get; private set; } = PyBytes.Empty;
             public PyBytes unconsumed_tail { get; private set; } = PyBytes.Empty;
+            internal bool NeedsInput { get; private set; } = true;
 
             internal DecompressObject(Container container)
             {
@@ -216,6 +255,8 @@ namespace Typhon.Stdlib
                     Span<byte> destination = buffer[..(int)Math.Min(remaining, buffer.Length)];
                     OperationStatus status = _decode(input, destination, out int consumed, out int produced);
                     if (status == OperationStatus.InvalidData) throw new error("Error -3 while decompressing data");
+                    NeedsInput = status == OperationStatus.NeedMoreData ||
+                        status != OperationStatus.Done && consumed == 0 && produced == 0;
                     output.Write(destination[..produced]);
                     remaining -= produced;
                     input = input[consumed..];

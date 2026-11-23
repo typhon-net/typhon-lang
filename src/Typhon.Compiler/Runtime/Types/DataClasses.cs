@@ -16,7 +16,8 @@ namespace Typhon.Runtime
     internal sealed class PyLocalDataClass : TypeDelegator, IPyKeywordCallable
     {
         readonly string _name;
-        internal readonly string PythonModule;
+        readonly string _module;
+        internal string PythonModule => Members.TryGetValue("__module__", out var declared) && declared is string module ? module : _module;
         internal readonly string QualName;
         internal readonly OrderedDictionary<string, object?> Members;
 
@@ -24,7 +25,7 @@ namespace Typhon.Runtime
             OrderedDictionary<string, object?>? members = null) : base(parent)
         {
             _name = name;
-            PythonModule = module;
+            _module = module;
             QualName = qualName;
             Members = members ?? new OrderedDictionary<string, object?>(StringComparer.Ordinal);
         }
@@ -32,6 +33,31 @@ namespace Typhon.Runtime
         internal bool TryLookup(string name, out object? value) =>
             Members.TryGetValue(name, out value) ||
             BaseType is PyLocalDataClass parent && parent.TryLookup(name, out value);
+
+        internal object? GetAnnotations()
+        {
+            if (Members.TryGetValue("__annotations__", out var annotations)) return annotations;
+            if (Members.TryGetValue("__annotate__", out var annotate) && annotate != null)
+            {
+                annotations = Builtins.__invoke(annotate, [1L]);
+                if (annotations is not System.Collections.IDictionary)
+                    throw new InvalidCastException("__annotate__ returned a non-dict value");
+            }
+            else annotations = new OrderedDictionary<string, object?>();
+            Members["__annotations__"] = annotations;
+            return annotations;
+        }
+
+        internal void SetMember(string name, object? value)
+        {
+            if (name == "__annotate__" && value != null)
+            {
+                if (!Builtins.callable(value)) throw new InvalidCastException("__annotate__ must be callable or None");
+                Members.Remove("__annotations__");
+            }
+            else if (name == "__annotations__") Members["__annotate__"] = null;
+            Members[name] = value;
+        }
 
         public object? __call__(params object?[] args) => __call_kw__(args, null);
 

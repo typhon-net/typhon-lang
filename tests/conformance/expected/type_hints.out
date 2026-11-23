@@ -1,0 +1,3 @@
+[('item', 'Child'), ('flag', 'bool'), ('return', 'NoneType')]
+[('first', 'int'), ('second', 'str')]
+[('value', "ForwardRef('Unknown')"), ('return', "<class 'int'>")]

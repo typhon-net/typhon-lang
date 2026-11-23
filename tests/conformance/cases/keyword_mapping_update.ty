@@ -1,0 +1,12 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+from typing import Any
+
+
+def merge(extra: Any, **keywords):
+    keywords = {**extra, **keywords}
+    return keywords
+
+
+print(merge({"first": 1, "second": 0}, second=2, third=3))

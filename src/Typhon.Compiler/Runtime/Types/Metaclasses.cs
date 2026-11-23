@@ -127,7 +127,7 @@ namespace Typhon.Runtime
             _ => value,
         };
 
-        static Type Select(Type? proposed, Type[] bases)
+        internal static Type Select(Type? proposed, Type[] bases)
         {
             Type winner = proposed ?? typeof(Type);
             foreach (Type basis in bases)
@@ -199,7 +199,7 @@ namespace Typhon.Runtime
             return target;
         });
 
-        static Type[] ClassBases(ITuple values) => Enumerable.Range(0, values.Length)
+        internal static Type[] ClassBases(ITuple values) => Enumerable.Range(0, values.Length)
             .Select(index => values[index] as Type ?? throw new InvalidCastException("type() bases must be types")).ToArray();
 
         internal static object? Create(Type metaclass, object?[] args, IDictionary<string, object?>? keywords)
@@ -246,6 +246,15 @@ namespace Typhon.Runtime
             return PyClassDescriptors.ReadBodyName(PyClassDescriptors.Unassigned, name, module, moduleName);
         }
 
+        internal static IDictionary PrepareNamespace(object? metaclass, string name, ITuple bases,
+            IDictionary<string, object?>? keywords)
+        {
+            object? prepare = Builtins.getattr(metaclass, "__prepare__", null);
+            return prepare == null ? new OrderedDictionary<string, object?>() :
+                (object?)Builtins.__invoke_kw(prepare, [name, bases], keywords) as IDictionary ??
+                throw new InvalidCastException("__prepare__ must return a mapping");
+        }
+
         internal static void Define(Type target, Type? declared, string name, string module, Type[] bases, string[] names,
             IDictionary<string, object?>? keywords)
         {
@@ -266,10 +275,7 @@ namespace Typhon.Runtime
             }
             Type chosen = Select(declared, bases);
             var basis = new PyTuple<Type>(bases);
-            object? prepare = Builtins.getattr(chosen, "__prepare__", null);
-            IDictionary ns = prepare == null ? new OrderedDictionary<string, object?>() :
-                (object?)Builtins.__invoke_kw(prepare, [name, basis], keywords) as IDictionary ??
-                throw new InvalidCastException("__prepare__ must return a mapping");
+            IDictionary ns = PrepareNamespace(chosen, name, basis, keywords);
             ns["__module__"] = module;
             ns["__qualname__"] = name;
             if (typeParameters != null)

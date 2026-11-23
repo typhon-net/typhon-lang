@@ -1,0 +1,10 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+names: dict[str, int] = {}
+for source in ("unknown + 1", "unknown()", "known + 1"):
+    try:
+        print(eval(source, names))
+    except NameError as error:
+        print(type(error).__name__, error.name)
+    names["known"] = 7

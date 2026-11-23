@@ -56,15 +56,18 @@ namespace Typhon.Compiler.Emit
         /// the member declared with it: count: Annotated[int, Parameter()] → [Parameter()] public long count { get; set; }.
         /// Other metadata (strings, Python values) means nothing to the compiler, as it means nothing to CPython at run time.
         /// </summary>
-        void EmitAnnotatedAttributes(Expr annotation)
+        void EmitAnnotatedAttributes(Expr annotation) => EmitAttributes(AnnotatedAttributes(annotation).ToList());
+
+        IEnumerable<Expr> AnnotatedAttributes(Expr annotation)
         {
-            if (!(annotation is SubscriptExpr s) || StripTypingPrefix(DottedName(s.Target)) != "Annotated" || !(s.Index is TupleExpr t)) return;
-            foreach (var meta in t.Elts.Skip(1))
+            if (annotation is not SubscriptExpr subscription || StripTypingPrefix(DottedName(subscription.Target)) != "Annotated" ||
+                subscription.Index is not TupleExpr metadata) yield break;
+            foreach (var value in metadata.Elts.Skip(1))
             {
-                if (!(meta is NameExpr || meta is AttributeExpr || meta is CallExpr) || !(DecoratorName(meta) is string name)) continue;
-                bool attribute = TryResolveType(name, 0, out var m, out var py) && py == null && m != null ||
-                                 TryResolveType(name + "Attribute", 0, out m, out py) && py == null && m != null;
-                if (attribute) EmitAttributes(new List<Expr> { meta });
+                if (value is not (NameExpr or AttributeExpr or CallExpr) || DecoratorName(value) is not string name) continue;
+                if (TryResolveType(name, 0, out var nativeType, out var pythonType) && pythonType == null && nativeType != null ||
+                    TryResolveType(name + "Attribute", 0, out nativeType, out pythonType) && pythonType == null && nativeType != null)
+                    yield return value;
             }
         }
 
@@ -206,8 +209,28 @@ namespace Typhon.Compiler.Emit
                 case ConstExpr c: return c.Kind is not (ConstKind.Ellipsis or ConstKind.Bytes or ConstKind.Imaginary) &&
                     !(c.Kind == ConstKind.Int && !long.TryParse(c.Raw.Replace("_", ""), out _));
                 case UnaryExpr u when (u.Op == "-" || u.Op == "+") && u.Operand is ConstExpr uc && (uc.Kind == ConstKind.Int || uc.Kind == ConstKind.Float): return true;
-                default: return FoldInt(e) is System.Numerics.BigInteger v && v >= long.MinValue && v <= long.MaxValue;
+                default: return !_big && NativeConstantDefault(e) ||
+                    FoldInt(e) is System.Numerics.BigInteger v && v >= long.MinValue && v <= long.MaxValue;
             }
+        }
+
+        bool NativeConstantDefault(Expr expression)
+        {
+            if (expression is NameExpr alias && ImportAlias(alias) is Expr imported) expression = imported;
+            string member;
+            string owner;
+            if (expression is NameExpr name && !IsShadowed(name.Id))
+            {
+                member = name.Id;
+                owner = StdlibOwner(member);
+            }
+            else if (expression is AttributeExpr property)
+            {
+                member = property.Name;
+                owner = DotNetStaticMeta(property.Target);
+            }
+            else return false;
+            return owner != null && _r.GetMembers(owner, member).Any(candidate => candidate.IsStatic && candidate.IsConstant);
         }
 
         readonly HashSet<AttributeExpr> _privateClassDefaultReads = new HashSet<AttributeExpr>();
@@ -534,6 +557,7 @@ namespace Typhon.Compiler.Emit
             }
             else if (sig.IsGenerator) elem = ImplicitDynamic(f, $"the values yielded by '{f.PyName ?? f.Name}'");
             // (an override of a .NET or runtime method: the base method's return type)
+            else if (!f.IsAsync && baseMethod?.ReturnsVoid == true) elem = "void";
             else if (!f.IsAsync && baseMethod?.ReturnsDynamic == true) elem = "dynamic";
             else if (locals.HasValueReturn && !f.IsAsync && baseMethod?.Type != null) elem = baseMethod.Type;
             else if (locals.HasValueReturn)

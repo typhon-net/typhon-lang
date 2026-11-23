@@ -142,6 +142,8 @@ namespace Typhon.Compiler.Emit
                 case NamedExpr ne: return InferType(ne.Target) ?? InferType(ne.Value);
                 case ComprehensionExpr comp: return ComprehensionType(comp);
                 case NameExpr { Id: "__debug__" }: return "bool";
+                case NameExpr { Id: "__builtins__" } names when !_m.IsGdScript && !IsShadowed(names.Id):
+                    return _m.RuntimeCodeMode == null && _p.MainModule == _m.Name ? "global::Typhon.Runtime.PyModule" : "dynamic";
                 case NameExpr n when n.Id == "__file__" && !IsShadowed(n.Id): return "string";
                 case NameExpr late when LateClassSlot(late.Id) != null: return "dynamic";
                 case NameExpr ian when ImportAlias(ian) is Expr importTarget: return InferType(importTarget);
@@ -160,7 +162,7 @@ namespace Typhon.Compiler.Emit
                     if (!IsLocal(n.Id) && _runtimeProjectBindings.TryGetValue(n.Id, out var imported))
                         return ConditionalModuleClass(imported.Owner, imported.Name) ? "global::System.Type" : "dynamic";
                     if (!IsLocal(n.Id) && ConditionalModuleClass(_m, n.Id)) return "global::System.Type";
-                    return MayReadComputedGlobal(n) ? "dynamic" : null;
+                    return MayReadComputedGlobal(n) || MayReadRuntimeGlobal(n) ? "dynamic" : null;
                 }
                 case AttributeExpr component when UsesComplexComponent(component): return "double";
                 case AttributeExpr comparator when UsesBuiltinStringComparison(comparator) || UsesInheritedNotEqual(comparator):

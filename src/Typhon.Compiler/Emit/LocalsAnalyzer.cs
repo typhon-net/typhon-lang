@@ -430,18 +430,19 @@ namespace Typhon.Compiler.Emit
 
     internal static class AstWalker
     {
-        public static void VisitAll(object root, Action<Node> visit)
+        public static void VisitAll(object root, Action<Node> visit, bool includeNestedScopes = true)
         {
             if (root == null) return;
             if (root is System.Collections.IEnumerable list && !(root is string))
             {
-                foreach (var item in list) VisitAll(item, visit);
+                foreach (var item in list) VisitAll(item, visit, includeNestedScopes);
                 return;
             }
             if (root is Node n)
             {
+                if (!includeNestedScopes && n is FunctionDef or ClassDef or LambdaExpr) return;
                 visit(n);
-                foreach (var c in Children(n)) VisitAll(c, visit);
+                foreach (var c in Children(n)) VisitAll(c, visit, includeNestedScopes);
             }
         }
 

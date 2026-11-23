@@ -36,6 +36,7 @@ namespace Typhon.Runtime
             if (describe != null)
                 return Unwrapped(() => describe.Invoke(e, null)) is string text
                     ? text : throw new InvalidCastException("__str__ returned a non-string value");
+            if (e.Data["__args__"] is object?[] arguments) return PyExc.Text(arguments);
             const string Head = "The given key '", Tail = "' was not present in the dictionary.";
             string m = e.Message;
             if (e is KeyNotFoundException && m.StartsWith(Head, StringComparison.Ordinal) && m.EndsWith(Tail, StringComparison.Ordinal))
@@ -63,11 +64,12 @@ namespace Typhon.Runtime
                 case Enum en: return en.GetType().Name + "." + en.ToString();
                 case Exception e: return ExceptionText(e);
                 case Type type: return TryMetaclassText(type, "__str__", out string text) ? text : ClassRepr(type);
-                case IPyRepr own: return own.ToString() ?? own.__repr__(); // str(): Fraction → 1/2, Path → /tmp/x
+                case IPyRepr own: return TryInstanceString(own, out var ownText) ? ownText : own.ToString() ?? own.__repr__();
                 case IEnumerable view when PyDictViews.Name(view.GetType()) is string name: return PyDictViews.Repr(view, name);
                 case IFormattable fmt when o is int || o is long || o is short || o is byte || o is sbyte || o is uint || o is ulong || o is ushort || o is decimal || o is BigInteger:
                     return fmt.ToString(null, Inv);
-                default: return CollectionRepr(o) ?? Convert.ToString(o, Inv) ?? "";
+                default: return TryInstanceString(o, out var instanceText) ? instanceText :
+                    CollectionRepr(o) ?? Convert.ToString(o, Inv) ?? "";
             }
         }
 
@@ -86,10 +88,43 @@ namespace Typhon.Runtime
             Type type => ClassRepr(type),
             Enum member when member.GetType().IsDefined(typeof(PySourceAttribute), false) =>
                 $"<{PyTypeName(member.GetType())}.{member}: {Convert.ToInt64(member, Inv).ToString(Inv)}>",
+            _ when TryNamespaceTextSlot(o, "__repr__", out var slot) => InvokeTextSlot(slot, "__repr__"),
             IPyRepr own => own.__repr__(), // repr(): Fraction(1, 2), PosixPath('/tmp/x')
             MissingMemberException error => PyExc.Repr(error, PyExc.Args(error)),
             _ => str(o),
         };
+
+        static bool TryNamespaceTextSlot(object? value, string name, out object? callable)
+        {
+            if (value is PyLocalClassInstance local && local.PythonType.TryLookup(name, out var member))
+            {
+                callable = PyMetaclasses.Bind(member, local, local.PythonType);
+                return true;
+            }
+            var (owner, inherited) = LookupSourceSpecialMethod(value, name, dataOnly: true);
+            callable = inherited;
+            return owner != null;
+        }
+
+        static string InvokeTextSlot(object? callable, string name) => (object?)__invoke(callable, []) as string ??
+            throw new InvalidCastException($"{name} returned a non-string value");
+
+        static bool TryInstanceString(object? value, out string text)
+        {
+            if (TryNamespaceTextSlot(value, "__str__", out var strMethod))
+            {
+                text = InvokeTextSlot(strMethod, "__str__");
+                return true;
+            }
+            if (TryNamespaceTextSlot(value, "__repr__", out var reprMethod))
+            {
+                var (owner, declared) = LookupSourceSpecialMethod(value, "__str__");
+                text = owner == null ? InvokeTextSlot(reprMethod, "__repr__") : InvokeTextSlot(declared, "__str__");
+                return true;
+            }
+            text = "";
+            return false;
+        }
 
         internal static string DefaultClassRepr(Type type) => $"<class '{PythonQualifiedTypeName(type)}'>";
 

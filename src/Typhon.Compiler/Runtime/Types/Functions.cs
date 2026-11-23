@@ -31,13 +31,16 @@ namespace Typhon.Runtime
         internal object Target => _target;
         internal string Name => _name;
         internal Type? BuiltinOwner { get; }
+        readonly string? _nativeModule;
+        internal bool IsBuiltinModuleFunction => _nativeModule != null;
         internal bool IncludesNonPublic => (_visibility & System.Reflection.BindingFlags.NonPublic) != 0;
         readonly System.Reflection.BindingFlags _visibility;
-        public PyBoundMethod(object target, string name, bool includeNonPublic = false, Type? builtinOwner = null)
+        public PyBoundMethod(object target, string name, bool includeNonPublic = false, Type? builtinOwner = null, string? nativeModule = null)
         {
             _target = target;
             _name = name;
             BuiltinOwner = builtinOwner;
+            _nativeModule = nativeModule;
             _visibility = System.Reflection.BindingFlags.Public;
             if (includeNonPublic) _visibility |= System.Reflection.BindingFlags.NonPublic;
         }
@@ -50,7 +53,7 @@ namespace Typhon.Runtime
 
         public string __name__ => BuiltinOwner != null ? "__new__" : _name;
         public string? __doc__ => Source?.DocString;
-        public string __module__ => Source?.Module ?? Builtins.__module_of(_target as Type ?? _target.GetType());
+        public string __module__ => _nativeModule ?? Source?.Module ?? Builtins.__module_of(_target as Type ?? _target.GetType());
         public Typhon.Stdlib.types.CodeType? __code__ => Source is { } source ? new Typhon.Stdlib.types.CodeType(_name, source.Filename, source.Line) : null;
 
         public dynamic? __call__(object?[] args)
@@ -409,12 +412,16 @@ namespace Typhon.Runtime
                 System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic;
             for (Type? owner = type; owner != null; owner = owner.BaseType)
             {
-                if (owner.GetMethods(declaredStatic).Any(method => method.Name == "__new__"))
-                {
-                    result = new PyBoundMethod(owner, "__new__", includeNonPublic: true).__call_kw__([type, .. args], keywords);
-                    if (result != null && type.IsInstanceOfType(result)) InitializeAllocated(result, args, keywords);
-                    return true;
-                }
+                object? allocator;
+                if (TryGetClassData(owner, "__new__", out var member, before: owner.BaseType))
+                    allocator = PyMetaclasses.Bind(member, null, type);
+                else if (owner.GetMethods(declaredStatic).Any(method => method.Name == "__new__"))
+                    allocator = new PyBoundMethod(owner, "__new__", includeNonPublic: true);
+                else continue;
+
+                result = __invoke_kw(allocator, [type, .. args], keywords);
+                if (result != null && type.IsInstanceOfType(result)) InitializeAllocated(result, args, keywords);
+                return true;
             }
             return false;
         }
@@ -422,6 +429,7 @@ namespace Typhon.Runtime
         static object? Construct(Type t, object?[] args)
         {
             if (TryCustomAllocation(t, args, null, out var allocated)) return allocated;
+            if (TryAddedInitializer(t, args, null, out allocated)) return allocated;
             Typhon.Stdlib._abc.CheckAbstract(t);
             if (typeof(PyIntegerEnum).IsAssignableFrom(t))
             {
@@ -632,6 +640,7 @@ namespace Typhon.Runtime
                 if (PyMetaclasses.IsMetaclass(t) || t == typeof(Type) && args.Length != 1)
                     return PyMetaclasses.Create(t, args, kw);
                 if (TryCustomAllocation(t, args, kw, out var allocated)) return allocated;
+                if (TryAddedInitializer(t, args, kw, out allocated)) return allocated;
                 Typhon.Stdlib._abc.CheckAbstract(t);
                 if (t == typeof(MissingMemberException)) return __attribute_error(args, kw);
                 if (t == typeof(PyPartial)) return ConstructPartial(args, kw);

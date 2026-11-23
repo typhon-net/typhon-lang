@@ -1,0 +1,24 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+from io import RawIOBase, SEEK_SET
+import io as system_io
+
+
+class Reader(RawIOBase):
+    def close(self):
+        return super().close()
+
+    def seek(self, offset, whence=SEEK_SET):
+        return offset + whence
+
+
+class OtherReader(RawIOBase):
+    def seek(self, offset, whence=system_io.SEEK_CUR):
+        return offset + whence
+
+
+reader = Reader()
+print(reader.seek(5), reader.seek(5, 2), OtherReader().seek(5))
+reader.close()
+print(reader.closed)

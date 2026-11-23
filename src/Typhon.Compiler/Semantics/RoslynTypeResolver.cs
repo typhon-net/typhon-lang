@@ -246,7 +246,8 @@ namespace Typhon.Compiler.Semantics
                             BigFit(field.Type, out var fbn, out _);
                             result.Add(new MemberSig
                             {
-                                IsStatic = field.IsStatic, Type = Display(field.Type), ReturnsDynamic = field.Type.TypeKind == TypeKind.Dynamic,
+                                IsStatic = field.IsStatic, IsConstant = field.IsConst, Type = Display(field.Type),
+                                ReturnsDynamic = field.Type.TypeKind == TypeKind.Dynamic,
                                 IsOptionalModuleMember = field.GetAttributes().Any(a =>
                                     a.AttributeClass?.ToDisplayString() == "Typhon.Runtime.PyOptionalModuleMemberAttribute"),
                                 ValueFit = Fit(field.Type, out var fn), ValueNarrowTo = fn, ValueBigNarrowTo = fbn,

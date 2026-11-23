@@ -191,7 +191,7 @@ namespace Typhon.Compiler.Emit
             AstWalker.VisitAll(body, n => { if (n is NameExpr { Id: "globals" }) usesGlobals = true; });
             bool exposesGlobals = usesGlobals || _m.WritesModuleGlobals || isEntryModule && _p.Modules.Values.Any(source => ReadsModuleRegistry(source.Ast.Body));
             _nativeImportsInNamespace = !runtimeCode && !_m.IsGdScript && exposesGlobals &&
-                body.Any(statement => NativeNamespaceImports(statement).Any());
+                (_m.ConditionalImportBindings.Count > 0 || body.Any(statement => NativeNamespaceImports(statement).Any()));
             if (exposesGlobals)
                 foreach (var s in body)
                     if (s is AssignStmt ga) foreach (var t in ga.Targets) foreach (var nm in NamesIn(t)) usedInDefs.Add(nm);
@@ -236,7 +236,7 @@ namespace Typhon.Compiler.Emit
                 {
                     bool HasLateBinding(string name) => _lateModuleFields.Contains(name) || _m.ConditionalGlobals.Contains(name);
                     if (ProjectImports(s).Any() || PlatformModules(s).Any() ||
-                        _nativeImportsInNamespace && NativeNamespaceImports(s).Any() ||
+                        NativeNamespaceImports(s).Any(binding => _nativeImportsInNamespace || _m.ConditionalImportBindings.Contains(binding.Binding)) ||
                         s is ImportStmt import && import.Names.Any(alias => HasLateBinding(alias.AsName ?? alias.Name.Split('.')[0])) ||
                         s is ImportFromStmt from && from.Names.Any(alias => HasLateBinding(alias.AsName ?? alias.Name)))
                         execStmts.Add(s);

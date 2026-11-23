@@ -6,6 +6,7 @@
 namespace Typhon.Stdlib
 {
     using System;
+    using System.Collections;
     using System.Collections.Generic;
     using System.Linq;
     using System.Runtime.CompilerServices;
@@ -17,6 +18,101 @@ namespace Typhon.Stdlib
         public static readonly NoDefaultType NoDefault = new();
         public static readonly Type Union = typeof(types.UnionType);
         public static object? _idfunc(object? value) => value;
+
+        public static OrderedDictionary<string, object?> get_type_hints(object? obj,
+            object? globalns = null, object? localns = null, bool include_extras = false,
+            [PyKeywordOnly] object? format = null)
+        {
+            bool forward = Builtins.eq(format, 3L);
+            bool strings = Builtins.eq(format, 4L);
+            if (format != null && !forward && !strings && !Builtins.eq(format, 1L))
+                throw new ArgumentException($"Unsupported annotation format {Builtins.repr(format)}");
+
+            var hints = new OrderedDictionary<string, object?>();
+            if (Builtins.truthy((object?)Builtins.getattr(obj, "__no_type_check__", null))) return hints;
+
+            if (obj is Type cls)
+            {
+                foreach (Type basis in PyMetaclasses.MethodOrder(cls).Reverse())
+                {
+                    var module = (object?)Builtins.getattr(basis, "__module__", null) is string name &&
+                        sys_.modules.TryGetValue(name, out var imported) ? (object?)imported : null;
+                    object globals = globalns ?? AnnotationGlobals(module, "__dict__");
+                    object locals = localns ?? AnnotationGlobals(basis, "__dict__");
+                    if (localns == null && globalns == null) (globals, locals) = (locals, globals);
+                    ReadHints(basis, globals, locals);
+                }
+            }
+            else
+            {
+                object? unwrapped = obj == null ? null : (object?)inspect.unwrap(obj);
+                object globals = globalns ?? (unwrapped is PyModule
+                    ? AnnotationGlobals(unwrapped, "__dict__") : AnnotationGlobals(unwrapped, "__globals__"));
+                ReadHints(obj, globals, localns ?? globals);
+                if (hints.Count == 0 && obj is not PyModule && !Builtins.callable(obj) &&
+                    !Builtins.hasattr(obj, "__annotations__") && !Builtins.hasattr(obj, "__annotate__"))
+                    throw new InvalidCastException($"{Builtins.repr(obj)} is not a module, class, or callable");
+            }
+            return hints;
+
+            void ReadHints(object? owner, object globals, object locals)
+            {
+                object? annotations = Builtins.getattr(owner, "__annotations__", null);
+                object? annotate = Builtins.getattr(owner, "__annotate__", null);
+                if (annotate != null && (strings || forward || annotations == null))
+                    annotations = Builtins.__invoke(annotate, [format ?? 1L]);
+                if (annotations == null) return;
+                if (annotations is not IDictionary members)
+                    throw new InvalidCastException("__annotations__ must be a dictionary");
+                var entries = members.GetEnumerator();
+                while (entries.MoveNext())
+                {
+                    if (entries.Key is not string name) throw new InvalidCastException("annotation names must be strings");
+                    object? value = entries.Value;
+                    if (strings)
+                        value = annotate != null && value is string source ? source : inspect.FormatAnnotation(value);
+                    else
+                    {
+                        var visited = new HashSet<string>();
+                        while (value is string reference && visited.Add(reference))
+                        {
+                            try { value = Builtins.eval(reference, globals, locals); }
+                            catch (NameError) when (forward) { value = ForwardReference(reference); }
+                        }
+                        value ??= typeof(types.NoneType);
+                        if (!include_extras) value = StripAnnotationMetadata(value);
+                    }
+                    hints[name] = value;
+                }
+            }
+        }
+
+        static object AnnotationGlobals(object? owner, string attribute)
+        {
+            object? names = Builtins.getattr(owner, attribute, null);
+            if (names is IDictionary dictionary) return dictionary;
+            if (names is types.MappingProxyType proxy)
+            {
+                var result = new OrderedDictionary<string, object?>();
+                foreach (var (key, value) in proxy.items())
+                    if (key is string name) result[name] = value;
+                return result;
+            }
+            return new OrderedDictionary<string, object?>();
+        }
+
+        static object? StripAnnotationMetadata(object? annotation)
+        {
+            if ((object?)Builtins.getattr(annotation, "__metadata__", null) != null)
+                return StripAnnotationMetadata((object?)Builtins.getattr(annotation, "__origin__"));
+            if (annotation is types.GenericAlias alias)
+            {
+                var arguments = Enumerable.Range(0, alias.__args__.Count)
+                    .Select(index => StripAnnotationMetadata(alias.__args__[index])).ToArray();
+                return new types.GenericAlias(alias.__origin__, new PyTuple<object?>(arguments));
+            }
+            return annotation;
+        }
 
         internal class Any
         {

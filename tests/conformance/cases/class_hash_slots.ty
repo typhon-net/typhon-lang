@@ -1,0 +1,12 @@
+class Plain:
+    pass
+
+class Equal:
+    def __eq__(self, other):
+        return False
+
+print(callable(getattr(Plain, "__hash__")), callable(getattr(type(None), "__hash__")))
+print(getattr(Equal, "__hash__") is None, getattr(list, "__hash__") is None)
+print(getattr(dict, "__hash__") is None, getattr(bytearray, "__hash__") is None)
+number_hash = getattr(int, "__hash__")
+print(number_hash(5) == hash(5))

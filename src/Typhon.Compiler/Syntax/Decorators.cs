@@ -150,6 +150,7 @@ namespace Typhon.Compiler.Syntax
                         var classPython = c.Decorators.Where(d => !IsStringEnumDecorator(d) && !IsIntegerEnumDecorator(d) && IsPythonDecorator(d, names)).ToList();
                         if (classPython.Count > 0)
                         {
+                            c.HasPythonClassDecorators = true;
                             Expr applied = new NameExpr { Id = c.Name, Line = c.Line, Col = c.Col };
                             for (int k = classPython.Count - 1; k >= 0; k--)
                                 applied = new CallExpr { Func = classPython[k], Args = { new Arg { Value = applied } }, Line = classPython[k].Line, Col = classPython[k].Col };

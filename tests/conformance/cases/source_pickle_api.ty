@@ -1,0 +1,14 @@
+#:pylib-source pickle
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import pickle
+
+data = {"name": "Typhon", "values": (2, 3), "blob": b"abc"}
+for protocol in (0, 2, 4, 5):
+    payload = pickle.dumps(data, protocol=protocol)
+    print(protocol, pickle.loads(payload) == data)
+
+buffers: list = []
+payload = pickle.dumps(pickle.PickleBuffer(b"buffer"), protocol=5, buffer_callback=buffers.append)
+print(len(buffers), bytes(pickle.loads(payload, buffers=buffers)))

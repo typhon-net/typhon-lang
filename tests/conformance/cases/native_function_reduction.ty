@@ -1,0 +1,9 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import codecs
+from types import BuiltinFunctionType
+
+encoder = codecs.encode
+print(isinstance(encoder, BuiltinFunctionType))
+print(getattr(encoder, "__reduce__")(), getattr(encoder, "__reduce_ex__")(4))

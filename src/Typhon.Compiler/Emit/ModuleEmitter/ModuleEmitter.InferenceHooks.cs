@@ -298,8 +298,9 @@ namespace Typhon.Compiler.Emit
         {
             sameModule = false;
             if (csType == null) return null;
-            if (_m.Classes.ContainsKey(csType)) { sameModule = true; return TypeInference.ClassKey(_m, csType); }
-            if (_importedFromModules.TryGetValue(csType, out var imp) && imp.Key.Classes.ContainsKey(imp.Value)) return TypeInference.ClassKey(imp.Key, imp.Value);
+            string unqualifiedName = csType.TrimStart('@');
+            if (_m.Classes.ContainsKey(unqualifiedName)) { sameModule = true; return TypeInference.ClassKey(_m, unqualifiedName); }
+            if (_importedFromModules.TryGetValue(unqualifiedName, out var imp) && imp.Key.Classes.ContainsKey(imp.Value)) return TypeInference.ClassKey(imp.Key, imp.Value);
             int dot = csType.LastIndexOf('.');
             if (dot > 0)
             {

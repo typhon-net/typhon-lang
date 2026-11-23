@@ -16,6 +16,13 @@ internal static class PyLib
 {
     static readonly Regex Directive = new(@"^#:pylib(?:[ \t]+(?<dir>[^\r\n]*?))?[ \t]*\r?$", RegexOptions.Multiline);
 
+    static readonly Regex SourceDirective = new(@"^#:pylib-source[ \t]+(?<names>[A-Za-z_][A-Za-z_0-9.]*(?:[, \t]+[A-Za-z_][A-Za-z_0-9.]*)*)[ \t]*\r?$",
+        RegexOptions.Multiline);
+
+    public static IEnumerable<string> SelectedSources(string source) =>
+        SourceDirective.Matches(source).SelectMany(match => match.Groups["names"].Value
+            .Split([',', ' ', '\t'], StringSplitOptions.RemoveEmptyEntries));
+
     /// <summary>The typing-only modules (Typhon's compiler handles their names itself): never compiled from Lib.</summary>
     static readonly HashSet<string> TypingOnly = new() { "typing", "enum", "__future__", "collections.abc", "typing_extensions" };
 
@@ -24,7 +31,7 @@ internal static class PyLib
     {
         dir = null;
         var m = Directive.Match(source);
-        if (!m.Success) return false;
+        if (!m.Success) return SourceDirective.IsMatch(source);
         string given = m.Groups["dir"].Value.Trim();
         if (given.Length > 0) dir = Path.GetFullPath(Path.Combine(sourceDir, given));
         return true;

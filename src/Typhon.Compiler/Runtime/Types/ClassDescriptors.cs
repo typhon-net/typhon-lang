@@ -71,10 +71,14 @@ namespace Typhon.Runtime
 
         internal static bool TryGetAnnotations(Type type, out object? value)
         {
-            if (type is PyLocalDataClass local && local.Members.TryGetValue("__annotations__", out value)) return true;
+            if (type is PyLocalDataClass local)
+            {
+                value = local.GetAnnotations();
+                return true;
+            }
             var members = Namespace(type);
             if (members.TryRead("__annotations__", out value)) return true;
-            if (type is not PyLocalDataClass && !type.IsDefined(typeof(PySourceAttribute), false)) return false;
+            if (!type.IsDefined(typeof(PySourceAttribute), false)) return false;
             value = new OrderedDictionary<string, object?>();
             members.SetAdded("__annotations__", value);
             return true;

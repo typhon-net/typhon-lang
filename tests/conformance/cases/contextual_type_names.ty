@@ -1,0 +1,13 @@
+class partial:
+    value: int = 3
+
+class record:
+    value: int = 7
+
+def first() -> partial:
+    return partial()
+
+def second() -> record:
+    return record()
+
+print(first().value, second().value)

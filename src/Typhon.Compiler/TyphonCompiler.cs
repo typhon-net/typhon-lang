@@ -51,6 +51,7 @@ namespace Typhon.Compiler
         public readonly HashSet<string> Functions = new HashSet<string>();
         public readonly HashSet<string> Globals = new HashSet<string>();
         internal readonly HashSet<string> ConditionalGlobals = new HashSet<string>();
+        internal readonly HashSet<string> ConditionalImportBindings = new HashSet<string>();
         internal readonly HashSet<string> ReboundFunctions = new HashSet<string>();
         internal readonly HashSet<string> ReboundClasses = new HashSet<string>();
         internal readonly List<FunctionDef> ReboundImplementations = new List<FunctionDef>();
@@ -432,6 +433,13 @@ namespace Typhon.Compiler
                     case AnnAssignStmt a: if (a.Target is NameExpr an) info.Globals.Add(an.Id); break;
                 }
             }
+            if (!runtimeCode && !info.IsGdScript)
+                AstWalker.VisitAll(info.Ast.Body.Where(statement => statement is not (ImportStmt or ImportFromStmt)), node =>
+                {
+                    if (node is ImportFromStmt from)
+                        info.ConditionalImportBindings.UnionWith(from.Names.Where(alias => alias.Name != "*").Select(alias => alias.AsName ?? alias.Name));
+                }, includeNestedScopes: false);
+
             var branches = info.Ast.Body.Where(s => s is IfStmt or TryStmt).ToList();
             if (branches.Count > 0)
             {

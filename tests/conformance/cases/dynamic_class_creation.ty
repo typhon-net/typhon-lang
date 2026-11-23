@@ -1,0 +1,23 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+from types import new_class
+
+
+def record_repr(self) -> str:
+    return f"Record({self.value})"
+
+
+def setup(namespace):
+    namespace["value"] = 7
+    namespace["__repr__"] = record_repr
+
+
+base = new_class("Base")
+record = new_class("Record", (base,), exec_body=setup)
+instance = record()
+print(record.__name__, base.__module__, issubclass(record, base))
+print(instance.value, repr(instance), str(instance))
+record.__module__ = "custom_module"
+record.description = "updated"
+print(record.__module__, record.__dict__["description"])

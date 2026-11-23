@@ -1,0 +1,23 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+from _pickle import PickleBuffer
+
+data = bytearray(b"test")
+buffer = PickleBuffer(data)
+view = buffer.raw()
+view[0] = 66
+print(view.format, view.readonly, bytes(view), bytes(memoryview(buffer)))
+buffer.release()
+print(bytes(view))
+try:
+    buffer.raw()
+except ValueError:
+    print("ValueError")
+try:
+    PickleBuffer(memoryview(data)[::2]).raw()
+except BufferError:
+    print("BufferError")
+
+from pickle import PickleBuffer as PublicBuffer
+print(PublicBuffer is PickleBuffer, bytes(PublicBuffer(b"public").raw()))

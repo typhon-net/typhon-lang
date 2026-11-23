@@ -15,17 +15,10 @@ namespace Typhon.Compiler.Emit
     // Names: Python names to C# names and types (renames, shadowing, the runtime's helpers), and resolving type names.
     internal sealed partial class ModuleEmitter
     {
-        static readonly HashSet<string> CSharpKeywords = new HashSet<string>
-        {
-            "abstract", "as", "base", "bool", "break", "byte", "case", "catch", "char", "checked", "class", "const", "continue", "decimal",
-            "default", "delegate", "do", "double", "else", "enum", "event", "explicit", "extern", "false", "finally", "fixed", "float", "for",
-            "foreach", "goto", "if", "implicit", "in", "int", "interface", "internal", "is", "lock", "long", "namespace", "new", "null",
-            "object", "operator", "out", "override", "params", "private", "protected", "public", "readonly", "ref", "return", "sbyte",
-            "sealed", "short", "sizeof", "stackalloc", "static", "string", "struct", "switch", "this", "throw", "true", "try", "typeof",
-            "uint", "ulong", "unchecked", "unsafe", "ushort", "using", "virtual", "void", "volatile", "while",
-        };
-
-        internal static string Esc(string name) => CSharpKeywords.Contains(name) ? "@" + name : name;
+        internal static string Esc(string name) =>
+            Microsoft.CodeAnalysis.CSharp.SyntaxFacts.GetKeywordKind(name) != Microsoft.CodeAnalysis.CSharp.SyntaxKind.None ||
+            Microsoft.CodeAnalysis.CSharp.SyntaxFacts.GetContextualKeywordKind(name) != Microsoft.CodeAnalysis.CSharp.SyntaxKind.None
+                ? "@" + name : name;
         internal static string EscapeDottedName(string name) => string.Join(".", name.Split('.').Select(Esc));
 
         static readonly Dictionary<string, string> ExceptionMap = new Dictionary<string, string>
@@ -219,10 +212,16 @@ namespace Typhon.Compiler.Emit
 
         bool AtRuntimeModuleScope => _scopeKey == RuntimeCodeScopeKey && _scope?.Parent == null;
 
-        bool MayReadComputedGlobal(NameExpr expression)
+        bool MayReadComputedGlobal(NameExpr expression) =>
+            _m.RebindsUnknownGlobals && _m.RuntimeCodeMode == null && IsUnresolvedSourceName(expression);
+
+        bool MayReadRuntimeGlobal(NameExpr expression) =>
+            _m.RuntimeCodeMode != null && IsUnresolvedSourceName(expression);
+
+        bool IsUnresolvedSourceName(NameExpr expression)
         {
             string name = expression.Id;
-            return _m.RebindsUnknownGlobals && !_m.IsGdScript && _m.RuntimeCodeMode == null && !IsShadowed(name) &&
+            return !_m.IsGdScript && !IsShadowed(name) &&
             !_dotnetAliases.ContainsKey(name) && !_moduleAliases.ContainsKey(name) && !_typingOnlyNames.Contains(name) &&
             !_runtimeProjectBindings.ContainsKey(name) && !ExceptionMap.ContainsKey(name) &&
             StdlibOwner(name) == null && _r.GetMembers("Typhon.Runtime.Builtins", name).Count == 0 &&
@@ -245,6 +244,12 @@ namespace Typhon.Compiler.Emit
             if (ImportAlias(n) is Expr imported) return EmitExpr(imported);
             if (id == "self" && HasSelfInScope()) return "this";
             if (id == "__debug__") return "true";
+            if (id == "__builtins__" && !_m.IsGdScript && !IsShadowed(id))
+            {
+                if (_m.RuntimeCodeMode != null) return "((dynamic?)__typhon_execution.BuiltinNamespace)";
+                const string module = "global::Typhon.Runtime.PyModule.Of(typeof(global::Typhon.Stdlib.builtins), \"builtins\")";
+                return _p.MainModule == _m.Name ? module : module + ".__dict__";
+            }
             if (id is "__name__" or "__doc__" && !_m.IsGdScript && _m.RuntimeCodeMode == null && !IsShadowed(id))
                 return ModuleObject(_m) + "." + id;
             if (id == "__name__" && !IsShadowed(id)) return CsString(_m.Name);
@@ -294,6 +299,8 @@ namespace Typhon.Compiler.Emit
                 return EmitPreparedName(id);
             if (MayReadComputedGlobal(n))
                 return $"{ModuleObject(_m)}.ReadGlobal({CsString(id)})";
+            if (MayReadRuntimeGlobal(n))
+                return $"__typhon_execution.{(AtRuntimeModuleScope ? "Local" : "Global")}[{CsString(id)}]";
             return Esc(id);
         }
 

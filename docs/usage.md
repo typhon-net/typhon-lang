@@ -107,6 +107,12 @@ ts = graphlib.TopologicalSorter({"b": {"a"}, "c": {"b"}})
 print(list(ts.static_order()), colorsys.rgb_to_hsv(0.2, 0.4, 0.4))
 ```
 
+Use `#:pylib-source gzip` to select the CPython source for a named module while
+keeping the same Python import. Multiple module names can be separated by spaces
+or commas. A separate `#:pylib DIR` line selects the installation's library
+directory.
+
+
 The module is compiled like a module of the program: its functions get typed versions for the program's calls, and the
 compile cache keeps the result until a source changes. Typhon's runtime modules normally take precedence over `Lib/`
 sources. With the directive enabled, import `ast`, `opcode` or `dis` in the entry file to select its CPython

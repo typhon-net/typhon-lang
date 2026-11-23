@@ -125,7 +125,7 @@ namespace Typhon.Stdlib
             public string __repr__() => $"<Signature {this}>";
         }
 
-        static string FormatAnnotation(object? annotation) => annotation switch
+        internal static string FormatAnnotation(object? annotation) => annotation switch
         {
             Type type when type == typeof(object) => "object",
             Type type when type == typeof(Type) => "type",

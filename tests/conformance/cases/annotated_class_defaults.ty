@@ -1,0 +1,23 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+def inspect_class(cls):
+    print(getattr(cls, "value", "absent"), cls.__dict__.get("value", "absent"))
+    print("required" in cls.__dict__)
+    return cls
+
+
+@inspect_class
+class Point:
+    required: int
+    value: int = 2
+    history: list[int] = []
+
+
+a = Point()
+b = Point()
+a.history.append(7)
+print(Point.value, a.value, b.history)
+a.value = 3
+Point.value = 4
+print(a.value, b.value, Point.value)

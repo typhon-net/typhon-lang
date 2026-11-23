@@ -1,0 +1,19 @@
+#:pylib-source dataclasses
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import dataclasses as dc
+
+@dc.dataclass
+class Point:
+    x: int
+    y: int = 2
+
+point = Point(3)
+print(point, dc.is_dataclass(point))
+print(dc.asdict(point))
+print([(field.name, field.default is dc.MISSING) for field in dc.fields(point)])
+print(dc.replace(point, y=9))
+
+record = dc.make_dataclass("Record", [("value", int)])
+print(record(7))

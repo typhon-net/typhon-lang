@@ -480,10 +480,11 @@ namespace Typhon.Runtime
         {
             // ba[a:b] = data: any bytes-like value (bytes, bytearray, memoryview, a list of ints)
             if (l is PyByteArray ba) { setslice(ba.Buffer, start, stop, step, ByteOps.From(values)); return; }
+            if (l is global::memoryview view) { view.SetSlice(start, stop, step, values); return; }
             var itemType = EnumerableItemType(l.GetType());
             if (itemType == null || l is not IList) throw new InvalidCastException($"'{l.GetType().Name}' object does not support slice assignment");
             var typed = (IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(itemType))!;
-            foreach (var v in (IEnumerable)values)
+            foreach (object? v in __iter_dyn(values))
                 typed.Add(v == null || itemType.IsInstanceOfType(v) || itemType == typeof(object) ? v : Convert.ChangeType(v, Nullable.GetUnderlyingType(itemType) ?? itemType, CultureInfo.InvariantCulture));
             var generic = typeof(Builtins).GetMethods().First(m => m.Name == nameof(setslice) && m.IsGenericMethodDefinition);
             generic.MakeGenericMethod(itemType).Invoke(null, new object?[] { l, start, stop, step, typed });

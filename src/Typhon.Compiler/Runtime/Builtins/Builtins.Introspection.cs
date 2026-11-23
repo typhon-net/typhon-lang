@@ -52,7 +52,7 @@ namespace Typhon.Runtime
             if (value is ReprDescriptor) return typeof(Typhon.Stdlib.types.WrapperDescriptorType);
             if (value is PyPartial) return typeof(PyPartial);
             if (value is PyFunction || value is Delegate && Typhon.Stdlib.inspect.isfunction(value)) return typeof(Typhon.Stdlib.types.FunctionType);
-            if (value is PyBoundMethod { BuiltinOwner: not null })
+            if (value is PyBoundMethod { BuiltinOwner: not null } or PyBoundMethod { IsBuiltinModuleFunction: true })
                 return typeof(Typhon.Stdlib.types.BuiltinFunctionType);
             if (value is PyBoundMethod method && Typhon.Stdlib.inspect.ismethod(method))
                 return typeof(Typhon.Stdlib.types.MethodType);

@@ -172,6 +172,13 @@ namespace Typhon.Runtime
             return error;
         }
 
+        public static T __exception_args<T>(object?[] args) where T : Exception
+        {
+            var error = (T)Activator.CreateInstance(typeof(T), [PyExc.Text(args)])!;
+            error.Data["__args__"] = args;
+            return error;
+        }
+
         static Exception ExceptionInstance(object? value)
         {
             if (value is Type type && typeof(Exception).IsAssignableFrom(type)) value = __invoke(type, []);

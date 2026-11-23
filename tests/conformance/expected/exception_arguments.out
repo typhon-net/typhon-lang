@@ -1,0 +1,4 @@
+('wrong type', 3, None)
+('wrong type', 3, None)
+('wrong value', 5)
+('wrong value', 5)

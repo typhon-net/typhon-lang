@@ -16,6 +16,12 @@ namespace Typhon.Stdlib
     {
         public static readonly PyBytes BOM_UTF8 = new([0xef, 0xbb, 0xbf]);
 
+        public static PyBytes encode(string obj, string encoding = "utf-8", string errors = "strict") =>
+            lookup(encoding).encode(obj, errors).Item1;
+
+        public static string decode(object obj, string encoding = "utf-8", string errors = "strict") =>
+            lookup(encoding).decode(obj, errors).Item1;
+
         public static CodecInfo lookup(string encoding)
         {
             try
@@ -34,7 +40,7 @@ namespace Typhon.Stdlib
         {
             public string name => identifier;
             public (PyBytes, long) encode(string text, string errors = "strict") =>
-                (new PyBytes(ByteOps.EncodingOf(identifier, errors).GetBytes(text)), Builtins.len(text));
+                (Builtins.encode(text, identifier, errors), Builtins.len(text));
             public (string, long) decode(object buffer, string errors = "strict")
             {
                 byte[] data = ByteOps.Buffer(buffer);

@@ -41,7 +41,7 @@ namespace Typhon.Runtime
             return (byte)x;
         }
 
-        internal static byte[] Buffer(object? value) => value is PyBytes or PyByteArray or byte[] or global::memoryview
+        internal static byte[] Buffer(object? value) => value is PyBytes or PyByteArray or byte[] or global::memoryview or Typhon.Stdlib._pickle.PickleBuffer
             ? From(value) : throw new InvalidCastException("object supporting the buffer API required");
 
         public static byte[] From(object? o) => o switch
@@ -51,6 +51,7 @@ namespace Typhon.Runtime
             PyByteArray a => a.ToArray(),
             byte[] arr => arr,
             global::memoryview view => view.ToArray(),
+            Typhon.Stdlib._pickle.PickleBuffer buffer => buffer.View.ToArray(),
             string => throw new InvalidCastException("string argument without an encoding"),
             long or int or BigInteger => new byte[(int)Convert.ToInt64(o, CultureInfo.InvariantCulture)],
             IEnumerable e => e.Cast<object?>().Select(Byte).ToArray(),

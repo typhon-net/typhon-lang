@@ -156,6 +156,7 @@ namespace Typhon.Compiler.Emit
             }
             if (value is not AttributeExpr a || ImportedBuiltinTypeValue(a) != null) return null;
             if (BuiltinStringMethodValue(a) is string stringMethod) return stringMethod;
+            if (UsesBuiltinLength(a)) return EmitAttribute(a);
             if (DottedName(a.Target) is string dotted && !IsLocal(dotted.Split('.')[0]) &&
                 TryResolveType(dotted, 0, out _, out var owner) && owner != null &&
                 MethodInHierarchy(owner, a.Name) is FunctionDef definition &&
@@ -264,6 +265,9 @@ namespace Typhon.Compiler.Emit
                         string declType = null;
                         if (_scope.Locals.Annotations.TryGetValue(n.Id, out var ann) && !TypeInference.IsBareContainer(ann)) declType = MapType(ann, stmt);
                         else if (ConflictType(n.Id) is string wider) declType = wider; // rebound to other types later (in a nested block)
+                        else if (!_m.IsGdScript && rawValue == null && value is NameExpr { Id: "NotImplemented" } sentinel &&
+                            !IsShadowed(sentinel.Id))
+                            declType = "dynamic";
                         string inferred = boundMethod ? "dynamic" : rawValue != null ? null : AssignedValueType(value);
                         Declared(n.Id);
                         if (declType != null)
@@ -435,6 +439,9 @@ namespace Typhon.Compiler.Emit
                             (_scope.Locals?.Annotations.ContainsKey(n.Id) == true || !IsLocal(n.Id) && _moduleFieldTypes.ContainsKey(n.Id)) &&
                             !TypeInference.IsNonePlaceholder(comprehension))
                             rawValue = EmitComprehension(comprehension, known);
+                        if (rawValue == null && typed && value is DictExpr mapping && mapping.Keys.Any(key => key == null) &&
+                            DictTypes(known) != null)
+                            rawValue = EmitDict(mapping, targetTyped: true, expectedType: known);
                         // a lambda into a late-bound variable or field: a delegate of dynamic values
                         if (rawValue == null && value is LambdaExpr dl && !typed) { string dtype = EmitLambdaLocal(dl, null, out var dcode); rawValue = $"({dtype}){dcode}"; }
                         _w.Line($"{EmitName(n)} = {rawValue ?? TupleLiteralValue(value, known) ??
@@ -649,7 +656,15 @@ namespace Typhon.Compiler.Emit
                     string tgt = EmitExpr(sub.Target);
                     if (sub.Target is ConstExpr || sub.Target is BinOpExpr || sub.Target is UnaryExpr) tgt = Paren(tgt);
                     string lo = sl.Lower != null ? SliceBound(sl.Lower) : "null", hi = sl.Upper != null ? SliceBound(sl.Upper) : "null";
-                    _w.Line($"{Rt("setslice")}({tgt}, {lo}, {hi}, {(sl.Step != null ? SliceBound(sl.Step) : "1")}, {rawValue ?? EmitIterable(value)});");
+                    string receiverType = InferType(sub.Target);
+                    bool preserveValue = receiverType is null or "dynamic" or "object" or "object?" or "memoryview" or "global::memoryview";
+                    string replacement = rawValue ?? (preserveValue ? EmitValue(value) : EmitIterable(value));
+                    if (preserveValue)
+                    {
+                        tgt = $"(object){Paren(tgt)}";
+                        replacement = $"(object?){Paren(replacement)}";
+                    }
+                    _w.Line($"{Rt("setslice")}({tgt}, {lo}, {hi}, {(sl.Step != null ? SliceBound(sl.Step) : "1")}, {replacement});");
                     return;
                 }
                 case SubscriptExpr sub:
@@ -866,6 +881,9 @@ namespace Typhon.Compiler.Emit
                 // the static call: an extension method cannot be dispatched dynamically (a late-bound value in the list)
                 _w.Line(cast ? $"{Rt("__extend_cast")}({target}, {EmitIterable(a.Value)});" : $"global::Typhon.Runtime.Builtins.extend({target}, {EmitIterable(a.Value)});");
             }
+            else if (a.Op == "+" && tt?.StartsWith(PyTuplePrefix) == true &&
+                (a.Value is TupleExpr || HomogeneousTupleItem(vt) != null || TupleElementTypes(vt) != null))
+                _w.Line($"{target} += {EmitAsPyTuple(a.Value, tt)};");
             else if (a.Op == "+" && tt == "dynamic" && !IsNumeric(vt)) _w.Line($"{target} = {Rt("__iadd")}({target}, {value});");
             // String repetition returns a new string, including when a late-bound count is rebound to it.
             else if (a.Op == "*" && a.Target is NameExpr &&

@@ -15,6 +15,8 @@ namespace Typhon.Runtime
     {
         public IDictionary Globals { get; }
         public IDictionary Locals { get; }
+        public object? BuiltinNamespace => Globals.Contains("__builtins__")
+            ? Globals["__builtins__"] : PyModule.Of(typeof(builtins), "builtins").__dict__;
         public Bindings Global { get; }
         public Bindings Local { get; }
 
@@ -39,7 +41,7 @@ namespace Typhon.Runtime
                 {
                     if (_names.Contains(name)) return _names[name];
                     if (!ReferenceEquals(_names, _globals) && _globals.Contains(name)) return _globals[name];
-                    throw new NameError($"name '{name}' is not defined");
+                    throw new NameError($"name '{name}' is not defined", name: name);
                 }
                 set => _names[name] = value;
             }

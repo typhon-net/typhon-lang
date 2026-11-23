@@ -553,21 +553,24 @@ namespace Typhon.Compiler.Emit
             depth < 20 && (LiteralSlotNames(definition).Contains(name) ||
                 TyphonBases(definition).Any(basis => HasLiteralSlot(basis, name, depth + 1)));
 
+        static bool HasLateModuleBinding(ModuleInfo owner, string name) => owner != null &&
+            (owner.ConditionalGlobals.Contains(name) || owner.ReboundFunctions.Contains(name) || owner.ReboundClasses.Contains(name));
+
         bool IsConditionalModuleBinding(Expr value)
         {
             if (value is NameExpr name && !IsLocal(name.Id))
             {
-                if (_m.ConditionalGlobals.Contains(name.Id) || _runtimeProjectBindings.ContainsKey(name.Id)) return true;
+                if (HasLateModuleBinding(_m, name.Id) || _runtimeProjectBindings.ContainsKey(name.Id)) return true;
                 if (_importedFromModules.TryGetValue(name.Id, out var imported))
-                    return imported.Key.ConditionalGlobals.Contains(imported.Value);
-                return _wildcardModules.Any(m => m.ConditionalGlobals.Contains(name.Id));
+                    return HasLateModuleBinding(imported.Key, imported.Value);
+                return _wildcardModules.Any(m => HasLateModuleBinding(m, name.Id));
             }
             if (value is AttributeExpr member && DottedName(member.Target) is string dotted &&
                 ModuleRef(dotted) is ModuleInfo module)
             {
                 var (owner, binding) = ProjectExport(module, member.Name);
                 return UsesRuntimeProjectMember(module, member.Name) || binding != null &&
-                    (owner?.ConditionalGlobals.Contains(binding) == true ||
+                    (HasLateModuleBinding(owner, binding) ||
                      owner?.Globals.Contains(binding) == true && !owner.Functions.Contains(binding) && InferType(member) == "dynamic");
             }
             return false;
@@ -590,6 +593,13 @@ namespace Typhon.Compiler.Emit
 
         string EmitCall(CallExpr c, bool targetTyped)
         {
+            if (!_m.IsGdScript && c.Func is NameExpr exception &&
+                exception.Id is "TypeError" or "ValueError" or "RuntimeError" or "Exception" or "BaseException" &&
+                !IsShadowed(exception.Id) && c.Args.Count > 1 && c.Args.All(argument => argument.Name == null && !argument.Star && !argument.DoubleStar))
+            {
+                var values = c.Args.Select(argument => $"(object?){Paren(EmitLooseValue(argument.Value))}");
+                return $"{Rt("__exception_args")}<{ExceptionMap[exception.Id]}>([{string.Join(", ", values)}])";
+            }
             if (!_m.IsGdScript && EmitTypeSlotCall(c) is string typeSlot) return typeSlot;
             if (!_m.IsGdScript && c.Func is AttributeExpr overridden &&
                 overridden.Target is not CallExpr { Func: NameExpr { Id: "super" } } &&
@@ -992,7 +1002,8 @@ namespace Typhon.Compiler.Emit
                             if (t is NameExpr { Id: "super" } && !IsShadowed("super"))
                                 mt = "global::Typhon.Stdlib.builtins.super";
                             if (DottedName(t) is string abcName && TryResolveType(abcName, 0, out var abcMeta, out var abc) &&
-                                (abcMeta is ("Typhon.Stdlib.types+FunctionType" or "Typhon.Stdlib.types+GeneratorType" or
+                                (abcMeta is ("Typhon.Stdlib.types+FunctionType" or "Typhon.Stdlib.types+BuiltinFunctionType" or
+                                    "Typhon.Stdlib.types+BuiltinMethodType" or "Typhon.Stdlib.types+GeneratorType" or
                                     "Typhon.Stdlib.types+AsyncGeneratorType" or "Typhon.Stdlib.types+CoroutineType") ||
                                  abc?.TypeParams.Count > 0 || MayHaveVirtualSubclasses(abcMeta, abc)))
                             {
@@ -1243,7 +1254,9 @@ namespace Typhon.Compiler.Emit
         {
             bool namedAttributeCall = !_m.IsGdScript && c.Func is AttributeExpr member && InferType(member.Target) == "dynamic" &&
                 c.Args.Any(a => a.Name != null) && TyphonCallee(c, out _) == null;
-            if (!bindPositionalSpread && !namedAttributeCall && !c.Args.Any(a => a.DoubleStar)) return null;
+            bool namedBeforeSpread = c.Args.SkipWhile(argument => argument.Name == null).Any(argument => argument.Star);
+            if (!bindPositionalSpread && !namedAttributeCall && !namedBeforeSpread &&
+                !c.Args.Any(argument => argument.DoubleStar)) return null;
             string callee = null;
             if (DottedName(c.Func) is string typeName && !IsLocal(typeName.Split('.')[0]) &&
                 TryTypeExpr(c.Func, out var constructor))
@@ -1410,8 +1423,12 @@ namespace Typhon.Compiler.Emit
                 return null;
             var members = _r.GetMembers(owner, name).Where(member => member.IsStatic).ToList();
             bool value = members.Any(member => !member.IsMethod);
-            if (!value && (members.Count == 0 || members.Any(member =>
-                member.TypeParams?.Count > 0 || member.Parameters.Any(parameter => parameter.IsParams))))
+            int positionalPrefix = call.Args.TakeWhile(argument => !argument.Star)
+                .Count(argument => argument.Name == null && !argument.DoubleStar);
+            // A CLR params array can only spread values after the fixed parameters.
+            if (!value && (members.All(member => member.TypeParams?.Count > 0) ||
+                members.Any(member => member.Parameters.LastOrDefault()?.IsParams == true &&
+                    member.Parameters.Count - 1 <= positionalPrefix)))
                 return null;
             var positional = call.Args.Where(a => a.Name == null && !a.DoubleStar)
                 .Select(a => a.Star ? $".. {Rt("__iter_dyn")}((object?){Paren(EmitExpr(a.Value))})"
@@ -1531,6 +1548,14 @@ namespace Typhon.Compiler.Emit
                 return InvokeLogicalMethod(spreadMethod, $"(object?){Paren(EmitExpr(spreadMethod.Target))}", c.Args);
             if (TryTypeExpr(c.Func, out var typeCode))
             {
+                if (DottedName(c.Func) is string decoratedName &&
+                    TryResolveType(decoratedName, 0, out _, out var decorated) && decorated?.HasPythonClassDecorators == true)
+                {
+                    var arguments = c.Args.Where(argument => argument.Name == null && !argument.DoubleStar)
+                        .Select(argument => argument.Star ? $".. {Rt("__iter_dyn")}((object?){Paren(EmitValue(argument.Value))})" :
+                            $"(object?){Paren(EmitLooseValue(argument.Value))}");
+                    return $"{Rt("__invoke_kw")}(typeof({typeCode}), [{string.Join(", ", arguments)}], {KeywordArgs(c.Args)})";
+                }
                 if (c.Args.Count == 1 && c.Args[0] is Arg { Name: null or "value", Star: false, DoubleStar: false } enumValue &&
                     DottedName(c.Func) is string enumName && TryResolveType(enumName, 0, out _, out var enumClass) &&
                     enumClass != null && (IsStringEnum(enumClass) || IsObjectIntegerEnum(enumClass)))

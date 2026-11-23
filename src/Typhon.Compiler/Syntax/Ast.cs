@@ -251,6 +251,7 @@ namespace Typhon.Compiler.Syntax
     {
         internal bool ConditionalModuleDefinition;
         internal bool ExportsIntegerEnumMembers;
+        internal bool HasPythonClassDecorators;
         internal string PyName;
         public string Name;
         public List<TypeParam> TypeParams = new List<TypeParam>();

@@ -1,0 +1,20 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import zlib
+
+data = b"hello world" * 5
+payload = zlib.compress(data, wbits=-15) + b"extra"
+decoder = zlib._ZlibDecompressor(wbits=-15)
+print(decoder.needs_input, decoder.eof)
+print(decoder.decompress(payload[:1], 4), decoder.needs_input, decoder.eof)
+print(decoder.decompress(payload[1:], 0), decoder.needs_input, decoder.eof)
+first = decoder.decompress(b"", 4)
+next_part = decoder.decompress(b"", 4)
+print(first, next_part, decoder.needs_input)
+print(first + next_part + decoder.decompress(b"") == data)
+print(decoder.needs_input, decoder.eof, decoder.unused_data)
+try:
+    decoder.decompress(b"")
+except EOFError:
+    print("EOFError")

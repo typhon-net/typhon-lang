@@ -1,0 +1,18 @@
+def table_size(table: dict[str, int]):
+    size = table.__len__
+    print(size())
+    table["two"] = 2
+    print(size())
+
+def format_length(values: list[int]):
+    methods = [values.__len__, "text".__len__]
+    return [method() for method in methods]
+
+table_size({"one": 1})
+print(format_length([1, 2, 3]))
+
+def other_lengths(items: set[int], pair: tuple[int, str]):
+    print(items.__len__(), pair.__len__())
+    print(getattr(items, "__len__")(), getattr(pair, "__len__")())
+
+other_lengths({7, 8, 9}, (1, "two"))

@@ -1,0 +1,20 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+from types import new_class
+
+
+def annotate(format: int):
+    print("annotated", format)
+    return {"value": int}
+
+
+example = new_class("Example")
+print(example.__annotations__)
+example.__annotate__ = annotate
+print(example.__annotations__)
+print(example.__annotations__)
+example.__annotate__ = None
+print(example.__annotations__)
+example.__annotations__ = {"other": str}
+print(example.__annotate__, example.__annotations__)

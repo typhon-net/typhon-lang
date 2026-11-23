@@ -1,0 +1,13 @@
+def populate(cls):
+    def initialize(self, value=2):
+        self.value = value
+    setattr(cls, "__init__", initialize)
+    return cls
+
+@populate
+class Record:
+    value: int
+
+print(Record().value)
+print(Record(5).value)
+print(Record(value=7).value)

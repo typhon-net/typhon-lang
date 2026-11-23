@@ -1,0 +1,23 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+def with_repr(cls):
+    setattr(cls, "__repr__", lambda self: "generated repr")
+    return cls
+
+
+@with_repr
+class Sample:
+    pass
+
+
+@with_repr
+class WithString:
+    def __str__(self) -> str:
+        return "declared str"
+
+
+print(str(Sample()), repr(Sample()))
+print(str(WithString()), repr(WithString()))
+setattr(Sample, "__str__", lambda self: "generated str")
+print(str(Sample()), repr(Sample()))

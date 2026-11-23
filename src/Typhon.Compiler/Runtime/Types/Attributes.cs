@@ -136,7 +136,7 @@ namespace Typhon.Runtime
                     m.Name == name && !m.IsDefined(typeof(PyMissingMethodAttribute), false)))
                 { value = new PyBoundMethod(storage, name); return true; }
                 if (name == "__getstate__") { value = __object_method("__object_getstate"); return true; }
-                if (name == "__hash__" && t == typeof(object)) { value = __object_method("__object_hash"); return true; }
+                if (name == "__hash__") { value = ClassHashSlot(t); return true; }
                 if (t == typeof(OrderedDictionary<object, object>))
                 {
                     if (name == "__eq__") { value = __object_method("__dict_eq"); return true; }
@@ -159,6 +159,18 @@ namespace Typhon.Runtime
                 if (TryBuiltinClassMethod(t, name, out value)) return true;
                 if (PyMetaclasses.TryBindMember(t, name, out value)) return true;
                 // CLR reflection consumers may also read members of the Type object itself.
+            }
+            if (o is PyBoundMethod { IsBuiltinModuleFunction: true } builtin &&
+                name is "__reduce__" or "__reduce_ex__")
+            {
+                value = new PyClosure(name, (args, keywords) =>
+                {
+                    int arity = name == "__reduce_ex__" ? 1 : 0;
+                    if (args.Length != arity || keywords?.Count > 0)
+                        throw PyClosure.ArgCountError(name, arity, arity, args.Length);
+                    return builtin.__name__;
+                });
+                return true;
             }
             if (o is PyFunction pf)
             {
@@ -292,6 +304,16 @@ namespace Typhon.Runtime
                 case "__class__": value = __type_of(o); return true;
                 case "__dict__": value = new PyAttrDict(o); return true;
             }
+            if (name == "__len__" && (o is string or System.Collections.ICollection or ITuple or IPyLen || IsSet(o)))
+            {
+                value = new PyClosure(name, (args, keywords) =>
+                {
+                    if (args.Length != 0 || keywords?.Count > 0)
+                        throw PyClosure.ArgCountError(name, 0, 0, args.Length);
+                    return len(o);
+                });
+                return true;
+            }
             if (name == "__iter__" && o is System.Collections.IEnumerable or ITuple)
             {
                 value = new PyClosure(name, (args, keywords) =>
@@ -421,6 +443,30 @@ namespace Typhon.Runtime
         static readonly ILookup<string, MethodInfo> BuiltinExtensions = typeof(Builtins)
             .GetMethods(BindingFlags.Public | BindingFlags.Static)
             .Where(method => method.IsDefined(typeof(ExtensionAttribute), false)).ToLookup(method => method.Name);
+
+        static object? ClassHashSlot(Type type)
+        {
+            const BindingFlags declaredInstance = BindingFlags.Public | BindingFlags.NonPublic |
+                BindingFlags.DeclaredOnly | BindingFlags.Instance;
+            foreach (Type owner in PyMetaclasses.MethodOrder(type))
+            {
+                if (owner == typeof(PyByteArray) || owner.IsGenericType &&
+                    owner.GetGenericTypeDefinition() is Type generic && (generic == typeof(List<>) ||
+                        generic == typeof(HashSet<>) || generic == typeof(OrderedDictionary<,>)))
+                    return null;
+                if (owner.GetMethods(declaredInstance).Any(method => method.Name == "__eq__"))
+                    return null;
+            }
+            if (!(type.IsValueType || type == typeof(string) || type == typeof(PyBytes) ||
+                  typeof(System.Runtime.CompilerServices.ITuple).IsAssignableFrom(type)))
+                return __object_method("__object_hash");
+            var descriptors = BuiltinClassMethods.GetValue(type, _ => new ConcurrentDictionary<string, PyClosure>());
+            return descriptors.GetOrAdd("__hash__", method => new PyClosure(method, (args, keywords) =>
+            {
+                if (args.Length != 1 || keywords?.Count > 0) throw PyClosure.ArgCountError(method, 1, 1, args.Length);
+                return hash(args[0]);
+            }));
+        }
 
         static bool TryBuiltinClassMethod(Type type, string name, out object? value)
         {
@@ -599,7 +645,8 @@ namespace Typhon.Runtime
         /// <summary>Python instances can acquire attributes, while CLR receivers keep their normal setter behavior.</summary>
         public static void __setattr_late(object? value, object? receiver, string name, Action<dynamic, dynamic> clrSet, bool freshEmptyDict = false)
         {
-            if (receiver == null || receiver is Exception error && PyExceptionState.HasAttribute(error, name) ||
+            if (receiver is null or PyLocalDataClass or PyLocalClassInstance ||
+                receiver is Exception error && PyExceptionState.HasAttribute(error, name) ||
                 (receiver as Type ?? receiver.GetType()).IsDefined(typeof(PySourceAttribute), false))
                 SetAttribute(receiver, name, value, freshEmptyDict);
             else
@@ -623,7 +670,7 @@ namespace Typhon.Runtime
                 throw new InvalidCastException("__class__ assignment requires a compatible object layout");
             }
             if (o is PyLocalClassInstance instance) { instance.Set(name, value); return; }
-            if (o is PyLocalDataClass local) { local.Members[name] = value; return; }
+            if (o is PyLocalDataClass local) { local.SetMember(name, value); return; }
             if (o is Type t)
             {
                 if (PyMetaclasses.Set(t, name, value)) return;

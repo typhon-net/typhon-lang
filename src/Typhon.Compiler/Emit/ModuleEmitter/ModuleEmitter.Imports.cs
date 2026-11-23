@@ -45,7 +45,7 @@ namespace Typhon.Compiler.Emit
             module.Functions.Contains("__getattr__") || module.Globals.Contains("__getattr__");
 
         bool UsesRuntimeProjectMember(ModuleInfo module, string name) =>
-            module.MayReplaceModule || ConditionalModuleClass(module, name) ||
+            module.MayReplaceModule || ConditionalModuleClass(module, name) || module.ConditionalImportBindings.Contains(name) ||
             (module.WritesModuleGlobals || HasModuleAttributeFallback(module)) &&
             ProjectExport(module, name).Owner == null && RuntimeReExport(module, name).Module == null;
 
@@ -249,12 +249,14 @@ namespace Typhon.Compiler.Emit
                 _w.Line($"global::Typhon.Runtime.Builtins.__import_platform_module({CsString(module)});");
             foreach (var module in ProjectImports(stmt))
                 _w.Line($"_ = {ImportModule(module)};");
-            if (_nativeImportsInNamespace && (_scopeKey == TypeInference.FuncKey(_m, null, "<main>") ||
-                _scopeKey == TypeInference.FuncKey(_m, null, "<module>")))
+            if ((_nativeImportsInNamespace || _m.ConditionalImportBindings.Count > 0) &&
+                (_scopeKey == TypeInference.FuncKey(_m, null, "<main>") ||
+                 _scopeKey == TypeInference.FuncKey(_m, null, "<module>")))
             {
                 string module = ModuleObject(_m);
                 foreach (var binding in NativeNamespaceImports(stmt))
                 {
+                    if (!_nativeImportsInNamespace && !_m.ConditionalImportBindings.Contains(binding.Binding)) continue;
                     string source = $"global::Typhon.Runtime.PyModule.Of(typeof({CsTypeName(binding.Metadata)}), {CsString(PublicModule(binding.Module))})";
                     if (binding.Member == "*")
                         _w.Line($"{module}.ImportNamespaceNames({source});");
@@ -427,7 +429,9 @@ namespace Typhon.Compiler.Emit
                 {
                     if (a.Name == "*") { _wildcardModules.Add(mod); continue; }
                     string bound = a.AsName ?? a.Name;
-                    if (mod.MayReplaceModule)
+                    // A conditional fallback import can share its name with a source class.
+                    // Keep the class declaration visible to inheritance and metaclass resolution.
+                    if (mod.MayReplaceModule || mod.ConditionalImportBindings.Contains(a.Name) && !mod.Classes.ContainsKey(a.Name))
                     {
                         _runtimeProjectBindings[bound] = (mod, a.Name, "__typhon_" + NewTmp("import"));
                         continue;
@@ -569,14 +573,15 @@ namespace Typhon.Compiler.Emit
             ["_json"] = "json", ["_statistics"] = "statistics", ["_string"] = "string", ["_csv"] = "csv",
             ["_collections"] = "collections", ["_contextvars"] = "contextvars",
             ["_md5"] = "hashlib", ["_sha1"] = "hashlib", ["_pydecimal"] = "decimal",
-            ["_decimal"] = "decimal", ["_pickle"] = "pickle", ["_bz2"] = "bz2", ["_lzma"] = "lzma", ["_locale"] = "locale",
+            ["_decimal"] = "decimal", ["_bz2"] = "bz2", ["_lzma"] = "lzma", ["_locale"] = "locale",
             ["_stat"] = "stat", ["_warnings"] = "warnings", ["_py_warnings"] = "warnings", ["_queue"] = "queue", ["_socket"] = "socket",
         };
 
-        static string PublicModule(string dotted)
+        string PublicModule(string dotted)
         {
             var parts = dotted.Split('.');
             if (parts[0] == "_collections_abc") return "collections.abc";
+            if (parts[0] == "_functools" && _p.FindModule("functools") != null) return dotted;
             return PrivateModuleAliases.TryGetValue(parts[0], out var pub) ? pub + dotted.Substring(parts[0].Length) : dotted;
         }
 
@@ -597,6 +602,7 @@ namespace Typhon.Compiler.Emit
 
             bool AvailableProjectExport(ModuleInfo owner, string member)
             {
+                if (owner.ConditionalImportBindings.Contains(member)) return true;
                 if (ProjectExport(owner, member).Owner == null) return false;
                 if (owner != _m || !_m.IsPackage || !_m.ConditionalGlobals.Contains(member) ||
                     _p.FindModule(owner.Name + "." + member) != null) return true;

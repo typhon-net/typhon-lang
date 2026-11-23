@@ -1,0 +1,17 @@
+#:pylib-source gzip
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import gzip
+from io import BytesIO
+
+data = b"Typhon gzip\nsecond line\n"
+payload = gzip.compress(data, mtime=0)
+print(gzip.decompress(payload) == data)
+buffer = BytesIO()
+with gzip.GzipFile(fileobj=buffer, mode="wb", mtime=0) as writer:
+    print(writer.write(data))
+buffer.seek(0)
+with gzip.GzipFile(fileobj=buffer, mode="rb") as reader:
+    print(reader.readline())
+    print(reader.seek(0), reader.read(6), reader.tell())

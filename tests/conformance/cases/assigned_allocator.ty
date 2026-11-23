@@ -1,0 +1,22 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+def allocate(cls, value: int, *, offset: int = 3):
+    instance = object.__new__(cls)
+    instance.total = value + offset
+    return instance
+
+
+class Base:
+    __new__ = allocate
+
+
+class Child(Base):
+    def __init__(self, value: int, *, offset: int = 3) -> None:
+        self.twice = value * 2
+
+
+base = Base(4)
+child = Child(5, offset=6)
+print(type(base).__name__, base.total)
+print(type(child).__name__, child.total, child.twice)
