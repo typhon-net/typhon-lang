@@ -1,0 +1,21 @@
+class Recorder:
+    def __init__(self, ready: bool):
+        self.always = 0
+        if ready:
+            self.conditional = None
+
+    def record(self, value):
+        self.value = value
+
+
+recorder = Recorder(False)
+print(recorder.always, hasattr(recorder, "conditional"), hasattr(recorder, "value"))
+try:
+    print(recorder.value)
+except AttributeError:
+    print("missing")
+recorder.record(None)
+print(hasattr(recorder, "value"), recorder.value)
+delattr(recorder, "value")
+print(hasattr(recorder, "value"))
+print(hasattr(Recorder(True), "conditional"))

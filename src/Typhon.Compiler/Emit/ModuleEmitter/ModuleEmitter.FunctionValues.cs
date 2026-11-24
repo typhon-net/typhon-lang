@@ -303,7 +303,7 @@ namespace Typhon.Compiler.Emit
             {
                 string kind = f.IsAsync ? (locals.HasYield ? "AsyncGenerator" : "Coroutine")
                     : locals.HasYield ? "Generator" : "Ordinary";
-                _w.Line($"[global::Typhon.Runtime.PySource({CsString(_path)}, {CsString(PythonModuleName)}, global::Typhon.Runtime.PyCallableKind.{kind}, line: {f.Line})]");
+                _w.Line($"[global::Typhon.Runtime.PySource({CsString(_path)}, {CsString(PythonModuleName)}, global::Typhon.Runtime.PyCallableKind.{kind}, line: {f.FirstSourceLine})]");
             }
             _w.Line($"internal sealed class {cls} : global::Typhon.Runtime.PyFunction");
             _w.Open();
@@ -330,11 +330,11 @@ namespace Typhon.Compiler.Emit
                 if (_m.RuntimeCodeMode == null && f.EndOffset > f.StartOffset && f.EndOffset <= _m.SourceText?.Length)
                 {
                     string text = CsString(_m.SourceText.Substring(f.StartOffset, f.EndOffset - f.StartOffset));
-                    source = $"_code = new global::Typhon.Runtime.RuntimeFunctionCode(__name__, {CsString(_path)}, {f.Line}, " +
+                    source = $"_code = new global::Typhon.Runtime.RuntimeFunctionCode(__name__, {CsString(_path)}, {f.FirstSourceLine}, " +
                         $"{text}, {(_big ? "true" : "false")}, {flags}, {arity}, {names}); ";
                 }
                 else
-                    source = $"_code = new global::Typhon.Stdlib.types.CodeType(__name__, {CsString(_path)}, {f.Line}, {flags}, " +
+                    source = $"_code = new global::Typhon.Stdlib.types.CodeType(__name__, {CsString(_path)}, {f.FirstSourceLine}, {flags}, " +
                         $"arity: {arity}, variables: new {PyTuplePrefix}string>({names})); ";
             }
             _w.Line($"{cls}() : base({CsString(f.PyName ?? f.Name)}) {{ {module}{source}{(doc != null ? $"__doc__ = {doc}; " : "")}}}");
@@ -623,15 +623,8 @@ namespace Typhon.Compiler.Emit
             if (call.Func is NameExpr { Id: "print" } && !IsShadowed("print")) return true;
             if (call.Func is AttributeExpr { Target: NameExpr { Id: "self" } } && HasSelfInScope() &&
                 TyphonCallee(call, out int implicitParams) is FunctionDef source && implicitParams != 0 &&
-                _cls?.Def.Body.Contains(source) == true && !source.IsAsync && !_m.Ast.MethodDecorators.ContainsKey(source))
-            {
-                var locals = LocalsAnalyzer.Analyze(source.Body, source.Params.Select(parameter => parameter.Name), null);
-                if (!locals.HasYield && (source.Returns != null
-                    ? MapType(source.Returns, source, isReturn: true) == "void"
-                    : !locals.HasValueReturn && !ImplicitMethodResultIsDynamic(source) &&
-                        DotNetBaseMethod(_cls.Def, source)?.ReturnsDynamic != true))
-                    return true;
-            }
+                _cls?.Def.Body.Contains(source) == true && SourceMethodReturnsVoid(_cls.Def, source))
+                return true;
             int positional = call.Args.Count(arg => arg.Name == null && !arg.Star && !arg.DoubleStar);
             var named = call.Args.Where(arg => arg.Name != null).Select(arg => arg.Name).ToList();
             var overloads = DotNetOverloads(call);
@@ -647,6 +640,17 @@ namespace Typhon.Compiler.Emit
                 overloads = _r.GetMembers("Typhon.Runtime.Builtins", name.Id).Where(m => m.IsMethod && m.IsStatic).ToList();
             var methods = overloads?.Where(method => Applicable(method, positional, named)).ToList();
             return methods is { Count: > 0 } && methods.All(method => method.ReturnsVoid);
+        }
+
+        bool SourceMethodReturnsVoid(ClassDef owner, FunctionDef method)
+        {
+            var resolver = owner == _cls?.Def ? this : ClassDeclarationResolver(owner);
+            if (method.IsAsync || resolver._m.Ast.MethodDecorators.ContainsKey(method)) return false;
+            var locals = LocalsAnalyzer.Analyze(method.Body, method.Params.Select(parameter => parameter.Name), null);
+            return !locals.HasYield && (method.Returns != null
+                ? resolver.MapType(method.Returns, method, isReturn: true) == "void"
+                : !locals.HasValueReturn && !resolver.ImplicitMethodResultIsDynamic(method, owner) &&
+                    resolver.DotNetBaseMethod(owner, method)?.ReturnsDynamic != true);
         }
 
         /// <summary>A lambda bound to a local name: Func&lt;T..., R&gt; when its calls give the parameter types, else a delegate of dynamic values.</summary>

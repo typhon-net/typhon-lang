@@ -1,0 +1,7 @@
+True True True
+True True
+1 1.2 Oid(nid=1, oid='1.2')
+Purpose.SERVER_AUTH <Purpose.SERVER_AUTH: Oid(nid=1, oid='1.2')> SERVER_AUTH
+True True
+['SERVER_AUTH', 'CLIENT_AUTH'] ['SERVER_AUTH', 'CLIENT_AUTH', 'SERVER_ALIAS']
+(-1, 0) Point(x=-1, y=0) True

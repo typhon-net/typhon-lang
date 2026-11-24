@@ -1,0 +1,20 @@
+class Source:
+    def act(self, value):
+        return self.label + str(value)
+
+class Middle:
+    nickname = alias = Source.act
+
+class Storage(Source):
+    def __init__(self, label: str):
+        self.label = label
+
+class Combined(Storage, Middle):
+    pass
+
+combined = Combined("answer ")
+print(combined.nickname(7), combined.alias(value=8), sep=" | ")
+print(Middle.nickname(combined, 9))
+print(Middle.alias is Middle.nickname, Middle.alias is Source.act)
+first = second = combined.act
+print(first is second, second(10))

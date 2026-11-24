@@ -1,0 +1,14 @@
+class Protocol:
+    def command(self, name, suffix="message"):
+        return 200 + len(name), name + " " + suffix
+
+    def default_response(self):
+        code, text = self.command("helo")
+        return code, text, self.command("status")[0]
+
+
+client = Protocol()
+print(client.command("ping", "explicit"))
+print(client.default_response())
+code, text = client.command("quit")
+print(code, text)

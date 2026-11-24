@@ -10,6 +10,7 @@ namespace Typhon.Stdlib
     using System.Buffers;
     using System.IO;
     using System.IO.Compression;
+    using System.Runtime.InteropServices;
     using Typhon.Runtime;
 
     internal static class zlib
@@ -77,10 +78,16 @@ namespace Typhon.Stdlib
             _ => throw new ArgumentException("unsupported decompression window size"),
         });
 
-        public static PyBytes compress(object data, long level = Z_DEFAULT_COMPRESSION, long wbits = MAX_WBITS)
+        public static PyBytes compress(object data, [Optional, DefaultParameterValue(Z_DEFAULT_COMPRESSION)] object? level,
+            long wbits = MAX_WBITS)
         {
-            using var encoder = compressobj(level: level, wbits: wbits);
-            return encoder.Encode(ByteOps.Buffer(data), final: true);
+            byte[] input = ByteOps.Buffer(data);
+            object index = Builtins.__index_value(level);
+            if (index is not long numeric || numeric is < int.MinValue or > int.MaxValue)
+                throw new OverflowException("Python int too large to convert to C int");
+            if (numeric is < -1 or > 9) throw new error("Bad compression level");
+            using var encoder = compressobj(level: numeric, wbits: wbits);
+            return encoder.Encode(input, final: true);
         }
 
         public static PyBytes decompress(object data, long wbits = MAX_WBITS, long bufsize = DEF_BUF_SIZE)

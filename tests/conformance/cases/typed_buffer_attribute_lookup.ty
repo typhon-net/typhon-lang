@@ -1,0 +1,13 @@
+import io
+
+
+def consume(data):
+    if hasattr(data, 'read'):
+        return data.read(3)
+    return data
+
+
+print(consume(b'bytes'))
+print(consume(bytearray(b'mutable')))
+print(consume(io.BytesIO(b'stream')))
+print(b'fixed'.decode('ascii'))

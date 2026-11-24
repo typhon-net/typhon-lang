@@ -1,0 +1,52 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+from functools import partial
+
+
+def greet(first: str, second: str, ending: str = "!") -> str:
+    return first + " " + second + ending
+
+
+def join(first: str, second: str, ending: str = "!") -> str:
+    return first + "/" + second + ending
+
+
+value = partial(greet, "hello", ending="?")
+reduce = getattr(type(value), "__reduce__")
+factory, factory_args, state = reduce(value)
+print(factory is type(value), factory_args[0] is greet, state[0] is greet)
+print(state[1], state[2], state[3], object.__getstate__(value))
+print(getattr(value, "__reduce_ex__")(3)[2] == state)
+
+attributes = vars(value)
+setattr(value, "label", "saved")
+saved = reduce(value)[2]
+print(saved[1] is value.args, saved[2] is value.keywords, saved[3] is attributes)
+print(saved[3] is object.__getstate__(value), attributes["label"])
+
+restored = factory(*factory_args)
+print(getattr(type(restored), "__setstate__")(restored, saved))
+print(restored("world"), restored("world", ending="!"), restored.label)
+print(vars(restored) is attributes, restored.keywords is value.keywords)
+
+incoming_args = ("fresh",)
+incoming_keywords = {"ending": "."}
+incoming_attributes = {"label": "new"}
+restore = getattr(restored, "__setstate__")
+restore((join, incoming_args, incoming_keywords, incoming_attributes))
+print(restored.func is join, restored.args is incoming_args, restored.keywords is incoming_keywords)
+print(restored("value"), vars(restored) is incoming_attributes, restored.label)
+incoming_keywords["ending"] = "?"
+incoming_attributes["label"] = "changed"
+print(restored("value"), restored.label)
+
+for invalid in (None, (), (None, (), {}, None), (join, [], {}, None), (join, (), [], None), (join, (), {}, 3)):
+    try:
+        restore(invalid)
+    except TypeError as error:
+        print(str(error))
+print(restored("value"), restored.label)
+
+restore((greet, ("reset",), None, None))
+print(restored("done"), restored.keywords, object.__getstate__(restored), vars(restored) is incoming_attributes)

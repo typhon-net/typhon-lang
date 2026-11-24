@@ -1,0 +1,18 @@
+#:pylib-source trace
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+from trace import Trace
+
+def walk(n: int) -> int:
+    total = 0
+    for i in range(n):
+        total += i
+    return total
+
+tracer = Trace(count=True, trace=False)
+print(tracer.runfunc(walk, n=4))
+counts = []
+for (filename, lineno), count in tracer.results().counts.items():
+    if filename.endswith("source_trace_counts.ty"):
+        counts.append((lineno, count))
+print(sorted(counts))

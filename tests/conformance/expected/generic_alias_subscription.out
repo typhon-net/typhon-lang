@@ -4,3 +4,6 @@ list[int] *list[int] False True
 (<class 'int'>, Ellipsis)
 list[int]
 ('Tagged', (<class 'int'>, <class 'str'>))
+('Tagged', 5)
+True True
+True True

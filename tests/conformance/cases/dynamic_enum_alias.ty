@@ -1,0 +1,26 @@
+import enum
+import sys
+
+VALUE = 7
+enum.IntEnum._convert_('Mode', __name__, lambda name: name == 'VALUE')
+mode = getattr(sys.modules[__name__], 'Mode')
+mode.LEGACY = mode.VALUE
+print(mode.LEGACY is mode.VALUE, 'LEGACY' in mode.__members__, list(mode.__members__))
+print(mode.__dict__['LEGACY'] is mode.VALUE, mode.VALUE.LEGACY is mode.VALUE)
+setattr(mode, 'LEGACY', 9)
+print(mode.LEGACY)
+del mode.LEGACY
+print(hasattr(mode, 'LEGACY'))
+try:
+    mode.VALUE = 99
+except AttributeError:
+    print('member assignment rejected')
+try:
+    del mode.VALUE
+except AttributeError:
+    print('member deletion rejected')
+
+plain = enum.Enum('Plain', {'VALUE': 'current'})
+plain.LEGACY = plain.VALUE
+print(plain.LEGACY is plain.VALUE, 'LEGACY' in plain.__members__)
+print(plain.__dict__['LEGACY'] is plain.VALUE, plain.VALUE.LEGACY is plain.VALUE)

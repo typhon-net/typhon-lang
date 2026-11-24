@@ -117,7 +117,12 @@ namespace Typhon.Compiler.Syntax
 
     // ───────────────────────────── Statements ─────────────────────────────
 
-    public abstract class Stmt : Node { }
+    public abstract class Stmt : Node
+    {
+        internal bool IsFlattenedClassMember;
+        internal int DecoratorLine;
+        internal int FirstSourceLine => DecoratorLine == 0 ? Line : DecoratorLine;
+    }
 
     public sealed class ExprStmt : Stmt { public Expr Value; }
 
@@ -239,6 +244,7 @@ namespace Typhon.Compiler.Syntax
         internal bool UsedInClassBody;
         internal bool IsMissingMethodStub;
         internal bool NeedsOverrideBinding;
+        internal bool HidesBaseMethod;
         internal bool UsedWithUnboundReceiver;
         internal bool UsesObjectReturnSlot;
         /// <summary>The name Python sees (its __name__) when Name was changed: a decorated function's undecorated body.</summary>
@@ -249,6 +255,7 @@ namespace Typhon.Compiler.Syntax
 
     public sealed class ClassDef : Stmt
     {
+        internal List<Expr> BasesBeforeFlattening;
         internal bool ConditionalModuleDefinition;
         internal bool ExportsIntegerEnumMembers;
         internal bool HasPythonClassDecorators;
@@ -262,6 +269,10 @@ namespace Typhon.Compiler.Syntax
         public List<Expr> Decorators = new List<Expr>();
         /// <summary>Set for a class made from namedtuple(...) / typing.NamedTuple: its fields in order (it behaves like a tuple of them).</summary>
         public List<string> NamedTupleFields;
+        internal bool InlinedNamedTupleBase;
+        internal bool NamedTupleFieldConstructor;
+        internal List<Expr> NamedTupleFactoryDefaults;
+        internal bool CapturesNamedTupleFactoryDefaults => !NamedTupleFieldConstructor && NamedTupleFactoryDefaults is { Count: > 0 };
         /// <summary>The namedtuple subclass provides its own allocation logic, lowered to its constructor.</summary>
         public bool NamedTupleCustomNew;
         /// <summary>The class statement applies object.__new__ and binds the uninitialized instance to the class name.</summary>

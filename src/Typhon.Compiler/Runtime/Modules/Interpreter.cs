@@ -48,6 +48,7 @@ namespace Typhon.Stdlib
             ["range"] = typeof(PyRange), ["slice"] = typeof(PySlice), ["super"] = typeof(super),
             ["property"] = typeof(property), ["classmethod"] = typeof(classmethod), ["staticmethod"] = typeof(staticmethod),
             ["frozendict"] = typeof(frozendict<object, object>), ["frozenset"] = typeof(frozenset<object>),
+            ["sentinel"] = typeof(PySingleton),
             ["Exception"] = typeof(Exception), ["ValueError"] = typeof(ArgumentException), ["TypeError"] = typeof(InvalidCastException),
             ["NameError"] = typeof(NameError), ["KeyError"] = typeof(KeyNotFoundException), ["AttributeError"] = typeof(MissingMemberException),
         };
@@ -64,11 +65,8 @@ namespace Typhon.Stdlib
         public static void print(params object?[] values) => Builtins.print_kw(values ?? new object?[] { null });
 
         /// <summary>open(file, mode='r', ...): a text file, or a binary one for a mode with 'b'.</summary>
-        public static dynamic open(object file, string mode = "r", long buffering = -1, string? encoding = null, string? errors = null, string? newline = null, bool closefd = true, object? opener = null)
-        {
-            string path = file as string ?? Builtins.str(file);
-            return mode.Contains('b') ? Builtins.open_binary(path, mode) : Builtins.open(path, mode, buffering, encoding, errors, newline);
-        }
+        public static dynamic open(object file, string mode = "r", long buffering = -1, string? encoding = null, string? errors = null, string? newline = null, bool closefd = true, object? opener = null) =>
+            io.open(file, mode, buffering, encoding, errors, newline, closefd, opener);
         public static string input(string prompt = "") => Builtins.input(prompt);
 
         public static string repr(object? o) => Builtins.repr(o);
@@ -132,8 +130,13 @@ namespace Typhon.Stdlib
                 case Type t:
                     if (t == typeof(_typing.Any)) throw new InvalidCastException("typing.Any cannot be used with isinstance()");
                     if (t == typeof(types.MethodType) && obj is PyBoundMethod method) return inspect.ismethod(method);
-                    Type actual = obj is PyIntegerEnum { DynamicEnumType: { } enumType } ? enumType :
-                        obj is Type cls ? PyMetaclasses.Of(cls) : obj?.GetType() ?? typeof(types.NoneType);
+                    Type actual = obj switch
+                    {
+                        PyIntegerEnum { DynamicEnumType: { } enumType } => enumType,
+                        PyLocalClassInstance local => local.PythonType,
+                        Type cls => PyMetaclasses.Of(cls),
+                        _ => obj?.GetType() ?? typeof(types.NoneType),
+                    };
                     if (actual == t || Builtins.__type_of(obj) == t) return true;
                     if (PyMetaclasses.TryBindMember(t, "__instancecheck__", out var check))
                         return Builtins.truthy((object?)Builtins.__invoke(check, [obj]));
@@ -303,7 +306,7 @@ namespace Typhon.Stdlib
             for (int pass = 0; pass < 2; pass++)
             {
                 GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true);
-                GC.WaitForPendingFinalizers();
+                if (!Builtins.RunningFinalizer) GC.WaitForPendingFinalizers();
             }
             return 0;
         }
@@ -715,10 +718,7 @@ namespace Typhon.Stdlib
         }
     }
 
-    /// <summary>
-    /// copyreg: the registry pickle consults for reducing objects (dispatch_table, pickle(), constructor()) and the
-    /// extension code registry. Typhon has no pickle module yet; the registry is kept for code that fills it.
-    /// </summary>
+    /// <summary>Copy and pickle registries and reconstruction functions.</summary>
     internal static class copyreg
     {
         public static readonly OrderedDictionary<object, object?> dispatch_table = new OrderedDictionary<object, object?>(PyKeyComparer.Instance!);
@@ -739,6 +739,31 @@ namespace Typhon.Stdlib
         {
             if (@object == null) throw new InvalidCastException("constructors must be callable");
         }
+
+        public static object _reduce_ex(object value, long protocol)
+        {
+            if (protocol >= 2) throw new AssertionError("assertion failed");
+            return Builtins.LegacyReduction(value);
+        }
+
+        public static object? _reconstructor(Type cls, Type @base, object? state)
+        {
+            if (@base == typeof(object)) return Builtins.__object_new(cls);
+
+            object? instance = Builtins.__invoke((object?)Builtins.getattr(@base, "__new__"), [cls, state]);
+            object? initialize = Builtins.getattr(@base, "__init__", PyModule.Unbound);
+            if (!ReferenceEquals(initialize, PyModule.Unbound) &&
+                !ReferenceEquals(initialize, Builtins.__object_method("__object_init")))
+                Builtins.__invoke(initialize, [instance, state]);
+            return instance;
+        }
+
+        public static object? __newobj__([PyPositionalOnly] Type cls, [PyPackedArguments] object?[] args) =>
+            Builtins.__invoke((object?)Builtins.getattr(cls, "__new__"), [cls, .. args]);
+
+        public static object? __newobj_ex__(Type cls, object? args, object? kwargs) =>
+            Builtins.__invoke_kw((object?)Builtins.getattr(cls, "__new__"),
+                [cls, .. Builtins.__iter_dyn(args)], Builtins.__kwargs(new OrderedDictionary<string, dynamic>(), kwargs));
 
         public static void add_extension(string module, string name, long code)
         {

@@ -3,6 +3,7 @@
 # Licensed under the MIT License. See LICENSE file in the project root for full license information.
 
 import gzip
+import zlib
 from io import BytesIO
 
 data = b"Typhon gzip\nsecond line\n"
@@ -15,3 +16,12 @@ buffer.seek(0)
 with gzip.GzipFile(fileobj=buffer, mode="rb") as reader:
     print(reader.readline())
     print(reader.seek(0), reader.read(6), reader.tell())
+
+try:
+    gzip.compress(data, compresslevel=1.5)
+except TypeError as error:
+    print(type(error).__name__, str(error))
+try:
+    gzip.compress(data, compresslevel=10)
+except zlib.error as error:
+    print(type(error).__name__, str(error))

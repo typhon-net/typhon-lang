@@ -1,0 +1,35 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+class Data(bytes):
+    def __init__(self, source: bytes) -> None:
+        self.original_length = len(source)
+
+
+class InheritedData(Data):
+    pass
+
+
+class Doubled(bytes):
+    def __new__(cls, source: bytes):
+        return bytes.__new__(cls, source + source)
+
+
+base = Data(b"hello")
+print(type(base).__name__, isinstance(base, bytes), repr(base), base.original_length, base[0], base.decode())
+inherited = InheritedData(b"child")
+print(type(inherited).__name__, repr(inherited), inherited.original_length)
+reconstructed = bytes.__new__(Data, b"direct")
+print(type(reconstructed).__name__, repr(reconstructed), hasattr(reconstructed, "original_length"))
+plain = bytes.__new__(bytes, reconstructed)
+print(type(plain).__name__, plain == reconstructed)
+alias = getattr(InheritedData, "__new__")
+without_init = alias(InheritedData, source=b"alias")
+print(alias.__self__ is bytes, repr(without_init), hasattr(without_init, "original_length"))
+wrapped = Doubled(b"ab")
+print(type(wrapped).__name__, repr(wrapped))
+print(getattr(Data, "__hash__")(base) == hash(b"hello"))
+try:
+    forbidden = object.__new__(Data)
+except TypeError:
+    print("bytes subclasses require bytes allocation")

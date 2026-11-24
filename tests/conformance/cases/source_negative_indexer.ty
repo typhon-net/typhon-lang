@@ -1,0 +1,14 @@
+class TypedKeys:
+    def __getitem__(self, key: int) -> int:
+        return key
+
+
+class ObservedKeys:
+    def __getitem__(self, key):
+        return type(key).__name__, key
+
+
+typed = TypedKeys()
+observed = ObservedKeys()
+print(typed[-2], observed[-3])
+print([4, 5][-1])

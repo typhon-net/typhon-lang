@@ -12,3 +12,51 @@ for protocol in (0, 2, 4, 5):
 buffers: list = []
 payload = pickle.dumps(pickle.PickleBuffer(b"buffer"), protocol=5, buffer_callback=buffers.append)
 print(len(buffers), bytes(pickle.loads(payload, buffers=buffers)))
+
+
+class Record:
+    def __init__(self, number: int) -> None:
+        self.number = number
+
+
+class Data(bytes):
+    def __init__(self, source: bytes) -> None:
+        self.source = source
+
+
+class Slotted:
+    __slots__ = ("stored",)
+
+    def __init__(self, stored: str) -> None:
+        self.stored = stored
+
+
+record = Record(17)
+setattr(record, "self_ref", record)
+data = Data(b"data")
+slot = Slotted("slot")
+for level in range(6):
+    ordinary = pickle._loads(pickle._dumps(record, protocol=level))
+    binary = pickle._loads(pickle._dumps(data, protocol=level))
+    print(level, type(ordinary).__name__, ordinary.number, ordinary.self_ref is ordinary,
+          type(binary).__name__, repr(binary), binary.source)
+    if level >= 2:
+        slotted = pickle._loads(pickle._dumps(slot, protocol=level))
+        print(type(slotted).__name__, slotted.stored, hasattr(slotted, "__dict__"))
+
+
+class KeywordRecord:
+    def __new__(cls, *, key: str):
+        instance = object.__new__(cls)
+        instance.key = key
+        return instance
+
+    def __getnewargs_ex__(self):
+        return (), {"key": self.key}
+
+
+keyword_record = KeywordRecord(key="value")
+setattr(keyword_record, "extra", 12)
+for level in range(6):
+    restored = pickle._loads(pickle._dumps(keyword_record, protocol=level))
+    print(level, type(restored).__name__, restored.key, restored.extra)

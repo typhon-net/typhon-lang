@@ -1,0 +1,26 @@
+import copyreg
+
+
+class Allocated:
+    def __new__(cls, sequence: int, *, label: str = 'default'):
+        instance = object.__new__(cls)
+        instance.sequence = sequence
+        instance.label = label
+        return instance
+
+    def __init__(self, sequence, *, label='default'):
+        raise RuntimeError('initialization must not run')
+
+
+class Record:
+    def __init__(self):
+        raise RuntimeError('initialization must not run')
+
+
+plain = copyreg._reconstructor(Record, object, None)
+print(type(plain).__name__, vars(plain))
+source = (7,)
+positional = copyreg.__newobj__(Allocated, *source)
+print(positional.sequence, positional.label)
+keyword = copyreg.__newobj_ex__(Allocated, (12,), {'label': 'custom'})
+print(keyword.sequence, keyword.label)

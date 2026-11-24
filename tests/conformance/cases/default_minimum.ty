@@ -1,0 +1,12 @@
+from collections.abc import Iterable
+from typing import Any
+
+
+def completed(results: Iterable[Any]):
+    success = True
+    for attempt in range(1):
+        success = min(results, default=True)
+    return success
+
+
+print(completed([True, False]), completed([]), completed(["result"]))

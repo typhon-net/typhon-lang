@@ -36,7 +36,14 @@ namespace Typhon.Compiler.Emit
         // Type-annotation spelling does not change a source value into a CLR type.
         bool SourceValueSubscription(Expr target)
         {
-            if (!GenericAliases.Contains(StripTypingPrefix(DottedName(target)))) return false;
+            string dotted = DottedName(target);
+            if (!_m.IsGdScript && dotted != null &&
+                (TryResolveType(dotted, 0, out _, out var definition) || TryResolveImportedReboundClass(dotted, out _, out definition)) &&
+                (HasUserMetaclass(definition, new HashSet<ClassDef>(), "__getitem__") ||
+                 definition is { TypeParams.Count: 0 } &&
+                 (DefinesInHierarchy(definition, "__class_getitem__") || ClassVariableOwner(definition, "__class_getitem__") != null)))
+                return true;
+            if (!GenericAliases.Contains(StripTypingPrefix(dotted))) return false;
             bool ExportsValue(ModuleInfo module, string name) => !module.Classes.ContainsKey(name) &&
                 (module.Globals.Contains(name) || module.Functions.Contains(name));
             if (target is NameExpr name)
@@ -57,7 +64,7 @@ namespace Typhon.Compiler.Emit
                 Obs.AddElement(rkey, (PyType(InferType(s.Index)) ?? TypeInference.Unknown) + "→" + (rk == 'c' ? "long" : TypeInference.Pending));
             if (!(s.Index is SliceExpr) && BuiltinGenericOrigin(s.Target) is string origin)
                 return EmitGenericAlias(s, origin);
-            if (!store && s.Index is not SliceExpr && SourceValueSubscription(s.Target))
+            if (!store && s.Index is not SliceExpr && (SourceValueSubscription(s.Target) || EnumIterated(s.Target, out _) != null))
                 return $"{Rt("__getitem")}((object?){Paren(EmitValue(s.Target))}, {EmitUnionArguments(s.Index)})";
             // a generic type used as a value, e.g. Stack[str].of(...) or Dictionary[str, int] passed around
             if (!(s.Index is SliceExpr) && TryTypeExpr(s, out var genericType)) return genericType;
@@ -79,6 +86,11 @@ namespace Typhon.Compiler.Emit
             if (InferType(s.Index) == "global::Typhon.Runtime.PySlice")
                 return $"{Rt("__getitem")}((object?){target}, (object?){Paren(EmitExpr(s.Index))})";
             string targetType = InferType(s.Target);
+            // Source indexers receive the Python key itself, including negative integers.
+            if (!store && !_m.IsGdScript && s.Index is UnaryExpr { Op: "-", Operand: ConstExpr { Kind: ConstKind.Int } } &&
+                ClassKeyOfType(targetType, out _) is string sourceKey && ClassDefOfKey(sourceKey) is ClassDef sourceType &&
+                MethodInHierarchy(sourceType, "__getitem__") != null)
+                return $"{target}[{EmitValue(s.Index)}]";
             if (!store && UsesDictMissingLookup(targetType))
                 return $"{Rt("__getitem")}((object?){Paren(target)}, (object?){Paren(EmitValue(s.Index))})";
             // a class deriving from list: positions like a list's (a Python int, maybe negative)
@@ -99,6 +111,14 @@ namespace Typhon.Compiler.Emit
             // a[x, y] on a late-bound a: the key is the tuple (x, y) (a Typhon class's __getitem__ takes one key)
             if (lateContainer && s.Index is TupleExpr dtk && !dtk.Elts.Any(x => x is SliceExpr))
                 return $"{Rt("__getitem")}((object?){target}, (object?){EmitExpr(new TupleExpr { Elts = dtk.Elts, Parenthesized = true, Line = dtk.Line, Col = dtk.Col })})";
+            if (targetType == "string" && !_m.IsGdScript)
+            {
+                string index = EmitValue(s.Index);
+                string type = InferType(s.Index);
+                if (!IsIntegral(type) || type == TypeInference.BigInt || IsDynamicallyDispatched(s.Index))
+                    index = $"(object?){Paren(index)}";
+                return $"{Rt("str_at")}({target}, {index})";
+            }
             // s[i] is a one-character str
             if (targetType == "string" && !(s.Index is TupleExpr)) return $"{Rt("str_at")}({target}, {EmitPosition(s.Index, targetType)})";
             // t[i] of a tuple of fixed shape: ItemN for a constant index, else the ITuple indexer (items of one type)

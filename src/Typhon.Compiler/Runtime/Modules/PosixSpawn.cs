@@ -250,13 +250,8 @@ namespace Typhon.Stdlib
                     yield return EnvironmentEntry(item.Key, item.Value);
                 yield break;
             }
-            object? items = Builtins.__invoke((object?)Builtins.getattr(env, "items"), []);
-            foreach (object item in Builtins.__iter_dyn(items))
-            {
-                var pair = Builtins.__iter_dyn(item).Cast<object?>().ToArray();
-                if (pair.Length != 2) throw new ArgumentException("environment entry must contain a key and value");
-                yield return EnvironmentEntry(pair[0], pair[1]);
-            }
+            foreach (var (key, value) in ProcessEnvironment.Entries(env))
+                yield return EnvironmentEntry(key, value);
         }
 
         static byte[] EnvironmentEntry(object? key, object? value)

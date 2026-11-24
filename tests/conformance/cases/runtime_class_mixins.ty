@@ -1,0 +1,35 @@
+class Header(str):
+    @classmethod
+    def parse(cls, text, options):
+        options['decoded'] = text.upper()
+        options['parts'] = [text]
+
+    def __new__(cls, name, text):
+        options = {'notes': []}
+        cls.parse(text, options)
+        self = str.__new__(cls, options['decoded'])
+        del options['decoded']
+        self.bind(name, **options)
+        return self
+
+    def bind(self, name, *, parts, notes):
+        self.name = name
+        self.parts = parts
+        self.notes = notes
+
+
+class Uppercase:
+    @classmethod
+    def parse(cls, text, options):
+        options['decoded'] = text.upper() + '!'
+        options['parts'] = [text, cls.__name__]
+
+Construct = type('Construct', (Uppercase, Header), {})
+message = Construct('subject', 'hello')
+print(message, message.name, message.parts, message.notes)
+print(type(message).__name__, isinstance(message, Header), isinstance(message, Uppercase))
+if isinstance(message, Uppercase):
+    print('logical mixin')
+else:
+    print('unknown base')
+print(issubclass(Construct, Uppercase))

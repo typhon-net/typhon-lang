@@ -1,0 +1,13 @@
+class Styled(str):
+    def __str__(self) -> str:
+        return 'styled'
+
+
+descriptor = getattr(str, '__str__')
+value = Styled('plain')
+print(descriptor('ordinary'), descriptor(value))
+print(type(descriptor(value)) is str, str(value))
+try:
+    descriptor(7)
+except TypeError:
+    print('string receiver required')

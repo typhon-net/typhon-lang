@@ -182,6 +182,9 @@ namespace Typhon.Stdlib
         [DllImport("ucrtbase.dll", EntryPoint = "_putwch", CallingConvention = CallingConvention.Cdecl)]
         static extern ushort PutWideChar(ushort character);
 
+        public static long open_osfhandle(long handle, long flags) => os_.RegisterWindowsFileHandle(handle, flags);
+        public static long get_osfhandle(long fd) => os_.WindowsFileHandle(fd);
+
         public static string getwch() => ((char)GetWideChar()).ToString();
         public static object? putwch(string value)
         {
@@ -205,11 +208,6 @@ namespace Typhon.Stdlib
         static extern int NativePipe([Out] int[] descriptors);
         [DllImport("libc", EntryPoint = "pipe2", SetLastError = true)]
         static extern int NativePipeWithFlags([Out] int[] descriptors, int flags);
-        [DllImport("kernel32.dll", EntryPoint = "CreatePipe", SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        static extern bool CreateWindowsPipe(out SafeFileHandle read, out SafeFileHandle write,
-            IntPtr securityAttributes, uint bufferSize);
-
         [DllImport("libc", EntryPoint = "fcntl", SetLastError = true)]
         static extern int ConfigureDescriptor(int descriptor, int command, int value);
         [DllImport("libc", EntryPoint = "isatty", SetLastError = true)]
@@ -363,14 +361,9 @@ namespace Typhon.Stdlib
         {
             if (OperatingSystem.IsWindows())
             {
-                if (!CreateWindowsPipe(out var read, out var write, IntPtr.Zero, 0))
-                {
-                    int error = Marshal.GetLastPInvokeError();
-                    read?.Dispose();
-                    write?.Dispose();
-                    throw OsErrors.WinError(error, new System.ComponentModel.Win32Exception(error).Message, filename: null);
-                }
-                return RegisterFilePair(read, FileAccess.Read, write, FileAccess.Write);
+                var (read, write) = _winapi.CreatePipe(null, 0);
+                return RegisterFilePair(new SafeFileHandle(new IntPtr(read), ownsHandle: true), FileAccess.Read,
+                    new SafeFileHandle(new IntPtr(write), ownsHandle: true), FileAccess.Write);
             }
 
             var descriptors = new int[2];
@@ -433,9 +426,11 @@ namespace Typhon.Runtime
                 "msvcrt" or "nt" or "_winapi" => System.OperatingSystem.IsWindows(),
                 "posix" => !System.OperatingSystem.IsWindows(),
                 "_posixsubprocess" => System.OperatingSystem.IsLinux(),
+                "_lzma" => Typhon.Stdlib.LzmaNative.IsAvailable &&
+                    (!Typhon.Stdlib.sys_.modules.TryGetValue(name, out var loaded) || loaded != null),
                 _ => true,
             };
-            if (!available) throw new ModuleNotFoundError($"No module named '{name}'");
+            if (!available) throw new ModuleNotFoundError($"No module named '{name}'", name);
         }
     }
 }

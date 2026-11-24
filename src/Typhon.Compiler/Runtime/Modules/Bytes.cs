@@ -204,6 +204,7 @@ namespace Typhon.Runtime
 
         internal static byte[] Encode(string text, string encoding, string errors)
         {
+            if (Typhon.Stdlib.codecs.IsIdna(encoding)) return Typhon.Stdlib.codecs.EncodeIdna(text, errors);
             var codec = EncodingOf(encoding, errors);
             byte[] bytes = codec.GetBytes(text);
             return CodecName(encoding) is "utf-8-sig" or "utf-16" or "utf16" or "utf-32" or "utf32"
@@ -212,6 +213,7 @@ namespace Typhon.Runtime
 
         public static string Decode(byte[] data, string encoding, string errors)
         {
+            if (Typhon.Stdlib.codecs.IsIdna(encoding)) return Typhon.Stdlib.codecs.DecodeIdna(data, errors);
             if (Typhon.Stdlib.codecs.IsRawUnicodeEscape(encoding))
                 return Typhon.Stdlib.codecs.raw_unicode_escape_decode(new PyBytes(data), errors).Item1;
             if (errors == "strict" && CodecName(encoding) is "ascii" or "us-ascii")
@@ -340,17 +342,33 @@ namespace Typhon.Runtime
     }
 
     /// <summary>Python's bytes: an immutable sequence of ints 0..255.</summary>
-    internal sealed class PyBytes : IReadOnlyList<long>, IEquatable<PyBytes>, IComparable<PyBytes>, IComparable, IPyRepr, IPyLen
+    internal class PyBytes : IReadOnlyList<long>, IEquatable<PyBytes>, IComparable<PyBytes>, IComparable, IPyRepr, IPyLen
     {
-        internal readonly byte[] Data;
+        internal byte[] Data { get; private set; }
         int _hash;
         public static readonly PyBytes Empty = new PyBytes(Array.Empty<byte>());
+
+        protected PyBytes() : this(Array.Empty<byte>()) { }
 
         public PyBytes(byte[] data)
         {
             Data = data;
             if (global::Typhon.Stdlib._tracemalloc.is_tracing())
                 global::Typhon.Stdlib._tracemalloc.Record(this, data.LongLength);
+        }
+
+        public static PyBytes __new__([PyPackedArguments] object?[] args, [PyKeywordArguments] IDictionary<string, object?> keywords) =>
+            Builtins.__bytes_new(args, keywords);
+
+        internal static PyBytes Allocate(Type cls, PyBytes payload)
+        {
+            if (cls == typeof(PyBytes)) return payload;
+            Typhon.Stdlib._abc.CheckAbstract(cls);
+            var value = (PyBytes)RuntimeHelpers.GetUninitializedObject(cls);
+            value.Data = payload.Data;
+            if (global::Typhon.Stdlib._tracemalloc.is_tracing())
+                global::Typhon.Stdlib._tracemalloc.Record(value, value.Data.LongLength);
+            return value;
         }
         /// <summary>A bytes literal: the string holds one char per byte (0..255).</summary>
         public static PyBytes Latin1(string s)

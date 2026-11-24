@@ -1,0 +1,13 @@
+class Display:
+    def __str__(self):
+        return 'item'
+
+    def __format__(self, specification):
+        return str.__format__(str(self), specification)
+
+
+display = Display()
+print(format(display, '>6'))
+print(str.__format__('hi', '*^6'))
+formatter = str.__format__
+print(formatter('whole', '.3'))

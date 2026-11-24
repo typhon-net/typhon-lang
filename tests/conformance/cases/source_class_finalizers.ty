@@ -1,0 +1,35 @@
+import gc
+
+released: list[str] = []
+
+
+class Resource:
+    def __init__(self, label: str):
+        self.label = label
+
+    def __del__(self):
+        released.append("base:" + self.label)
+
+
+class Custom(Resource):
+    def close(self):
+        gc.collect()
+        released.append("custom:" + self.label)
+
+    __del__ = close
+
+
+class Inherited(Resource):
+    pass
+
+
+def use():
+    objects = [Resource("first"), Custom("second"), Inherited("third")]
+    print(len(objects))
+
+
+use()
+gc.collect()
+print(sorted(released))
+gc.collect()
+print(len(released))

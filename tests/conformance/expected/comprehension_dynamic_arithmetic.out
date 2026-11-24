@@ -1,0 +1,6 @@
+(0.22745098039215686, 0.29411764705882354, 0.3607843137254902)
+invalid str index
+red
+c b
+string indices must be integers, not 'str'
+string indices must be integers, not 'float'

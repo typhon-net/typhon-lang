@@ -1,0 +1,22 @@
+class Storage:
+    def __init__(self, value):
+        self.value = value
+
+    def describe(self):
+        return 'base ' + self.value
+
+
+def make(prefix: str):
+    class Format:
+        def describe(self):
+            return prefix + super().describe()
+
+    class Combined(Format, Storage):
+        """Combined value."""
+
+    value = Combined('stored')
+    print(value.describe(), isinstance(value, Storage), isinstance(value, Format))
+    print(Combined.__name__, Combined.__doc__)
+
+
+make('local ')

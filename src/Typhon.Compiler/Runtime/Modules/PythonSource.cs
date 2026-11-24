@@ -13,6 +13,7 @@ namespace Typhon.Stdlib
     using System.Text;
     using System.Text.RegularExpressions;
     using Typhon.Runtime;
+    using Path = System.IO.Path;
 
     internal static partial class tokenize
     {
@@ -116,6 +117,12 @@ namespace Typhon.Stdlib
             public static readonly List<string> SOURCE_SUFFIXES = OperatingSystem.IsWindows() ? new() { ".py", ".pyw" } : new() { ".py" };
             public static readonly List<string> BYTECODE_SUFFIXES = new() { ".pyc" };
 
+            internal static class FrozenImporter
+            {
+                // Typhon ships library source and managed builtins. Its import layout has no frozen CPython code.
+                public static ModuleSpec? find_spec(string fullname, object? path = null, object? target = null) => null;
+            }
+
             internal static class BuiltinImporter
             {
                 internal static bool IsBuiltin(string name) => sys_.builtin_module_names.Contains(name);
@@ -211,6 +218,24 @@ namespace Typhon.Stdlib
         internal static class util
         {
             public static readonly PyBytes MAGIC_NUMBER = new PyBytes(new byte[] { 0x52, 0x0e, 0x0d, 0x0a });
+
+            public static PyBytes source_hash(object source_bytes) =>
+                _imp.source_hash(System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(MAGIC_NUMBER.Data), source_bytes);
+
+            public static string cache_from_source(object path, [PyKeywordOnly] object? optimization = null)
+            {
+                string filename = os_.__path(path);
+                string sourceName = Path.GetFileName(filename);
+                int dot = sourceName.LastIndexOf('.');
+                string name = dot < 0 ? sourceName : dot == 0 ? sourceName[1..] + "." : sourceName[..(dot + 1)];
+                string level = optimization == null ? "" : Builtins.str(optimization);
+                if (level.Length != 0 && !Builtins.isalnum(level))
+                    throw new ArgumentException($"{Builtins.repr(level)} is not alphanumeric");
+                string tag = _bootstrap_external.CacheTag ?? throw new NotImplementedException("sys.implementation.cache_tag is None");
+                string cacheName = name + tag + (level.Length == 0 ? "" : ".opt-" + level) + ".pyc";
+                string directory = Path.GetDirectoryName(filename) ?? "";
+                return Path.Combine(directory, "__pycache__", cacheName);
+            }
 
             public static machinery.ModuleSpec? find_spec(string name, string? package = null)
             {

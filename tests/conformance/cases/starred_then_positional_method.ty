@@ -1,0 +1,20 @@
+events = []
+
+
+class Styler:
+    def colorize(self, code, size, theme):
+        return f'{code}/{size}/{theme}'
+
+    def apply(self, info, theme):
+        return self.colorize(*info, theme)
+
+
+def take(value):
+    events.append(value)
+    return value
+
+
+styler = Styler()
+print(styler.apply((200, 17), 'plain'))
+print(styler.colorize(*take((404, 0)), take('error')))
+print(events)

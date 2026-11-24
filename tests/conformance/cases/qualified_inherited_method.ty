@@ -1,0 +1,23 @@
+class Root:
+    def act(self):
+        print("root action")
+
+    def __getitem__(self, key):
+        return "root " + key
+
+class Forward(Root):
+    pass
+
+class Parent(Forward):
+    def act(self):
+        print("parent action")
+
+    def __getitem__(self, key):
+        return "parent " + key
+
+class Leaf(Parent):
+    def from_root(self, key: str):
+        Root.act(self)
+        return Forward.__getitem__(self, key)
+
+print(Leaf().from_root("index"))

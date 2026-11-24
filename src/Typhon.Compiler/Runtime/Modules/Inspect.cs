@@ -46,6 +46,7 @@ namespace Typhon.Stdlib
     using System.Linq;
     using System.Reflection;
     using System.Runtime.CompilerServices;
+    using System.Runtime.InteropServices;
     using System.Threading.Tasks;
     using Typhon.Runtime;
 
@@ -248,6 +249,50 @@ namespace Typhon.Stdlib
             return File.Exists(filename) || linecache.cache.ContainsKey(filename) ? filename : null;
         }
 
+        public static string? getcomments(object? @object)
+        {
+            string? filename;
+            try { filename = getsourcefile(@object); }
+            catch (Exception error) when (error is InvalidCastException or IOException) { return null; }
+            if (filename == null) return null;
+            linecache.checkcache(filename);
+            object cached = Builtins.__invoke((object)linecache.getlines, [filename]);
+            var lines = Builtins.__iter_dyn(cached).Cast<string>().ToList();
+            if (@object is PyModule)
+            {
+                int start = lines.Count > 0 && lines[0].StartsWith("#!", StringComparison.Ordinal) ? 1 : 0;
+                while (start < lines.Count && lines[start].Trim() is "" or "#") start++;
+                if (start == lines.Count || !lines[start].StartsWith('#')) return null;
+                return string.Concat(lines.Skip(start).TakeWhile(line => line.StartsWith('#')).Select(line => Builtins.expandtabs(line)));
+            }
+
+            var code = @object switch
+            {
+                types.CodeType value => value,
+                types.TracebackType traceback => traceback.tb_frame.f_code,
+                sys_.frame frame => frame.f_code,
+                _ => Builtins.getattr(@object, "__code__", null) as types.CodeType,
+            };
+            long lineNumber = code?.co_firstlineno ?? MethodOf(@object)?.GetCustomAttribute<PySourceAttribute>()?.Line ??
+                (@object as Type)?.GetCustomAttribute<PySourceAttribute>()?.Line ?? 0;
+            if (lineNumber < 2 || lineNumber > lines.Count) return null;
+            int declaration = (int)lineNumber - 1, startOfBlock = declaration;
+            string definition = Builtins.expandtabs(lines[declaration]);
+            int indent = definition.Length - definition.TrimStart().Length;
+            while (startOfBlock > 0)
+            {
+                string preceding = Builtins.expandtabs(lines[startOfBlock - 1]);
+                string comment = preceding.TrimStart();
+                if (!comment.StartsWith('#') || preceding.Length - comment.Length != indent) break;
+                startOfBlock--;
+            }
+            if (startOfBlock == declaration) return null;
+            while (startOfBlock < declaration && lines[startOfBlock].Trim() == "#") startOfBlock++;
+            while (declaration > startOfBlock && lines[declaration - 1].Trim() == "#") declaration--;
+            return string.Concat(lines.Skip(startOfBlock).Take(declaration - startOfBlock)
+                .Select(line => Builtins.expandtabs(line).TrimStart()));
+        }
+
         public static string getabsfile(object? @object, string? _filename = null)
         {
             string path = System.IO.Path.GetFullPath(_filename ?? getsourcefile(@object) ?? getfile(@object));
@@ -317,6 +362,122 @@ namespace Typhon.Stdlib
             return null;
         }
 
+        public static dynamic? getmro(object? cls) => Builtins.getattr(cls, "__mro__");
+
+        public static List<dynamic> getclasstree(object? classes, [Optional, DefaultParameterValue(false)] object? unique)
+        {
+            var children = new OrderedDictionary<object, List<object>>(Builtins.PyEqualityComparer.Instance);
+            var roots = new List<object>();
+            foreach (object cls in Builtins.__iter_dyn(classes))
+            {
+                object? bases = Builtins.getattr(cls, "__bases__");
+                if (!Builtins.truthy(bases))
+                {
+                    if (!Builtins.contains(roots, cls)) roots.Add(cls);
+                    continue;
+                }
+
+                foreach (object parent in Builtins.__iter_dyn(bases))
+                {
+                    if (!children.TryGetValue(parent, out var descendants))
+                        children.Add(parent, descendants = new List<object>());
+                    if (!Builtins.contains(descendants, cls)) descendants.Add(cls);
+                    if (Builtins.truthy(unique) && Builtins.contains(classes, parent)) break;
+                }
+            }
+            roots.AddRange(children.Keys.Where(parent => !Builtins.contains(classes, parent)));
+            return Walk(roots);
+
+            List<dynamic> Walk(List<object> branch)
+            {
+                var tree = new List<dynamic>();
+                var comparer = Builtins.PyComparer<object?>();
+                foreach (object cls in branch.OrderBy(owner => (object?)Builtins.getattr(owner, "__module__"), comparer)
+                    .ThenBy(owner => (object?)Builtins.getattr(owner, "__name__"), comparer))
+                {
+                    tree.Add(new PyTuple<object?>([cls, (object?)Builtins.getattr(cls, "__bases__")]));
+                    if (children.TryGetValue(cls, out var descendants)) tree.Add(Walk(descendants));
+                }
+                return tree;
+            }
+        }
+
+        internal sealed class Attribute(string name, string kind, Type defining_class, object? @object) : PyStructSeq
+        {
+            static readonly string[] Names = ["name", "kind", "defining_class", "object"];
+            readonly object?[] _values = [name, kind, defining_class, @object];
+
+            public string name => (string)_values[0]!;
+            public string kind => (string)_values[1]!;
+            public Type defining_class => (Type)_values[2]!;
+            public dynamic? @object => _values[3];
+
+            public void Deconstruct(out string name, out string kind, out Type defining_class, out dynamic? @object) =>
+                (name, kind, defining_class, @object) = (this.name, this.kind, this.defining_class, _values[3]);
+
+            protected override string TypeName => nameof(Attribute);
+            protected override string[] Fields => Names;
+            protected override object?[] Values => _values;
+        }
+
+        public static List<Attribute> classify_class_attrs(Type cls)
+        {
+            Type[] mro = PyMetaclasses.MethodOrder(cls).ToArray();
+            Type[] metaclasses = PyMetaclasses.MethodOrder(PyMetaclasses.Of(cls))
+                .Where(owner => owner != typeof(Type) && owner != typeof(object)).ToArray();
+            var namespaces = mro.Concat(metaclasses)
+                .Select(owner => (Owner: owner, Members: (IDictionary)Builtins.getattr(owner, "__dict__"))).ToArray();
+
+            IEnumerable<string> directory = PyMetaclasses.TryBindMember(cls, "__dir__", out var customDirectory)
+                ? Builtins.__iter_dyn((object?)Builtins.__invoke(customDirectory, [])).Cast<string>()
+                : Builtins.dir(cls).Concat(namespaces.Take(mro.Length).SelectMany(entry => entry.Members.Keys.Cast<string>()));
+            var names = directory.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList();
+            foreach (var (_, members) in namespaces.Take(mro.Length))
+                foreach (DictionaryEntry entry in members)
+                    if (entry.Value is types.DynamicClassAttribute attribute && (object?)attribute.fget != null)
+                        names.Add((string)entry.Key);
+
+            var result = new List<Attribute>();
+            var processed = new HashSet<string>(StringComparer.Ordinal);
+            foreach (string name in names)
+            {
+                object? value = null;
+                Type? home = null;
+                if (name != "__dict__" && !processed.Contains(name))
+                {
+                    try { value = Builtins.getattr(cls, name); }
+                    catch (Exception) { /* A descriptor may fail while being read through the class. */ }
+                    if (value != null)
+                    {
+                        home = (object?)Builtins.getattr(value, "__objclass__", null) as Type;
+                        if (!mro.Contains(home))
+                            home = mro.LastOrDefault(owner => ReferenceEquals((object?)Builtins.getattr(owner, name, null), value));
+                    }
+                }
+
+                object? raw = null;
+                foreach (var (owner, members) in namespaces)
+                {
+                    if (!members.Contains(name)) continue;
+                    raw = members[name];
+                    if (!metaclasses.Contains(home)) home = owner;
+                    break;
+                }
+                if (home == null) continue;
+
+                value ??= raw;
+                result.Add(raw switch
+                {
+                    builtins.staticmethod => new(name, "static method", home, raw),
+                    builtins.classmethod => new(name, "class method", home, raw),
+                    builtins.property => new(name, "property", home, raw),
+                    _ => new(name, isroutine(value) ? "method" : "data", home, value),
+                });
+                processed.Add(name);
+            }
+            return result;
+        }
+
         public static List<(string, dynamic?)> getmembers(object @object, object? predicate = null)
         {
             var result = new List<(string, dynamic?)>();
@@ -344,7 +505,7 @@ namespace Typhon.Stdlib
                 PyModule module => module.SourceType,
                 _ => obj?.GetType(),
             };
-            if (obj is PyFunction function && function._attrs != null && function._attrs.TryGetValue(attr, out var saved))
+            if (obj is PyFunction function && function.TryStoredAttribute(attr, out var saved))
                 return saved;
             if (instance && obj != null && PyAttrDict.TryGetExtra(obj, attr, out var extra)) return extra;
             for (; type != null; type = type.BaseType)

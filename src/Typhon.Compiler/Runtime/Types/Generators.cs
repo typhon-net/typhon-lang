@@ -368,10 +368,17 @@ namespace Typhon.Runtime
         {
             PyModule module => module.__dict__,
             Typhon.Stdlib.types.SimpleNamespace ns => ns.__dict__,
+            PyPartial partial => partial.__dict__,
             Type type => PyClassDescriptors.Dictionary(type),
-            _ => new PyAttrDict(o),
+            _ when PyInstanceSlots.HasNoInstanceDict(o.GetType()) => throw MissingAttribute(o, "__dict__"),
+            _ => PyAttrDict.Of(o),
         };
-        public static dynamic vars(object o) => __dict__(o);
+
+        public static dynamic vars(object o)
+        {
+            try { return __dict__(o); }
+            catch (MissingMemberException) { throw new InvalidCastException("vars() argument must have __dict__ attribute"); }
+        }
         public static frozenset<string> frozenset(string s) => new frozenset<string>(chars(s));
         public static frozenset<object> frozenset() => new frozenset<object>();
         public static OrderedDictionary<object, object?> dict(object? source)

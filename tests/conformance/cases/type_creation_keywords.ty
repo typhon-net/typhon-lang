@@ -1,0 +1,10 @@
+class Tagged:
+    def __init_subclass__(cls, *, tag):
+        cls.tag = tag
+
+
+Created = type('Created', (Tagged,), {}, tag='named')
+print(Created.__name__, Created.tag, issubclass(Created, Tagged))
+options = {'tag': 'packed'}
+Second = type('Second', (Tagged,), {}, **options)
+print(Second.__name__, Second.tag)

@@ -93,6 +93,8 @@ namespace Typhon.Compiler.Emit
 
         static readonly HashSet<string> ArithmeticOps = new HashSet<string> { "+", "-", "*", "/", "//", "%", "**", "<<", ">>" };
         static bool IsBitwiseOperator(string op) => op is "|" or "&" or "^";
+        static bool MatchingSetOperands(string left, string right) =>
+            IsSetType(left) && IsSetType(right) && GenericArg(left) == GenericArg(right);
 
         /// <summary>An operand of arithmetic: an int literal is a long, unless the other side is a narrower .NET integer.</summary>
         string Operand(Expr e, Expr other) => IsIntLiteral(e) && !IsSmallInt(InferType(other)) ? EmitValue(e) : EmitExpr(e);
@@ -211,7 +213,7 @@ namespace Typhon.Compiler.Emit
             if ((b.Op == "-" || b.Op == "|" || b.Op == "&" || b.Op == "^") && (IsSetType(lType) || IsSetType(rType)))
             {
                 // sets of different item types (ints and late-bound values): the operation on their items as objects
-                if (!(IsSetType(lType) && IsSetType(rType) && GenericArg(lType) == GenericArg(rType)))
+                if (!MatchingSetOperands(lType, rType))
                     return $"{Rt(b.Op == "-" ? "sub" : b.Op == "|" ? "or_" : b.Op == "&" ? "and_" : "xor_")}((object){Paren(l)}, (object){Paren(r)})";
                 return $"{Rt(b.Op == "-" ? "set_sub" : b.Op == "|" ? "set_or" : b.Op == "&" ? "set_and" : "set_xor")}({l}, {r})";
             }
@@ -282,16 +284,59 @@ namespace Typhon.Compiler.Emit
             }
         }
 
-        string EmitCompare(CompareExpr c)
+        string EmitCompare(CompareExpr c, bool condition = false)
         {
-            var parts = new List<string>();
+            if (c.Ops.Count == 1) return EmitComparison(c.Left, c.Ops[0], c.Comparators[0]);
+
+            bool booleanResult = InferType(c) == "bool";
+            bool truthTestsOnly = condition || booleanResult;
+            var code = new StringBuilder("(");
+            var closers = new Stack<string>();
             Expr left = c.Left;
+            var capturedLeft = Capture(left, preceding: null, following: c.Ops[0]);
             for (int i = 0; i < c.Ops.Count; i++)
             {
-                parts.Add(EmitComparison(left, c.Ops[i], c.Comparators[i]));
-                left = c.Comparators[i];
+                Expr right = c.Comparators[i];
+                bool last = i + 1 == c.Ops.Count;
+                var capturedRight = last ? ((string Code, string Type)?)null : Capture(right, c.Ops[i], c.Ops[i + 1]);
+                string comparison = EmitComparison(left, c.Ops[i], right, capturedLeft, capturedRight);
+                if (truthTestsOnly)
+                {
+                    // A dynamic && would break definite assignment for subsequent operand captures.
+                    code.Append(booleanResult ? $"(bool){Paren(comparison)}" : $"{Rt("truthy")}((object?){Paren(comparison)})");
+                    if (!last) code.Append(" && ");
+                }
+                else if (last)
+                {
+                    code.Append(comparison);
+                }
+                else
+                {
+                    // A rich comparison can produce a value that must survive short-circuiting.
+                    string result = NewTmp("cmpResult");
+                    code.Append($"{Paren(comparison)} switch {{ var {result} => {Rt("truthy")}((object?){result}) ? ");
+                    closers.Push($" : (dynamic){result} }}");
+                }
+                left = right;
+                if (capturedRight is { } captured) capturedLeft = captured;
             }
-            return parts.Count == 1 ? parts[0] : "(" + string.Join(" && ", parts) + ")";
+            foreach (string closer in closers) code.Append(closer);
+            return code.Append(')').ToString();
+
+            (string Code, string Type) Capture(Expr operand, string preceding, string following)
+            {
+                var (operandCode, type) = ComparisonOperand(operand, preceding, following);
+                string temporary = NewTmp("cmp");
+                string value = IsNone(operand) ? "((object?)null)" : Paren(operandCode);
+                if (truthTestsOnly)
+                    code.Append($"{value} is var {temporary} && ");
+                else
+                {
+                    code.Append($"{value} switch {{ var {temporary} => ");
+                    closers.Push(" }");
+                }
+                return (temporary, type);
+            }
         }
 
         static bool IsNone(Expr e) => e is ConstExpr c && c.Kind == ConstKind.None;
@@ -325,21 +370,27 @@ namespace Typhon.Compiler.Emit
             return isClass && (lt == rt || lt == null || rt == null);
         }
 
-        string EmitComparison(Expr left, string op, Expr right)
+        (string Code, string Type) ComparisonOperand(Expr expression, string preceding, string following)
         {
-            bool identity = op is "is" or "is not";
-            bool numericComparison = op is "==" or "!=" or "<" or "<=" or ">" or ">=";
-            (string Code, string Type) CompareOperand(Expr expression, bool asValue)
-            {
-                // A constant bound can exceed the default integer storage width.
-                // Compare to its Python value without storing it in a long.
-                if (numericComparison && !_big && !_m.IsGdScript && expression is BinOpExpr or UnaryExpr &&
-                    FoldInt(expression) is BigInteger integer && (integer < long.MinValue || integer > long.MaxValue))
-                    return ($"global::System.Numerics.BigInteger.Parse({CsString(integer.ToString(System.Globalization.CultureInfo.InvariantCulture))})", TypeInference.BigInt);
-                return (asValue ? EmitValue(expression) : EmitExpr(expression), InferType(expression));
-            }
-            var (l, lt) = CompareOperand(left, identity || op is "in" or "not in");
-            var (r, rt) = CompareOperand(right, identity);
+            static bool NumericComparison(string op) => op is "==" or "!=" or "<" or "<=" or ">" or ">=";
+            bool identity = preceding is "is" or "is not" || following is "is" or "is not";
+            bool asValue = identity || following is "in" or "not in";
+            // A constant bound can exceed the default integer storage width.
+            // Compare to its Python value without storing it in a long.
+            if ((NumericComparison(preceding) || NumericComparison(following)) &&
+                !_big && !_m.IsGdScript && expression is BinOpExpr or UnaryExpr &&
+                FoldInt(expression) is BigInteger integer && (integer < long.MinValue || integer > long.MaxValue))
+                return ($"global::System.Numerics.BigInteger.Parse({CsString(integer.ToString(System.Globalization.CultureInfo.InvariantCulture))})", TypeInference.BigInt);
+            string code = (identity ? BoundMethodValue(expression) : null) ??
+                (asValue ? EmitValue(expression) : EmitExpr(expression));
+            return (code, InferType(expression));
+        }
+
+        string EmitComparison(Expr left, string op, Expr right, (string Code, string Type)? capturedLeft = null,
+            (string Code, string Type)? capturedRight = null)
+        {
+            var (l, lt) = capturedLeft ?? ComparisonOperand(left, preceding: null, following: op);
+            var (r, rt) = capturedRight ?? ComparisonOperand(right, preceding: op, following: null);
             bool wideWithReal = lt == TypeInference.BigInt && (rt is "double" or "float" or "decimal") ||
                 rt == TypeInference.BigInt && (lt is "double" or "float" or "decimal");
             if (op == "==" || op == "!=")
@@ -373,7 +424,7 @@ namespace Typhon.Compiler.Emit
                 {
                     string negated = op == "in" ? "" : "!";
                     if (!_m.IsGdScript && (IsUnknownType(lt) || IsUnknownType(rt) || lt == "object?" || rt == "object?" ||
-                        rt?.StartsWith(PyTuplePrefix, StringComparison.Ordinal) == true))
+                        capturedRight != null && right is TupleExpr || rt?.StartsWith(PyTuplePrefix, StringComparison.Ordinal) == true))
                         return $"{negated}{Rt("__membership")}((object?){Paren(l)}, (object?){Paren(r)})";
                     string iterable = right is TupleExpr ? EmitIterable(right) : r;
                     if (_m.IsGdScript || left is ConstExpr) return $"{negated}{Rt("contains")}({iterable}, {l})";
@@ -384,8 +435,6 @@ namespace Typhon.Compiler.Emit
                 case "is not":
                 {
                     bool negated = op == "is not";
-                    l = BoundMethodValue(left) ?? l;
-                    r = BoundMethodValue(right) ?? r;
                     string none = negated ? "not null" : "null";
                     if (IsNone(right)) return $"((object?){Paren(l)} is {none})";
                     if (IsNone(left)) return $"((object?){Paren(r)} is {none})";

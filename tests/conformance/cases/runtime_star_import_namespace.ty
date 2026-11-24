@@ -1,0 +1,28 @@
+import sys
+import types
+
+plain = types.ModuleType('typhon_exec_star_plain')
+plain.visible = 6
+plain._hidden = 7
+sys.modules[plain.__name__] = plain
+
+explicit = types.ModuleType('typhon_exec_star_explicit')
+explicit.__all__ = ['_included']
+explicit._included = 9
+explicit.excluded = 11
+sys.modules[explicit.__name__] = explicit
+
+global_names = {}
+local_names = {}
+exec('from typhon_exec_star_plain import *\n'
+     'from typhon_exec_star_explicit import *\n'
+     'total = visible + _included',
+     global_names, local_names)
+print(sorted(local_names), local_names['total'])
+print('visible' in global_names)
+try:
+    exec('from typhon_exec_star_missing import *', {})
+except ModuleNotFoundError:
+    print('missing module')
+
+exec('def __typhon_import_star():\n    return 7\nprint(__typhon_import_star())', global_names)

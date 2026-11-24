@@ -1,0 +1,61 @@
+class Plain:
+    def __init__(self, value: int):
+        self.value = value
+
+
+class Slotted:
+    __slots__ = ('value',)
+
+    def __init__(self, value: int):
+        self.value = value
+
+
+class Keyword:
+    def __new__(cls, count: int, *, label: str):
+        instance = object.__new__(cls)
+        instance.count = count
+        instance.label = label
+        return instance
+
+    def __getnewargs_ex__(self):
+        return (self.count,), {'label': self.label}
+
+
+class WithState:
+    def __getstate__(self):
+        return {'explicit': 7}
+
+
+class ExplicitReducer:
+    def __reduce__(self):
+        return str, ('custom',)
+
+
+def report(label, value, protocol):
+    try:
+        result = object.__reduce_ex__(value, protocol)
+    except TypeError:
+        print(label, protocol, 'TypeError')
+        return
+    make, arguments, *rest = result
+    if len(arguments) and isinstance(arguments[0], type):
+        arguments = (arguments[0].__name__, *arguments[1:])
+    if len(arguments) > 1 and isinstance(arguments[1], type):
+        arguments = (arguments[0], arguments[1].__name__, *arguments[2:])
+    normalized = [part if part is None or not hasattr(part, '__next__') else list(part) for part in rest]
+    print(label, protocol, make.__name__, arguments, normalized)
+
+
+for protocol in range(6):
+    report('plain', Plain(11), protocol)
+    report('slots', Slotted(13), protocol)
+    report('custom', ExplicitReducer(), protocol)
+    report('state', WithState(), protocol)
+report('keywords', Keyword(17, label='named'), 2)
+report('list', [2, 3], 3)
+report('dict', {'a': 4}, 4)
+report('int', 19, 5)
+
+
+reconstruct, arguments, _, _, _ = object.__reduce_ex__(19, 5)
+print(reconstruct(*arguments))

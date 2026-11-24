@@ -1,0 +1,31 @@
+enabled = True
+
+
+class Ratio:
+    def __init__(self):
+        self._amount = 2
+
+    if enabled:
+        @property
+        def amount(self):
+            return self._amount
+
+        @amount.setter
+        def amount(self, value):
+            self._amount = value * 2
+
+        @amount.deleter
+        def amount(self):
+            self._amount = 0
+    else:
+        @property
+        def amount(self):
+            return -1
+
+
+ratio = Ratio()
+print(ratio.amount)
+ratio.amount = 9
+print(ratio.amount)
+del ratio.amount
+print(ratio.amount)

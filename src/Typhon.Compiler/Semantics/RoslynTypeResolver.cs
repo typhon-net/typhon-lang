@@ -125,6 +125,9 @@ namespace Typhon.Compiler.Semantics
 
         readonly Dictionary<string, IReadOnlyList<MemberSig>> _members = new Dictionary<string, IReadOnlyList<MemberSig>>();
 
+        static bool IsOptionalModuleMember(ISymbol symbol) => symbol.GetAttributes().Any(a =>
+            a.AttributeClass?.ToDisplayString() == "Typhon.Runtime.PyOptionalModuleMemberAttribute");
+
         MemberSig MethodSig(IMethodSymbol m)
         {
             var sig = new MemberSig
@@ -138,6 +141,7 @@ namespace Typhon.Compiler.Semantics
                 Type = Display(m.ReturnType),
                 ReturnsDynamic = m.ReturnType.TypeKind == TypeKind.Dynamic,
                 ReturnsVoid = m.ReturnsVoid,
+                IsOptionalModuleMember = IsOptionalModuleMember(m),
             };
             // C# constructs a delegate from one callable. The CLR metadata's target and
             // method pointer are implementation details, not the source parameter list.
@@ -248,8 +252,7 @@ namespace Typhon.Compiler.Semantics
                             {
                                 IsStatic = field.IsStatic, IsConstant = field.IsConst, Type = Display(field.Type),
                                 ReturnsDynamic = field.Type.TypeKind == TypeKind.Dynamic,
-                                IsOptionalModuleMember = field.GetAttributes().Any(a =>
-                                    a.AttributeClass?.ToDisplayString() == "Typhon.Runtime.PyOptionalModuleMemberAttribute"),
+                                IsOptionalModuleMember = IsOptionalModuleMember(field),
                                 ValueFit = Fit(field.Type, out var fn), ValueNarrowTo = fn, ValueBigNarrowTo = fbn,
                             });
                             break;

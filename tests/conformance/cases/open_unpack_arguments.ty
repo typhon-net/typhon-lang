@@ -1,0 +1,29 @@
+import os
+from tempfile import TemporaryDirectory
+
+
+def prepare(path, text):
+    suffix = '' if text else 'b'
+    options = {'encoding': 'ASCII'} if text else {}
+    return open(path, 'x+' + suffix, **options)
+
+
+with TemporaryDirectory() as directory:
+    path = os.path.join(directory, 'item')
+    with prepare(path, True) as stream:
+        stream.write('hello')
+        stream.seek(0)
+        print(stream.read())
+
+    options = {'file': path, 'mode': 'rb'}
+    with open(**options) as stream:
+        print(stream.read())
+
+    parts = [path, 'rb']
+    with open(*parts) as stream:
+        print(stream.read())
+
+    try:
+        open(path, 'rb', **{'encoding': 'ASCII'})
+    except ValueError:
+        print('binary encoding rejected')

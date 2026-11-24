@@ -20,3 +20,19 @@ class Tagged:
         return cls.__name__, value
 
 print(subscribe(Tagged, (int, str)))
+
+print(Tagged[5])
+
+
+class Container:
+    __class_getitem__ = classmethod(GenericAlias)
+
+
+class Derived(Container):
+    pass
+
+
+direct = Container[int]
+extended = Derived[str, int]
+print(direct.__origin__ is Container, direct.__args__ == (int,))
+print(extended.__origin__ is Derived, extended.__args__ == (str, int))

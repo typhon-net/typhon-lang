@@ -1,0 +1,24 @@
+from typing import Any
+
+
+def read(value: Any):
+    first, *rest = value.split(":", 1)
+    if rest:
+        position, *rest = "".join(rest).split(",", 1)
+    return first, rest
+
+
+print(read("entry:3,and more"))
+print(read("single"))
+
+
+def change(items: list[int], labels: list[str]):
+    first, *rest = items
+    saved = rest
+    if labels:
+        label, *rest = labels
+    return saved, rest, saved is rest
+
+
+print(change([0, 1, 2], ["a", "b"]))
+print(change([0, 1, 2], []))

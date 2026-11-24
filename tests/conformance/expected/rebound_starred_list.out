@@ -1,0 +1,4 @@
+('entry', ['and more'])
+('single', [])
+([1, 2], ['b'], False)
+([1, 2], [1, 2], True)

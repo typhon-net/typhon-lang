@@ -1,0 +1,5 @@
+_lzma
+_lzma unavailable
+['data.txt'] b'data'
+False
+lzma module is not available

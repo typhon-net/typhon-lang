@@ -1,0 +1,46 @@
+class Geometry:
+    def bounds(self, column=None, row=None, column2=None, row2=None):
+        return column, row, column2, row2
+
+    bbox = bounds
+
+
+class Widget(Geometry):
+    def bbox(self, index):
+        return 'index', index
+
+
+def through_base(geometry: Geometry):
+    print(geometry.bbox(3))
+    for arguments in [(), (2, 4)]:
+        try:
+            print(geometry.bbox(*arguments))
+        except TypeError:
+            print('wrong argument count')
+
+
+through_base(Geometry())
+through_base(Widget())
+print(Widget().bbox(index=6))
+
+
+class Parent:
+    def forget(self):
+        return 'parent'
+
+
+class Panel(Parent):
+    def forget(self, child):
+        return child
+
+
+def detach(parent: Parent):
+    try:
+        print(parent.forget())
+    except TypeError:
+        print('requires child')
+
+
+detach(Parent())
+detach(Panel())
+print(Panel().forget('pane'))

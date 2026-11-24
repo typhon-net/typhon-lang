@@ -1,0 +1,14 @@
+class Parent:
+    def __init__(self, value: str):
+        self.value = value
+
+
+class Child(Parent):
+    @classmethod
+    def create(cls, value: str):
+        instance = object.__new__(cls)
+        super(Child, instance).__init__(**{'value': value})
+        return instance
+
+
+print(Child.create('created').value)

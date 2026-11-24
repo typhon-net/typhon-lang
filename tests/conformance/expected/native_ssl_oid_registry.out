@@ -1,0 +1,15 @@
+(129, 'serverAuth', 'TLS Web Server Authentication', '1.3.6.1.5.5.7.3.1') (130, 'clientAuth', 'TLS Web Client Authentication', '1.3.6.1.5.5.7.3.2')
+True
+True
+True
+(1, 'rsadsi', 'RSA Data Security, Inc.', '1.2.840.113549') (13, 'CN', 'commonName', '2.5.4.3')
+(379, 'ORG', 'org', '1.3') (676, 'identified-organization', 'identified-organization', '1.3')
+unknown object 'serverAuth'
+Unknown object
+unknown object '3.1'
+embedded null character
+ValueError Unknown object
+ValueError NID must be positive.
+ValueError unknown NID 4096
+OverflowError Python int too large to convert to C int
+txt2obj() argument 'txt' must be str, not bytes

@@ -1,0 +1,39 @@
+import marshal
+
+original = compile("value = 'before'\n", "original.py", "exec")
+copy = original.replace()
+print(copy is original, copy.co_filename, copy.co_consts)
+
+renamed = original.replace(co_filename="rewritten.py")
+changed = renamed.replace(co_consts=("after",))
+print(renamed.co_filename, renamed.co_consts)
+print(changed.co_filename, changed.co_consts)
+print(changed.co_code == original.co_code, changed.co_names == original.co_names)
+
+roundtrip = marshal.loads(marshal.dumps(changed))
+print(roundtrip.co_filename, roundtrip.co_consts)
+print(list(roundtrip.co_positions()) == list(changed.co_positions()))
+
+try:
+    original.replace(co_filename=None)
+except TypeError as error:
+    print(error)
+
+try:
+    original.replace(co_consts=["invalid"])
+except TypeError as error:
+    print(error)
+
+try:
+    original.replace(("invalid",))
+except TypeError:
+    print("positional tuple rejected")
+
+try:
+    original.replace(None)
+except TypeError:
+    print("positional None rejected")
+
+namespace: dict[str, object] = {}
+exec(original, namespace)
+print(original.co_filename, original.co_consts, namespace["value"])

@@ -1,0 +1,3 @@
+import callback_registry_fixture as registry
+
+print(registry.entries[int](3), registry.entries[str](4))

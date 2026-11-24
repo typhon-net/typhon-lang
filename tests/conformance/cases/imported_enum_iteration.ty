@@ -1,0 +1,4 @@
+#:pylib .
+import imported_enum_def
+
+print([(item.name, item.value) for item in imported_enum_def.Mode])

@@ -36,13 +36,19 @@ namespace Typhon.Compiler.Emit
                     foreach (var c in m.Classes.Values) LowerObjectStrAliases(c);
                     LowerSingletonClasses(m);
                 }
+                foreach (var c in m.Classes.Values) AddMethodAliases(c, chainedOnly: true);
             }
             // several bases: one stays the C# base, the others' members are copied in, in MRO order
             MultipleInheritance.Apply(p);
             foreach (var m in p.Modules.Values)
             {
                 if (m.Ast == null || m.ParseDiagnostics.Count > 0) continue;
-                foreach (var c in m.Classes.Values) { DropTypingOnlyMembers(c); NormalizeSelfNames(c); AddMethodAliases(c); NormalizeSuper(c); }
+                foreach (var c in m.Classes.Values)
+                {
+                    NormalizeSelfNames(c);
+                    AddMethodAliases(c);
+                    NormalizeSuper(c);
+                }
             }
             AddBaseStubs(p);
             foreach (var module in p.Modules.Values)
@@ -382,6 +388,7 @@ namespace Typhon.Compiler.Emit
                     if (ntBase != null && NamedTupleFieldsOf(ntBase, known) is List<string> bf)
                     {
                         c.Bases.Remove(ntBase);
+                        c.InlinedNamedTupleBase = true;
                         MakeNamedTuple(c, bf, ntBase.Args.FirstOrDefault(x => x.Name == "defaults")?.Value, annotated: null);
                         RewriteNamedTupleSuperMethods(c);
                         known[c.Name] = bf;
@@ -466,6 +473,8 @@ namespace Typhon.Compiler.Emit
         static void MakeNamedTuple(ClassDef c, List<string> fields, Expr defaults, List<AnnAssignStmt> annotated)
         {
             c.NamedTupleFields = fields;
+            var defaultValues = defaults is TupleExpr dt ? dt.Elts : defaults is ListExpr dl ? dl.Elts : new List<Expr>();
+            c.NamedTupleFactoryDefaults = defaultValues;
             if (c.Body.OfType<FunctionDef>().Any(f => f.Name == "__init__")) return;
             if (c.Body.OfType<FunctionDef>().FirstOrDefault(f => f.Name == "__new__") is FunctionDef allocate)
             {
@@ -474,7 +483,7 @@ namespace Typhon.Compiler.Emit
             }
             var init = new FunctionDef { Name = "__init__", Line = c.Line, Col = c.Col };
             init.Params.Add(new Param { Name = "self", Line = c.Line, Col = c.Col });
-            var defaultValues = defaults is TupleExpr dt ? dt.Elts : defaults is ListExpr dl ? dl.Elts : new List<Expr>();
+            c.NamedTupleFieldConstructor = true;
             for (int i = 0; i < fields.Count; i++)
             {
                 var ann = annotated?[i];
@@ -666,13 +675,6 @@ namespace Typhon.Compiler.Emit
             foreach (var nested in c.Body.OfType<ClassDef>()) NormalizeSuper(nested);
         }
 
-        /// <summary>__class_getitem__ = classmethod(GenericAlias): generic aliases for typing (list[int]-style), nothing at run time here.</summary>
-        static void DropTypingOnlyMembers(ClassDef c)
-        {
-            c.Body.RemoveAll(s => s is AssignStmt a && a.Targets.Count == 1 && a.Targets[0] is NameExpr n && n.Id == "__class_getitem__");
-            foreach (var nested in c.Body.OfType<ClassDef>()) DropTypingOnlyMembers(nested);
-        }
-
         /// <summary>
         /// A method's first parameter is the instance whatever it is called (cls in a metaclass's methods, mcs, klass); a
         /// classmethod's is the class. The rest of the compiler knows them as self and cls: such a parameter is renamed,
@@ -715,29 +717,40 @@ namespace Typhon.Compiler.Emit
         internal static bool CanBindClassBodyFunction(FunctionDef definition, bool allowProperty = false,
             bool allowCapturedDefaults = false) =>
             (definition.Decorators.Count == 0 || allowProperty && definition.Decorators.Count == 1 &&
-                definition.Decorators[0] is NameExpr { Id: "property" }) && definition.TypeParams.Count == 0 && definition.Params.Count > 0 &&
+                definition.Decorators[0] is (NameExpr { Id: "property" } or
+                    AttributeExpr { Target: NameExpr, Name: "getter" or "setter" or "deleter" })) &&
+            definition.TypeParams.Count == 0 && definition.Params.Count > 0 &&
             (allowCapturedDefaults || definition.Params.All(parameter => parameter.Default == null || parameter.Default is ConstExpr)) &&
             definition.Name is not ("__init__" or "__new__");
 
         /// <summary>__rmul__ = __mul__ in a class body: a method of the new name with the same parameters and body.</summary>
-        static void AddMethodAliases(ClassDef c)
+        static void AddMethodAliases(ClassDef c, bool chainedOnly = false)
         {
             for (int i = 0; i < c.Body.Count; i++)
             {
-                if (!(c.Body[i] is AssignStmt a) || a.Targets.Count != 1 || !(a.Targets[0] is NameExpr alias) || !(a.Value is NameExpr original)) continue;
+                if (c.Body[i] is not AssignStmt { Value: NameExpr original } assignment ||
+                    chainedOnly && assignment.Targets.Count < 2 ||
+                    assignment.Targets.Any(target => target is not NameExpr)) continue;
                 var def = c.Body.Take(i).OfType<FunctionDef>().LastOrDefault(f => f.Name == original.Id);
-                if (def == null || def.UsedInClassBody) continue;
-                c.Body[i] = new FunctionDef
+                if (def == null || def.UsedInClassBody ||
+                    def.Decorators.Any(decorator => Decorators.Name(decorator) is "property" or "builtins.property")) continue;
+                var aliases = assignment.Targets.Cast<NameExpr>().Select(alias => new FunctionDef
                 {
-                    Name = alias.Id, TypeParams = def.TypeParams, Params = def.Params, Returns = def.Returns, Body = def.Body,
-                    Decorators = def.Decorators, IsAsync = def.IsAsync, Line = a.Line, Col = a.Col,
-                };
+                    Name = alias.Id, PyName = def.PyName ?? def.Name,
+                    TypeParams = def.TypeParams, Params = def.Params, Returns = def.Returns, Body = def.Body,
+                    Decorators = def.Decorators, IsAsync = def.IsAsync, Line = assignment.Line, Col = assignment.Col,
+                    IsFlattenedClassMember = assignment.IsFlattenedClassMember,
+                }).ToList();
+                c.Body.RemoveAt(i);
+                c.Body.InsertRange(i, aliases);
+                i += aliases.Count - 1;
             }
             // Python's text protocols require a string, including when a class aliases an unannotated method.
-            foreach (var f in c.Body.OfType<FunctionDef>())
-                if (f.Returns == null && f.Name is "__str__" or "__repr__")
-                    f.Returns = new NameExpr { Id = "str", Line = f.Line, Col = f.Col };
-            foreach (var nested in c.Body.OfType<ClassDef>()) AddMethodAliases(nested);
+            if (!chainedOnly)
+                foreach (var f in c.Body.OfType<FunctionDef>())
+                    if (f.Returns == null && f.Name is "__str__" or "__repr__")
+                        f.Returns = new NameExpr { Id = "str", Line = f.Line, Col = f.Col };
+            foreach (var nested in c.Body.OfType<ClassDef>()) AddMethodAliases(nested, chainedOnly);
         }
 
         internal static bool UsesVariadicOverrideBridge(FunctionDef method, FunctionDef inherited)
@@ -751,6 +764,32 @@ namespace Typhon.Compiler.Emit
             return method.Params.Skip(1).Take(prefix).All(parameter => parameter.Kind == ParamKind.Normal && !parameter.KeywordOnly) &&
                 (prefix != 0 || inherited.Params.Skip(1).Any(parameter => parameter.Default != null));
         }
+
+        internal static bool HasPackedKeywords(FunctionDef method) =>
+            method.Params.Count >= 3 && method.Params[1].Kind == ParamKind.VarArgs &&
+            method.Params.Last().Kind == ParamKind.KwArgs &&
+            method.Params.Skip(2).Take(method.Params.Count - 3).All(parameter => parameter.KeywordOnly);
+
+        internal static bool UsesPackedKeywordOverrideBridge(FunctionDef method, FunctionDef inherited) =>
+            HasPackedKeywords(method) && (!HasPackedKeywords(inherited) || method.Params.Count != inherited.Params.Count) &&
+            method.TypeParams.Count == 0 && inherited.TypeParams.Count == 0 && method.IsAsync == inherited.IsAsync;
+
+        internal static bool UsesPositionalOverrideBridge(FunctionDef method, FunctionDef inherited) =>
+            inherited.Params.Count >= 3 && inherited.Params.Last().Kind == ParamKind.VarArgs &&
+            inherited.Params.Skip(1).Take(inherited.Params.Count - 2).All(parameter => parameter.Kind == ParamKind.Normal && !parameter.KeywordOnly) &&
+            (method.Params.Count != inherited.Params.Count || method.Params.Zip(inherited.Params,
+                (child, parent) => child.Kind == parent.Kind && child.KeywordOnly == parent.KeywordOnly).Any(same => !same)) &&
+            method.TypeParams.Count == 0 && inherited.TypeParams.Count == 0 && method.IsAsync == inherited.IsAsync;
+
+        internal static bool UsesKwargsOverrideBridge(FunctionDef method, FunctionDef inherited) =>
+            inherited.Params.Count == 2 && inherited.Params[1].Kind == ParamKind.KwArgs &&
+            method.Params.Skip(1).All(parameter => parameter.Kind == ParamKind.Normal) &&
+            method.TypeParams.Count == 0 && inherited.TypeParams.Count == 0 && method.IsAsync == inherited.IsAsync;
+
+        static bool ChangesRequiredArity(FunctionDef method, FunctionDef inherited) =>
+            (method.Params.Count < inherited.Params.Count || method.Params.Skip(inherited.Params.Count).Any(parameter => parameter.Default == null)) &&
+            method.Params.Concat(inherited.Params).All(parameter => parameter.Kind == ParamKind.Normal) &&
+            method.TypeParams.Count == 0 && inherited.TypeParams.Count == 0 && method.IsAsync == inherited.IsAsync;
 
         static void AddBaseStubs(ProjectContext p)
         {
@@ -808,13 +847,17 @@ namespace Typhon.Compiler.Emit
                 if (root == d || IsSpecial(root)) continue;
                 foreach (var f in d.Body.OfType<FunctionDef>())
                 {
-                    if (f.Params.LastOrDefault()?.Kind == ParamKind.VarArgs && f.Decorators.Count == 0)
+                    if (f.Decorators.Count == 0 && f.Params.Count > 0)
                         foreach (var inherited in ancestors.SelectMany(parent => parent.Body.OfType<FunctionDef>())
-                            .Where(candidate => candidate.Name == f.Name && UsesVariadicOverrideBridge(f, candidate)))
+                            .Where(candidate => candidate.Name == f.Name &&
+                                (UsesVariadicOverrideBridge(f, candidate) || UsesPackedKeywordOverrideBridge(f, candidate) ||
+                                 UsesKwargsOverrideBridge(f, candidate) || UsesPositionalOverrideBridge(f, candidate) ||
+                                 ChangesRequiredArity(f, candidate))))
                         {
                             // Bind Python calls against the actual method's positional and keyword parameters.
                             inherited.NeedsOverrideBinding = true;
                             f.NeedsOverrideBinding = true;
+                            f.HidesBaseMethod |= ChangesRequiredArity(f, inherited);
                         }
                     if (f.Name.StartsWith("__") && f.Name.EndsWith("__") || f.Decorators.Count > 0 || f.Params.Count == 0) continue;
                     if (MultipleInheritance.IsGenerated(f.Name)) continue; // (multiple inheritance's own hooks and copies)
@@ -835,8 +878,9 @@ namespace Typhon.Compiler.Emit
                 var root = kv.Key.Root;
                 bool HasResult(FunctionDef method) => AstWalker.ContainsOutsideNestedScopes(method.Body, node =>
                     node is ReturnStmt { Value: not null and not ConstExpr { Kind: ConstKind.None } });
-                bool sharedResult = !first.IsAsync && defs.Any(HasResult) && !defs.All(HasResult) &&
-                    !defs.Any(method => AstWalker.ContainsOutsideNestedScopes(method.Body, node => node is YieldExpr));
+                bool sharedResult = !first.IsAsync &&
+                    (defs.Any(method => AstWalker.ContainsOutsideNestedScopes(method.Body, node => node is YieldExpr)) ||
+                     defs.Any(HasResult) && !defs.All(HasResult));
                 if (sharedResult)
                     foreach (FunctionDef method in defs) method.UsesObjectReturnSlot = true;
                 var stub = new FunctionDef { Name = kv.Key.Name, Line = root.Line, Col = root.Col,

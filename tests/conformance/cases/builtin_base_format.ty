@@ -1,0 +1,19 @@
+# typhon: int=bigint
+class Number(int):
+    def __str__(self):
+        return "number"
+
+    def __format__(self, spec):
+        return "custom:" + spec
+
+integer_format = getattr(int, "__format__")
+print(integer_format is getattr(bool, "__format__"))
+print(getattr(int, "__str__") is getattr(object, "__str__"))
+print(integer_format(12, "04d"), integer_format(True, "04d"), integer_format(True, ""))
+print(integer_format(1 << 90, "#x"))
+value = Number(12)
+print(integer_format(value, "04d"), integer_format(value, ""), format(value, "04d"))
+try:
+    integer_format("12", "04d")
+except TypeError:
+    print("invalid receiver")

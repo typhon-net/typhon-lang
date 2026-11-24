@@ -1,0 +1,21 @@
+class Navigator:
+    def report(self):
+        speed = self.speed()
+        return speed
+
+    def speed(self, new_speed=0):
+        pass
+
+
+class Pen:
+    def speed(self, new_speed=None):
+        if new_speed is None:
+            return 7
+
+
+class Turtle(Pen, Navigator):
+    pass
+
+
+print(Navigator().report())
+print(Turtle().report())

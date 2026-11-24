@@ -1,0 +1,13 @@
+from _ssl import MemoryBIO, RAND_bytes, RAND_status, SSLError
+
+bio = MemoryBIO()
+print(bio.pending, bio.eof, bio.read())
+print(bio.write(b'abcd'), bio.write(b'ef'))
+print(bio.read(2), bio.pending)
+bio.write_eof()
+print(bio.eof, bio.read(), bio.eof, bio.pending)
+try:
+    bio.write(b'x')
+except SSLError:
+    print('closed')
+print(RAND_status(), len(RAND_bytes(16)), RAND_bytes(0))

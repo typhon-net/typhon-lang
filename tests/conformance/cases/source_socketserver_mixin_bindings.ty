@@ -1,0 +1,32 @@
+#:pylib-source socketserver
+from socketserver import ThreadingMixIn
+
+
+class _Threads:
+    def __init__(self):
+        raise RuntimeError('should use socketserver helper')
+
+
+class Root:
+    pass
+
+
+class Storage(Root):
+    def finish_request(self, request, address):
+        print(request, address)
+
+    def shutdown_request(self, request):
+        pass
+
+    def server_close(self):
+        pass
+
+
+class Worker(ThreadingMixIn, Storage):
+    pass
+
+
+server = Worker()
+server.process_request('request', 'address')
+server.server_close()
+print('closed')

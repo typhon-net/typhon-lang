@@ -27,3 +27,26 @@ try:
     zlib.decompress(b"not compressed")
 except zlib.error:
     print("invalid compressed data")
+
+
+class CompressionLevel:
+    def __index__(self) -> int:
+        return 1
+
+
+message = b"default and index levels"
+print(zlib.decompress(zlib.compress(message)) == message,
+      zlib.compress(message) == zlib.compress(message, level=-1))
+print(zlib.compress(message, CompressionLevel()) == zlib.compress(message, level=1))
+try:
+    zlib.compress(message, level=1.5)
+except TypeError as error:
+    print(type(error).__name__, str(error))
+try:
+    zlib.compress(message, level=10)
+except zlib.error as error:
+    print(type(error).__name__, str(error))
+try:
+    zlib.compress(message, level=2147483648)
+except OverflowError as error:
+    print(type(error).__name__, str(error))

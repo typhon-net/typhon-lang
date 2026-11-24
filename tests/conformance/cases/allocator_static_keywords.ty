@@ -1,0 +1,24 @@
+class Header(str):
+    @classmethod
+    def parse(cls, text, options):
+        options['decoded'] = text.upper()
+        options['parts'] = [text]
+
+    def __new__(cls, name, text):
+        options = {'notes': []}
+        cls.parse(text, options)
+        self = str.__new__(cls, options['decoded'])
+        del options['decoded']
+        self.bind(name, **options)
+        return self
+
+    def bind(self, name, *, parts, notes):
+        self.name = name
+        self.parts = parts
+        self.notes = notes
+
+
+class Construct(Header):
+    pass
+message = Construct('subject', 'hello')
+print(message, message.name, message.parts, message.notes)

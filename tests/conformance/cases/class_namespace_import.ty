@@ -1,0 +1,13 @@
+class Names:
+    from math import sqrt as root
+    import fractions as rational
+    answer = root(81)
+    if answer == 9:
+        from math import ceil
+
+    def result(self):
+        return self.ceil(1.5)
+
+
+print(Names.answer, Names().result(), Names.rational.Fraction(1, 2))
+print(Names().root(64))

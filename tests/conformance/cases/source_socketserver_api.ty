@@ -1,0 +1,20 @@
+#:pylib-source socketserver
+import socket
+import socketserver
+import threading
+
+
+class Echo(socketserver.StreamRequestHandler):
+    def handle(self) -> None:
+        self.wfile.write(self.rfile.readline().upper())
+
+
+with socketserver.TCPServer(('127.0.0.1', 0), Echo) as server:
+    worker = threading.Thread(target=server.handle_request, daemon=True)
+    worker.start()
+    with socket.create_connection(server.server_address, timeout=3) as client:
+        client.sendall(b'hello\n')
+        with client.makefile('rb') as incoming:
+            print(incoming.readline())
+    worker.join(5)
+    print(worker.is_alive())

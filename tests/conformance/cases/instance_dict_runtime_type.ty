@@ -1,0 +1,26 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+class Record:
+    def __init__(self, number: int) -> None:
+        self.number = number
+
+
+class Mixed:
+    __slots__ = ("slot", "__dict__")
+
+
+record = Record(17)
+state = object.__getstate__(record)
+print(type(state) is dict, isinstance(state, dict), state is vars(record))
+print(type(record.__dict__) is dict, record.__dict__.__class__ is dict)
+state["number"] = 19
+state["name"] = "record"
+print(record.number, getattr(record, "name"), state == {"number": 19, "name": "record"})
+
+mixed = Mixed()
+mixed.slot = 5
+setattr(mixed, "extra", "x")
+dictionary, slots = object.__getstate__(mixed)
+print(type(dictionary) is dict, type(slots) is dict, dictionary is vars(mixed))
+print(dictionary["extra"], slots["slot"])

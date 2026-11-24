@@ -1,0 +1,19 @@
+from copy import copy, deepcopy
+
+
+class Record:
+    pass
+
+
+record = Record()
+items = ['value']
+setattr(record, 'items', items)
+setattr(record, 'parent', record)
+
+shallow = copy(record)
+deep = deepcopy(record)
+print(hasattr(shallow, 'items'), hasattr(deep, 'items'))
+print(getattr(shallow, 'items', None) is items, getattr(deep, 'items', None) == items)
+print(getattr(shallow, 'parent', None) is record, getattr(deep, 'parent', None) is deep)
+setattr(shallow, 'new_field', 42)
+print(hasattr(record, 'new_field'))

@@ -1,0 +1,26 @@
+class Record:
+    def first(self):
+        return next(self.entries())
+
+
+class ActiveRecord(Record):
+    def entries(self):
+        received = yield "first"
+        yield received
+
+    def _entries(self):
+        try:
+            yield "inside"
+        finally:
+            print("closed")
+
+
+record = ActiveRecord()
+print(record.first())
+iterator = record.entries()
+print(next(iterator))
+print(iterator.send("second"))
+nested = record._entries()
+print(next(nested))
+nested.close()
+print(hasattr(Record(), "entries"))

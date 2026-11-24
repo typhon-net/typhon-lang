@@ -1,0 +1,4 @@
+[('object', ()), [('Left', ('object',)), [('Branch', ('Left', 'Right')), [('Leaf', ('Branch',))]], ('Right', ('object',)), [('Branch', ('Left', 'Right')), [('Leaf', ('Branch',))]]]]
+[('object', ()), [('Left', ('object',)), [('Branch', ('Left', 'Right')), [('Leaf', ('Branch',))]], ('Right', ('object',))]]
+[('Left', ('object',)), [('Branch', ('Left', 'Right'))], ('Right', ('object',)), [('Branch', ('Left', 'Right'))]]
+[]

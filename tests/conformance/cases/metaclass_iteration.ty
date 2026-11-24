@@ -1,0 +1,17 @@
+class Repeated(type):
+    def __iter__(cls):
+        return iter((cls.__name__, cls.__name__))
+
+
+class Letters(metaclass=Repeated):
+    pass
+
+
+class Digits(metaclass=Repeated):
+    pass
+
+
+print(list(Letters))
+print([entry.lower() for entry in Digits])
+method = getattr(Letters, '__iter__')
+print(next(method()))

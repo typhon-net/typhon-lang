@@ -1,0 +1,5 @@
+inspect_here
+inspect_here inspect_here <module>
+True True <module>
+True True
+1 3 site = inspect.stack(3)[0]

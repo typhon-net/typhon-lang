@@ -1,0 +1,22 @@
+import math
+
+
+class Point(tuple):
+    def __new__(cls, horizontal, vertical):
+        return tuple.__new__(cls, (horizontal, vertical))
+
+    def __abs__(self):
+        return math.hypot(*self)
+
+
+class Derived(Point):
+    pass
+
+
+def magnitude(value: object):
+    return abs(value)
+
+
+point = Derived(3, 4)
+print(type(point).__name__, isinstance(point, Point))
+print(getattr(point, '__abs__')(), magnitude(point), abs(point))

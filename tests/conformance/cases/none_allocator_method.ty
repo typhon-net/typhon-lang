@@ -1,0 +1,12 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+
+none_type = type(None)
+allocate = None.__new__
+print(allocate is none_type.__new__)
+print(allocate(none_type) is None)
+try:
+    allocate(object)
+except TypeError:
+    print('incompatible type')

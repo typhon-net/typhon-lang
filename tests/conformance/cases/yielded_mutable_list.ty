@@ -1,0 +1,16 @@
+class HandleNumber(int):
+    pass
+
+
+def values():
+    items = []
+    yield items
+    items.append(7)
+    yield len(items)
+
+
+stream = values()
+elements = next(stream)
+elements.append(HandleNumber(3))
+print(next(stream))
+print(elements[0], isinstance(elements[0], HandleNumber), elements[1])

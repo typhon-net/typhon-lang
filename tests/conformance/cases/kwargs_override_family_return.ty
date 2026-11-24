@@ -1,0 +1,22 @@
+class Base:
+    def select(self, **options):
+        print('base select')
+
+
+class NoValue(Base):
+    def select(self):
+        print('no value')
+
+
+class ReturnsValue(Base):
+    def select(self, first, last=None):
+        return first if last is None else last
+
+
+def call(value: Base):
+    print(value.select())
+
+
+call(Base())
+call(NoValue())
+print(ReturnsValue().select('first', 'last'))

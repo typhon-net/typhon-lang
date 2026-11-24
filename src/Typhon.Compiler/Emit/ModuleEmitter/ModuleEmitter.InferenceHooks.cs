@@ -198,7 +198,10 @@ namespace Typhon.Compiler.Emit
                 if (a.Star || a.DoubleStar) return null;
                 int idx = a.Name == null ? pos++ : ps.FindIndex(p => p.Name == a.Name);
                 if (idx < 0 || idx >= ps.Count) return null;
-                types[idx] = TypeInference.Settled(PyType(InferType(a.Value)) ?? TypeInference.Unknown);
+                string type = a.Value is NameExpr builtin && BuiltinTypeValue(builtin) != null
+                    ? "global::System.Type"
+                    : PyType(InferType(a.Value));
+                types[idx] = TypeInference.Settled(type ?? TypeInference.Unknown);
                 if (types[idx] == TypeInference.Pending) types[idx] = TypeInference.Unknown;
             }
             for (int i = 0; i < ps.Count; i++)
@@ -206,7 +209,12 @@ namespace Typhon.Compiler.Emit
                 if (ps[i].Annotation != null && !(TypeInference.IsBareContainer(ps[i].Annotation) && types[i] != null && ContainerMatches(ps[i].Annotation, types[i])))
                 { types[i] = TypeInference.Declared; continue; }
                 if (types[i] == null && IsParamAlias(t.Def, ps[i])) { types[i] = TypeInference.Declared; continue; }
-                if (types[i] == null) types[i] = ps[i].Default != null ? (PyType(InferType(ps[i].Default)) ?? TypeInference.Unknown) : null;
+                if (types[i] == null && ps[i].Default is Expr defaultValue)
+                {
+                    // An omitted None has no concrete CLR type. Keep the argument dynamic
+                    // while still observing the types of the other supplied arguments.
+                    types[i] = IsNone(defaultValue) ? "dynamic" : PyType(InferType(defaultValue)) ?? TypeInference.Unknown;
+                }
                 if (types[i] == null) return null;
                 // Nullable reference annotations do not distinguish CLR overloads.
                 if (types[i].EndsWith("?") && DotNetMeta(types[i].TrimEnd('?')) is string metadata &&
@@ -250,7 +258,29 @@ namespace Typhon.Compiler.Emit
         void RecordCall(InferenceTarget t, List<Arg> args)
         {
             if (Obs == null || t == null || !t.InferParams) return;
-            Obs.Calls.Add(new Observations.Call { Callee = t.Key, Types = ArgTypes(t, args), Context = _ctxFallbackKey });
+            Obs.Calls.Add(new Observations.Call
+            {
+                Callee = t.Key,
+                Types = ArgTypes(t, args),
+                Context = _ctxFallbackKey,
+                RequiresFallback = RequiresDefaultFallback(t, args),
+            });
+        }
+
+        bool RequiresDefaultFallback(InferenceTarget target, List<Arg> args)
+        {
+            if (args.Count >= target.Def.Params.Count - target.FirstParam || target.AlwaysFallback) return false;
+            int positional = args.Count(argument => argument.Name == null);
+            foreach (var parameter in target.Params.Skip(positional))
+            {
+                if (args.Any(argument => argument.Name == parameter.Name)) continue;
+                // A specialization can carry a literal default. Other defaults may depend on the
+                // definition's scope or leave the parameter dynamic, so keep the original signature.
+                Expr value = parameter.Default;
+                if (value == null || IsNone(value) || value is NameExpr or AttributeExpr ||
+                    !IsConstantDefault(value) && FoldInt(value) == null) return true;
+            }
+            return false;
         }
 
         /// <summary>The inferred return type of a call to an unannotated project function (Pending while still unknown in a dry run).</summary>
@@ -267,7 +297,8 @@ namespace Typhon.Compiler.Emit
         }
 
         bool UsesFallbackForOmittedArguments(InferenceTarget target, List<Arg> arguments) =>
-            target.Class == null && Ti.Fallback.Contains(target.Key) && arguments.Count < target.Params.Count;
+            arguments.Count < target.Params.Count &&
+            (target.AlwaysFallback || target.Class == null && Ti.Fallback.Contains(target.Key));
 
         string InferredCallType(InferenceTarget t, List<Arg> args)
         {
@@ -277,7 +308,7 @@ namespace Typhon.Compiler.Emit
             if (t.InferParams)
             {
                 // Only the original signature accepts omitted arguments when it coexists with specializations.
-                if (UsesFallbackForOmittedArguments(t, args)) return null;
+                if (UsesFallbackForOmittedArguments(t, args)) return t.AlwaysFallback ? "dynamic" : null;
                 var types = ArgTypes(t, args);
                 // (a late-bound argument is part of the signature: its parameter is dynamic in the overload for this call)
                 if (types == null || types.Any(x => TypeInference.IsUnknown(x) && x != "dynamic") || types.All(x => x == "dynamic" || x == TypeInference.Declared)) return null;
@@ -285,8 +316,17 @@ namespace Typhon.Compiler.Emit
                 if (!(Ti.Signatures.TryGetValue(t.Key, out var sigs) && sigs.Any(s => TypeInference.SigKey(s) == sig))) return _dry ? TypeInference.Pending : null;
             }
             if (Ti.Returns.TryGetValue(TypeInference.ReturnKey(t.Key, sig), out var rt))
-                return t.Module == _m || IsPortableType(rt) ? rt : null;
+                return VisibleInferredType(t.Module, rt);
             return _dry ? TypeInference.Pending : null;
+        }
+
+        // A class named by an inferred signature belongs to the module that defined it.
+        string VisibleInferredType(ModuleInfo owner, string type)
+        {
+            if (owner == _m || IsPortableType(type)) return type;
+            string className = type.TrimStart('@');
+            return owner?.Classes.ContainsKey(className) == true
+                ? $"{ModuleClassName(owner)}.{Esc(className)}" : null;
         }
 
         /// <summary>Typhon class key for a C# type name visible in this module (same module, or imported by name).</summary>
@@ -355,10 +395,10 @@ namespace Typhon.Compiler.Emit
                 if (_p.TryFindClass(_m, b.Name, out var bc, out var owner) && bc == b)
                 {
                     string key = TypeInference.ClassKey(owner, bc.Name);
-                    // An unannotated namedtuple field and a widened slot both have dynamic storage.
+                    // Preserve late lookup for instance attributes whose inherited storage is dynamic.
                     if (Ti != null && Ti.Fields.TryGetValue(key, out var fields) && fields.TryGetValue(name, out var type) &&
                         type != "void" && (type != "dynamic" || bc.NamedTupleFields?.Contains(name) == true ||
-                            Ti.ExternalFields.ContainsKey(key + "|" + name)))
+                            CollectImplicitFields(bc).ContainsKey(name) || Ti.ExternalFields.ContainsKey(key + "|" + name)))
                         return type;
                 }
                 if (InheritedFieldType(b, name, depth + 1) is string deeper) return deeper;

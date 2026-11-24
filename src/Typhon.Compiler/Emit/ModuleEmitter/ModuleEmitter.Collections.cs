@@ -106,7 +106,16 @@ namespace Typhon.Compiler.Emit
         }
 
         /// <summary>The type of an expression as something iterated (an Enum class iterates its members).</summary>
-        string IterableType(Expr e) => EnumIterated(e, out _) is string et ? et + "[]" : InferType(e);
+        string IterableType(Expr e)
+        {
+            if (EnumIterated(e, out _) is string enumType) return enumType + "[]";
+            string type = InferType(e);
+            return IteratesClassObject(e, type) ? "dynamic" : type;
+        }
+
+        bool IteratesClassObject(Expr expression, string type) =>
+            type is "System.Type" or "global::System.Type" ||
+            DottedName(expression) is string name && TryResolveType(name, 0, out _, out var definition) && definition != null;
 
         /// <summary>The C# type of an Enum class used as an iterable (for kind in Color:), or null.</summary>
         string EnumIterated(Expr e, out ClassDef definition)
@@ -114,18 +123,22 @@ namespace Typhon.Compiler.Emit
             definition = null;
             if (DottedName(e) is not string name || IsLocal(name.Split('.')[0]) ||
                 !TryResolveType(name, 0, out _, out var cls) || cls == null ||
-                !(IsObjectIntegerEnum(cls) || IsPlainObjectEnum(cls) || cls.Bases.Any(basis => DottedName(basis) is "Enum" or "enum.Enum" or "IntEnum" or "enum.IntEnum")))
+                !(IsObjectIntegerEnum(cls) || IsStringEnum(cls) || IsPlainObjectEnum(cls) ||
+                    cls.Bases.Any(basis => IsManagedEnumBase(cls, basis, "Enum") || IsManagedEnumBase(cls, basis, "IntEnum"))))
                 return null;
             definition = cls;
-            return StdlibTypeCode(null, cls) ?? Esc(cls.Name);
+            return TryTypeExpr(e, out string type) ? type : StdlibTypeCode(null, cls) ?? Esc(cls.Name);
         }
 
         string EmitIterable(Expr e)
         {
             // for kind in Color: an Enum class iterates its members in definition order
             if (EnumIterated(e, out var enumClass) is string enumType)
-                return IsObjectIntegerEnum(enumClass) ? $"{enumType}._value2member_map_.Values" :
+                return IsObjectIntegerEnum(enumClass) || IsStringEnum(enumClass) ? $"{enumType}._value2member_map_.Values" :
                     IsPlainObjectEnum(enumClass) ? $"{enumType}.__unique_members" : $"global::System.Enum.GetValues<{enumType}>()";
+            string t = InferType(e);
+            if (IteratesClassObject(e, t))
+                return $"{Rt("__iter_dyn")}((object?){Paren(EmitValue(e))})";
             string code = EmitExpr(e);
             // iterating a str yields one-character strs
             if (e is ConstExpr sc && sc.Kind == ConstKind.Str || e is FStringExpr) return $"{Rt("chars")}({code})";
@@ -145,7 +158,6 @@ namespace Typhon.Compiler.Emit
             if (e is ListExpr || e is TupleExpr || e is SetExpr || e is ComprehensionExpr || e is ConstExpr) return code;
             // a late-bound value: a typed sequence of dynamic items (LINQ lambdas cannot take part in dynamic dispatch); the
             // argument is passed as object so that the call itself is bound statically
-            string t = InferType(e);
             if (t == null && e is NameExpr imported && !IsLocal(imported.Id) &&
                 ImportedIterableType(imported.Id) is string importedType)
             {
@@ -447,6 +459,11 @@ namespace Typhon.Compiler.Emit
             return string.Join(" ", statements);
         }
 
+        bool ProjectionUsesDynamic(Expr expression) =>
+            IsDynamicallyDispatched(expression) ||
+            expression is BinOpExpr binary && ArithmeticOps.Contains(binary.Op) &&
+            (ProjectionUsesDynamic(binary.Left) || ProjectionUsesDynamic(binary.Right));
+
         string EmitComprehensionCore(ComprehensionExpr c, Scope bindings, string targetType)
         {
             string targetElem = targetType != null && targetType.EndsWith(">") && (targetType.StartsWith("List<") || targetType.StartsWith("HashSet<") ||
@@ -494,7 +511,7 @@ namespace Typhon.Compiler.Emit
                 if (i == c.Generators.Count - 1)
                 {
                     string elt = c.Kind == ComprehensionKind.Dict ? $"({EmitValue(c.Elt)}, {EmitValue(c.ValueElt)})" : EmitElementAs(c.Elt, targetElem);
-                    if (c.Kind != ComprehensionKind.Dict && IsDynamicallyDispatched(c.Elt))
+                    if (c.Kind != ComprehensionKind.Dict && ProjectionUsesDynamic(c.Elt))
                     {
                         // LINQ infers dynamic from late argument dispatch even when the callable's result type is known.
                         string projection = targetElem ?? PyType(InferType(c.Elt));

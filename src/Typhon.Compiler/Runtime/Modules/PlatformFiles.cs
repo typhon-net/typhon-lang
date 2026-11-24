@@ -128,7 +128,7 @@ namespace Typhon.Stdlib
         }
     }
 
-    internal static class _winapi
+    internal static partial class _winapi
     {
         public const long COPY_FILE_ALLOW_DECRYPTED_DESTINATION = 0x00000008;
         public const long COPY_FILE_COPY_SYMLINK = 0x00000800;
@@ -160,7 +160,7 @@ namespace Typhon.Stdlib
 
         public static bool NeedCurrentDirectoryForExePath(string exe_name) => NeedSearchCurrentDirectory(exe_name);
 
-        internal static Exception FileError(int code, string filename, string? filename2 = null) =>
+        internal static Exception FileError(int code, string? filename, string? filename2 = null) =>
             OsErrors.WinError(code, new Win32Exception(code).Message, filename, filename2);
     }
 }

@@ -1,0 +1,24 @@
+from typing import Any
+
+class Dispatch:
+    def accept(self, name, data=None):
+        return name, data
+
+    def string_path(self, name: str, data: Any):
+        return self.accept(name, data)
+
+    def tuple_path(self, name: Any, data: tuple[str, int]):
+        return self.accept(name, data)
+
+    def dynamic_path(self, name: Any, data: Any) -> Any:
+        return self.accept(name, data)
+
+    def default_path(self, name: Any) -> Any:
+        return self.accept(name)
+
+value = Dispatch()
+print(value.string_path("label", None))
+print(value.tuple_path(None, ("item", 3)))
+print(value.dynamic_path("label", ("item", 3)))
+print(value.dynamic_path(5, False))
+print(value.default_path("default"))

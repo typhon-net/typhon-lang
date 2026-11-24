@@ -1,0 +1,16 @@
+b'YWJjZGVmZ2g='
+b'YWJjZGVmZ2g'
+b'YWJj\nZGVm\nZ2g='
+b'YWJj\nZGVm\nZ2g'
+b'YWJj\nZGVm\nZ2g='
+b'YWJj\nZGVm\nZ2g'
+b'YWJjZGVm\nZ2g='
+b'YWJjZGVm\nZ2g'
+b'YWJjZGVmZ2g='
+b'YWJjZGVmZ2g'
+b'\xfc\xff\xff7\n\xff\xffv\xff\n\xfc\xff\xff7\n\xffw=='
+b'-_8'
+b''
+True
+Cannot convert negative int
+invalid altchars: b'x'

@@ -1,0 +1,8 @@
+Data True b'hello' 5 104 hello
+InheritedData b'child' 5
+Data b'direct' False
+bytes True
+True b'alias' False
+Doubled b'abab'
+True
+bytes subclasses require bytes allocation

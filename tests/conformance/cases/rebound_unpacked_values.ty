@@ -1,0 +1,20 @@
+class HandleNumber(int):
+    pass
+
+
+def number(value: int):
+    return HandleNumber(value)
+
+
+def build(choice: bool):
+    first, second = -1, -1
+    if choice:
+        first, second = number(13), number(7)
+        first = number(5)
+    return first, second
+
+
+first, second = build(True)
+print(first, isinstance(first, HandleNumber))
+print(second, isinstance(second, HandleNumber))
+print(build(False))

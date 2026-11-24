@@ -142,6 +142,9 @@ namespace Typhon.Compiler.Emit
             return null;
         }
 
+        static bool NeedsNullableNativeParameter(Param parameter, string nativeType) =>
+            parameter.Annotation == null && IsNone(parameter.Default) && IsValueTypeName(nativeType);
+
         string TypeParamList(List<TypeParam> tps) => tps.Count == 0 ? "" : "<" + string.Join(", ", tps.Select(t => Esc(t.Name))) + ">";
 
         static string ClassTypeValue(string name, ClassDef definition)
@@ -385,14 +388,17 @@ namespace Typhon.Compiler.Emit
 
         // Overrides must agree on their CLR return type. A method that only raises may supply
         // an abstract-by-convention declaration whose return type is not known yet.
-        bool ImplicitMethodResultIsDynamic(FunctionDef method) => _cls != null &&
-            (FamilyReturnsValue(_cls.Def, method.Name) ||
-             method.Body.Count > 0 && !CanFallThrough(method.Body) &&
-             !AstWalker.ContainsOutsideNestedScopes(method.Body, node => node is ReturnStmt) &&
-             !FamilyDefinesElsewhere(_cls.Def, method.Name));
+        bool ImplicitMethodResultIsDynamic(FunctionDef method, ClassDef owner = null)
+        {
+            owner ??= _cls?.Def;
+            return owner != null && (FamilyReturnsValue(owner, method.Name) ||
+                method.Body.Count > 0 && !CanFallThrough(method.Body) &&
+                !AstWalker.ContainsOutsideNestedScopes(method.Body, node => node is ReturnStmt) &&
+                !FamilyDefinesElsewhere(owner, method.Name));
+        }
 
         Signature BuildSignature(FunctionDef f, bool dropFirst, string selfName = null, string[] paramTypes = null,
-            string retKey = null, bool keepSpecializedDefaults = true, bool forOverrideSlot = false)
+            string retKey = null, bool keepSpecializedDefaults = true, bool forOverrideSlot = false, ClassDef declaringClass = null)
         {
             var sig = new Signature();
             var locals = LocalsAnalyzer.Analyze(f.Body, f.Params.Select(p => p.Name), null);
@@ -425,7 +431,9 @@ namespace Typhon.Compiler.Emit
             var forwarded = dropFirst && f.Name == "__init__" ? new List<string>() : null;
             int pi = 0;
             // an override of a .NET or runtime class's method: unannotated parameters take the base method's types
-            var baseMethod = dropFirst && _cls != null && !_cls.IsInterface && _cls.Def.Body.Contains(f) ? DotNetBaseMethod(_cls.Def, f) : null;
+            ClassDef methodOwner = declaringClass ?? _cls?.Def;
+            var baseMethod = dropFirst && _cls?.IsInterface != true && methodOwner?.Body.Contains(f) == true
+                ? DotNetBaseMethod(methodOwner, f) : null;
             string[] baseTypes = baseMethod?.Parameters.Select(x => x.GenericType).ToArray();
             bool inferredMethod = dropFirst && f.Name != "__init__" && _cls?.Def.Body.Contains(f) == true &&
                 (paramTypes != null || _ctxFallbackKey != null);
@@ -452,7 +460,8 @@ namespace Typhon.Compiler.Emit
                 }
                 string inferred = paramTypes != null && pi < paramTypes.Length ? paramTypes[pi] : null;
                 if (inferred == null && p.Annotation == null && baseTypes != null && pi < baseTypes.Length)
-                    inferred = baseTypes[pi] is "object" or "object?" or "global::System.Object" ? "dynamic" : baseTypes[pi];
+                    inferred = baseTypes[pi] is "object" or "object?" or "global::System.Object" ||
+                        !_m.IsGdScript && NeedsNullableNativeParameter(p, baseTypes[pi]) ? "dynamic" : baseTypes[pi];
                 pi++;
                 // def f(..., bisect=bisect) that callers never pass: the name stands for the function (calls go to it directly)
                 if (IsParamAlias(f, p))
@@ -470,6 +479,8 @@ namespace Typhon.Compiler.Emit
                     : inferred != null && inferred != TypeInference.Declared ? inferred
                     : ImplicitDynamic(p, $"parameter '{p.Name}'");
                 if (type == "void") type = "object";
+                if (paramTypes != null && p.Annotation == null && !TypeInference.IsUnknown(type))
+                    (scope.InferredParameters ??= new HashSet<string>()).Add(p.Name);
                 scope.Types[p.Name] = type;
                 if (p.Kind == ParamKind.VarArgs)
                 {
@@ -555,6 +566,10 @@ namespace Typhon.Compiler.Emit
             else if (f.Returns != null)
             {
                 elem = MapType(f.Returns, f, isReturn: true);
+                // Python functions created by exec can return values independently of their annotations.
+                if (_m.RuntimeCodeMode != null && methodOwner == null && elem == "void" &&
+                    !sig.IsGenerator && locals.HasValueReturn)
+                    elem = "dynamic";
                 // -> int with a 'return None' somewhere: the function returns an optional int
                 if (!sig.IsGenerator && IsValueTypeName(elem) && !elem.EndsWith("?") && ReturnsNone(f.Body)) elem += "?";
                 if (sig.IsGenerator)
@@ -578,7 +593,7 @@ namespace Typhon.Compiler.Emit
             else if (locals.HasValueReturn)
                 elem = retKey != null && Ti != null && Ti.Returns.TryGetValue(retKey, out var inferredReturn) && inferredReturn != "dynamic" ? inferredReturn
                      : ImplicitDynamic(f, $"the return type of '{f.PyName ?? f.Name}'");
-            else if (dropFirst && ImplicitMethodResultIsDynamic(f)) elem = "dynamic";
+            else if (dropFirst && ImplicitMethodResultIsDynamic(f, methodOwner)) elem = "dynamic";
             else elem = "void";
 
             sig.ElementType = elem;
@@ -684,7 +699,7 @@ namespace Typhon.Compiler.Emit
                 string doc = f.Body.FirstOrDefault() is ExprStmt statement && statement.Value is ConstExpr { Kind: ConstKind.Str } text
                     ? CsString(text.Str) : "null";
                 string kind = f.IsAsync ? (sig.IsGenerator ? "AsyncGenerator" : "Coroutine") : sig.IsGenerator ? "Generator" : "Ordinary";
-                _w.Line($"[global::Typhon.Runtime.PySource({CsString(_path)}, {CsString(PythonModuleName)}, global::Typhon.Runtime.PyCallableKind.{kind}, doc: {doc}, line: {f.Line})]");
+                _w.Line($"[global::Typhon.Runtime.PySource({CsString(_path)}, {CsString(PythonModuleName)}, global::Typhon.Runtime.PyCallableKind.{kind}, doc: {doc}, line: {f.FirstSourceLine})]");
                 EmitSignatureAttribute(f);
             }
             EmitAttributes(f.Decorators);

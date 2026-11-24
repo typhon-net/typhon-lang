@@ -1,0 +1,30 @@
+events: list[str] = []
+
+def installed(name):
+    events.append("installed:" + name)
+
+class Meta(type):
+    def __new__(mcls, name, bases, namespace):
+        namespace["installed"] = installed
+        return super().__new__(mcls, name, bases, namespace)
+
+    def register(cls, name):
+        events.append(cls.__name__ + ":" + name)
+
+class ItemSetter:
+    def __set_name__(self, owner, name):
+        owner.register(name)
+        owner.installed(name)
+
+class Item(metaclass=Meta):
+    value = ItemSetter()
+
+class Plain:
+    def register(self, name):
+        events.append("plain:" + name)
+
+def dispatch(owner, name):
+    owner.register(name)
+
+dispatch(Plain(), "value")
+print(events)

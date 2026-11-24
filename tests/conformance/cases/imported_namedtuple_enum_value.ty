@@ -1,0 +1,6 @@
+#:pylib .
+import namedtuple_enum_value_data
+
+
+member = namedtuple_enum_value_data.Category.PRIMARY
+print(member.value.code, member.value.label)

@@ -46,6 +46,10 @@ namespace Typhon.Runtime
                 case Type type:
                     if (PyMetaclasses.TryBindMember(type, "__getitem__", out var metaItem)) return __invoke(metaItem, [key]);
                     if (TryGetAttr(type, "__class_getitem__", out var classItem, allowFallback: false)) return __invoke(classItem, [key]);
+                    if (type.IsEnum)
+                        return key is string enumName && type.GetField(enumName, System.Reflection.BindingFlags.Public |
+                            System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.DeclaredOnly) is { } field
+                            ? field.GetValue(null) : throw new KeyNotFoundException(repr(key));
                     if (type == typeof(List<object>) || type == typeof(HashSet<object>) ||
                         type == typeof(OrderedDictionary<object, object>) || type == typeof(frozenset<object>) ||
                         type == typeof(ITuple) || type == typeof(Type))
@@ -73,7 +77,7 @@ namespace Typhon.Runtime
                     var (start, stop, step) = sequenceSlice.Bounds();
                     return slice(o, start, stop, step);
                 }
-                case string s when IsIndex(key): return str_at(s, __pos(key is bool kb ? (kb ? 1L : 0L) : key!, s.Length));
+                case string s: return str_at(s, key);
                 case IList list when IsIndex(key): return list[__pos(key is bool lb ? (lb ? 1L : 0L) : key!, list.Count)];
                 case ITuple t when IsIndex(key): return t[__pos(key is bool tb ? (tb ? 1L : 0L) : key!, t.Length)];
                 case Typhon.Stdlib.collections.abc.Mapping mappingValue: return mappingValue.Item(key);
@@ -587,7 +591,7 @@ namespace Typhon.Runtime
             if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(frozendict<,>)) return false;
             bool builtinShape = o is ITuple or IList || o is IDictionary and not (Typhon.Stdlib.types.MappingProxyType or PyAttrDict) ||
                 type.IsGenericType && type.GetGenericTypeDefinition() == typeof(HashSet<>);
-            return builtinShape && !HasSourceMember(type, name);
+            return builtinShape && !HasSourceMember(type, name) && ReadableInstanceMethod(type, name) == null;
         }
 
         /// <summary>a += b on late-bound values: a list extends in place (Python's list.__iadd__), anything else adds.</summary>
@@ -612,6 +616,17 @@ namespace Typhon.Runtime
             for (int i = a; i < b; i++) if (EqualityComparer<T>.Default.Equals(l[i], x)) return i;
             throw new ArgumentException("value is not in list");
         }
+        public static long index(this ITuple tuple, [PyPositionalOnly] object? value,
+            [System.Runtime.InteropServices.Optional, PyPositionalOnly] object? start,
+            [System.Runtime.InteropServices.Optional, PyPositionalOnly] object? stop)
+        {
+            object? Bound(object? argument) => ReferenceEquals(argument, Type.Missing) ? null : __index_value(argument);
+            var (first, last, _) = new PySlice(Bound(start), Bound(stop)).BigIndices(tuple.Length);
+            for (int i = (int)first; i < (int)last; i++)
+                if (eq(tuple[i], value)) return i;
+            throw new ArgumentException("tuple.index(x): x not in tuple");
+        }
+
         public static long count<T>(this IEnumerable<T> l, T x) => l.LongCount(y => Equals(y, x));
         public static void sort<T>(this List<T> l, bool reverse = false)
         {

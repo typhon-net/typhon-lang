@@ -10,8 +10,21 @@ namespace Typhon.Runtime
     using System.Collections.Generic;
     using System.Linq;
     using System.Reflection;
+    using System.Reflection.Emit;
     using System.Runtime.CompilerServices;
     using Typhon.Stdlib;
+
+    [AttributeUsage(AttributeTargets.Class | AttributeTargets.Interface, Inherited = false)]
+    internal sealed class PyDeclaredBasesAttribute(params Type[] bases) : Attribute
+    {
+        internal readonly Type[] Bases = bases;
+    }
+
+    [AttributeUsage(AttributeTargets.Method, Inherited = false)]
+    internal sealed class PyRuntimeMixinMethodAttribute(string name) : Attribute
+    {
+        internal string Name { get; } = name;
+    }
 
     [AttributeUsage(AttributeTargets.Class, Inherited = false)]
     internal sealed class PyMetaclassDefinitionAttribute : Attribute { }
@@ -46,7 +59,11 @@ namespace Typhon.Runtime
 
         internal static Type[] Bases(Type type) => Definitions.TryGetValue(type, out var definition)
             ? definition.Bases.Length == 0 ? [typeof(object)] : definition.Bases
-            : PyExc.DeclaredBases(type) ?? ((PyExc.BuiltinParent(type) ?? type.BaseType) is Type parent ? [parent] : []);
+            : DeclaredBases(type) ?? ((PyExc.BuiltinParent(type) ?? type.BaseType) is Type parent ? [parent] : []);
+
+        internal static Type[]? DeclaredBases(Type type) =>
+            typeof(IPyPlainEnum).IsAssignableFrom(type) && !typeof(PyPlainEnum).IsAssignableFrom(type) && type.BaseType is Type storage
+                ? [storage, typeof(Typhon.Stdlib.@enum.Enum)] : type.GetCustomAttribute<PyDeclaredBasesAttribute>(inherit: false)?.Bases;
 
         internal static IEnumerable<Type> MethodOrder(Type type)
         {
@@ -57,9 +74,9 @@ namespace Typhon.Runtime
                     foreach (Type member in definition.MethodOrder) yield return member;
                     yield break;
                 }
-                if (PyExc.DeclaredBases(owner) is Type[] exceptionBases)
+                if (DeclaredBases(owner) is Type[] bases)
                 {
-                    foreach (var member in ComputeMethodOrder(owner, exceptionBases)) yield return member;
+                    foreach (var member in ComputeMethodOrder(owner, bases)) yield return member;
                     yield break;
                 }
                 yield return owner;
@@ -68,6 +85,7 @@ namespace Typhon.Runtime
 
         internal static bool HasDeclaredAncestor(Type target, Type ancestor) =>
             Definitions.TryGetValue(target, out var definition) && definition.MethodOrder.Contains(ancestor) ||
+            ancestor == typeof(Typhon.Stdlib.@enum.Enum) && typeof(IPyPlainEnum).IsAssignableFrom(target) ||
             PyExc.HasDeclaredBase(target, ancestor);
 
         static Type[] ComputeMethodOrder(Type type, Type[] bases)
@@ -120,14 +138,36 @@ namespace Typhon.Runtime
             return true;
         }
 
+        internal static bool DeleteMember(Type type, string name) =>
+            Definitions.TryGetValue(type, out var definition) && definition.Namespace.Remove(name);
+
         internal static object? Bind(object? value, object? instance, Type owner) => value switch
         {
             builtins.classmethod cm => cm.__get__(instance, owner),
             builtins.staticmethod sm => sm.__get__(instance, owner),
             builtins.property p => p.__get__(instance, owner),
-            PyFunction function when instance != null => new types.MethodType(function, instance),
+            PyFunction function when instance != null => function.__get__(instance, owner),
+            types.DynamicClassAttribute descriptor when instance == null => descriptor.__get__(null, owner),
+            object descriptor when instance == null => BindClassDescriptor(descriptor, owner),
             _ => value,
         };
+
+        static object? BindClassDescriptor(object descriptor, Type owner)
+        {
+            Type type = Builtins.__type_of(descriptor);
+            if (type is not PyLocalDataClass && !type.IsDefined(typeof(PySourceAttribute), false))
+                return descriptor;
+
+            foreach (Type declaration in MethodOrder(type))
+            {
+                // A special method is resolved in the class namespace, bypassing instance attributes.
+                IDictionary members = declaration is PyLocalDataClass local
+                    ? local.Members : Namespace(declaration) ?? PyClassDescriptors.DeclaredNamespace(declaration);
+                if (!members.Contains("__get__")) continue;
+                return Builtins.__invoke(members["__get__"], [descriptor, null, owner]);
+            }
+            return descriptor;
+        }
 
         internal static Type Select(Type? proposed, Type[] bases)
         {
@@ -217,19 +257,137 @@ namespace Typhon.Runtime
                 if (metaclass != creation.Meta || name != creation.Name || !parents.SequenceEqual(creation.Bases))
                     throw new NotSupportedException("type.__new__ cannot change a compiled class's metaclass, name, or bases");
                 Remember(creation.Target, creation.Storage, metaclass, creation.Bases, owned, qualifiedName);
+                Builtins.NotifyClassDescriptors(creation.Target, owned);
                 Builtins.__initialize_subclass(creation.Target, kwargs);
                 return creation.Target;
             }
-            if (parents.Length > 1)
-                throw new NotSupportedException("a runtime-created class supports at most one base class");
             string module = owned.TryGetValue("__module__", out object? declaredModule) && declaredModule is string moduleName
                 ? moduleName : sys_._getframemodulename() ?? "__main__";
             owned["__module__"] = module;
-            var target = new PyLocalDataClass(name, module, qualifiedName, parents.FirstOrDefault() ?? typeof(object), owned);
+            Type parent = RuntimeLayoutBase(parents);
+            Type? target = CompiledSubclass(parent, name, module, owned.ContainsKey("__new__") ||
+                parents.Any(basis => basis.IsDefined(typeof(PyCustomAllocationAttribute), false)));
+            if (target == null)
+            {
+                if (parents.Length > 1)
+                    throw new NotSupportedException("multiple runtime bases require a compatible compiled storage layout");
+                target = new PyLocalDataClass(name, module, qualifiedName, parent, owned);
+            }
             Remember(target, target, metaclass, parents, owned, qualifiedName);
+            Builtins.NotifyClassDescriptors(target, owned);
             Builtins.__initialize_subclass(target, kwargs);
             return target;
         });
+
+        internal static bool TryBindMixinInstanceMethod(object receiver, Type owner, string name, out object? member)
+        {
+            const BindingFlags flags = BindingFlags.DeclaredOnly | BindingFlags.Static | BindingFlags.NonPublic;
+            member = null;
+            if (owner is PyLocalDataClass local)
+            {
+                if (!local.Members.TryGetValue(name, out var value)) return false;
+                member = Bind(value, receiver, Builtins.__type_of(receiver));
+                return true;
+            }
+            if (owner.IsInstanceOfType(receiver)) return false;
+            var method = owner.GetMethods(flags).FirstOrDefault(candidate =>
+                candidate.GetCustomAttribute<PyRuntimeMixinMethodAttribute>()?.Name == name);
+            if (method == null) return false;
+            var callable = new PyBoundMethod(owner, method.Name, includeNonPublic: true, displayName: name);
+            member = new types.MethodType(callable, receiver);
+            return true;
+        }
+
+        internal static bool TryGetMixinInstanceMethod(object receiver, Type type, string name, out object? member)
+        {
+            member = null;
+            if (!HasRuntimeSubclassStorage(type)) return false;
+            const BindingFlags instance = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly;
+            foreach (Type owner in MethodOrder(type))
+            {
+                if (TryBindMixinInstanceMethod(receiver, owner, name, out member)) return true;
+                if (owner.IsInstanceOfType(receiver) && owner.GetMember(name, instance).Length > 0) return false;
+            }
+            return false;
+        }
+
+        internal static bool HasRuntimeSubclassStorage(Type type) => type.Assembly.IsDynamic && Definitions.TryGetValue(type, out _);
+
+        static Type RuntimeLayoutBase(Type[] bases)
+        {
+            Type? primary = null;
+            Type? native = null;
+            foreach (Type parent in bases)
+            {
+                if (parent is PyLocalDataClass) continue;
+                Type basis = Storage(parent);
+                Type? layout = basis;
+                while (layout != null && layout.IsDefined(typeof(PySourceAttribute), false)) layout = layout.BaseType;
+                if (layout == null || layout == typeof(object)) continue;
+                if (native != null && !native.IsAssignableFrom(layout) && !layout.IsAssignableFrom(native))
+                    throw new InvalidCastException("multiple bases have incompatible instance layouts");
+                if (native == null || native != layout && native.IsAssignableFrom(layout))
+                {
+                    primary = basis;
+                    native = layout;
+                }
+            }
+            return primary ?? bases.FirstOrDefault(basis => basis is not PyLocalDataClass) ?? bases.FirstOrDefault() ?? typeof(object);
+        }
+
+        static Type? CompiledSubclass(Type parent, string name, string module, bool hasAllocator)
+        {
+            if (!RuntimeFeature.IsDynamicCodeSupported || !parent.IsClass || parent.IsSealed ||
+                parent.IsAbstract || parent.ContainsGenericParameters || !parent.IsDefined(typeof(PySourceAttribute), false))
+                return null;
+            hasAllocator |= parent.IsDefined(typeof(PyCustomAllocationAttribute), false);
+            const BindingFlags constructors = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+            var accessible = parent.GetConstructors(constructors).Where(constructor => constructor.IsPublic ||
+                constructor.IsFamily || constructor.IsFamilyOrAssembly || constructor.IsAssembly).ToArray();
+            if (accessible.Length == 0 && !hasAllocator) return null;
+
+            var assembly = AssemblyBuilder.DefineDynamicAssembly(new AssemblyName("Typhon.RuntimeClass"), AssemblyBuilderAccess.RunAndCollect);
+            var accessOverride = typeof(IgnoresAccessChecksToAttribute).GetConstructor([typeof(string)])!;
+            assembly.SetCustomAttribute(new CustomAttributeBuilder(accessOverride, [parent.Assembly.GetName().Name!]));
+            if (parent.Assembly != typeof(PySourceAttribute).Assembly)
+                assembly.SetCustomAttribute(new CustomAttributeBuilder(accessOverride, [typeof(PySourceAttribute).Assembly.GetName().Name!]));
+            var type = assembly.DefineDynamicModule("RuntimeClass").DefineType("RuntimeClass", TypeAttributes.Public, parent);
+            var source = typeof(PySourceAttribute).GetConstructor([typeof(string), typeof(string), typeof(PyCallableKind),
+                typeof(string), typeof(int), typeof(string)])!;
+            type.SetCustomAttribute(new CustomAttributeBuilder(source, ["<type>", module, PyCallableKind.Ordinary, null, 0, name]));
+            if (hasAllocator)
+                type.SetCustomAttribute(new CustomAttributeBuilder(typeof(PyCustomAllocationAttribute).GetConstructor(Type.EmptyTypes)!, []));
+            foreach (var constructor in accessible)
+            {
+                var parameters = constructor.GetParameters();
+                var forwarder = type.DefineConstructor(MethodAttributes.Public, CallingConventions.Standard,
+                    parameters.Select(parameter => parameter.ParameterType).ToArray());
+                var body = forwarder.GetILGenerator();
+                body.Emit(OpCodes.Ldarg_0);
+                for (int index = 0; index < parameters.Length; index++)
+                {
+                    var parameter = parameters[index];
+                    var forwarded = forwarder.DefineParameter(index + 1, parameter.Attributes, parameter.Name);
+                    if (parameter.HasDefaultValue && parameter.DefaultValue is not (Missing or DBNull))
+                        forwarded.SetConstant(parameter.DefaultValue);
+                    foreach (var attribute in parameter.GetCustomAttributesData())
+                        if (attribute.AttributeType == typeof(PyKeywordOnlyAttribute) || attribute.AttributeType == typeof(PyPackedArgumentsAttribute) ||
+                            attribute.AttributeType == typeof(ParamArrayAttribute))
+                            forwarded.SetCustomAttribute(new CustomAttributeBuilder(attribute.Constructor,
+                                attribute.ConstructorArguments.Select(argument => argument.Value).ToArray()));
+                    body.Emit(OpCodes.Ldarg, (short)(index + 1));
+                }
+                body.Emit(OpCodes.Call, constructor);
+                body.Emit(OpCodes.Ret);
+            }
+            if (accessible.Length == 0)
+            {
+                var body = type.DefineConstructor(MethodAttributes.Private, CallingConventions.Standard, Type.EmptyTypes).GetILGenerator();
+                body.Emit(OpCodes.Newobj, typeof(InvalidOperationException).GetConstructor(Type.EmptyTypes)!);
+                body.Emit(OpCodes.Throw);
+            }
+            return type.CreateType();
+        }
 
         internal static Type[] ClassBases(ITuple values) => Enumerable.Range(0, values.Length)
             .Select(index => values[index] as Type ?? throw new InvalidCastException("type() bases must be types")).ToArray();
@@ -253,7 +411,7 @@ namespace Typhon.Runtime
 
         internal static T Write<T>(Type type, string name, T value)
         {
-            if (_creating is { } frame && frame.Storage == type) frame.Namespace[name] = value;
+            if (_creating is { } frame && frame.Storage == type) Builtins.__setitem(frame.Namespace, name, value);
             return value;
         }
 
@@ -308,12 +466,12 @@ namespace Typhon.Runtime
             Type chosen = Select(declared, bases);
             var basis = new PyTuple<Type>(bases);
             IDictionary ns = PrepareNamespace(chosen, name, basis, keywords);
-            ns["__module__"] = module;
-            ns["__qualname__"] = name;
+            Builtins.__setitem(ns, "__module__", module);
+            Builtins.__setitem(ns, "__qualname__", name);
             if (typeParameters != null)
             {
-                ns["__type_params__"] = typeParameters;
-                ns["__orig_bases__"] = originalBases;
+                Builtins.__setitem(ns, "__type_params__", typeParameters);
+                Builtins.__setitem(ns, "__orig_bases__", originalBases);
             }
             object?[] create = [chosen, name, basis, ns];
 
@@ -324,7 +482,7 @@ namespace Typhon.Runtime
                 RuntimeHelpers.RunClassConstructor(storage.TypeHandle);
                 IDictionary original = PyClassDescriptors.DeclaredNamespace(storage);
                 foreach (string member in names)
-                    if (!ns.Contains(member) && original.Contains(member)) ns[member] = original[member];
+                    if (!ns.Contains(member) && original.Contains(member)) Builtins.__setitem(ns, member, original[member]);
                 object? construct = Builtins.getattr(chosen, "__new__", New);
                 var result = (object?)Builtins.__invoke_kw(construct, create, keywords);
                 if (!ReferenceEquals(result, target) || !Definitions.TryGetValue(target, out _))
@@ -352,5 +510,15 @@ namespace Typhon.Runtime
         public static void __class_namespace_delete(Type type, string name) => PyMetaclasses.Delete(type, name);
         public static dynamic? __class_namespace_read(Type type, string name, Type module, string moduleName) =>
             PyMetaclasses.Read(type, name, module, moduleName);
+    }
+}
+
+namespace System.Runtime.CompilerServices
+{
+    // Runtime subclasses can inherit the internal storage of a Typhon-generated base class.
+    [AttributeUsage(AttributeTargets.Assembly, AllowMultiple = true)]
+    internal sealed class IgnoresAccessChecksToAttribute(string assemblyName) : Attribute
+    {
+        public string AssemblyName { get; } = assemblyName;
     }
 }

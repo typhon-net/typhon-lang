@@ -1,0 +1,34 @@
+class Initializer:
+    def __init__(self, label: str, *, count: int = 1):
+        self.labels = [label] * count
+
+    def activate(self, name: str) -> str:
+        return "base " + name
+
+
+class Inherited(Initializer):
+    pass
+
+
+class Work(Inherited):
+    def __init__(self, label: str):
+        self.factory.__init__(self, label)
+
+    def activate(self, name: str) -> str:
+        return self.factory.activate(self, name)
+
+
+def initialize(parent: type, receiver: Work) -> None:
+    parent.__init__(receiver, "typed", count=2)
+
+
+Work.factory = Inherited
+work = Work("direct")
+print(work.labels)
+initializer = getattr(work.factory, "__init__")
+initializer(work, "retrieved")
+print(work.labels)
+
+initialize(Inherited, work)
+print(work.labels)
+print(work.activate("server"))

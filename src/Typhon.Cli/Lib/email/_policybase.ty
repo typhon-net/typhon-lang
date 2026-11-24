@@ -1,0 +1,674 @@
+# Source: CPython 3.15.2, Lib/email/_policybase.py
+# https://github.com/python/cpython/blob/v3.15.2/Lib/email/_policybase.py
+# The original source follows the license below without changes.
+#
+# A. HISTORY OF THE SOFTWARE
+# ==========================
+#
+# Python was created in the early 1990s by Guido van Rossum at Stichting
+# Mathematisch Centrum (CWI, see https://www.cwi.nl) in the Netherlands
+# as a successor of a language called ABC.  Guido remains Python's
+# principal author, although it includes many contributions from others.
+#
+# In 1995, Guido continued his work on Python at the Corporation for
+# National Research Initiatives (CNRI, see https://www.cnri.reston.va.us)
+# in Reston, Virginia where he released several versions of the
+# software.
+#
+# In May 2000, Guido and the Python core development team moved to
+# BeOpen.com to form the BeOpen PythonLabs team.  In October of the same
+# year, the PythonLabs team moved to Digital Creations, which became
+# Zope Corporation.  In 2001, the Python Software Foundation (PSF, see
+# https://www.python.org/psf/) was formed, a non-profit organization
+# created specifically to own Python-related Intellectual Property.
+# Zope Corporation was a sponsoring member of the PSF.
+#
+# All Python releases are Open Source (see https://opensource.org for
+# the Open Source Definition).  Historically, most, but not all, Python
+# releases have also been GPL-compatible; the table below summarizes
+# the various releases.
+#
+#     Release         Derived     Year        Owner       GPL-
+#                     from                                compatible? (1)
+#
+#     0.9.0 thru 1.2              1991-1995   CWI         yes
+#     1.3 thru 1.5.2  1.2         1995-1999   CNRI        yes
+#     1.6             1.5.2       2000        CNRI        no
+#     2.0             1.6         2000        BeOpen.com  no
+#     1.6.1           1.6         2001        CNRI        yes (2)
+#     2.1             2.0+1.6.1   2001        PSF         no
+#     2.0.1           2.0+1.6.1   2001        PSF         yes
+#     2.1.1           2.1+2.0.1   2001        PSF         yes
+#     2.1.2           2.1.1       2002        PSF         yes
+#     2.1.3           2.1.2       2002        PSF         yes
+#     2.2 and above   2.1.1       2001-now    PSF         yes
+#
+# Footnotes:
+#
+# (1) GPL-compatible doesn't mean that we're distributing Python under
+#     the GPL.  All Python licenses, unlike the GPL, let you distribute
+#     a modified version without making your changes open source.  The
+#     GPL-compatible licenses make it possible to combine Python with
+#     other software that is released under the GPL; the others don't.
+#
+# (2) According to Richard Stallman, 1.6.1 is not GPL-compatible,
+#     because its license has a choice of law clause.  According to
+#     CNRI, however, Stallman's lawyer has told CNRI's lawyer that 1.6.1
+#     is "not incompatible" with the GPL.
+#
+# Thanks to the many outside volunteers who have worked under Guido's
+# direction to make these releases possible.
+#
+#
+# B. TERMS AND CONDITIONS FOR ACCESSING OR OTHERWISE USING PYTHON
+# ===============================================================
+#
+# Python software and documentation are licensed under the
+# Python Software Foundation License Version 2.
+#
+# Starting with Python 3.8.6, examples, recipes, and other code in
+# the documentation are dual licensed under the PSF License Version 2
+# and the Zero-Clause BSD license.
+#
+# Some software incorporated into Python is under different licenses.
+# The licenses are listed with code falling under that license.
+#
+#
+# PYTHON SOFTWARE FOUNDATION LICENSE VERSION 2
+# --------------------------------------------
+#
+# 1. This LICENSE AGREEMENT is between the Python Software Foundation
+# ("PSF"), and the Individual or Organization ("Licensee") accessing and
+# otherwise using this software ("Python") in source or binary form and
+# its associated documentation.
+#
+# 2. Subject to the terms and conditions of this License Agreement, PSF hereby
+# grants Licensee a nonexclusive, royalty-free, world-wide license to reproduce,
+# analyze, test, perform and/or display publicly, prepare derivative works,
+# distribute, and otherwise use Python alone or in any derivative version,
+# provided, however, that PSF's License Agreement and PSF's notice of copyright,
+# i.e., "Copyright (c) 2001 Python Software Foundation; All Rights Reserved"
+# are retained in Python alone or in any derivative version prepared by Licensee.
+#
+# 3. In the event Licensee prepares a derivative work that is based on
+# or incorporates Python or any part thereof, and wants to make
+# the derivative work available to others as provided herein, then
+# Licensee hereby agrees to include in any such work a brief summary of
+# the changes made to Python.
+#
+# 4. PSF is making Python available to Licensee on an "AS IS"
+# basis.  PSF MAKES NO REPRESENTATIONS OR WARRANTIES, EXPRESS OR
+# IMPLIED.  BY WAY OF EXAMPLE, BUT NOT LIMITATION, PSF MAKES NO AND
+# DISCLAIMS ANY REPRESENTATION OR WARRANTY OF MERCHANTABILITY OR FITNESS
+# FOR ANY PARTICULAR PURPOSE OR THAT THE USE OF PYTHON WILL NOT
+# INFRINGE ANY THIRD PARTY RIGHTS.
+#
+# 5. PSF SHALL NOT BE LIABLE TO LICENSEE OR ANY OTHER USERS OF PYTHON
+# FOR ANY INCIDENTAL, SPECIAL, OR CONSEQUENTIAL DAMAGES OR LOSS AS
+# A RESULT OF MODIFYING, DISTRIBUTING, OR OTHERWISE USING PYTHON,
+# OR ANY DERIVATIVE THEREOF, EVEN IF ADVISED OF THE POSSIBILITY THEREOF.
+#
+# 6. This License Agreement will automatically terminate upon a material
+# breach of its terms and conditions.
+#
+# 7. Nothing in this License Agreement shall be deemed to create any
+# relationship of agency, partnership, or joint venture between PSF and
+# Licensee.  This License Agreement does not grant permission to use PSF
+# trademarks or trade name in a trademark sense to endorse or promote
+# products or services of Licensee, or any third party.
+#
+# 8. By copying, installing or otherwise using Python, Licensee
+# agrees to be bound by the terms and conditions of this License
+# Agreement.
+#
+#
+# BEOPEN.COM LICENSE AGREEMENT FOR PYTHON 2.0
+# -------------------------------------------
+#
+# BEOPEN PYTHON OPEN SOURCE LICENSE AGREEMENT VERSION 1
+#
+# 1. This LICENSE AGREEMENT is between BeOpen.com ("BeOpen"), having an
+# office at 160 Saratoga Avenue, Santa Clara, CA 95051, and the
+# Individual or Organization ("Licensee") accessing and otherwise using
+# this software in source or binary form and its associated
+# documentation ("the Software").
+#
+# 2. Subject to the terms and conditions of this BeOpen Python License
+# Agreement, BeOpen hereby grants Licensee a non-exclusive,
+# royalty-free, world-wide license to reproduce, analyze, test, perform
+# and/or display publicly, prepare derivative works, distribute, and
+# otherwise use the Software alone or in any derivative version,
+# provided, however, that the BeOpen Python License is retained in the
+# Software, alone or in any derivative version prepared by Licensee.
+#
+# 3. BeOpen is making the Software available to Licensee on an "AS IS"
+# basis.  BEOPEN MAKES NO REPRESENTATIONS OR WARRANTIES, EXPRESS OR
+# IMPLIED.  BY WAY OF EXAMPLE, BUT NOT LIMITATION, BEOPEN MAKES NO AND
+# DISCLAIMS ANY REPRESENTATION OR WARRANTY OF MERCHANTABILITY OR FITNESS
+# FOR ANY PARTICULAR PURPOSE OR THAT THE USE OF THE SOFTWARE WILL NOT
+# INFRINGE ANY THIRD PARTY RIGHTS.
+#
+# 4. BEOPEN SHALL NOT BE LIABLE TO LICENSEE OR ANY OTHER USERS OF THE
+# SOFTWARE FOR ANY INCIDENTAL, SPECIAL, OR CONSEQUENTIAL DAMAGES OR LOSS
+# AS A RESULT OF USING, MODIFYING OR DISTRIBUTING THE SOFTWARE, OR ANY
+# DERIVATIVE THEREOF, EVEN IF ADVISED OF THE POSSIBILITY THEREOF.
+#
+# 5. This License Agreement will automatically terminate upon a material
+# breach of its terms and conditions.
+#
+# 6. This License Agreement shall be governed by and interpreted in all
+# respects by the law of the State of California, excluding conflict of
+# law provisions.  Nothing in this License Agreement shall be deemed to
+# create any relationship of agency, partnership, or joint venture
+# between BeOpen and Licensee.  This License Agreement does not grant
+# permission to use BeOpen trademarks or trade names in a trademark
+# sense to endorse or promote products or services of Licensee, or any
+# third party.  As an exception, the "BeOpen Python" logos available at
+# http://www.pythonlabs.com/logos.html may be used according to the
+# permissions granted on that web page.
+#
+# 7. By copying, installing or otherwise using the software, Licensee
+# agrees to be bound by the terms and conditions of this License
+# Agreement.
+#
+#
+# CNRI LICENSE AGREEMENT FOR PYTHON 1.6.1
+# ---------------------------------------
+#
+# 1. This LICENSE AGREEMENT is between the Corporation for National
+# Research Initiatives, having an office at 1895 Preston White Drive,
+# Reston, VA 20191 ("CNRI"), and the Individual or Organization
+# ("Licensee") accessing and otherwise using Python 1.6.1 software in
+# source or binary form and its associated documentation.
+#
+# 2. Subject to the terms and conditions of this License Agreement, CNRI
+# hereby grants Licensee a nonexclusive, royalty-free, world-wide
+# license to reproduce, analyze, test, perform and/or display publicly,
+# prepare derivative works, distribute, and otherwise use Python 1.6.1
+# alone or in any derivative version, provided, however, that CNRI's
+# License Agreement and CNRI's notice of copyright, i.e., "Copyright (c)
+# 1995-2001 Corporation for National Research Initiatives; All Rights
+# Reserved" are retained in Python 1.6.1 alone or in any derivative
+# version prepared by Licensee.  Alternately, in lieu of CNRI's License
+# Agreement, Licensee may substitute the following text (omitting the
+# quotes): "Python 1.6.1 is made available subject to the terms and
+# conditions in CNRI's License Agreement.  This Agreement together with
+# Python 1.6.1 may be located on the internet using the following
+# unique, persistent identifier (known as a handle): 1895.22/1013.  This
+# Agreement may also be obtained from a proxy server on the internet
+# using the following URL: http://hdl.handle.net/1895.22/1013".
+#
+# 3. In the event Licensee prepares a derivative work that is based on
+# or incorporates Python 1.6.1 or any part thereof, and wants to make
+# the derivative work available to others as provided herein, then
+# Licensee hereby agrees to include in any such work a brief summary of
+# the changes made to Python 1.6.1.
+#
+# 4. CNRI is making Python 1.6.1 available to Licensee on an "AS IS"
+# basis.  CNRI MAKES NO REPRESENTATIONS OR WARRANTIES, EXPRESS OR
+# IMPLIED.  BY WAY OF EXAMPLE, BUT NOT LIMITATION, CNRI MAKES NO AND
+# DISCLAIMS ANY REPRESENTATION OR WARRANTY OF MERCHANTABILITY OR FITNESS
+# FOR ANY PARTICULAR PURPOSE OR THAT THE USE OF PYTHON 1.6.1 WILL NOT
+# INFRINGE ANY THIRD PARTY RIGHTS.
+#
+# 5. CNRI SHALL NOT BE LIABLE TO LICENSEE OR ANY OTHER USERS OF PYTHON
+# 1.6.1 FOR ANY INCIDENTAL, SPECIAL, OR CONSEQUENTIAL DAMAGES OR LOSS AS
+# A RESULT OF MODIFYING, DISTRIBUTING, OR OTHERWISE USING PYTHON 1.6.1,
+# OR ANY DERIVATIVE THEREOF, EVEN IF ADVISED OF THE POSSIBILITY THEREOF.
+#
+# 6. This License Agreement will automatically terminate upon a material
+# breach of its terms and conditions.
+#
+# 7. This License Agreement shall be governed by the federal
+# intellectual property law of the United States, including without
+# limitation the federal copyright law, and, to the extent such
+# U.S. federal law does not apply, by the law of the Commonwealth of
+# Virginia, excluding Virginia's conflict of law provisions.
+# Notwithstanding the foregoing, with regard to derivative works based
+# on Python 1.6.1 that incorporate non-separable material that was
+# previously distributed under the GNU General Public License (GPL), the
+# law of the Commonwealth of Virginia shall govern this License
+# Agreement only as to issues arising under or with respect to
+# Paragraphs 4, 5, and 7 of this License Agreement.  Nothing in this
+# License Agreement shall be deemed to create any relationship of
+# agency, partnership, or joint venture between CNRI and Licensee.  This
+# License Agreement does not grant permission to use CNRI trademarks or
+# trade name in a trademark sense to endorse or promote products or
+# services of Licensee, or any third party.
+#
+# 8. By clicking on the "ACCEPT" button where indicated, or by copying,
+# installing or otherwise using Python 1.6.1, Licensee agrees to be
+# bound by the terms and conditions of this License Agreement.
+#
+#         ACCEPT
+#
+#
+# CWI LICENSE AGREEMENT FOR PYTHON 0.9.0 THROUGH 1.2
+# --------------------------------------------------
+#
+# Copyright (c) 1991 - 1995, Stichting Mathematisch Centrum Amsterdam,
+# The Netherlands.  All rights reserved.
+#
+# Permission to use, copy, modify, and distribute this software and its
+# documentation for any purpose and without fee is hereby granted,
+# provided that the above copyright notice appear in all copies and that
+# both that copyright notice and this permission notice appear in
+# supporting documentation, and that the name of Stichting Mathematisch
+# Centrum or CWI not be used in advertising or publicity pertaining to
+# distribution of the software without specific, written prior
+# permission.
+#
+# STICHTING MATHEMATISCH CENTRUM DISCLAIMS ALL WARRANTIES WITH REGARD TO
+# THIS SOFTWARE, INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+# FITNESS, IN NO EVENT SHALL STICHTING MATHEMATISCH CENTRUM BE LIABLE
+# FOR ANY SPECIAL, INDIRECT OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+# ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT
+# OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+#
+# ZERO-CLAUSE BSD LICENSE FOR CODE IN THE PYTHON DOCUMENTATION
+# ----------------------------------------------------------------------
+#
+# Permission to use, copy, modify, and/or distribute this software for any
+# purpose with or without fee is hereby granted.
+#
+# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+# REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY
+# AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+# INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM
+# LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR
+# OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+# PERFORMANCE OF THIS SOFTWARE.
+
+"""Policy framework for the email package.
+
+Allows fine grained feature control of how the package parses and emits data.
+"""
+
+import abc
+import re
+from email import header
+from email import charset as _charset
+from email.utils import _has_surrogates
+
+__all__ = [
+    'Policy',
+    'Compat32',
+    'compat32',
+    ]
+
+# validation regex from RFC 5322, equivalent to pattern re.compile("[!-9;-~]+$")
+valid_header_name_re = re.compile("[\041-\071\073-\176]+$")
+
+def validate_header_name(name):
+    # Validate header name according to RFC 5322
+    if not valid_header_name_re.match(name):
+        raise ValueError(
+            f"Header field name contains invalid characters: {name!r}")
+
+class _PolicyBase:
+
+    """Policy Object basic framework.
+
+    This class is useless unless subclassed.  A subclass should define
+    class attributes with defaults for any values that are to be
+    managed by the Policy object.  The constructor will then allow
+    non-default values to be set for these attributes at instance
+    creation time.  The instance will be callable, taking these same
+    attributes keyword arguments, and returning a new instance
+    identical to the called instance except for those values changed
+    by the keyword arguments.  Instances may be added, yielding new
+    instances with any non-default values from the right hand
+    operand overriding those in the left hand operand.  That is,
+
+        A + B == A(<non-default values of B>)
+
+    The repr of an instance can be used to reconstruct the object
+    if and only if the repr of the values can be used to reconstruct
+    those values.
+
+    """
+
+    def __init__(self, **kw):
+        """Create new Policy, possibly overriding some defaults.
+
+        See class docstring for a list of overridable attributes.
+
+        """
+        for name, value in kw.items():
+            if hasattr(self, name):
+                super(_PolicyBase,self).__setattr__(name, value)
+            else:
+                raise TypeError(
+                    "{!r} is an invalid keyword argument for {}".format(
+                        name, self.__class__.__name__))
+
+    def __repr__(self):
+        args = [ "{}={!r}".format(name, value)
+                 for name, value in self.__dict__.items() ]
+        return "{}({})".format(self.__class__.__name__, ', '.join(args))
+
+    def clone(self, **kw):
+        """Return a new instance with specified attributes changed.
+
+        The new instance has the same attribute values as the current object,
+        except for the changes passed in as keyword arguments.
+
+        """
+        newpolicy = self.__class__.__new__(self.__class__)
+        for attr, value in self.__dict__.items():
+            object.__setattr__(newpolicy, attr, value)
+        for attr, value in kw.items():
+            if not hasattr(self, attr):
+                raise TypeError(
+                    "{!r} is an invalid keyword argument for {}".format(
+                        attr, self.__class__.__name__))
+            object.__setattr__(newpolicy, attr, value)
+        return newpolicy
+
+    def __setattr__(self, name, value):
+        if hasattr(self, name):
+            msg = "{!r} object attribute {!r} is read-only"
+        else:
+            msg = "{!r} object has no attribute {!r}"
+        raise AttributeError(msg.format(self.__class__.__name__, name))
+
+    def __add__(self, other):
+        """Non-default values from right operand override those from left.
+
+        The object returned is a new instance of the subclass.
+
+        """
+        return self.clone(**other.__dict__)
+
+
+def _append_doc(doc, added_doc):
+    doc = doc.rsplit('\n', 1)[0]
+    added_doc = added_doc.split('\n', 1)[1]
+    return doc + '\n' + added_doc
+
+def _extend_docstrings(cls):
+    if cls.__doc__ and cls.__doc__.startswith('+'):
+        cls.__doc__ = _append_doc(cls.__bases__[0].__doc__, cls.__doc__)
+    for name, attr in cls.__dict__.items():
+        if attr.__doc__ and attr.__doc__.startswith('+'):
+            for c in (c for base in cls.__bases__ for c in base.mro()):
+                doc = getattr(getattr(c, name), '__doc__')
+                if doc:
+                    attr.__doc__ = _append_doc(doc, attr.__doc__)
+                    break
+    return cls
+
+
+class Policy(_PolicyBase, metaclass=abc.ABCMeta):
+
+    r"""Controls for how messages are interpreted and formatted.
+
+    Most of the classes and many of the methods in the email package accept
+    Policy objects as parameters.  A Policy object contains a set of values and
+    functions that control how input is interpreted and how output is rendered.
+    For example, the parameter 'raise_on_defect' controls whether or not an RFC
+    violation results in an error being raised or not, while 'max_line_length'
+    controls the maximum length of output lines when a Message is serialized.
+
+    Any valid attribute may be overridden when a Policy is created by passing
+    it as a keyword argument to the constructor.  Policy objects are immutable,
+    but a new Policy object can be created with only certain values changed by
+    calling the Policy instance with keyword arguments.  Policy objects can
+    also be added, producing a new Policy object in which the non-default
+    attributes set in the right hand operand overwrite those specified in the
+    left operand.
+
+    Settable attributes:
+
+    raise_on_defect     -- If true, then defects should be raised as errors.
+                           Default: False.
+
+    linesep             -- string containing the value to use as separation
+                           between output lines.  Default '\n'.
+
+    cte_type            -- Type of allowed content transfer encodings
+
+                           7bit  -- ASCII only
+                           8bit  -- Content-Transfer-Encoding: 8bit is allowed
+
+                           Default: 8bit.  Also controls the disposition of
+                           (RFC invalid) binary data in headers; see the
+                           documentation of the binary_fold method.
+
+    max_line_length     -- maximum length of lines, excluding 'linesep',
+                           during serialization.  None or 0 means no line
+                           wrapping is done.  Default is 78.
+
+    mangle_from_        -- a flag that, when True escapes From_ lines in the
+                           body of the message by putting a '>' in front of
+                           them. This is used when the message is being
+                           serialized by a generator. Default: False.
+
+    message_factory     -- the class to use to create new message objects.
+                           If the value is None, the default is Message.
+
+    verify_generated_headers
+                        -- if true, the generator verifies that each header
+                           they are properly folded, so that a parser won't
+                           treat it as multiple headers, start-of-body, or
+                           part of another header.
+                           This is a check against custom Header & fold()
+                           implementations.
+    """
+
+    raise_on_defect = False
+    linesep = '\n'
+    cte_type = '8bit'
+    max_line_length = 78
+    mangle_from_ = False
+    message_factory = None
+    verify_generated_headers = True
+
+    def handle_defect(self, obj, defect):
+        """Based on policy, either raise defect or call register_defect.
+
+            handle_defect(obj, defect)
+
+        defect should be a Defect subclass, but in any case must be an
+        Exception subclass.  obj is the object on which the defect should be
+        registered if it is not raised.  If the raise_on_defect is True, the
+        defect is raised as an error, otherwise the object and the defect are
+        passed to register_defect.
+
+        This method is intended to be called by parsers that discover defects.
+        The email package parsers always call it with Defect instances.
+
+        """
+        if self.raise_on_defect:
+            raise defect
+        self.register_defect(obj, defect)
+
+    def register_defect(self, obj, defect):
+        """Record 'defect' on 'obj'.
+
+        Called by handle_defect if raise_on_defect is False.  This method is
+        part of the Policy API so that Policy subclasses can implement custom
+        defect handling.  The default implementation calls the append method of
+        the defects attribute of obj.  The objects used by the email package by
+        default that get passed to this method will always have a defects
+        attribute with an append method.
+
+        """
+        obj.defects.append(defect)
+
+    def header_max_count(self, name):
+        """Return the maximum allowed number of headers named 'name'.
+
+        Called when a header is added to a Message object.  If the returned
+        value is not 0 or None, and there are already a number of headers with
+        the name 'name' equal to the value returned, a ValueError is raised.
+
+        Because the default behavior of Message's __setitem__ is to append the
+        value to the list of headers, it is easy to create duplicate headers
+        without realizing it.  This method allows certain headers to be limited
+        in the number of instances of that header that may be added to a
+        Message programmatically.  (The limit is not observed by the parser,
+        which will faithfully produce as many headers as exist in the message
+        being parsed.)
+
+        The default implementation returns None for all header names.
+        """
+        return None
+
+    @abc.abstractmethod
+    def header_source_parse(self, sourcelines):
+        """Given a list of linesep terminated strings constituting the lines of
+        a single header, return the (name, value) tuple that should be stored
+        in the model.  The input lines should retain their terminating linesep
+        characters.  The lines passed in by the email package may contain
+        surrogateescaped binary data.
+        """
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def header_store_parse(self, name, value):
+        """Given the header name and the value provided by the application
+        program, return the (name, value) that should be stored in the model.
+        """
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def header_fetch_parse(self, name, value):
+        """Given the header name and the value from the model, return the value
+        to be returned to the application program that is requesting that
+        header.  The value passed in by the email package may contain
+        surrogateescaped binary data if the lines were parsed by a BytesParser.
+        The returned value should not contain any surrogateescaped data.
+
+        """
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def fold(self, name, value):
+        """Given the header name and the value from the model, return a string
+        containing linesep characters that implement the folding of the header
+        according to the policy controls.  The value passed in by the email
+        package may contain surrogateescaped binary data if the lines were
+        parsed by a BytesParser.  The returned value should not contain any
+        surrogateescaped data.
+
+        """
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def fold_binary(self, name, value):
+        """Given the header name and the value from the model, return binary
+        data containing linesep characters that implement the folding of the
+        header according to the policy controls.  The value passed in by the
+        email package may contain surrogateescaped binary data.
+
+        """
+        raise NotImplementedError
+
+
+@_extend_docstrings
+class Compat32(Policy):
+
+    """+
+    This particular policy is the backward compatibility Policy.  It
+    replicates the behavior of the email package version 5.1.
+    """
+
+    mangle_from_ = True
+
+    def _sanitize_header(self, name, value):
+        # If the header value contains surrogates, return a Header using
+        # the unknown-8bit charset to encode the bytes as encoded words.
+        if not isinstance(value, str):
+            # Assume it is already a header object
+            return value
+        if _has_surrogates(value):
+            return header.Header(value, charset=_charset.UNKNOWN8BIT,
+                                 header_name=name)
+        else:
+            return value
+
+    def header_source_parse(self, sourcelines):
+        """+
+        The name is parsed as everything up to the ':' and returned unmodified.
+        The value is determined by stripping leading whitespace off the
+        remainder of the first line joined with all subsequent lines, and
+        stripping any trailing carriage return or linefeed characters.
+
+        """
+        name, value = sourcelines[0].split(':', 1)
+        value = ''.join((value, *sourcelines[1:])).lstrip(' \t\r\n')
+        return (name, value.rstrip('\r\n'))
+
+    def header_store_parse(self, name, value):
+        """+
+        The name and value are returned unmodified.
+        """
+        validate_header_name(name)
+        return (name, value)
+
+    def header_fetch_parse(self, name, value):
+        """+
+        If the value contains binary data, it is converted into a Header object
+        using the unknown-8bit charset.  Otherwise it is returned unmodified.
+        """
+        return self._sanitize_header(name, value)
+
+    def fold(self, name, value):
+        """+
+        Headers are folded using the Header folding algorithm, which preserves
+        existing line breaks in the value, and wraps each resulting line to the
+        max_line_length.  Non-ASCII binary data are CTE encoded using the
+        unknown-8bit charset.
+
+        """
+        return self._fold(name, value, sanitize=True)
+
+    def fold_binary(self, name, value):
+        """+
+        Headers are folded using the Header folding algorithm, which preserves
+        existing line breaks in the value, and wraps each resulting line to the
+        max_line_length.  If cte_type is 7bit, non-ascii binary data is CTE
+        encoded using the unknown-8bit charset.  Otherwise the original source
+        header is used, with its existing line breaks and/or binary data.
+
+        """
+        folded = self._fold(name, value, sanitize=self.cte_type=='7bit')
+        return folded.encode('ascii', 'surrogateescape')
+
+    def _fold(self, name, value, sanitize):
+        parts = []
+        parts.append('%s: ' % name)
+        if isinstance(value, str):
+            if _has_surrogates(value):
+                if sanitize:
+                    h = header.Header(value,
+                                      charset=_charset.UNKNOWN8BIT,
+                                      header_name=name)
+                else:
+                    # If we have raw 8bit data in a string, we have no idea
+                    # what the encoding is.  There is no safe way to split this
+                    # string.  If it's ascii-subset, then we could do a normal
+                    # ascii split, but if it's multibyte then we could break the
+                    # string.  There's no way to know so the least harm seems to
+                    # be to not split the string and risk it being too long.
+                    parts.append(value)
+                    h = None
+            else:
+                h = header.Header(value, header_name=name)
+        else:
+            # Assume it is a Header-like object.
+            h = value
+        if h is not None:
+            # The Header class interprets a value of None for maxlinelen as the
+            # default value of 78, as recommended by RFC 5322 section 2.1.1.
+            maxlinelen = 0
+            if self.max_line_length is not None:
+                maxlinelen = self.max_line_length
+            parts.append(h.encode(linesep=self.linesep, maxlinelen=maxlinelen))
+        parts.append(self.linesep)
+        return ''.join(parts)
+
+
+compat32 = Compat32()

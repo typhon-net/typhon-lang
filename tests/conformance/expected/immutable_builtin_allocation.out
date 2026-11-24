@@ -1,0 +1,27 @@
+False False True
+0.0 2.5 -4.5
+3.0 3.25
+0j (1-2j)
+(2+3j) 4j
+(3.25+3j) (3+2j)
+b'' b'caf\xc3\xa9'
+b'\x00\xff' b'\x00\x00\x00' b'value'
+__new__ float.__new__ True 2.0
+True __new__
+False (1.5-2.5j)
+b'\xe9'
+12.5
+(-3+5j)
+(1+0j)
+bool requires a subtype
+float requires a subtype
+complex requires a subtype
+bytes requires a subtype
+float rejects None
+complex rejects None
+bytes rejects None
+bool rejects keywords
+complex rejects a duplicate
+bytes requires str with encoding
+bytes items require integers
+float requires a digit between underscores

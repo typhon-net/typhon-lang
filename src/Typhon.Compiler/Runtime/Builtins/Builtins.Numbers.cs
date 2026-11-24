@@ -132,25 +132,25 @@ namespace Typhon.Runtime
                 RegexOptions.CultureInvariant | RegexOptions.IgnoreCase | RegexOptions.NonBacktracking);
         }
 
+        static string NormalizeDecimalLiteral(string source)
+        {
+            if (!source.Any(c => c > 127)) return source;
+            var normalized = new StringBuilder(source.Length);
+            foreach (var rune in source.EnumerateRunes())
+                if (Rune.GetUnicodeCategory(rune) == UnicodeCategory.DecimalDigitNumber)
+                    normalized.Append((char)('0' + (int)Rune.GetNumericValue(rune)));
+                else
+                    normalized.Append(rune.ToString());
+            return normalized.ToString();
+        }
+
         public static Complex complex(string text)
         {
             string source = text.Trim();
             if (source.Length >= 2 && source[0] == '(' && source[^1] == ')')
                 source = source[1..^1].Trim();
 
-            // Like float(), complex() accepts Unicode decimal digits.
-            if (source.Any(c => c > 127))
-            {
-                var normalized = new StringBuilder(source.Length);
-                foreach (var rune in source.EnumerateRunes())
-                    if (Rune.GetUnicodeCategory(rune) == UnicodeCategory.DecimalDigitNumber)
-                        normalized.Append((char)('0' + (int)Rune.GetNumericValue(rune)));
-                    else
-                        normalized.Append(rune.ToString());
-                source = normalized.ToString();
-            }
-
-            Match match = ComplexText.Literal.Match(source);
+            Match match = ComplexText.Literal.Match(NormalizeDecimalLiteral(source));
             if (!match.Success) throw new ArgumentException("complex() arg is a malformed string");
             Group real = match.Groups["real"], imag = match.Groups["imag"];
             double Parse(Group part) => !part.Success ? 0.0 : part.Value switch
@@ -376,14 +376,15 @@ namespace Typhon.Runtime
             return !ReferenceEquals(result, NotImplemented);
         }
 
-        // A dunder stored in a class namespace has no corresponding CLR operator.
-        // Resolve it on the class, with the same reflected priority as Python's numeric slots.
-        static bool TryClassBinaryOp(object? left, object? right, string name, string symbol, out object? result)
+        // Namespace entries and methods of tuple subtypes can take precedence over CLR operators.
+        // Resolve them on the class, with the same reflected priority as Python's numeric slots.
+        static bool TryClassBinaryOp(object? left, object? right, string name, string symbol, out object? result,
+            bool allowSequenceFallback = false)
         {
             string direct = "__" + name + "__";
             string reflected = "__r" + name + "__";
-            var a = LookupSourceSpecialMethod(left, direct, dataOnly: true);
-            var b = LookupSourceSpecialMethod(right, reflected, dataOnly: true);
+            var a = LookupSourceSpecialMethod(left, direct, dataOnly: left is not PyTupleSubclass);
+            var b = LookupSourceSpecialMethod(right, reflected, dataOnly: right is not PyTupleSubclass);
             result = null;
             if (a.Owner == null && b.Owner == null) return false;
 
@@ -397,6 +398,7 @@ namespace Typhon.Runtime
             if (reflectedFirst && InvokeBinarySlot(b, left, out result)) return true;
             if (InvokeBinarySlot(a, right, out result)) return true;
             if (distinct && !reflectedFirst && InvokeBinarySlot(b, left, out result)) return true;
+            if (allowSequenceFallback && a.Owner == null) return false;
             throw UnsupportedBinaryOp(left, right, symbol);
         }
 
@@ -547,7 +549,11 @@ namespace Typhon.Runtime
             };
         }
 
-        internal static dynamic __index_value(object? value)
+        internal static dynamic __index_value(object? value) =>
+            IndexValueOrNull(value) ??
+            throw new InvalidCastException($"'{PyTypeName(__type_of(value))}' object cannot be interpreted as an integer");
+
+        static object? IndexValueOrNull(object? value)
         {
             if (AsInt(value, out long integer)) return integer;
             if (value is bool flag) return flag ? 1L : 0L;
@@ -558,7 +564,7 @@ namespace Typhon.Runtime
                 BigInteger result = IntProtocolResult(value, "__index__", (object?)__invoke(index, []));
                 return result >= long.MinValue && result <= long.MaxValue ? (object)(long)result : result;
             }
-            throw new InvalidCastException($"'{(value == null ? "NoneType" : PyTypeName(value.GetType()))}' object cannot be interpreted as an integer");
+            return null;
         }
 
         static BigInteger ParseByteInteger(object buffer, long numberBase = 10)
@@ -697,7 +703,11 @@ namespace Typhon.Runtime
         public static long abs(long x) => Math.Abs(x);
         public static double abs(double x) => Math.Abs(x);
         public static decimal abs(decimal x) => Math.Abs(x);
-        public static dynamic abs(object x) => ((dynamic)x).__abs__();
+        public static dynamic abs(object x)
+        {
+            var slot = LookupSourceSpecialMethod(x, "__abs__");
+            return slot.Owner == null ? ((dynamic)x).__abs__() : __invoke(slot.Value, []);
+        }
 
         public static long round(double x) => @int(Math.Round(x, MidpointRounding.ToEven));
         public static long round(long x) => x;
@@ -758,9 +768,11 @@ namespace Typhon.Runtime
         /// <summary>a + b with late-bound operands: list concatenation (str and numbers bind normally).</summary>
         public static dynamic add(dynamic a, dynamic b)
         {
-            if (TryClassBinaryOp((object?)a, (object?)b, "add", "+", out var result)) return result!;
-            object left = NumericOperand((object?)a)!;
-            object right = NumericOperand((object?)b)!;
+            object left = a, right = b;
+            if (TryClassBinaryOp(left, right, "add", "+", out var result,
+                allowSequenceFallback: left is ITuple && right is PyTupleSubclass)) return result!;
+            left = NumericOperand(left)!;
+            right = NumericOperand(right)!;
             PromoteMixedFloat(ref left, ref right);
             a = left;
             b = right;

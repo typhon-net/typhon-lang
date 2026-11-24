@@ -58,6 +58,7 @@ namespace Typhon.Compiler.Emit
             if (ConstIntValue(e) is long ci) return ci != 0 ? "true" : "false";
             // in a condition, and/or need only the truth of each operand
             if (e is BoolOpExpr bo) return "(" + string.Join(bo.Op == "and" ? " && " : " || ", bo.Values.Select(v => Paren(Cond(v)))) + ")";
+            if (e is CompareExpr { Ops.Count: > 1 } comparison) return EmitCompare(comparison, condition: true);
             string code = EmitExpr(e);
             return IsBoolish(e) ? code : $"{Rt("truthy")}({code})";
         }
@@ -72,7 +73,7 @@ namespace Typhon.Compiler.Emit
                 case NameExpr n when _narrowed.Contains(n.Id) && KnownTypeCore(n.Id) is string ot && ot.EndsWith("?"): return EmitName(n) + ".Value";
                 case NameExpr late when LateClassSlot(late.Id) is string storage: return EmitLateClassName(late.Id, storage);
                 case NameExpr ia when ImportAlias(ia) is Expr importTarget: return EmitExpr(importTarget, targetTyped);
-                case NameExpr method when ClassBodyMethod(method):
+                case NameExpr method when ClassBodyMember(method):
                     return $"{Rt("getattr")}(typeof({_cls.CsSelfType}), {CsString(method.Id)})";
                 case NameExpr fv when FunctionValue(fv, typed: _fnTypedUse) is string fvalue: return fvalue;
                 // a nested function as a value where no delegate type is expected (returned as dynamic, stored, a decorator's result)
@@ -119,7 +120,7 @@ namespace Typhon.Compiler.Emit
                     string bt = InferType(b);
                     bool late = bt == null || bt == "dynamic";
                     // (an empty {} / [] takes the other operand's type: counts = counts or {})
-                    string Operand(Expr x, bool last = false) => late ? $"(dynamic){Paren(EmitExpr(x))}"
+                    string Operand(Expr x, bool last = false) => late ? $"(dynamic){Paren(EmitLooseValue(x))}"
                         : IsEmptyLiteral(x) && !last && bt.EndsWith(">") ? $"new {bt}()" // ([] and xs: tested with 'is var', so it needs a type)
                         : EmitExpr(x, targetTyped || IsEmptyLiteral(x));
                     string code = Operand(b.Values[b.Values.Count - 1], last: true);
@@ -366,17 +367,23 @@ namespace Typhon.Compiler.Emit
             if (_cls.Members.Contains(name) || _cls.FieldTypes.ContainsKey(name) || _cls.Def.Body.OfType<ClassDef>().Any(n => n.Name == name)) return false;
             if (CollectImplicitFields(_cls.Def).ContainsKey(name)) return false;
             var bases = _cls.Def.Bases.Where(b => !(DottedName(b is SubscriptExpr bs ? bs.Target : b) is "object" or "Protocol" or "typing.Protocol" or "ABC" or "abc.ABC" or "Generic" or "typing.Generic")).ToList();
-            // (a base Typhon cannot see into, a .NET class it cannot resolve: assume it defines it)
-            if (bases.Any(b => !ResolveBase(b, out _, out _))) return false;
+            // Builtin containers may be lowered directly to CLR collection syntax without a resolved base symbol.
+            // Their extension methods still bind statically, while an added attribute needs Python lookup.
+            bool KnownBuiltin(Expr basis) => !_m.IsGdScript &&
+                (basis is SubscriptExpr generic ? generic.Target : basis) is NameExpr builtin &&
+                BuiltinTypeNames.Contains(builtin.Id) && !IsShadowed(builtin.Id);
+            if (bases.Any(b => !ResolveBase(b, out _, out _) && (!KnownBuiltin(b) || IsRuntimeMethod(name)))) return false;
             return !BaseHasMember(bases, name, requireOverridable: false);
         }
 
-        bool IsNarrowedInstanceAttribute(AttributeExpr attribute)
+        bool NeedsSubclassAttributeLookup(AttributeExpr attribute)
         {
-            if (_m.IsGdScript || attribute.Target is not NameExpr receiver ||
-                !_renames.TryGetValue(receiver.Id, out var narrowed) || !_narrowedInstanceVariables.Contains(narrowed) ||
-                _lambdaParams.Any(parameters => parameters.ContainsKey(receiver.Id)) ||
-                KnownType(receiver.Id) is not string type || ClassKeyOfType(type, out _) is not string key ||
+            if (_m.IsGdScript) return false;
+            bool narrowed = attribute.Target is NameExpr receiver &&
+                _renames.TryGetValue(receiver.Id, out var alias) && _narrowedInstanceVariables.Contains(alias) &&
+                !_lambdaParams.Any(parameters => parameters.ContainsKey(receiver.Id));
+            string type = InferType(attribute.Target);
+            if (ClassKeyOfType(type, out _) is not string key ||
                 ClassDefOfKey(key) is not ClassDef definition) return false;
 
             string name = attribute.Name;
@@ -384,11 +391,13 @@ namespace Typhon.Compiler.Emit
                 ClassVariableOwner(definition, name) != null || CollectImplicitFields(definition).ContainsKey(name) ||
                 _r.HasMember("System.Object", name)) return false;
 
-            // A type test only establishes the base type. Members added to a Python instance
-            // or declared on the actual subclass still need ordinary attribute lookup.
+            // A Python receiver typed as a base may expose attributes from the actual subclass.
             var bases = definition.Bases.Where(b => DottedName(b is SubscriptExpr sub ? sub.Target : b) is not
                 ("object" or "ABC" or "abc.ABC" or "Protocol" or "typing.Protocol" or "Generic" or "typing.Generic")).ToList();
-            return bases.All(b => ResolveBase(b, out _, out _)) && !BaseHasMember(bases, name, requireOverridable: false);
+            if (bases.Any(b => !ResolveBase(b, out _, out _)) || BaseHasMember(bases, name, requireOverridable: false))
+                return false;
+            return narrowed || AllClasses().Any(subclass => subclass != definition &&
+                DerivesFrom(subclass, definition) && DeclaresMember(subclass, name));
         }
 
         ClassDef ClassVariableOwner(ClassDef c, string name, int depth = 0)
@@ -404,7 +413,8 @@ namespace Typhon.Compiler.Emit
             if (c.Body.Any(st => st is FunctionDef method && method.Name == name ||
                 st is AnnAssignStmt annotation && annotation.Target is NameExpr field && field.Id == name)) return null;
             foreach (var b in c.Bases)
-                if (ResolveBase(b, out var bc, out _) && bc != null && ClassVariableOwner(bc, name, depth + 1) is ClassDef owner)
+                if (ClassDeclarationResolver(c).ResolveBase(b, out var bc, out _) && bc != null &&
+                    ClassVariableOwner(bc, name, depth + 1) is ClassDef owner)
                     return owner;
             return null;
         }
@@ -499,6 +509,7 @@ namespace Typhon.Compiler.Emit
         {
             "__name__", "__qualname__", "__module__", "__doc__", "__dict__", "__class__", "__wrapped__", "__self__", "__func__",
             "__annotations__", "__slots__", "__file__", "__all__", "__version__", "__mro__", "__bases__", "__defaults__", "__code__",
+            "__members__",
         };
 
         /// <summary>The builtin types as values: the C# type each one's values have.</summary>
@@ -517,6 +528,7 @@ namespace Typhon.Compiler.Emit
             ["frozendict"] = "global::Typhon.Runtime.frozendict<object, object>",
             ["frozenset"] = "global::Typhon.Runtime.frozenset<object>",
             ["slice"] = "global::Typhon.Runtime.PySlice",
+            ["sentinel"] = "global::Typhon.Runtime.PySingleton",
         };
 
         string BuiltinTypeRepresentation(string name, string type) => _big ? name switch
@@ -722,6 +734,20 @@ namespace Typhon.Compiler.Emit
             attribute.Name is ("__getitem__" or "__setitem__" or "__delitem__" or "clear" or "pop" or "fromkeys") &&
             attribute.Target is NameExpr { Id: "dict" } type ? BuiltinTypeValue(type) : null;
 
+        string ListDescriptorReceiver(AttributeExpr member)
+        {
+            if (_m.IsGdScript || member.Name is not ("__new__" or "__init__")) return null;
+            if (BuiltinListBase(member.Target)) return "typeof(List<object>)";
+            return DottedName(member.Target) is string name &&
+                TryResolveType(name, 0, out _, out var definition) && definition != null && HasListBase(definition) &&
+                TryTypeExpr(member.Target, out string type) ? $"typeof({type})" : null;
+        }
+
+        string ImmutableAllocatorReceiver(AttributeExpr attribute) =>
+            !_m.IsGdScript && attribute.Name == "__new__" &&
+            attribute.Target is NameExpr { Id: "bool" or "float" or "complex" or "bytes" } owner
+                ? BuiltinTypeValue(owner) : null;
+
         string BaseObjectMethod(AttributeExpr attr) =>
             attr.Target is NameExpr { Id: "dict" } && !IsShadowed("dict") && attr.Name is ("__new__" or "__eq__")
                 ? (attr.Name == "__new__" ? "__dict_new" : "__dict_eq") :
@@ -735,10 +761,13 @@ namespace Typhon.Compiler.Emit
                 "__new__" => "__object_new",
                 "__init__" => "__object_init",
                 "__str__" => "__object_str",
+                "__format__" => "__object_format__",
                 "__hash__" => "__object_hash",
                 "__ne__" => "__object_ne",
                 "__getattribute__" => "__object_getattribute",
                 "__getstate__" => "__object_getstate",
+                "__reduce__" => "__object_reduce",
+                "__reduce_ex__" => "__object_reduce_ex",
                 "__setattr__" => "__object_setattr",
                 "__delattr__" => "__object_delattr",
                 _ => null,
@@ -754,7 +783,8 @@ namespace Typhon.Compiler.Emit
                 case "errno": case "strerror": case "filename2": case "winerror":
                 case "filename": case "lineno": case "offset": case "text":
                 case "end_lineno": case "end_offset": case "msg": case "print_file_and_line":
-                case "name": case "path": case "obj": case "exceptions":
+                case "args": case "name": case "path": case "obj": case "exceptions":
+                case "encoding": case "object": case "start": case "end": case "reason":
                     return IsExceptionType(InferType(attribute.Target));
                 default: return false;
             }
@@ -812,7 +842,7 @@ namespace Typhon.Compiler.Emit
                 nativeStaticOwner.StartsWith("Typhon.Stdlib.") && IsRuntimeClassMeta(nativeStaticOwner) &&
                 _r.GetMembers(nativeStaticOwner, a.Name).Any(member => member.IsStatic && !member.IsMethod))
                 return $"{CsTypeName(nativeStaticOwner)}.{Esc(a.Name)}";
-            if (IsRuntimeModuleAttribute(a) || IsRuntimeObjectAttribute(a) || ClassDefaultReceiver(a.Target))
+            if (IsRuntimeModuleAttribute(a) || IsRuntimeObjectAttribute(a) || ClassDefaultReceiver(a.Target) || RuntimeClassInstance(a.Target))
             {
                 string receiver = EmitValue(a.Target);
                 return IsAttributeStore(a) ? $"((dynamic){Paren(receiver)}).{Esc(a.Name)}" :
@@ -832,6 +862,8 @@ namespace Typhon.Compiler.Emit
             if (!_m.IsGdScript && a.Name is ("numerator" or "denominator" or "real" or "imag") && !IsAttributeStore(a) &&
                 InferType(a.Target) is string number && (IsIntegral(number) || number == "bool"))
                 return $"{Rt("getattr")}((object?){Paren(EmitValue(a.Target))}, {CsString(a.Name)})";
+            if (!IsAttributeStore(a) && UsesRuntimeClassMro(a))
+                return $"{Rt("getattr")}((object?){Paren(SubclassLookupReceiver(a.Target))}, {CsString(a.Name)})";
             if (!IsAttributeStore(a) && UsesRuntimeIteratorMember(a))
                 return $"{Rt("getattr")}((object?){Paren(EmitExpr(a.Target))}, {CsString(a.Name)})";
             if (IsTypingUnion(a)) return $"typeof({RuntimeUnionType})";
@@ -846,9 +878,11 @@ namespace Typhon.Compiler.Emit
                 return $"{Rt("getattr")}((object?){Paren(EmitValue(a.Target))}, {CsString(a.Name)})";
             if (!Receivers.Contains(a) && DictionaryDescriptorReceiver(a) is string dictionaryType)
                 return $"{Rt("getattr")}({dictionaryType}, {CsString(a.Name)})";
+            if (!Receivers.Contains(a) && !IsAttributeStore(a) && ListDescriptorReceiver(a) is string listType)
+                return $"{Rt("getattr")}({listType}, {CsString(a.Name)})";
             if (!Receivers.Contains(a) && BaseObjectMethod(a) is string objectMethod)
                 return $"global::Typhon.Runtime.Builtins.__object_method({CsString(objectMethod)})";
-            if (a.Name is "__repr__" or "__dir__" && !IsAttributeStore(a) &&
+            if (a.Name is "__repr__" or "__dir__" or "__new__" or "__getnewargs__" && !IsAttributeStore(a) &&
                 a.Target is not CallExpr { Func: NameExpr { Id: "super" } })
             {
                 string receiver = (a.Target is NameExpr builtin ? BuiltinTypeValue(builtin) : null) ??
@@ -856,6 +890,11 @@ namespace Typhon.Compiler.Emit
                     (TryTypeExpr(a.Target, out string type) ? $"typeof({type})" : EmitValue(a.Target));
                 return $"{Rt("getattr")}((object?){Paren(receiver)}, {CsString(a.Name)})";
             }
+            if (!_m.IsGdScript && a.Name == "__members__" && !IsAttributeStore(a) &&
+                DottedName(a.Target) is string enumClass && TryResolveType(enumClass, 0, out _, out ClassDef definition) &&
+                definition != null && (IsObjectIntegerEnum(definition) || IsPlainObjectEnum(definition) || IsStringEnum(definition)) &&
+                TryTypeExpr(a.Target, out string enumType))
+                return $"{enumType}.__members__";
             if (a.Name is "__mro__" or "__bases__" or "__getstate__" or "__dataclass_params__" && !IsAttributeStore(a))
             {
                 string receiver = (a.Target is NameExpr builtin ? BuiltinTypeValue(builtin) : null) ?? EmitValue(a.Target);
@@ -1004,7 +1043,7 @@ namespace Typhon.Compiler.Emit
                 return $"{Rt("getattr")}((object?){Paren(EmitExpr(a.Target))}, {CsString(a.Name)})";
             if (TupleFieldOwner(a) is string tupleType)
                 return $"((global::Typhon.Runtime.PyTupleGetter){Rt("getattr")}(typeof({tupleType}), {CsString(a.Name)}))";
-            if (!IsAttributeStore(a) && (IsInstanceClassDefault(a) || TypeObjectMember(a) || IsNarrowedInstanceAttribute(a)))
+            if (!IsAttributeStore(a) && (IsInstanceClassDefault(a) || TypeObjectMember(a) || NeedsSubclassAttributeLookup(a)))
                 return $"{Rt("getattr")}((object?){Paren(ModuleOrClassValue(a.Target) ?? EmitExpr(a.Target))}, {CsString(a.Name)})";
             if (!IsAttributeStore(a) && DottedName(a.Target) is string conditionalOwner &&
                 TryResolveType(conditionalOwner, 0, out _, out var conditionalType) && conditionalType != null &&
@@ -1017,6 +1056,12 @@ namespace Typhon.Compiler.Emit
                     HasDecorator(descriptor.Decorators, "classmethod") && (!Receivers.Contains(a) || !ownerClass.Body.Contains(descriptor)) ||
                     !allowMethodGroup && !Receivers.Contains(a) && HasDecorator(descriptor.Decorators, "staticmethod")))
                 return $"{Rt("getattr")}(typeof({descriptorType}), {CsString(a.Name)})";
+            // Instance storage does not make a class attribute. The class can acquire a default at runtime.
+            if (!_m.IsGdScript && !IsAttributeStore(a) && DottedName(a.Target) is string storageOwner &&
+                TryResolveType(storageOwner, 0, out _, out var storageClass) && storageClass != null &&
+                ClassVariableOwner(storageClass, a.Name) == null && ImplicitFieldOwner(storageClass, a.Name) != null &&
+                TryTypeExpr(a.Target, out var storageType))
+                return $"{Rt("getattr")}({ClassTypeValue(storageType, storageClass)}, {CsString(a.Name)})";
             if (!_m.IsGdScript && !IsAttributeStore(a) && ClassKeyOfType(InferType(a.Target), out _) is string instanceClass &&
                 ClassDefOfKey(instanceClass) is ClassDef instanceOwner && MethodInHierarchy(instanceOwner, a.Name) is FunctionDef method &&
                 (HasDecorator(method.Decorators, "staticmethod") || HasDecorator(method.Decorators, "classmethod")))
@@ -1049,7 +1094,7 @@ namespace Typhon.Compiler.Emit
             // use its attribute lookup when there is no generated static member to bind.
             if (!IsAttributeStore(a) && a.Target is NameExpr runtimeName && !IsShadowed(runtimeName.Id) &&
                 _dotnetAliases.TryGetValue(runtimeName.Id, out var runtimeType) && runtimeType.StartsWith("Typhon.Stdlib.") &&
-                (!_r.HasMember(runtimeType, a.Name) || _r.GetMembers(runtimeType, a.Name).Any(m => m.IsOptionalModuleMember)) &&
+                (!_r.HasMember(runtimeType, a.Name) || IsOptionalNativeMember(runtimeType, a.Name)) &&
                 ModuleOrClassValue(runtimeName) is string runtimeModule)
                 return $"{Rt("getattr")}({runtimeModule}, {CsString(a.Name)})";
             if (!_m.IsGdScript && !IsAttributeStore(a) && InferType(a.Target) is string receiverType &&
@@ -1068,6 +1113,7 @@ namespace Typhon.Compiler.Emit
         /// <summary>The literal mode of open(path, mode) ("r" when omitted; null when not a literal).</summary>
         static string OpenMode(CallExpr c)
         {
+            if (c.Args.Any(argument => argument.Star || argument.DoubleStar)) return null;
             var mode = c.Args.Count > 1 && c.Args[1].Name == null ? c.Args[1].Value : c.Args.FirstOrDefault(a => a.Name == "mode")?.Value;
             return mode == null ? "r" : mode is ConstExpr mc && mc.Kind == ConstKind.Str ? mc.Str : null;
         }
@@ -1104,8 +1150,8 @@ namespace Typhon.Compiler.Emit
             bool StaticMethod(Expr value) => value is AttributeExpr member && DotNetStaticMeta(member.Target) is string metadata &&
                 _r.GetMembers(metadata, member.Name).Any(m => m.IsMethod && m.IsStatic);
             if (StaticMethod(i.Body) || StaticMethod(i.OrElse)) return true;
-            if (!targetTyped && ((i.Body is DictExpr { Keys.Count: 0 } && i.OrElse is DictExpr { Keys.Count: > 0 }) ||
-                (i.OrElse is DictExpr { Keys.Count: 0 } && i.Body is DictExpr { Keys.Count: > 0 }))) return true;
+            if (!targetTyped && IsEmptyLiteral(i.Body) != IsEmptyLiteral(i.OrElse) &&
+                (i.Body is DictExpr && i.OrElse is DictExpr || i.Body is ListExpr && i.OrElse is ListExpr)) return true;
             if (IsNone(i.Body) || IsNone(i.OrElse)) return false;
             string a = InferType(i.Body), o = InferType(i.OrElse);
             if (a == null || o == null || a == o || a == "dynamic" || o == "dynamic" || a == TypeInference.Pending || o == TypeInference.Pending) return false;

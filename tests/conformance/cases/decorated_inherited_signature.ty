@@ -1,0 +1,21 @@
+import inspect
+from contextlib import contextmanager
+
+
+class Base:
+    @contextmanager
+    def hold(self, value='default', *, label=None):
+        """Keep the supplied value and label."""
+        yield value, label
+
+
+class Derived(Base):
+    pass
+
+
+unbound = getattr(Derived, 'hold')
+bound = getattr(Derived(), 'hold')
+print(inspect.signature(unbound), unbound.__doc__)
+print(inspect.signature(bound))
+with bound('original', label=7) as pair:
+    print(pair)

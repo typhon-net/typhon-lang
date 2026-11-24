@@ -1,0 +1,4 @@
+first ['second', 'fourth', 'first', 'first', 'nested']
+[('alpha', 0, None), ('', 1, ('second',)), ('pkg', 2, ('third',))]
+['exported'] [('omega', 0, None)]
+['name_268', 'name_269', 'delta'] [('delta', 0, None)]

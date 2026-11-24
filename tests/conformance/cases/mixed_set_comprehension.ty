@@ -1,0 +1,9 @@
+def matching(keys):
+    shared = set(keys) & {'match'}
+    return ','.join(repr(item) for item in shared)
+
+print(matching(['skip', 'match', 42]))
+print(repr(matching(['skip', 42])))
+items = {1, 'match'}
+mixed = items & {'match'}
+print([value.upper() for value in mixed])

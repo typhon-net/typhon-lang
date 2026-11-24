@@ -37,6 +37,10 @@ namespace Typhon.Runtime
                 return Unwrapped(() => describe.Invoke(e, null)) is string text
                     ? text : throw new InvalidCastException("__str__ returned a non-string value");
             if (e.Data["__args__"] is object?[] arguments) return PyExc.Text(arguments);
+            if (e.Data["__args__"] is PyTuple<object?> assigned &&
+                e is not (SyntaxError or ImportError or BaseExceptionGroup or UnicodeDecodeError or UnicodeEncodeError or UnicodeTranslateError) &&
+                (e is not PyOSError systemError || systemError.errno == null || systemError.strerror == null))
+                return e is KeyNotFoundException && assigned.Count == 1 ? repr(assigned[0]) : PyExc.Text(assigned.ToArray());
             const string Head = "The given key '", Tail = "' was not present in the dictionary.";
             string m = e.Message;
             if (e is KeyNotFoundException && m.StartsWith(Head, StringComparison.Ordinal) && m.EndsWith(Tail, StringComparison.Ordinal))
@@ -91,6 +95,7 @@ namespace Typhon.Runtime
             _ when TryNamespaceTextSlot(o, "__repr__", out var slot) => InvokeTextSlot(slot, "__repr__"),
             IPyRepr own => own.__repr__(), // repr(): Fraction(1, 2), PosixPath('/tmp/x')
             MissingMemberException error => PyExc.Repr(error, PyExc.Args(error)),
+            Exception error when error.Data["__args__"] is PyTuple<object?> assigned => PyExc.Repr(error, assigned),
             _ => str(o),
         };
 
@@ -119,7 +124,8 @@ namespace Typhon.Runtime
             if (TryNamespaceTextSlot(value, "__repr__", out var reprMethod))
             {
                 var (owner, declared) = LookupSourceSpecialMethod(value, "__str__");
-                text = owner == null ? InvokeTextSlot(reprMethod, "__repr__") : InvokeTextSlot(declared, "__str__");
+                text = owner != null ? InvokeTextSlot(declared, "__str__") :
+                    value is PyString textValue ? textValue.Text : InvokeTextSlot(reprMethod, "__repr__");
                 return true;
             }
             text = "";
@@ -537,6 +543,30 @@ namespace Typhon.Runtime
             throw new InvalidCastException($"unsupported format string passed to {name}.__format__");
         }
 
+        static readonly PyClosure IntegerFormatSlot = new("__format__", (args, keywords) =>
+        {
+            if (args.Length != 2 || keywords?.Count > 0)
+                throw new InvalidCastException("int.__format__ expects a receiver and a format specification");
+            string spec = args[1] switch
+            {
+                string text => text,
+                PyString text => text.Text,
+                _ => throw new InvalidCastException("format specifier must be a string"),
+            };
+            object raw = args[0] switch
+            {
+                PyInteger integer => integer.PrimitiveValue,
+                bool bit => bit ? 1L : 0L,
+                object number when IsIntType(number.GetType()) => number,
+                _ => throw new InvalidCastException("descriptor '__format__' requires an 'int' object"),
+            };
+            return spec.Length == 0 ? str(args[0]) : format(raw, spec);
+        });
+
+        public static string __str__(this string value) => value;
+
+        public static string __format__(this string value, [PyPositionalOnly] string format_spec) => format(value, format_spec);
+
         public static string format(object? value, string spec = "")
         {
             if (value != null && value.GetType().GetMember("__format__", InstanceMembers).Length > 0)
@@ -811,7 +841,9 @@ namespace Typhon.Runtime
             PyAttrDict attrs => attrs.Keys,
             IDictionary d => DictionaryKeys(d),
             IList list => IterateList(list),
-            Type enumType when typeof(PyPlainEnum).IsAssignableFrom(enumType) => PyPlainEnum.Members(enumType),
+            Type enumType when typeof(IPyPlainEnum).IsAssignableFrom(enumType) => PyPlainEnum.Members(enumType),
+            Type enumType when typeof(PyStrEnum).IsAssignableFrom(enumType) => PyStrEnum.Members(enumType),
+            Type cls when PyMetaclasses.TryBindMember(cls, "__iter__", out var method) => IteratorItems(__invoke(method, [])),
             IEnumerable e => e.Cast<object>(),
             ITuple t => Enumerable.Range(0, t.Length).Select(i => t[i]!),
             _ => IteratePythonObject(o),
@@ -870,7 +902,30 @@ namespace Typhon.Runtime
                 yield return list[index]!;
         }
 
-        public static string str_at(string s, int i) => CharStr(s[i < 0 ? i + s.Length : i]);
+        public static string str_at(string s, int index) => str_at(s, (long)index);
+
+        public static string str_at(string s, long index)
+        {
+            int position = __pos(index, s.Length);
+            if ((uint)position >= (uint)s.Length) throw new IndexOutOfRangeException("string index out of range");
+            return CharStr(s[position]);
+        }
+
+        public static string str_at(string s, object? index)
+        {
+            if (index is PySlice range)
+            {
+                var (start, stop, step) = range.Bounds();
+                return slice(s, start, stop, step);
+            }
+            return IndexValueOrNull(index) switch
+            {
+                long position => str_at(s, position),
+                BigInteger position when position >= long.MinValue && position <= long.MaxValue => str_at(s, (long)position),
+                BigInteger => throw new IndexOutOfRangeException($"cannot fit '{PyTypeName(__type_of(index))}' into an index-sized integer"),
+                _ => throw new InvalidCastException($"string indices must be integers, not '{PyTypeName(__type_of(index))}'"),
+            };
+        }
 
 
         // Color.RED.value / Color.RED.name (Typhon enums are CLR enums with int values)

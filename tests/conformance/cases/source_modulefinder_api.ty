@@ -1,0 +1,30 @@
+#:pylib-source modulefinder
+from modulefinder import ModuleFinder
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from types import CodeType
+
+with TemporaryDirectory() as folder:
+    root = Path(folder)
+    script = root / "entry.py"
+    script.write_text("def run():\n    import helper\nimport package\n", encoding="utf-8")
+    (root / "helper.py").write_text("value = 42\nimport absent_dependency\n", encoding="utf-8")
+    package = root / "package"
+    package.mkdir()
+    (package / "__init__.py").write_text("from . import item\n", encoding="utf-8")
+    (package / "item.py").write_text("number = 7\n", encoding="utf-8")
+    finder = ModuleFinder(path=[folder])
+    finder.run_script(str(script))
+    print(sorted(finder.modules))
+    print(sorted(finder.modules["helper"].globalnames))
+    print(sorted(finder.modules["package.item"].globalnames))
+    print(finder.any_missing())
+
+    original = finder.modules["__main__"].__code__
+    rewriting = ModuleFinder(path=[folder], replace_paths=[(folder, "<rewritten>")])
+    updated = rewriting.replace_paths_in_code(original)
+    print(Path(updated.co_filename).name, updated.co_filename.startswith("<rewritten>"))
+    for child in updated.co_consts:
+        if isinstance(child, CodeType):
+            print(Path(child.co_filename).name, child.co_filename.startswith("<rewritten>"))
+    print(original.co_filename == str(script))

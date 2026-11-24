@@ -13,13 +13,16 @@ namespace Typhon.Compiler.Emit
             DottedName(expression) == "builtins.type" ||
             expression is NameExpr { Id: "type" } && !IsShadowed("type");
 
+        bool IsBuiltinClassCreation(CallExpr call) => BuiltinTypeBase(call.Func) &&
+            call.Args.Count(argument => argument.Name == null && !argument.DoubleStar) == 3;
+
         bool IsUserMetaclass(ClassDef definition) => IsUserMetaclass(definition, new HashSet<ClassDef>());
 
         bool IsUserMetaclass(ClassDef definition, HashSet<ClassDef> seen)
         {
             if (definition == null || !seen.Add(definition)) return false;
             var resolver = ClassDeclarationResolver(definition);
-            return definition.Bases.Any(b => resolver.BuiltinTypeBase(b) ||
+            return (definition.BasesBeforeFlattening ?? definition.Bases).Any(b => resolver.BuiltinTypeBase(b) ||
                 resolver.ResolveBase(b, out var parent, out _) && IsUserMetaclass(parent, seen));
         }
 
@@ -30,13 +33,15 @@ namespace Typhon.Compiler.Emit
         bool HasUserMetaclass(ClassDef definition) =>
             !_m.IsGdScript && HasUserMetaclass(definition, new HashSet<ClassDef>());
 
-        bool HasUserMetaclass(ClassDef definition, HashSet<ClassDef> seen)
+        bool HasUserMetaclass(ClassDef definition, HashSet<ClassDef> seen, string member = null)
         {
             if (definition == null || !seen.Add(definition)) return false;
             var resolver = ClassDeclarationResolver(definition);
             return DottedName(definition.Metaclass) is string name &&
-                resolver.TryResolveType(name, 0, out _, out var meta) && IsUserMetaclass(meta) ||
-                definition.Bases.Any(b => resolver.ResolveBase(b, out var parent, out _) && HasUserMetaclass(parent, seen));
+                resolver.TryResolveType(name, 0, out _, out var meta) && IsUserMetaclass(meta) &&
+                (member == null || resolver.DeclaresMember(meta, member)) ||
+                (definition.BasesBeforeFlattening ?? definition.Bases).Any(b =>
+                    resolver.ResolveBase(b, out var parent, out _) && HasUserMetaclass(parent, seen, member));
         }
 
         bool MetaclassMember(AttributeExpr member, out string type)
@@ -49,8 +54,75 @@ namespace Typhon.Compiler.Emit
             return true;
         }
 
-        bool IsMetaclassInstance(Expr expression) => DottedName(expression) is string name &&
-            TryResolveType(name, 0, out _, out var definition) && HasUserMetaclass(definition);
+        bool IsMetaclassInstance(Expr expression, string member = null) => !_m.IsGdScript &&
+            DottedName(expression) is string name && TryResolveType(name, 0, out _, out var definition) &&
+            HasUserMetaclass(definition, new HashSet<ClassDef>(), member);
+
+        bool RuntimeClassConstruction(Expr expression) =>
+            expression is CallExpr call && IsRuntimeTypeValue(call.Func) && !TryTypeExpr(call.Func, out _) &&
+            (call.Func is NameExpr name ? IsLocal(name.Id) || IsShadowed(name.Id) || StdlibOwner(name.Id) == null
+                : StdlibModuleOf(call, out _) == null);
+
+        bool RuntimeClassInstance(Expr expression) => !_m.IsGdScript &&
+            (RuntimeClassConstruction(expression) ||
+                expression is NameExpr name && _scope?.RuntimeClassInstances?.Contains(name.Id) == true);
+
+        HashSet<ClassDef> _runtimeMixinClasses;
+
+        bool NeedsRuntimeMixinBody(ClassContext context, FunctionDef method)
+        {
+            if (_m.IsGdScript || context.IsInterface || context.Def.TypeParams.Count != 0 ||
+                method.Params.Count == 0 || method.TypeParams.Count != 0 || method.Decorators.Count != 0 ||
+                method.Name is "__init__" or "__new__" || HasStringBase(context.Def) || IsUserMetaclass(context.Def))
+                return false;
+            if (_runtimeMixinClasses == null)
+            {
+                _runtimeMixinClasses = new HashSet<ClassDef>();
+                bool createsDynamicBases = false;
+                AstWalker.VisitAll(_m.Ast.Body, node =>
+                {
+                    if (node is CallExpr { Func: NameExpr { Id: "type" }, Args.Count: >= 3 } call &&
+                        call.Args[1].Value is TupleExpr { Elts.Count: >= 2 })
+                        createsDynamicBases = true;
+                });
+                if (createsDynamicBases)
+                {
+                    AstWalker.VisitAll(_m.Ast.Body, node =>
+                    {
+                        if (node is NameExpr name && !Receivers.Contains(name) && _m.Classes.TryGetValue(name.Id, out var definition))
+                            _runtimeMixinClasses.Add(definition);
+                    });
+
+                    var pending = new Stack<ClassDef>(_runtimeMixinClasses);
+                    while (pending.Count > 0)
+                    {
+                        var definition = pending.Pop();
+                        var resolver = ClassDeclarationResolver(definition);
+                        foreach (var basis in definition.Bases)
+                            if (resolver.ResolveBase(basis, out var parent, out _) && parent != null && _runtimeMixinClasses.Add(parent))
+                                pending.Push(parent);
+                    }
+                }
+            }
+            return _runtimeMixinClasses.Contains(context.Def);
+        }
+
+        void EmitRuntimeMixinBody(FunctionDef method, ClassContext context)
+        {
+            var previous = _cls;
+            _cls = null;
+            try
+            {
+                var signature = BuildSignature(method, dropFirst: false);
+                signature.Scope.LocalClassOwner = $"typeof({context.CsSelfType})";
+                signature.Scope.LocalClassReceiver = method.Params[0].Name;
+                _w.Line($"[global::Typhon.Runtime.PyRuntimeMixinMethod({CsString(method.Name)})]");
+                string asyncModifier = method.IsAsync && !signature.IsGenerator ? "async " : "";
+                _w.Line($"private static {asyncModifier}{signature.ReturnType} {NewTmp("mixin")}({signature.Params})");
+                EmitSignatureBody(method.Body, signature);
+            }
+            finally { _cls = previous; }
+        }
 
         readonly HashSet<FunctionDef> _metaclassMethods = new();
 
@@ -61,7 +133,7 @@ namespace Typhon.Compiler.Emit
                 !HasDecorator(method.Decorators, "property") &&
                 !method.Decorators.Any(d => DecoratorName(d)?.EndsWith(".setter") == true));
 
-        FunctionDef StaticMetaclassMethod(FunctionDef hook)
+        FunctionDef StaticMetaclassMethod(FunctionDef hook, string accessorName = null)
         {
             var receiver = hook.Params[0];
             var parameters = new List<Param>
@@ -76,13 +148,30 @@ namespace Typhon.Compiler.Emit
             parameters.AddRange(hook.Params.Skip(1));
             var transformed = new FunctionDef
             {
-                Name = hook.Name, Line = hook.Line, Col = hook.Col, Params = parameters,
+                Name = accessorName ?? hook.Name, PyName = hook.PyName ?? (accessorName != null ? hook.Name : null),
+                Line = hook.Line, Col = hook.Col, Params = parameters,
                 Returns = hook.Returns, Body = hook.Body, IsAsync = hook.IsAsync, TypeParams = hook.TypeParams,
-                Decorators = hook.Decorators.Where(d => DecoratorName(d) != "staticmethod")
+                Decorators = hook.Decorators.Where(d => accessorName == null && DecoratorName(d) != "staticmethod")
                     .Append(new NameExpr { Id = "staticmethod" }).ToList(),
             };
             _metaclassMethods.Add(transformed);
             return transformed;
+        }
+
+        void EmitMetaclassProperty(FunctionDef getter, FunctionDef setter, ClassContext context, List<Expr> bases)
+        {
+            string Accessor(FunctionDef accessor, string prefix)
+            {
+                if (accessor == null) return "null";
+                string name = NewTmp(prefix);
+                EmitMethod(StaticMetaclassMethod(accessor, name), context, bases);
+                return $"new global::Typhon.Runtime.PyBoundMethod(typeof({context.CsSelfType}), {CsString(name)}, " +
+                    $"includeNonPublic: true, displayName: {CsString(accessor.Name)})";
+            }
+            string get = Accessor(getter, "__typhon_metaproperty_get");
+            string set = Accessor(setter, "__typhon_metaproperty_set");
+            _w.Line($"internal static readonly global::Typhon.Stdlib.builtins.property {Esc(getter.Name)} = " +
+                $"new({get}, {set}) {{ __name__ = {CsString(getter.Name)} }};");
         }
 
         bool CapturesClassModuleName => !_m.IsGdScript && _m.RuntimeCodeMode == null && _m.Globals.Contains("__name__");
@@ -94,7 +183,8 @@ namespace Typhon.Compiler.Emit
                 _w.Line($"{Rt("__remember_class_module")}({type}, (object?)__name__);");
             if (!RunsClassBodyAtDefinition(definition))
             {
-                if (definition.TypeParams.Count == 0 && (IsStringEnum(definition) || IsObjectIntegerEnum(definition) || IsPlainObjectEnum(definition)))
+                if (definition.TypeParams.Count == 0 && (IsStringEnum(definition) || IsObjectIntegerEnum(definition) ||
+                    IsPlainObjectEnum(definition) || definition.CapturesNamedTupleFactoryDefaults))
                     _w.Line($"global::System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor({type}.TypeHandle);");
                 _w.Line($"{Rt("__register_subclass")}({type});");
                 return;
@@ -113,20 +203,23 @@ namespace Typhon.Compiler.Emit
             string metaclass = definition.Metaclass == null ? "null" : $"(global::System.Type){Paren(EmitValue(definition.Metaclass))}";
             string BaseValue(Expr basis) => basis is SubscriptExpr && TryTypeExpr(basis, out var constructedType)
                 ? $"typeof({constructedType})" : $"(global::System.Type){Paren(EmitValue(basis))}";
-            string bases = string.Join(", ", definition.Bases.Select(BaseValue));
-            var names = definition.Body.SelectMany(statement => statement switch
+            string bases = string.Join(", ", (definition.BasesBeforeFlattening ?? definition.Bases).Select(BaseValue));
+            var names = definition.Body.Where(IsPythonClassBodyMember).SelectMany(statement => statement switch
             {
                 FunctionDef method => new[] { method.Name },
                 ClassDef nested => new[] { nested.Name },
                 _ => NamesInClassStatement(statement),
             }).Distinct();
             string keywords = definition.ClassKeywords.Count == 0 ? "null" : KeywordArgs(definition.ClassKeywords);
-            _w.Line($"{Rt("__define_metaclass_type")}({type}, {metaclass}, {CsString(definition.Name)}, " +
+            _w.Line($"{Rt("__define_metaclass_type")}({type}, {metaclass}, {CsString(definition.PyName ?? definition.Name)}, " +
                 $"{CsString(PythonModuleName)}, [{bases}], [{string.Join(", ", names.Select(CsString))}], {keywords});");
         }
 
-        string CaptureClassMember(ClassContext context, string name, string type, string value) =>
-            HasUserMetaclass(context.Def)
+        static bool IsPythonClassBodyMember(Stmt statement) =>
+            !statement.IsFlattenedClassMember && statement is not FunctionDef { IsMissingMethodStub: true };
+
+        string CaptureClassMember(ClassContext context, string name, string type, string value, Stmt statement = null) =>
+            HasUserMetaclass(context.Def) && (statement == null || IsPythonClassBodyMember(statement))
                 ? $"{Rt("__class_namespace_set")}<{type}>(typeof({context.CsSelfType}), {CsString(name)}, {value})"
                 : value;
 

@@ -1,0 +1,10 @@
+def select(values: list[object], replace: bool):
+    result = True
+    if replace:
+        result = min(values, default=True)
+    return result
+
+print(select([], True))
+numbers: list[object] = [3, 2]
+print(select(numbers, True))
+print(select(numbers, False))

@@ -1,0 +1,17 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+class RecordingMeta(type):
+    def __new__(mcls, name, bases, namespace):
+        print(name)
+        return super().__new__(mcls, name, bases, namespace)
+
+
+Rebound = None
+
+
+class Rebound(metaclass=RecordingMeta):
+    pass
+
+
+print(Rebound.__name__)

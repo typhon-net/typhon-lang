@@ -1,0 +1,26 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+
+class MarkerMeta(type):
+    def __new__(mcls, name, bases, namespace):
+        namespace['temporary'] = name
+        result = super().__new__(mcls, name, bases, namespace)
+        print(result.temporary, 'temporary' in result.__dict__)
+        delattr(result, 'temporary')
+        return result
+
+
+class Marker(metaclass=MarkerMeta):
+    pass
+
+
+print(hasattr(Marker, 'temporary'), 'temporary' in Marker.__dict__)
+Marker.added = 'set'
+print(Marker.added)
+try:
+    delattr(Marker, 'absent')
+except AttributeError:
+    print('missing')
+delattr(Marker, 'added')
+print(hasattr(Marker, 'added'))

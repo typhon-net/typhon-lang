@@ -15,6 +15,7 @@ namespace Typhon.Stdlib
         const string Library = "typhon-liblzma";
 
         static readonly Lazy<IntPtr> Handle = new(Load);
+        internal static bool IsAvailable => Handle.Value != IntPtr.Zero;
 
         static LzmaNative() => NativeLibrary.SetDllImportResolver(typeof(LzmaNative).Assembly,
             (name, _, _) => name == Library ? Handle.Value : IntPtr.Zero);
@@ -38,7 +39,7 @@ namespace Typhon.Stdlib
 
         internal static void RequireLibrary()
         {
-            if (Handle.Value == IntPtr.Zero) throw new Typhon.Runtime.ImportError("liblzma is unavailable", "_lzma");
+            if (!IsAvailable) throw new Typhon.Runtime.ImportError("liblzma is unavailable", "_lzma");
         }
 
         [StructLayout(LayoutKind.Sequential)]

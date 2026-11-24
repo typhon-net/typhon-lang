@@ -1,0 +1,18 @@
+def report(self, label, *, suffix):
+    return self.name + ":" + label + suffix
+
+class Receiver:
+    def __init__(self, name):
+        self.name = name
+
+receiver = Receiver("item")
+descriptor = getattr(report, "__get__")
+bound = descriptor(receiver, Receiver)
+print(bound("value", suffix="!"))
+print(bound.__self__ is receiver, bound.__func__ is report)
+print(descriptor(None, Receiver) is report)
+print(hasattr(len, "__get__"))
+try:
+    descriptor(None, None)
+except TypeError:
+    print("missing receiver and owner")

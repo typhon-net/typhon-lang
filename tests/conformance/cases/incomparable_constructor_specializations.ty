@@ -1,0 +1,21 @@
+from typing import Any
+
+class Alias:
+    def __init__(self, data, *, enabled: bool = True, name=None):
+        self.value = data, enabled, name
+
+def from_tuple(data: tuple, name: Any) -> Alias:
+    return Alias(data, name=name, enabled=True)
+
+def from_name(data: Any, name: str) -> Alias:
+    return Alias(data, name=name, enabled=True)
+
+def copy(data: Any, name: Any, enabled: Any) -> Alias:
+    return Alias(data, name=name, enabled=enabled)
+
+items = tuple(["item"])
+print(from_tuple(items, None).value)
+print(from_name(None, "label").value)
+print(copy(items, "label", False).value)
+print(copy(5, 7, True).value)
+print(Alias(None).value)

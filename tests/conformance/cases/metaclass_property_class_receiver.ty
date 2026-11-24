@@ -1,0 +1,30 @@
+class Labels(type):
+    @property
+    def caption(cls):
+        return cls._caption
+
+    @caption.setter
+    def caption(cls, value):
+        cls._caption = value
+
+    @property
+    def identifier(cls):
+        return cls.__name__
+
+class Box(metaclass=Labels):
+    _caption = 'initial'
+    caption = 'shadow'
+    identifier = 'instance identifier'
+
+class Child(Box):
+    pass
+
+print(Box.caption, Child.caption, Box().caption)
+Box.caption = 'new'
+print(Box.caption, Child.caption)
+print(Box.identifier, Box().identifier)
+print(isinstance(Labels.caption, property))
+try:
+    Box.identifier = 'changed'
+except AttributeError:
+    print('read-only property')

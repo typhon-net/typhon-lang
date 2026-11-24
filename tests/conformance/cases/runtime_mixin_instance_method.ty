@@ -1,0 +1,24 @@
+class Payload(str):
+    def __new__(cls, value, label):
+        receiver = str.__new__(cls, value)
+        receiver.prepare(label=label)
+        return receiver
+
+    def prepare(self, *, label):
+        self.title = 'base: ' + label
+
+
+class Annotated:
+    def prepare(self, *, label):
+        self.extra = 'mixin: ' + label
+        super().prepare(label=label.upper())
+
+
+def combined(fields, storage):
+    return type('Combined', (fields, storage), {})
+
+
+Class = combined(Annotated, Payload)
+value = Class('hello', 'example')
+print(str(value), value.title, value.extra)
+print(isinstance(value, Annotated))

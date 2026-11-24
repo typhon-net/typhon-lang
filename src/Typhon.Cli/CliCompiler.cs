@@ -137,6 +137,8 @@ internal static class CliCompiler
             if (name == "__main__")
             {
                 sourceBackends.UnionWith(PyLib.SelectedSources(source));
+                if (sourceBackends.Contains("typing"))
+                    sourceBackends.UnionWith(["abc", "annotationlib", "collections.abc"]);
                 useSourceFallback = PyLib.Requested(source, dir, out var givenLib);
                 preferPinnedSource = givenLib == null && Environment.GetEnvironmentVariable("TYPHON_PYLIB") is not { Length: > 0 };
                 if (useSourceFallback || sourceBackends.Count > 0)

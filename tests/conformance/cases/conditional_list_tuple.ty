@@ -1,0 +1,16 @@
+class Notice(ValueError):
+    pass
+
+
+def report(with_notice: bool):
+    try:
+        return b"contents", [Notice("notice")] if with_notice else []
+    except ValueError:
+        return b"", []
+
+
+for enabled in (True, False):
+    contents, notices = report(enabled)
+    print(contents, len(notices))
+    if notices:
+        print(type(notices[0]).__name__, str(notices[0]))

@@ -1,0 +1,43 @@
+import socket
+
+
+class TransferredSocket(socket.socket):
+    pass
+
+
+with socket.socket() as listener:
+    listener.bind(('127.0.0.1', 0))
+    listener.listen()
+    with socket.create_connection(listener.getsockname(), timeout=5) as source:
+        accepted, _ = listener._accept()
+        with socket.socket(fileno=accepted) as peer:
+            peer.settimeout(5)
+            descriptor = source.fileno()
+            arguments = dict(family=source.family, type=source.type, proto=source.proto, fileno=descriptor)
+            adopted = TransferredSocket.__new__(TransferredSocket, **arguments)
+            print(type(adopted) is TransferredSocket, adopted.fileno() == -1)
+            adopted.__init__(family=source.family, type=source.type, proto=source.proto, fileno=descriptor)
+            print(adopted.fileno() == descriptor, source.detach() == descriptor, source.fileno() == -1)
+            source.close()
+            adopted.sendall(b'before')
+            print(peer.recv(6))
+            detached = adopted.detach()
+            adopted.close()
+            with socket.socket(fileno=detached) as reopened:
+                print(reopened.fileno() == descriptor, adopted.fileno() == -1)
+                reopened.sendall(b'after')
+                print(peer.recv(5))
+                raw = reopened.detach()
+                socket.close(raw)
+                try:
+                    socket.socket(fileno=raw)
+                except OSError:
+                    print('cannot adopt closed descriptor')
+            original = peer.fileno()
+            alias = socket.socket(fileno=original)
+            peer.close()
+            print(alias.fileno() == original)
+            try:
+                alias.recv(1)
+            except OSError:
+                print('closing one owner invalidates the shared descriptor')

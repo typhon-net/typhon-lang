@@ -57,7 +57,7 @@ namespace Typhon.Runtime
 
             public Type __objclass__ { get; }
 
-            public object __get__(object? instance, Type? owner = null)
+            public override object __get__(object? instance, object? owner = null)
             {
                 if (instance == null)
                 {

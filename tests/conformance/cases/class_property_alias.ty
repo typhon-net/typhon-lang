@@ -1,0 +1,15 @@
+class Point:
+    def __init__(self, code: int):
+        self.code = code
+
+    @property
+    def position(self) -> int:
+        return self.code
+
+    start = end = position
+
+
+point = Point(23)
+print(point.start, point.end, point.position)
+print(getattr(Point, "start") is getattr(Point, "position"))
+print(getattr(Point, "end") is getattr(Point, "position"))

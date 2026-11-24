@@ -1,0 +1,12 @@
+('smtp', None)
+('smtp', '-')
+('smtp', 0)
+('smtp', False)
+('smtp', '25')
+auth smtp
+True
+(b'smtp', None)
+(b'smtp', b'-')
+(b'smtp', 0)
+(b'smtp', False)
+True

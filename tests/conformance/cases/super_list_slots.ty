@@ -1,0 +1,21 @@
+class Bucket(list):
+    def __init__(self, *items, **options):
+        super().__init__(*items, **options)
+
+    def __len__(self) -> int:
+        return super().__len__() + 10
+
+    def __repr__(self) -> str:
+        return "Bucket(" + super().__repr__() + ")"
+
+    def pop(self):
+        return super().pop()
+
+
+bucket = Bucket(["a", "b"])
+print(bucket, len(bucket))
+print(bucket.pop(), bucket)
+try:
+    Bucket(["a"], invalid=True)
+except TypeError as error:
+    print(str(error))

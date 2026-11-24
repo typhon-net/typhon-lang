@@ -1,0 +1,7 @@
+RED blue GREEN
+True ['BLUE', 'GREEN']
+['RED', 'BLUE', 'GREEN']
+abc
+a b c
+a b c
+a ['b', 'c']

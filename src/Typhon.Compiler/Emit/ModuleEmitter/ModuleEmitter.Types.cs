@@ -87,7 +87,7 @@ namespace Typhon.Compiler.Emit
             {
                 // Platform-specific and dynamically set members use Python's lookup on the module object.
                 string module = RuntimeModuleName(member.Target, owner);
-                return !RuntimeExport(module, owner, member.Name);
+                return !RuntimeExport(module, owner, member.Name) || IsOptionalNativeMember(owner, member.Name);
             }
             return InferType(member.Target) is "global::Typhon.Runtime.PyModule" or "Typhon.Runtime.PyModule" &&
                 !_r.HasMember("Typhon.Runtime.PyModule", member.Name);
@@ -118,10 +118,41 @@ namespace Typhon.Compiler.Emit
                     (!IsObjectIntegerEnum(definition) || !_r.HasMember("Typhon.Runtime.PyIntegerEnum", member.Name));
             }
             return DotNetMeta(receiver) is string metadata && !_r.HasMember(metadata, member.Name) &&
-                (_r.HasMember(metadata, "TryGetMember") || IsNativePythonClass(metadata));
+                (_r.HasMember(metadata, "TryGetMember") || IsNativePythonClass(metadata) ||
+                    IsBytesType(receiver) && !RuntimeExtensionMethods.Contains(member.Name));
         }
 
-        string InferType(Expr e)
+        Dictionary<Expr, string> _receiverTypeQuery;
+        Scope _receiverTypeQueryScope;
+
+        string InferType(Expr expression)
+        {
+            if (_receiverTypeQuery != null)
+            {
+                if (_scope != _receiverTypeQueryScope || expression is not (AttributeExpr or CallExpr))
+                    return InferTypeCore(expression);
+                if (_receiverTypeQuery.TryGetValue(expression, out var known)) return known;
+                string inferred = InferTypeCore(expression);
+                _receiverTypeQuery[expression] = inferred;
+                return inferred;
+            }
+
+            if (expression is not (CallExpr { Func: AttributeExpr { Target: CallExpr } } or AttributeExpr { Target: CallExpr }))
+                return InferTypeCore(expression);
+
+            // The member-call checks can ask for the same receiver's type several times.
+            // Cache within one query so assignments and later inference passes get fresh types.
+            _receiverTypeQuery = new Dictionary<Expr, string>();
+            _receiverTypeQueryScope = _scope;
+            try { return InferTypeCore(expression); }
+            finally
+            {
+                _receiverTypeQuery = null;
+                _receiverTypeQueryScope = null;
+            }
+        }
+
+        string InferTypeCore(Expr e)
         {
             switch (e)
             {
@@ -147,6 +178,7 @@ namespace Typhon.Compiler.Emit
                     return _m.RuntimeCodeMode == null && _p.MainModule == _m.Name ? "global::Typhon.Runtime.PyModule" : "dynamic";
                 case NameExpr n when n.Id == "__file__" && !IsShadowed(n.Id): return "string";
                 case NameExpr late when LateClassSlot(late.Id) != null: return "dynamic";
+                case NameExpr member when ClassBodyMember(member): return "dynamic";
                 case NameExpr ian when ImportAlias(ian) is Expr importTarget: return InferType(importTarget);
                 case NameExpr module when !Receivers.Contains(module) && RuntimeModuleValue(module) != null:
                     return "global::Typhon.Runtime.PyModule";
@@ -186,8 +218,9 @@ namespace Typhon.Compiler.Emit
                     return "dynamic";
                 case AttributeExpr tupleField when TupleFieldOwner(tupleField) != null:
                     return "global::Typhon.Runtime.PyTupleGetter";
-                case AttributeExpr shadowed when IsInstanceClassDefault(shadowed) || IsNarrowedInstanceAttribute(shadowed): return "dynamic";
+                case AttributeExpr shadowed when IsInstanceClassDefault(shadowed) || NeedsSubclassAttributeLookup(shadowed): return "dynamic";
                 case AttributeExpr sm when InstanceMethodMayBeShadowed(sm): return "dynamic";
+                case AttributeExpr dict0 when dict0.Name == "__dict__": return "dynamic";
                 case AttributeExpr at when at.Target is NameExpr self && self.Id == "self" && _cls != null:
                     return _cls.FieldTypes.TryGetValue(at.Name, out var ft) ? ft : InheritedFieldType(_cls.Def, at.Name) ??
                            (_m.IsGdScript ? GdSelfMemberType(at.Name) : null) ??
@@ -198,7 +231,6 @@ namespace Typhon.Compiler.Emit
                     int pos = int.Parse(mp.Name.Substring(LocalsAnalyzer.MatchPositionPrefix.Length));
                     return names != null && pos < names.Count ? InferType(new AttributeExpr { Target = mp.Target, Name = names[pos] }) : null;
                 }
-                case AttributeExpr dict0 when dict0.Name == "__dict__": return "dynamic";
                 case AttributeExpr exported when DottedName(exported.Target) is string moduleName && ModuleRef(moduleName) is ModuleInfo exportedModule &&
                     UsesRuntimeProjectMember(exportedModule, exported.Name):
                     return ConditionalModuleClass(exportedModule, exported.Name) ? "global::System.Type" : "dynamic";
@@ -220,7 +252,7 @@ namespace Typhon.Compiler.Emit
                 }
                 case SubscriptExpr ix when !(ix.Index is SliceExpr):
                 {
-                    if (BuiltinGenericOrigin(ix.Target) != null || SourceValueSubscription(ix.Target)) return "dynamic";
+                    if (BuiltinGenericOrigin(ix.Target) != null || SourceValueSubscription(ix.Target) || EnumIterated(ix.Target, out _) != null) return "dynamic";
                     if (InferType(ix.Index) == "global::Typhon.Runtime.PySlice") return "dynamic";
                     var t = InferType(ix.Target);
                     if (UsesDictMissingLookup(t)) return "dynamic";
@@ -260,7 +292,7 @@ namespace Typhon.Compiler.Emit
                 {
                     var t = InferType(sub.Target);
                     if (t is "global::Typhon.Runtime.PyRange" or BigRangeType) return t;
-                    if (IsBytesType(t)) return t;
+                    if (IsBytesType(t) || t is "memoryview" or "global::memoryview") return t;
                     if (t != null && t.StartsWith(PyTuplePrefix)) return t;
                     return t != null && (t == "string" || t.StartsWith("List<") || t.EndsWith("[]") || t == "dynamic") ? t : null;
                 }
@@ -408,13 +440,14 @@ namespace Typhon.Compiler.Emit
         /// <summary>The type of a call: a Typhon function, a class, a builtin, a method of a known type, a standard-library function.</summary>
         string CallType(CallExpr call)
         {
-            if (!_m.IsGdScript && (BuiltinTypeBase(call.Func) && call.Args.Count == 3 || IsMetaclassExpression(call.Func)))
+            if (!_m.IsGdScript && (IsBuiltinClassCreation(call) || IsMetaclassExpression(call.Func) ||
+                IsMetaclassInstance(call.Func, "__call__")))
                 return "dynamic";
             if (CustomAllocatorTarget(call.Func, out _) ||
-                call.Func is AttributeExpr allocator && (BaseObjectMethod(allocator) is "__object_new" or "__dict_new" or "__tuple_new" ||
+                call.Func is AttributeExpr allocator && (BaseObjectMethod(allocator) is "__object_new" or "__dict_new" or "__tuple_new" or "__str_new" ||
                     allocator.Name == "__new__" && CustomAllocatorTarget(allocator.Target, out _)))
                 return "dynamic";
-            if (SuperListAppend(call) != null || ConditionalClassReference(call.Func)) return "dynamic";
+            if (DirectListSuper(call) != null || ConditionalClassReference(call.Func)) return "dynamic";
             if (call.Func is NameExpr aliasName && AliasTarget(aliasName) is Expr aliasTarget)
                 return InferType(new CallExpr { Func = aliasTarget, Args = call.Args, Line = call.Line, Col = call.Col });
             if (CallableObjectCall(call) is CallExpr objectCall) return InferType(objectCall);
@@ -448,8 +481,10 @@ namespace Typhon.Compiler.Emit
             }
             if (InferredCallType(call) is string inferredCall) return inferredCall;
             // a module function Typhon does not infer (it has *args / **kwargs) and that returns values: dynamic to C#
-            if (call.Func is NameExpr umf && !IsLocal(umf.Id) && _m.Functions.Contains(umf.Id) && CallTarget(call, out _) == null &&
-                _m.Ast.Body.OfType<FunctionDef>().FirstOrDefault(fd => fd.Name == umf.Id) is FunctionDef ufd && ufd.Returns == null && !ufd.IsAsync &&
+            if ((call.Func is NameExpr name && !IsLocal(name.Id) ||
+                call.Func is AttributeExpr member && DottedName(member.Target) is string module && ModuleRef(module) != null) &&
+                CallTarget(call, out _) == null && TyphonCallee(call, out int implicitParams) is FunctionDef ufd &&
+                implicitParams == 0 && ufd.Returns == null && !ufd.IsAsync &&
                 ufd.TypeParams.Count == 0 && !AstWalker.ContainsOutsideNestedScopes(ufd.Body, n => n is YieldExpr) &&
                 AstWalker.ContainsOutsideNestedScopes(ufd.Body, n => n is ReturnStmt ur && ur.Value != null && !IsNone(ur.Value)))
                 return "dynamic";
@@ -505,6 +540,7 @@ namespace Typhon.Compiler.Emit
                     case "bytes": return PyBytesType;
                     case "bytearray": return PyByteArrayType;
                     case "memoryview": return "global::memoryview";
+                    case "__import__": return "object";
                     case "type" when call.Args.Count == 1: return "global::System.Type";
                     case "slice": return "global::Typhon.Runtime.PySlice";
                     case "iter":
@@ -524,13 +560,22 @@ namespace Typhon.Compiler.Emit
                         string elem = at == "string" ? "string" : ElementTypeOf(at);
                         return elem == null || elem == TypeInference.Pending ? elem : $"global::Typhon.Runtime.PyTuple<{elem}>";
                     }
+                    case "reversed" when call.Args.Count == 1 && call.Args[0] is { Name: null, Star: false, DoubleStar: false }:
+                    {
+                        string receiver = BuiltinBaseType(InferType(call.Args[0].Value));
+                        if (receiver?.StartsWith("List<", StringComparison.Ordinal) == true)
+                            return $"IEnumerable<{ElementTypeOf(receiver) ?? "dynamic"}>";
+                        break;
+                    }
                     case "list": case "sorted": case "set":
                     {
                         if (call.Args.Count == 0 || call.Args[0].Name != null || call.Args[0].Star) return null;
                         var at = InferType(call.Args[0].Value);
                         if (at == TypeInference.Pending) return at;
-                        string elem = fn.Id == "list" && at == "string" ? "string" : ElementTypeOf(at);
+                        string elem = ElementTypeOf(at);
                         if (elem == null && fn.Id == "set" && IsUnknownType(at)) return "HashSet<dynamic>";
+                        if (elem == null && fn.Id == "list" && BuiltinBaseType(at)?.StartsWith("List<", StringComparison.Ordinal) == true)
+                            return "List<dynamic>";
                         if (elem == null || elem == TypeInference.Pending) return elem;
                         return (fn.Id == "set" ? "HashSet<" : "List<") + elem + ">";
                     }
@@ -581,11 +626,18 @@ namespace Typhon.Compiler.Emit
                     case "min": case "max":
                     {
                         // (key= picks an item, it does not change the type)
-                        if (call.Args.Any(a => a.Name != null && a.Name != "key" || a.Star)) return null;
+                        if (call.Args.Any(a => a.Name is not (null or "key" or "default") || a.Star || a.DoubleStar)) return null;
                         var pos = call.Args.Where(a => a.Name == null).ToList();
                         if (pos.Count == 0) return null;
                         var ts = pos.Count == 1 ? new List<string> { ElementTypeOf(InferType(pos[0].Value)) } : pos.Select(a => InferType(a.Value)).ToList();
                         if (ts.Contains(TypeInference.Pending)) return TypeInference.Pending;
+                        if (call.Args.FirstOrDefault(argument => argument.Name == "default") is Arg fallback)
+                        {
+                            if (pos.Count != 1) return null;
+                            string defaultType = InferType(fallback.Value);
+                            if (defaultType == TypeInference.Pending) return defaultType;
+                            return ts[0] is not (null or "object" or "object?") && ts[0] == defaultType ? defaultType : "dynamic";
+                        }
                         if (ts.Any(t => t is null or "object" or "object?")) return "dynamic";
                         if (_big && ts.All(IsIntegral)) return pos.Count == 1 && ts[0] == "long" ? "long" : IntT;
                         if (ts.All(t => t == ts[0])) return ts[0];
@@ -635,7 +687,8 @@ namespace Typhon.Compiler.Emit
             if (b.Op == "/" && (l == "dynamic" || r == "dynamic")) return "dynamic";
             if (b.Op == "/") return (l == "decimal" && r == "decimal") ? "decimal" : (NumericTypes.Contains(l ?? "") && NumericTypes.Contains(r ?? "") ? "double" : null);
             if (l == null || r == null) return null;
-            if ((b.Op == "-" || b.Op == "|" || b.Op == "&" || b.Op == "^") && (IsSetType(l) || IsSetType(r))) return IsSetType(l) ? l : r;
+            if ((b.Op == "-" || IsBitwiseOperator(b.Op)) && (IsSetType(l) || IsSetType(r)))
+                return MatchingSetOperands(l, r) ? l : "dynamic";
             if (b.Op == "+" && (l.StartsWith(PyTuplePrefix) || r.StartsWith(PyTuplePrefix) ||
                                 TupleElementTypes(l) is List<string> ll && TupleElementTypes(r) is List<string> rl && ll.Count + rl.Count >= 8 &&
                                 HomogeneousTupleItem(l) != null && HomogeneousTupleItem(l) == HomogeneousTupleItem(r)) &&

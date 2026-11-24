@@ -1,0 +1,34 @@
+import _ssl
+
+
+class Derived(_ssl._SSLContext):
+    pass
+
+
+class Wrapper(_ssl._SSLContext):
+    def __new__(cls, protocol):
+        allocated = _ssl._SSLContext.__new__(cls, protocol)
+        setattr(allocated, 'label', 'allocated')
+        return allocated
+
+
+client = _ssl._SSLContext.__new__(Derived, _ssl.PROTOCOL_TLS_CLIENT)
+server = _ssl._SSLContext.__new__(Derived, _ssl.PROTOCOL_TLS_SERVER)
+print(type(client) is Derived, client.protocol, client.check_hostname, client.verify_mode)
+print(type(server) is Derived, server.protocol, server.check_hostname, server.verify_mode)
+print(client.minimum_version, client.maximum_version, bool(client.options & _ssl.OP_NO_SSLv3))
+client._set_alpn_protocols(b'\x02h2')
+wrapped = Wrapper(_ssl.PROTOCOL_TLS_SERVER)
+print(type(wrapped) is Wrapper, wrapped.protocol, getattr(wrapped, 'label'))
+try:
+    _ssl._SSLContext.__new__(object, _ssl.PROTOCOL_TLS_CLIENT)
+except TypeError:
+    print('requires context subtype')
+try:
+    _ssl._SSLContext.__new__(Derived, 42)
+except ValueError:
+    print('invalid protocol rejected')
+try:
+    _ssl._SSLContext.__new__(Derived, 4294967312)
+except OverflowError:
+    print('protocol overflow rejected')

@@ -1,0 +1,26 @@
+1f8b08000000000000ff True b'a'
+0 1f8b08007856341204ff True
+1 1f8b08007856341204ff True
+6 1f8b08007856341200ff True
+9 1f8b08007856341202ff True
+-1 1f8b08007856341200ff True
+02000000
+00000000
+00000000
+True
+b'' b'' b''
+True
+True
+True Not a gzipped file (b'x')
+EOFError Compressed file ended before the end-of-stream marker was reached
+True Unknown compression method
+True Corrupted gzip header. Checksums do not match: 8a8f != 0000
+zlib.error
+EOFError Compressed file ended before the end-of-stream marker was reached
+True CRC check failed
+True Incorrect length of data produced
+True Not a gzipped file (b'z')
+TypeError
+zlib.error Bad compression level
+TypeError
+OverflowError

@@ -1,0 +1,5 @@
+True True
+True True str
+True True
+[233, 120, 128512, 233, 128512, 120, 233, 120]
+IndexError

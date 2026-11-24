@@ -1,0 +1,12 @@
+from collections import defaultdict
+from fractions import Fraction
+
+
+def total(items):
+    counts = defaultdict(int)
+    for num, scale in items:
+        counts[scale] += num
+    return sum(Fraction(num, scale) for scale, num in counts.items())
+
+
+print(total([(3, 2), (1, 3), (5, 2)]))

@@ -1,0 +1,18 @@
+True True
+True True
+[]
+Grandchild [] False
+None [3, 4] False
+[7, 8] [9] [10, 11]
+[1]
+invalid constructor argument
+[2, 3]
+constructor keyword rejected
+constructor arity rejected
+[14, 15]
+too many [14, 15]
+keyword [14, 15]
+not iterable []
+self []
+invalid subtype
+missing positional type

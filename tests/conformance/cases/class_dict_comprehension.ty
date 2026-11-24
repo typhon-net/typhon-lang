@@ -1,0 +1,11 @@
+class Options:
+    def __init__(self, **options):
+        for name, value in options.items():
+            setattr(self, name, value)
+
+    def __repr__(self):
+        args = ["{}={!r}".format(name, value) for name, value in self.__dict__.items()]
+        return "Options({})".format(", ".join(args))
+
+
+print(repr(Options(enabled=True, label="value")))

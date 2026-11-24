@@ -1,0 +1,44 @@
+from enum import StrEnum
+
+
+class Color(StrEnum):
+    RED = 'red'
+    BLUE = 'blue'
+    GREEN = 'green'
+    ALIAS = 'red'
+
+
+first, second, third = Color
+print(first.name, second.value, third.name)
+left, *rest = Color
+print(left is first, [item.name for item in rest])
+print([color.name for color in Color])
+
+
+class Values(type):
+    def __iter__(cls):
+        return iter(('a', 'b', 'c'))
+
+
+class Letters(metaclass=Values):
+    pass
+
+
+def unpack(cls: type):
+    x, y, z = cls
+    return x + y + z
+
+
+print(unpack(Letters))
+alias: type = Letters
+a, b, c = alias
+print(a, b, c)
+
+class MoreLetters(Letters):
+    pass
+
+
+a, b, c = MoreLetters
+print(a, b, c)
+a, *rest = MoreLetters
+print(a, rest)

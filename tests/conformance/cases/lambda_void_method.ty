@@ -19,3 +19,35 @@ print(counter.callback(True)(2, 3))
 print(counter.count)
 print(counter.callback(False)(4, 5, False))
 print(counter.count)
+
+
+class Dialog:
+    def __init__(self):
+        self.choice = 0
+
+    def done(self, choice: int) -> None:
+        self.choice = choice
+
+    def command(self, choice: int):
+        return lambda self=self, choice=choice: self.done(choice)
+
+
+dialog = Dialog()
+command = dialog.command(3)
+print(command() is None, dialog.choice)
+other = Dialog()
+print(command(other, 7) is None, dialog.choice, other.choice)
+
+
+class Alternate:
+    def done(self, choice: int) -> str:
+        return str(choice)
+
+
+def invoke(receiver: object, choice: int):
+    return receiver.done(choice)
+
+
+print(command(Alternate(), 12))
+print(invoke(dialog, 18) is None, dialog.choice)
+print(invoke(Alternate(), 22))

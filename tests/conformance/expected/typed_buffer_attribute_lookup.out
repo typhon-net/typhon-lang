@@ -1,0 +1,4 @@
+b'bytes'
+bytearray(b'mutable')
+b'str'
+fixed

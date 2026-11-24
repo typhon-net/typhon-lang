@@ -1,0 +1,17 @@
+class Options(dict):
+    def install(self, callback):
+        setattr(self, 'format_value', callback)
+
+    def description(self):
+        return self.format_value(self.get('name', 'default'))
+
+
+def decorate(value):
+    return value.upper() + '!'
+
+
+options = Options()
+options.install(decorate)
+print(options.description())
+options['name'] = 'example'
+print(options.description(), options.get('missing', 'backup'))

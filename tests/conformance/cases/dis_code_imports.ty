@@ -1,0 +1,24 @@
+import dis
+from types import CodeType
+
+source = """import alpha as first
+from . import second
+from ..pkg import third as fourth
+first = 1
+first = 2
+def nested():
+    global exported
+    import omega as local
+    exported = local
+"""
+code = compile(source, "<imports>", "exec", module="root.branch")
+names = dis._find_store_names(code)
+print(next(names), list(names))
+print(list(dis._find_imports(code)))
+for child in code.co_consts:
+    if isinstance(child, CodeType):
+        print(list(dis._find_store_names(child)), list(dis._find_imports(child)))
+
+wide = "\n".join("name_" + str(index) + " = 0" for index in range(270))
+wide_code = compile(wide + "\nimport delta\n", "<wide imports>", "exec")
+print(list(dis._find_store_names(wide_code))[-3:], list(dis._find_imports(wide_code)))

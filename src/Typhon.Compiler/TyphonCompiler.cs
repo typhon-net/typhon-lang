@@ -56,6 +56,8 @@ namespace Typhon.Compiler
         internal readonly List<ImportFromStmt> ConditionalStarImports = new List<ImportFromStmt>();
         internal readonly HashSet<string> ReboundFunctions = new HashSet<string>();
         internal readonly HashSet<string> ReboundClasses = new HashSet<string>();
+        /// <summary>Rebound names whose final module-scope binding is a source class.</summary>
+        internal readonly Dictionary<string, ClassDef> FinalReboundClasses = new Dictionary<string, ClassDef>();
         internal readonly List<FunctionDef> ReboundImplementations = new List<FunctionDef>();
         /// <summary>The source changes its module namespace through globals()[key].</summary>
         internal bool WritesModuleGlobals;
@@ -78,6 +80,13 @@ namespace Typhon.Compiler
         public readonly HashSet<string> RuntimeBindings = new HashSet<string>(StringComparer.Ordinal);
         /// <summary>What the GDScript front end knows about a .gd module (its script class, exports, inner classes).</summary>
         public GdScriptModule GdScript;
+
+        internal bool TryGetFinalReboundClass(string name, out ClassDef definition)
+        {
+            definition = null;
+            return !MayReplaceModule && !RebindsUnknownGlobals && !GlobalsReboundThroughNamespace.Contains(name) &&
+                FinalReboundClasses.TryGetValue(name, out definition);
+        }
 
         public string QualifiedClassName => "global::" + (string.IsNullOrEmpty(Namespace) ? "" : ModuleEmitter.EscapeDottedName(Namespace) + ".") + ModuleEmitter.Esc(ClassName);
         public bool IsMainModule => Name == "__main__" || Name.EndsWith(".__main__");
@@ -524,7 +533,14 @@ namespace Typhon.Compiler
                     info.ConditionalGlobals.Add(className.Str);
                     info.Globals.Add(className.Str);
                 }
-                if (statement is CallExpr { Func: AttributeExpr { Name: "update" } update } && IsModuleNamespace(update.Target))
+                bool namespaceUpdater = statement is CallExpr { Func: AttributeExpr { Name: "update" } update } &&
+                    IsModuleNamespace(update.Target);
+                bool dynamicCode = statement is CallExpr { Func: NameExpr { Id: "exec" or "eval" } name } execute &&
+                    !info.Functions.Contains(name.Id) && !info.Classes.ContainsKey(name.Id) && !info.Globals.Contains(name.Id) &&
+                    (execute.Args.Any(argument => argument.Name == "globals" && IsModuleNamespace(argument.Value)) ||
+                        execute.Args.Count >= 2 && execute.Args[0] is { Name: null, Star: false, DoubleStar: false } &&
+                        execute.Args[1] is { Name: null, Star: false, DoubleStar: false } scope && IsModuleNamespace(scope.Value));
+                if (namespaceUpdater || dynamicCode)
                 {
                     info.WritesModuleGlobals = true;
                     info.RebindsUnknownGlobals = true;

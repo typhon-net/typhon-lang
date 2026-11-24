@@ -1,0 +1,15 @@
+class Walkable:
+    def root(self):
+        current = self
+        while current.parent is not None:
+            current = current.parent
+        return current
+
+class Node(Walkable):
+    def __init__(self, label: str, parent=None):
+        self.label = label
+        self.parent = parent
+
+root = Node("top")
+leaf = Node("leaf", Node("middle", root))
+print(leaf.root().label, leaf.root() is root)

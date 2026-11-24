@@ -35,7 +35,7 @@ namespace Typhon.Runtime
             }
             return length;
         }
-        public static long len<T>(List<T> l) => l.Count;
+        public static long len<T>(List<T> l) => l.GetType() == typeof(List<T>) ? l.Count : len((object)l);
         public static long len<T>(T[] a) => a.Length;
         public static long len<T>(T t) where T : struct, ITuple => t.Length;
 
@@ -168,8 +168,13 @@ namespace Typhon.Runtime
             }
             if (TryGetAttr(c, "__contains__", out var method, allowFallback: false))
                 return truthy((object?)__invoke(method, [x]));
-            foreach (object? item in __iter_dyn(c))
-                if (ReferenceEquals(item, x) || eq(item, x)) return true;
+            return ContainsItems(__iter_dyn(c), x);
+        }
+
+        static bool ContainsItems(IEnumerable items, object? value)
+        {
+            foreach (object? item in items)
+                if (ReferenceEquals(item, value) || eq(item, value)) return true;
             return false;
         }
 
@@ -576,6 +581,13 @@ namespace Typhon.Runtime
                 return previous;
             }),
         };
+
+        internal static bool TryDictionaryBaseMember(Type type, string name, out PyFunction? member)
+        {
+            member = null;
+            return type.IsGenericType && type.GetGenericTypeDefinition() == typeof(OrderedDictionary<,>) &&
+                DictionaryDescriptors.TryGetValue(name, out member);
+        }
 
         public static object? __dict_delete(IDictionary dictionary, object? key)
         {

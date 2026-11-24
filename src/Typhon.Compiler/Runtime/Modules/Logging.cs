@@ -108,12 +108,15 @@ namespace Typhon.Runtime
             }
         }
 
-        /// <summary>A frame of Typhon code (its .ty file, line and Python function name), or null for runtime / .NET frames.</summary>
+        /// <summary>A Python source frame, or null for runtime and other CLR frames.</summary>
         public static (string file, int line, string func)? Caller(StackFrame f)
         {
             string? file = f.GetFileName();
-            if (file == null || !file.EndsWith(".ty", StringComparison.OrdinalIgnoreCase)) return null;
+            if (file == null || !(file.EndsWith(".ty", StringComparison.OrdinalIgnoreCase) ||
+                file.EndsWith(".py", StringComparison.OrdinalIgnoreCase))) return null;
             var m = f.GetMethod();
+            // The compiler uses explicit CLR interface implementations to forward Python calls.
+            if (m is { IsPrivate: true, IsFinal: true, IsVirtual: true } && m.Name.Contains('.')) return null;
             string fn = m?.Name ?? "?";
             // iterator / async state machines: <gen>d__3.MoveNext → gen; lambdas → <lambda>; local functions → their name
             if (fn == "MoveNext" && m?.DeclaringType?.Name is string sm && sm.StartsWith('<')) fn = sm.Substring(1, sm.IndexOf('>') - 1);

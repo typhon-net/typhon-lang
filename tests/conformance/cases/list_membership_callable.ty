@@ -1,0 +1,17 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+from itertools import filterfalse
+
+
+def bound_contains(container: object):
+    return container.__contains__
+
+
+names = ['same.txt', '.git', 'local.txt']
+ignored = ['.git']
+visible = bound_contains(ignored)
+print(list(filterfalse(visible, names)))
+ignored.append('local.txt')
+print(visible('local.txt'), visible('same.txt'))
+print(bound_contains([1, [2]])(True), bound_contains([1, [2]])([2]))

@@ -1,0 +1,3 @@
+(self, value='default', *, label=None) Keep the supplied value and label.
+(value='default', *, label=None)
+('original', 7)

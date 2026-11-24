@@ -1,0 +1,25 @@
+from functools import partial
+
+
+class Record:
+    def __new__(cls, value: int, *, label: str):
+        record = object.__new__(cls)
+        record.value = value
+        record.label = label
+        return record
+
+
+def restore(mode, arguments):
+    if mode == 'extended':
+        cls, positional, keywords = arguments
+        return partial(cls.__new__, cls, *positional, **keywords)()
+    return arguments[0]
+
+
+print(restore('plain', (b'original',)))
+record = restore('extended', (Record, (7,), {'label': 'restored'}))
+print(record.value, record.label)
+try:
+    restore('extended', (b'original',))
+except ValueError:
+    print('wrong number of arguments')

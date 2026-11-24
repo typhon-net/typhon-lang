@@ -19,6 +19,7 @@ namespace Typhon.Stdlib
     using System.Collections.Generic;
     using System.Linq;
     using System.Runtime.CompilerServices;
+    using System.Runtime.InteropServices;
     using Typhon.Runtime;
 
     internal static partial class types
@@ -97,7 +98,7 @@ namespace Typhon.Stdlib
             object? IDictionary.this[object key] { get => this[key]; set => throw ReadOnly(); }
             public dynamic? get(object key, object? @default = null) => _d.Contains(key) ? _d[key] : @default;
             public List<object?> keys() => _d.Keys.Cast<object?>().ToList();
-            public List<object?> values() => _d.Values.Cast<object?>().ToList();
+            public List<dynamic?> values() => _d.Values.Cast<dynamic?>().ToList();
             public List<(object?, object?)> items() { var r = new List<(object?, object?)>(); var en = _d.GetEnumerator(); while (en.MoveNext()) r.Add((en.Key, en.Value)); return r; }
             /// <summary>copy(): a copy of the underlying mapping (a dict).</summary>
             public OrderedDictionary<object, object?> copy()
@@ -272,33 +273,58 @@ namespace Typhon.Stdlib
         /// </summary>
         internal class DynamicClassAttribute
         {
-            public readonly object? fget, fset, fdel;
+            public dynamic? fget, fset, fdel;
             public object? __doc__;
             public bool __isabstractmethod__;
+            public bool overwrite_doc;
+
             public DynamicClassAttribute(object? fget = null, object? fset = null, object? fdel = null, object? doc = null)
             {
-                this.fget = fget; this.fset = fset; this.fdel = fdel;
-                __doc__ = doc ?? (fget as PyFunction)?.__doc__;
+                this.fget = fget;
+                this.fset = fset;
+                this.fdel = fdel;
+                __doc__ = Builtins.truthy(doc) ? doc : Builtins.getattr(fget, "__doc__", null);
+                __isabstractmethod__ = _abc.IsAbstract(fget);
+                overwrite_doc = doc == null;
             }
-            public virtual object? __get__(object? instance, object? ownerclass = null)
+
+            public virtual dynamic? __get__(object? instance, object? ownerclass = null)
             {
-                if (instance == null) throw new MissingMemberException("attribute is not available on the class");
-                if (fget == null) throw new MissingMemberException("unreadable attribute");
-                return Builtins.__invoke(fget, new[] { instance });
+                if (instance == null)
+                    return __isabstractmethod__ ? this : throw new MissingMemberException();
+                if ((object?)fget == null) throw new MissingMemberException("unreadable attribute");
+                return Builtins.__invoke((object?)fget, [instance]);
             }
-            public virtual void __set__(object? instance, object? value)
+
+            public virtual dynamic? __set__(object? instance, object? value)
             {
-                if (fset == null) throw new MissingMemberException("can't set attribute");
-                Builtins.__invoke(fset, new[] { instance, value });
+                if ((object?)fset == null) throw new MissingMemberException("can't set attribute");
+                Builtins.__invoke((object?)fset, [instance, value]);
+                return null;
             }
-            public virtual void __delete__(object? instance)
+
+            public virtual dynamic? __delete__(object? instance)
             {
-                if (fdel == null) throw new MissingMemberException("can't delete attribute");
-                Builtins.__invoke(fdel, new[] { instance });
+                if ((object?)fdel == null) throw new MissingMemberException("can't delete attribute");
+                Builtins.__invoke((object?)fdel, [instance]);
+                return null;
             }
-            public DynamicClassAttribute getter(object? fget) => new DynamicClassAttribute(fget, fset, fdel, __doc__);
-            public DynamicClassAttribute setter(object? fset) => new DynamicClassAttribute(fget, fset, fdel, __doc__);
-            public DynamicClassAttribute deleter(object? fdel) => new DynamicClassAttribute(fget, fset, fdel, __doc__);
+
+            DynamicClassAttribute WithAccessors(object? get, object? set, object? delete, object? doc)
+            {
+                var result = (DynamicClassAttribute)Builtins.__invoke(GetType(), [get, set, delete, doc]);
+                result.overwrite_doc = overwrite_doc;
+                return result;
+            }
+
+            public DynamicClassAttribute getter(object? fget)
+            {
+                object? doc = overwrite_doc ? Builtins.getattr(fget, "__doc__", null) : null;
+                return WithAccessors(fget, (object?)fset, (object?)fdel, Builtins.truthy(doc) ? doc : __doc__);
+            }
+
+            public DynamicClassAttribute setter(object? fset) => WithAccessors((object?)fget, fset, (object?)fdel, __doc__);
+            public DynamicClassAttribute deleter(object? fdel) => WithAccessors((object?)fget, (object?)fset, fdel, __doc__);
         }
 
         /// <summary>The Python code object shared by functions, frames, and compiled source.</summary>
@@ -322,6 +348,39 @@ namespace Typhon.Stdlib
                 (co_argcount, co_posonlyargcount, co_kwonlyargcount) = arity ?? (0L, 0L, 0L);
                 co_varnames = variables ?? EmptyVariableNames;
             }
+
+            public CodeType replace([PyKeywordOnly, Optional] object? __positional,
+                [PyKeywordOnly, Optional] object? co_consts, [PyKeywordOnly, Optional] object? co_filename)
+            {
+                // The CLR dynamic binder does not honor Python's keyword-only marker.
+                if (!ReferenceEquals(__positional, Type.Missing))
+                    throw new InvalidCastException("replace() takes no positional arguments");
+                PyTuple<object?>? constants = co_consts switch
+                {
+                    _ when ReferenceEquals(co_consts, Type.Missing) => null,
+                    PyTuple<object?> tuple => tuple,
+                    ITuple tuple => new PyTuple<object?>(Enumerable.Range(0, tuple.Length).Select(index => tuple[index])),
+                    _ => throw InvalidReplacement("co_consts", "tuple", co_consts),
+                };
+                string filename = co_filename switch
+                {
+                    _ when ReferenceEquals(co_filename, Type.Missing) => this.co_filename,
+                    string name => name,
+                    PyString name => name.Text,
+                    _ => throw InvalidReplacement("co_filename", "str", co_filename),
+                };
+                return ReplaceBytecodeMetadata(filename, constants);
+            }
+
+            static InvalidCastException InvalidReplacement(string name, string expected, object? value)
+            {
+                string actual = value == null ? "None" : Builtins.PyTypeName(Builtins.__type_of(value));
+                return new InvalidCastException($"replace() argument '{name}' must be {expected}, not {actual}");
+            }
+
+            internal virtual CodeType ReplaceBytecodeMetadata(string filename, PyTuple<object?>? constants) =>
+                throw new NotImplementedException("replacing code metadata requires CPython bytecode");
+
             // A managed frame without tracing has the one source position captured from the stack.
             public virtual IEnumerable<(long, long, long?)> co_lines()
             {

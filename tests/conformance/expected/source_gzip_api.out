@@ -2,3 +2,5 @@ True
 24
 b'Typhon gzip\n'
 0 b'Typhon' 6
+TypeError 'float' object cannot be interpreted as an integer
+error Bad compression level

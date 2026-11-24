@@ -1,0 +1,33 @@
+class Item:
+    def __init__(self, value: int):
+        self.value = value
+
+    def rank(self) -> int:
+        return self.value
+
+
+class OtherItem(Item):
+    def rank(self) -> int:
+        return -self.value
+
+
+items: list[Item] = [OtherItem(3), OtherItem(1), OtherItem(2)]
+items.sort(key=Item.rank)
+print([item.value for item in items])
+print([item.value for item in sorted(items, key=Item.rank, reverse=True)])
+items.sort(key=lambda item: item.rank())
+print([item.value for item in items])
+
+
+class Selector:
+    def rank(self, item: Item) -> int:
+        return item.value
+
+
+def selector() -> Selector:
+    print("selector lookup")
+    return Selector()
+
+
+items.sort(key=selector().rank)
+print([item.value for item in items])

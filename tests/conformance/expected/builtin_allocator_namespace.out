@@ -1,0 +1,9 @@
+object True True
+type True True
+NoneType True True
+int True True
+str True True
+tuple True True
+list True True
+dict True True
+False True

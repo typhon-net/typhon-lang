@@ -70,6 +70,11 @@ namespace Typhon.Stdlib
             public readonly PyTuple<string> co_cellvars = NamesWithKind(localNames, localKinds, 0x40);
             public override PyTuple<string> co_freevars { get; } = NamesWithKind(localNames, localKinds, 0x80);
 
+            internal override MarshalledCode ReplaceBytecodeMetadata(string filename, PyTuple<object?>? constants) =>
+                new(co_name, filename, (int)co_firstlineno, (int)co_flags, co_qualname,
+                    (int)co_argcount, (int)co_posonlyargcount, (int)co_kwonlyargcount, (int)co_stacksize,
+                    co_code, constants ?? co_consts, co_names, LocalNames, LocalKinds, co_linetable, co_exceptiontable);
+
             // CPython location table encoding
             // https://github.com/python/cpython/blob/main/InternalDocs/code_objects.md#format-of-the-locations-table
             readonly record struct Location(int Size, long? Line, long? EndLine, long? Column, long? EndColumn);

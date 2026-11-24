@@ -1,0 +1,12 @@
+import io
+
+class Source:
+    def __init__(self, handle):
+        self.handle = handle
+
+class Reader(Source):
+    def read(self):
+        line = self.handle.readline().replace(b'\r\n', b'').decode('ascii')
+        return line
+
+print(Reader(io.BytesIO(b'hello\r\n')).read())

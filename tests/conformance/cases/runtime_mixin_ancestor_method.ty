@@ -1,0 +1,25 @@
+class Storage(str):
+    def __new__(cls, value, *, marker):
+        instance = str.__new__(cls, value)
+        instance.configure(marker=marker)
+        return instance
+
+    def configure(self):
+        self.configured = True
+
+
+class Marker:
+    def configure(self, *args, **kwargs):
+        self.marker = kwargs.pop('marker')
+        super().configure(*args, **kwargs)
+
+
+class DerivedMarker(Marker):
+    def configure(self, *args, **kwargs):
+        super().configure(*args, **kwargs)
+        self.derived = 'yes'
+
+
+Box = type('Box', (DerivedMarker, Storage), {})
+item = Box('sample', marker='parent')
+print(item, item.marker, item.derived, item.configured)

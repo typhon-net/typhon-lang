@@ -73,6 +73,7 @@ namespace Typhon.Stdlib
                 object? receiver = __self__ is Type ? null : __self__;
                 if (__self_class__ != null)
                 {
+                    if (name == "__new__" && PyNamedTupleAllocator.TryGet(__thisclass__, inlinedBase: true, out result)) return true;
                     foreach (Type owner in PyMetaclasses.MethodOrder(__self_class__).SkipWhile(type => type != __thisclass__).Skip(1))
                     {
                         if (owner == typeof(object) && name == "__init_subclass__")
@@ -104,7 +105,7 @@ namespace Typhon.Stdlib
                             result = PyMetaclasses.New;
                             return true;
                         }
-                        if (owner == typeof(object) && name is "__new__" or "__str__" or "__getattribute__" or "__getstate__" or "__setattr__" or "__delattr__")
+                        if (owner == typeof(object) && name is "__new__" or "__str__" or "__getattribute__" or "__getstate__" or "__reduce__" or "__reduce_ex__" or "__setattr__" or "__delattr__")
                         {
                             var method = Builtins.__object_method("__object_" + name[2..^2]);
                             result = receiver != null && name != "__new__" ? new types.MethodType(method, receiver) : method;
@@ -162,6 +163,20 @@ namespace Typhon.Stdlib
                                 result = new types.MethodType(hook.__func__, __self_class__);
                             return true;
                         }
+                        if (owner.IsGenericType && owner.GetGenericTypeDefinition() == typeof(List<>) &&
+                            (Builtins.TryListBaseMember(owner, name, out var listMember) ||
+                             Builtins.TryBuiltinClassMethod(owner, name, out listMember)))
+                        {
+                            result = receiver == null || name == "__new__" ? listMember : new types.MethodType(listMember!, receiver);
+                            return true;
+                        }
+                        if (Builtins.TryDictionaryBaseMember(owner, name, out var dictionaryMember))
+                        {
+                            result = receiver == null || name == "fromkeys" ? dictionaryMember : new types.MethodType(dictionaryMember!, receiver);
+                            return true;
+                        }
+                        if (receiver != null && PyMetaclasses.TryBindMixinInstanceMethod(receiver, owner, name, out result))
+                            return true;
                         MethodInfo[] methods = owner.GetMethods(Declared).Where(m => m.Name == name && !m.IsAbstract &&
                             !m.ContainsGenericParameters && !m.IsDefined(typeof(PyMissingMethodAttribute), false)).ToArray();
                         if (methods.Length > 0)
@@ -169,6 +184,7 @@ namespace Typhon.Stdlib
                             result = new PyClosure(name, (args, keywords) => CallMethods(name, methods, receiver, args, keywords));
                             return true;
                         }
+                        if (name == "__new__" && PyNamedTupleAllocator.TryGet(owner, inlinedBase: false, out result)) return true;
                     }
                 }
                 return false;

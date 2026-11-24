@@ -14,3 +14,27 @@ for mode in (Format.VALUE_WITH_FAKE_GLOBALS, None, 8):
         signature(function, annotation_format=mode)
     except ValueError as error:
         print(str(error))
+
+
+def describe(first: "str", /, count: int = 2, *, last: "int" = 3) -> "str":
+    return first
+
+
+def format_through_value(value: object) -> str:
+    return value.format(max_width=18, quote_annotation_strings=False)
+
+
+def collect(*items: int, label="x", **options: object) -> None:
+    pass
+
+
+def nothing() -> str:
+    return ""
+
+
+info = signature(describe, annotation_format=Format.STRING)
+print(info.format() == str(info))
+print(info.format(quote_annotation_strings=False))
+print(format_through_value(info))
+print(signature(collect).format(max_width=14))
+print(signature(nothing).format(max_width=2))

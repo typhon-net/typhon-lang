@@ -355,10 +355,19 @@ namespace Typhon.Runtime
             return list[(int)RandBelow(list.Count)];
         }
 
-        public string choice(string s)
+        public string choice(string seq)
         {
-            if (s.Length == 0) throw new IndexOutOfRangeException("Cannot choose from an empty sequence");
-            return s[(int)RandBelow(s.Length)].ToString();
+            long length = Builtins.len(seq);
+            if (length == 0) throw new IndexOutOfRangeException("Cannot choose from an empty sequence");
+            int index = (int)RandBelow(length);
+            return length == seq.Length ? Builtins.CharStr(seq[index]) : Builtins.chars(seq).ElementAt(index);
+        }
+
+        public dynamic? choice(object seq)
+        {
+            if (Builtins.len(seq) == 0) throw new IndexOutOfRangeException("Cannot choose from an empty sequence");
+            // The runtime binder can narrow this index for __getitem__ methods compiled in 64-bit mode.
+            return Builtins.__getitem(seq, new BigInteger(RandBelow(Builtins.len(seq))));
         }
 
         public void shuffle<T>(IList<T> x)
@@ -594,7 +603,8 @@ namespace Typhon.Stdlib
         public static BigInteger randint(BigInteger a, BigInteger b) => _inst.randint(a, b);
         public static PyBytes randbytes(long n) => _inst.randbytes(n);
         public static T choice<T>(IEnumerable<T> seq) => _inst.choice(seq);
-        public static string choice(string s) => _inst.choice(s);
+        public static string choice(string seq) => _inst.choice(seq);
+        public static dynamic? choice(object seq) => _inst.choice(seq);
         public static void shuffle<T>(IList<T> x) => _inst.shuffle(x);
         public static List<T> sample<T>(IEnumerable<T> population, long k) => _inst.sample(population, k);
         public static List<string> sample(string population, long k) => _inst.sample(population, k);

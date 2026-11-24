@@ -1,0 +1,31 @@
+import inspect
+
+
+class Left:
+    pass
+
+
+class Right:
+    pass
+
+
+Branch = type("Branch", (Left, Right), {})
+Leaf = type("Leaf", (Branch,), {})
+
+
+def names(tree) -> list:
+    result = []
+    for entry in tree:
+        if isinstance(entry, list):
+            result.append(names(entry))
+        else:
+            cls, bases = entry
+            result.append((cls.__name__, tuple(base.__name__ for base in bases)))
+    return result
+
+
+classes = [Leaf, Branch, Right, Left, Branch]
+print(names(inspect.getclasstree(classes)))
+print(names(inspect.getclasstree(classes, 1)))
+print(names(inspect.getclasstree((Branch,), unique=True)))
+print(names(inspect.getclasstree([])))

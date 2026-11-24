@@ -1,0 +1,19 @@
+import base64
+import binascii
+
+data = b"abcdefgh"
+for columns in (0, 1, 7, 8, 100):
+    print(base64.b64encode(data, wrapcol=columns))
+    print(base64.b64encode(data, padded=False, wrapcol=columns))
+print(base64.b64encode(b"\xfb\xff" * 5, altchars=b"\xfc\xff", wrapcol=4))
+print(base64.urlsafe_b64encode(b"\xfb\xff", padded=False))
+print(base64.encodebytes(b""))
+print(base64.encodebytes(data * 10) == binascii.b2a_base64(data * 10, wrapcol=76))
+try:
+    base64.b64encode(data, wrapcol=-1)
+except ValueError as error:
+    print(str(error))
+try:
+    base64.b64encode(data, altchars=b"x")
+except ValueError as error:
+    print(str(error))

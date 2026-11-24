@@ -57,6 +57,50 @@ namespace Typhon.Stdlib
                 (long)zone.GetUtcOffset(utc).TotalSeconds);
         }
 
+        public static string asctime([System.Runtime.InteropServices.Optional, PyPositionalOnly] object? time_tuple)
+        {
+            if (ReferenceEquals(time_tuple, Type.Missing)) time_tuple = localtime();
+            if (time_tuple is not ITuple parts)
+                throw new InvalidCastException("Tuple or struct_time argument required");
+            if (parts.Length != 9)
+                throw new InvalidCastException("asctime(): illegal time tuple argument");
+
+            var values = new int[parts.Length];
+            for (int index = 0; index < values.Length; index++)
+                values[index] = AsctimePart(parts[index]);
+
+            int year = values[0], month = values[1], day = values[2];
+            int hour = values[3], minute = values[4], second = values[5];
+            int weekday = unchecked(values[6] + 1) % 7;
+            if (year < int.MinValue + 1900) throw new OverflowException("year out of range");
+            if (month is < 0 or > 12) throw new ArgumentException("month out of range");
+            if (day is < 0 or > 31) throw new ArgumentException("day of month out of range");
+            if (hour is < 0 or > 23) throw new ArgumentException("hour out of range");
+            if (minute is < 0 or > 59) throw new ArgumentException("minute out of range");
+            if (second is < 0 or > 61) throw new ArgumentException("seconds out of range");
+            if (weekday < 0) throw new ArgumentException("day of week out of range");
+            if (values[7] is < 0 or > 366) throw new ArgumentException("day of year out of range");
+
+            var format = CultureInfo.InvariantCulture.DateTimeFormat;
+            string weekdayName = format.GetAbbreviatedDayName((DayOfWeek)weekday);
+            string monthName = format.GetAbbreviatedMonthName(Math.Max(1, month));
+            return string.Create(CultureInfo.InvariantCulture,
+                $"{weekdayName} {monthName} {Math.Max(1, day),2} {hour:00}:{minute:00}:{second:00} {year}");
+        }
+
+        static int AsctimePart(object? value)
+        {
+            object index = Builtins.__index_value(value);
+            BigInteger number = index is BigInteger large ? large : (long)index;
+            long minimum = OperatingSystem.IsWindows() ? int.MinValue : long.MinValue;
+            long maximum = OperatingSystem.IsWindows() ? int.MaxValue : long.MaxValue;
+            if (number < minimum || number > maximum)
+                throw new OverflowException("Python int too large to convert to C long");
+            if (number < int.MinValue) throw new OverflowException("signed integer is less than minimum");
+            if (number > int.MaxValue) throw new OverflowException("signed integer is greater than maximum");
+            return (int)number;
+        }
+
         internal sealed class struct_time : PyStructSeq
         {
             public readonly long tm_year, tm_mon, tm_mday, tm_hour, tm_min, tm_sec, tm_wday, tm_yday, tm_isdst, tm_gmtoff;
@@ -261,15 +305,15 @@ namespace Typhon.Stdlib
             public object? this[long i] => Item(i);
         }
 
-        /// <summary>sys.implementation: name 'typhon', cache_tag None (no bytecode cache), version (Typhon's own), hexversion.</summary>
+        /// <summary>sys.implementation: name, optional CPython bytecode cache tag, Typhon version and hexversion.</summary>
         internal sealed class implementation_t : IPyRepr
         {
             public readonly string name = "typhon";
-            public readonly string? cache_tag = null;
+            public string? cache_tag => Typhon.Stdlib.importlib._bootstrap_external.CacheTag;
             public readonly version_info_t version = new version_info_t(0, 1, 0, "alpha", 0);
             public readonly long hexversion = 0x000100A0;
             public readonly string _multiarch = "";
-            public string __repr__() => $"namespace(name='{name}', cache_tag=None, version={version.__repr__()}, hexversion={hexversion})";
+            public string __repr__() => $"namespace(name='{name}', cache_tag={Builtins.repr(cache_tag)}, version={version.__repr__()}, hexversion={hexversion})";
             public override string ToString() => __repr__();
         }
 
@@ -383,6 +427,7 @@ namespace Typhon.Stdlib
 namespace Typhon.Runtime
 {
     using System;
+    using System.Collections;
     using System.Collections.Generic;
     using System.Dynamic;
     using System.Linq;
@@ -398,7 +443,7 @@ namespace Typhon.Runtime
         public string Field { get; } = field;
     }
 
-    [AttributeUsage(AttributeTargets.Field)]
+    [AttributeUsage(AttributeTargets.Field | AttributeTargets.Method)]
     internal sealed class PyOptionalModuleMemberAttribute : Attribute { }
 
     /// <summary>
@@ -413,9 +458,6 @@ namespace Typhon.Runtime
             ReferenceEquals(value, Unbound) ? Builtins.__unbound_import(name) : value;
 
         internal dynamic? ReadGlobal(string name) =>
-            __dict__.TryGetValue(name, out var value) ? value : Builtins.__unbound_import(name);
-
-        internal dynamic? ReadStarGlobal(string name) =>
             __dict__.TryGetValue(name, out var value) ||
                 Of(typeof(Typhon.Stdlib.builtins), "builtins").__dict__.TryGetValue(name, out value)
                 ? value : Builtins.__unbound_import(name);
@@ -460,7 +502,8 @@ namespace Typhon.Runtime
                 return _of.GetOrAdd(typeof(Typhon.Stdlib.os_.path), t => new PyModule(NativePathModule.Name, t));
             return _of.GetOrAdd(type, t => new PyModule(name, t,
                 t == typeof(Typhon.Stdlib.os_) ? Typhon.Stdlib.os_.IsExported :
-                t == typeof(Typhon.Stdlib.sys_) ? Typhon.Stdlib.sys_.IsExported : null));
+                t == typeof(Typhon.Stdlib.sys_) ? Typhon.Stdlib.sys_.IsExported :
+                t == typeof(Typhon.Stdlib._ssl) ? Typhon.Stdlib._ssl.IsExported : null));
         }
         public static object? Import(Type type, string name)
         {
@@ -478,13 +521,15 @@ namespace Typhon.Runtime
                 original._registeredSource = true;
             }
             try { System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(type.TypeHandle); }
-            catch
+            catch (Exception error)
             {
                 lock (registry)
                 {
                     registry.Remove(name);
                     original._registeredSource = false;
                 }
+                if (error is TypeInitializationException { InnerException: { } cause })
+                    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(cause).Throw();
                 throw;
             }
             lock (registry) return registry[name];
@@ -511,12 +556,23 @@ namespace Typhon.Runtime
         }
         public PyAttrDict __dict__ { get; }
 
-        internal void ImportNamespaceNames(PyModule source)
+        internal void ImportNamespaceNames(PyModule source) => CopyImportNamespace(source, __dict__);
+
+        internal static void CopyImportNamespace(object source, IDictionary destination)
         {
-            IEnumerable<string> names = source.__dict__.TryGetValue("__all__", out object? exported)
-                ? Builtins.__iter_dyn(exported).Select(name => (string)name)
-                : source.__dict__.Keys.Where(name => !name.StartsWith("_", StringComparison.Ordinal));
-            foreach (string name in names.ToArray()) __dict__[name] = source.ImportAttribute(name);
+            var module = source as PyModule;
+            object? exported = Builtins.getattr(source, "__all__", Unbound);
+            IEnumerable<string> names;
+            if (ReferenceEquals(exported, Unbound))
+            {
+                var dictionary = (IDictionary?)module?.__dict__ ?? (object?)Builtins.getattr(source, "__dict__", null) as IDictionary
+                    ?? throw new ImportError("from-import-* object has no __dict__ and no __all__");
+                names = dictionary.Keys.Cast<string>().Where(name => !name.StartsWith("_", StringComparison.Ordinal));
+            }
+            else names = Builtins.__iter_dyn(exported).Select(name => (string)name);
+
+            foreach (string name in names.ToArray())
+                destination[name] = module != null ? module.ImportAttribute(name) : Builtins.getattr(source, name);
         }
         internal bool TryReadAttribute(string name, out object? value, bool allowFallback = true)
         {
@@ -675,6 +731,7 @@ namespace Typhon.Runtime
             foreach (var t in types.Where(t => t.Namespace == "Typhon.Stdlib" && !t.IsNested && t.IsAbstract && t.IsSealed).OrderBy(t => t.Name, StringComparer.Ordinal))
             {
                 string name = NativeModuleName(t.Name);
+                if (t == typeof(Typhon.Stdlib._lzma) && !Typhon.Stdlib.LzmaNative.IsAvailable) continue;
                 if (!d.ContainsKey(name)) d[name] = Of(t, name);
                 foreach (var nested in t.GetNestedTypes().Where(IsNativeSubmodule))
                 {

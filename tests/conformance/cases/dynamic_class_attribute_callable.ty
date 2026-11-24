@@ -1,0 +1,15 @@
+from types import DynamicClassAttribute
+
+
+class Derived(DynamicClassAttribute):
+    def read(self, instance):
+        return self.fget(instance)
+
+
+def getter(value):
+    return 'got ' + str(value)
+
+
+field = Derived(getter)
+print(field.read(42))
+print(field.fget('argument'))

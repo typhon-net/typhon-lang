@@ -1,0 +1,24 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import sys
+
+try:
+    from _ssl import enum_crls
+except ImportError:
+    assert sys.platform != 'win32'
+else:
+    assert sys.platform == 'win32'
+    assert callable(enum_crls)
+
+
+def available():
+    try:
+        from _ssl import enum_certificates as certificates
+    except ImportError:
+        return False
+    return callable(certificates)
+
+
+assert available() == (sys.platform == 'win32')
+print('platform-specific from-import')

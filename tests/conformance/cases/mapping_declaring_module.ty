@@ -1,0 +1,13 @@
+#:pylib .
+import mapping_declaring_module_base
+
+class Index:
+    def __init__(self):
+        self.times = {'new': 'unrelated'}
+
+def set_value(index: mapping_declaring_module_base.Index, value: float) -> None:
+    index.times['new'] = value
+
+index = mapping_declaring_module_base.Index()
+set_value(index, 1.25)
+print(type(index.times['new']).__name__, type(index.times['old']).__name__, Index().times['new'])

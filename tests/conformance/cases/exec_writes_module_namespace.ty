@@ -1,0 +1,23 @@
+def install(name):
+    source = f'def {name}(value):\n    return value * 2'
+    exec(source, globals())
+
+
+install('twice')
+alias = twice
+print(twice(7), alias(5))
+
+
+def install_with_keywords():
+    exec('value_from_exec = 31', globals=globals())
+
+
+install_with_keywords()
+print(value_from_exec)
+
+
+def read_through_function():
+    return twice(value_from_exec)
+
+
+print(read_through_function())

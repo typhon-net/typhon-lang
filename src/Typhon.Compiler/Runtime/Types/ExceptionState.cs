@@ -29,7 +29,7 @@ namespace Typhon.Runtime
         internal static bool IsAttributeErrorMember(string name) => name is "name" or "obj";
 
         internal static bool HasAttribute(Exception error, string name) =>
-            name is "__cause__" or "__context__" or "__suppress_context__" or "__traceback__" ||
+            name is "args" or "__cause__" or "__context__" or "__suppress_context__" or "__traceback__" ||
             error is MissingMemberException && IsAttributeErrorMember(name);
 
         internal static MissingMemberException CreateAttributeError(object?[] args, object? name, object? obj)
@@ -48,6 +48,7 @@ namespace Typhon.Runtime
             States.TryGetValue(error, out var state);
             return name switch
             {
+                "args" => PyExc.Args(error),
                 "__cause__" => state?._cause,
                 "__context__" => state?._context,
                 "__suppress_context__" => state?._suppressContext ?? false,
@@ -63,6 +64,11 @@ namespace Typhon.Runtime
 
         internal static void SetAttribute(Exception error, string name, object? value)
         {
+            if (name == "args")
+            {
+                PyExc.SetArgs(error, value);
+                return;
+            }
             var state = States.GetOrCreateValue(error);
             switch (name)
             {

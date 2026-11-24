@@ -1,0 +1,4 @@
+import late_result_reader
+
+document = late_result_reader.parse('  letter\n', factory=late_result_reader.Document)
+print(document.get_content().strip())

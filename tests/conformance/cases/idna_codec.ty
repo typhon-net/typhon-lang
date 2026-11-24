@@ -1,0 +1,28 @@
+import codecs
+
+print(''.encode('idna') == b'', b''.decode('idna') == '')
+for name in ('localhost', 'EXAMPLE.COM.', '_service.example', 'Bücher。example', 'faß.de',
+             'a\u200db.example', 'ς.gr', '☃.net', '😀.example', 'föö_bar.example', 'ꭰ.example'):
+    encoded = name.encode('idna')
+    print(encoded, encoded.decode('idna'))
+print(codecs.lookup('IDNA').name, codecs.encode('Bücher', 'idna'), codecs.decode(b'xn--bcher-kva', 'idna'))
+print(b'XN--BCHER-KVA.'.decode('idna'))
+print(b'.a..b.'.decode('idna'))
+
+for invalid in ('.example', 'a..b', 'a' * 64, 'a' * 64 + '..b', 'a\ue000.example', 'אבa.example',
+                '1אב.example', 'xn--é.example', '\u200d'):
+    try:
+        invalid.encode('idna')
+    except UnicodeEncodeError as error:
+        print(error.encoding, error.start, error.end, error.reason)
+
+for invalid_bytes in (b'xn--', b'xn--abc-', b'xn--a.example', b'head.\xff'):
+    try:
+        invalid_bytes.decode('idna')
+    except UnicodeDecodeError as error:
+        print(error.encoding, error.start, error.end, error.reason)
+
+try:
+    'example'.encode('idna', 'ignore')
+except UnicodeError as error:
+    print(str(error))

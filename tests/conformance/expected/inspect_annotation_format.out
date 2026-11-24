@@ -7,3 +7,18 @@
 The VALUE_WITH_FAKE_GLOBALS format is for internal use only
 Unsupported format None
 Unsupported format 8
+True
+(first: str, /, count: int = 2, *, last: int = 3) -> str
+(
+    first: str,
+    /,
+    count: int = 2,
+    *,
+    last: int = 3
+) -> str
+(
+    *items: int,
+    label='x',
+    **options: object
+) -> None
+() -> str

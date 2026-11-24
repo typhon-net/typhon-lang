@@ -1,0 +1,8 @@
+True True
+True True True
+b'before'
+True True
+b'after'
+cannot adopt closed descriptor
+True
+closing one owner invalidates the shared descriptor

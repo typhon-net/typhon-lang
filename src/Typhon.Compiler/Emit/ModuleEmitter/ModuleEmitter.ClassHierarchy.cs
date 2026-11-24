@@ -22,11 +22,12 @@ namespace Typhon.Compiler.Emit
             if (c.Body.Any(st => st is FunctionDef f && f.Name == name || st is AssignStmt a && a.Targets.Any(t => t is NameExpr tn && tn.Id == name) ||
                                  st is AnnAssignStmt aa && aa.Target is NameExpr an && an.Id == name || st is ClassDef nc && nc.Name == name)) return true;
             if (CollectImplicitFields(c).ContainsKey(name)) return true;
+            var resolver = ClassDeclarationResolver(c);
             foreach (var b in c.Bases)
             {
-                if (!ResolveBase(b, out var py, out var meta)) continue;
-                if (py == null) return true; // a .NET base: it may well have it
-                if (DeclaresMember(py, name, depth + 1)) return true;
+                if (!resolver.ResolveBase(b, out var py, out var meta)) continue;
+                if (py != null ? DeclaresMember(py, name, depth + 1) : meta != null && _r.HasMember(meta, name))
+                    return true;
             }
             return false;
         }
@@ -163,14 +164,19 @@ namespace Typhon.Compiler.Emit
 
         static bool Defines(ClassDef c, string method) => c.Body.OfType<FunctionDef>().Any(f => f.Name == method);
 
-        /// <summary>Does any definition of the method in the class's hierarchy (its bases and subclasses) return a value?</summary>
+        IEnumerable<ClassDef> MethodFamily(ClassDef c)
+        {
+            var copies = _p.MixedInto.TryGetValue(c, out var into) ? into.Select(x => x.Class).ToList() : new List<ClassDef>();
+            // A copied mixin method can call a definition inherited from another base of the receiving class.
+            return AllClasses().Where(candidate => candidate == c || DerivesFrom(candidate, c) || DerivesFrom(c, candidate) ||
+                copies.Any(copy => candidate == copy || DerivesFrom(candidate, copy) || DerivesFrom(copy, candidate)));
+        }
+
+        /// <summary>Does a definition in the class or its mixin family return a value?</summary>
         bool FamilyReturnsValue(ClassDef c, string method)
         {
-            // (a mixin's family also has the classes its members were copied into: multiple inheritance)
-            var copies = _p.MixedInto.TryGetValue(c, out var into) ? into.Select(x => x.Class).ToList() : new List<ClassDef>();
-            foreach (var k in AllClasses())
+            foreach (var k in MethodFamily(c))
             {
-                if (!(k == c || DerivesFrom(k, c) || DerivesFrom(c, k) || copies.Any(x => k == x || DerivesFrom(k, x)))) continue;
                 foreach (var f in k.Body.OfType<FunctionDef>())
                 {
                     if (f.Name != method) continue;
@@ -185,38 +191,27 @@ namespace Typhon.Compiler.Emit
         }
 
         /// <summary>Does another class of the method's family (base, subclass, a class its members were copied into) define it?</summary>
-        bool FamilyDefinesElsewhere(ClassDef c, string method)
-        {
-            var copies = _p.MixedInto.TryGetValue(c, out var into) ? into.Select(x => x.Class).ToList() : new List<ClassDef>();
-            return AllClasses().Any(k => k != c && (DerivesFrom(k, c) || DerivesFrom(c, k) || copies.Any(x => k == x || DerivesFrom(k, x))) &&
-                                         k.Body.OfType<FunctionDef>().Any(f => f.Name == method));
-        }
+        bool FamilyDefinesElsewhere(ClassDef c, string method) =>
+            MethodFamily(c).Any(candidate => candidate != c && Defines(candidate, method));
 
         bool DefinesInHierarchy(ClassDef c, string method, int depth = 0) =>
             depth < 20 && (Defines(c, method) || TyphonBases(c).Any(b => DefinesInHierarchy(b, method, depth + 1)));
 
         /// <summary>A Typhon class deriving from list / dict / set (directly or through other Typhon classes).</summary>
-        bool IsBuiltinSubclass(string t)
-        {
-            if (t == null || ClassKeyOfType(t, out _) is not string key || ClassDefOfKey(key) is not ClassDef c) return false;
-            for (int depth = 0; c != null && depth < 20; depth++)
-            {
-                if (c.Bases.Any(b => (b is SubscriptExpr bs ? bs.Target : b) is NameExpr bn && (bn.Id == "list" || bn.Id == "dict" || bn.Id == "set"))) return true;
-                c = c.Bases.Count > 0 && ResolveBase(c.Bases[0], out var py, out _) ? py : null;
-            }
-            return false;
-        }
+        bool IsBuiltinSubclass(string type) => BuiltinBaseType(type) != null;
 
-        /// <summary>The list/dict/set type a Typhon class derives from (class Stack(list) → List&lt;dynamic&gt;), or null.</summary>
-        string BuiltinBaseType(string t)
+        /// <summary>The list, dict or set storage type inherited by a Typhon class.</summary>
+        string BuiltinBaseType(string type)
         {
-            if (t == null || ClassKeyOfType(t, out _) is not string key || ClassDefOfKey(key) is not ClassDef c) return null;
-            for (int depth = 0; c != null && depth < 20; depth++)
+            if (ClassKeyOfType(type, out _) is not string key || ClassDefOfKey(key) is not ClassDef definition) return null;
+            for (int depth = 0; definition != null && depth < 20; depth++)
             {
-                foreach (var b in c.Bases)
-                    if ((b is SubscriptExpr bs ? bs.Target : b) is NameExpr bn && (bn.Id == "list" || bn.Id == "dict" || bn.Id == "set") && !IsShadowed(bn.Id))
-                        return MapType(b, c, preserveClrType: true);
-                c = c.Bases.Count > 0 && ResolveBase(c.Bases[0], out var py, out _) ? py : null;
+                var resolver = ClassDeclarationResolver(definition);
+                foreach (var basis in definition.Bases)
+                    if ((basis is SubscriptExpr generic ? generic.Target : basis) is NameExpr name &&
+                        name.Id is "list" or "dict" or "set" && !resolver.IsShadowed(name.Id))
+                        return resolver.MapType(basis, definition, preserveClrType: true);
+                definition = definition.Bases.Count > 0 && resolver.ResolveBase(definition.Bases[0], out var parent, out _) ? parent : null;
             }
             return null;
         }

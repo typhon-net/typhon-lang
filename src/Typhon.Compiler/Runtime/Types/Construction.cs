@@ -19,23 +19,83 @@ namespace Typhon.Runtime
             if (!typeof(System.Collections.IDictionary).IsAssignableFrom(cls))
                 throw new InvalidCastException("dict.__new__ requires a dictionary subtype");
             Typhon.Stdlib._abc.CheckAbstract(cls);
-            var constructor = cls.GetConstructor(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+            return AllocateBuiltinSubclass(cls, "dict");
+        }
+
+        static Type? ListLayout(Type? type)
+        {
+            for (Type? current = type; current != null; current = current.BaseType)
+                if (current.IsGenericType && current.GetGenericTypeDefinition() == typeof(List<>))
+                    return current;
+            return null;
+        }
+
+        public static object __list_new([PyPositionalOnly] object? cls, [PyPackedArguments] object?[] args,
+            [PyKeywordArguments] OrderedDictionary<string, object?> keywords)
+        {
+            if (cls is not Type type) throw new InvalidCastException("list.__new__ requires a type");
+            Type? layout = ListLayout(type);
+            if (layout == null) throw new InvalidCastException($"list.__new__({PyTypeName(type)}): not a subtype of list");
+            return type == layout ? Activator.CreateInstance(layout)! : AllocateBuiltinSubclass(type, "list");
+        }
+
+        static object AllocateBuiltinSubclass(Type type, string builtin)
+        {
+            var constructor = type.GetConstructor(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
                 binder: null, [typeof(NoInit)], modifiers: null);
             if (constructor == null)
-                throw new InvalidCastException($"dict.__new__ cannot allocate '{PyTypeName(cls)}'");
-            return constructor.Invoke([default(NoInit)]);
+                throw new InvalidCastException($"{builtin}.__new__ cannot allocate '{PyTypeName(type)}'");
+            return Unwrapped(() => constructor.Invoke([default(NoInit)]))!;
+        }
+
+        public static object? __list_initialize(object? receiver, object?[] args, IDictionary<string, object?>? keywords)
+        {
+            if (receiver is not System.Collections.IList list || ListLayout(receiver.GetType()) is not Type layout)
+                throw new InvalidCastException("descriptor '__init__' requires a 'list' object");
+            if (keywords?.Count > 0) throw new InvalidCastException("list() takes no keyword arguments");
+            if (args.Length > 1) throw new InvalidCastException($"list.__init__ expected at most 1 argument, got {args.Length}");
+            list.Clear();
+            if (args.Length == 1)
+            {
+                Type element = layout.GetGenericArguments()[0];
+                foreach (object? item in __iter_dyn(args[0]))
+                    list.Add(PyArgs.ConvertArgument(item, element));
+            }
+            return null;
         }
 
         /// <summary>Binds forwarded arguments to the selected base class's allocation-independent initializer.</summary>
         public static void __base_init(object instance, Type parent, object?[] args, IDictionary<string, object?>? kwargs)
         {
-            var candidates = DeclaredInitializers(parent);
-            InvokeInitializer(instance, parent, args, kwargs, candidates);
+            if (!InitializeAllocated(instance, args, kwargs, parent))
+                throw PyArgs.NoFit(parent.Name + ".__init__", kwargs, []);
         }
 
         static List<MethodInfo> DeclaredInitializers(Type parent) =>
             parent.GetMethods(BindingFlags.DeclaredOnly | BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
                 .Where(method => method.Name == "__init__" && !method.IsGenericMethodDefinition && !method.IsVirtual).ToList();
+
+        // A source base whose allocation and initialization were split has an unbound Python initializer.
+        static PyClosure? CompiledInitializer(Type type)
+        {
+            for (Type? owner = type; owner != null && owner.IsDefined(typeof(PySourceAttribute), false); owner = owner.BaseType)
+            {
+                var candidates = DeclaredInitializers(owner);
+                if (candidates.Count == 0) continue;
+
+                var declaring = owner;
+                return new PyClosure("__init__", (args, keywords) =>
+                {
+                    if (args.Length == 0)
+                        throw new InvalidCastException("__init__() missing 1 required positional argument: 'self'");
+                    if (args[0] is not object instance || !declaring.IsInstanceOfType(instance))
+                        throw new InvalidCastException($"__init__() requires an instance of '{PyTypeName(declaring)}'");
+                    InvokeInitializer(instance, declaring, args[1..], keywords, candidates);
+                    return null;
+                });
+            }
+            return null;
+        }
 
         static bool TryAddedInitializer(Type type, object?[] args, IDictionary<string, object?>? keywords, out object? result)
         {
@@ -61,15 +121,22 @@ namespace Typhon.Runtime
                 throw new InvalidCastException("__init__() should return None");
         }
 
-        static void InitializeAllocated(object instance, object?[] args, IDictionary<string, object?>? kwargs)
+        static bool InitializeAllocated(object instance, object?[] args, IDictionary<string, object?>? kwargs,
+            Type? start = null)
         {
-            for (Type? owner = instance.GetType(); owner != null; owner = owner.BaseType)
+            for (Type? owner = start ?? instance.GetType(); owner != null; owner = owner.BaseType)
             {
                 var candidates = DeclaredInitializers(owner);
+                if (owner == ListLayout(owner))
+                {
+                    __list_initialize(instance, args, kwargs);
+                    return true;
+                }
                 if (candidates.Count == 0) continue;
                 InvokeInitializer(instance, owner, args, kwargs, candidates);
-                return;
+                return true;
             }
+            return false;
         }
 
         static void InvokeInitializer(object instance, Type parent, object?[] args, IDictionary<string, object?>? kwargs,

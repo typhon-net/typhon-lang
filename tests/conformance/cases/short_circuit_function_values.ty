@@ -1,0 +1,17 @@
+class Entry:
+    formatter = None
+
+    def display(self, value):
+        render = self.__class__.formatter or repr
+        return render(value)
+
+
+class NamedEntry(Entry):
+    @staticmethod
+    def formatter(value):
+        return 'value=' + str(value)
+
+
+print(Entry().display('alpha'))
+print(NamedEntry().display('beta'))
+print((True and repr)('gamma'))

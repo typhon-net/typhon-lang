@@ -1,0 +1,40 @@
+def encode(text: str) -> bytes:
+    try:
+        return text.encode('latin-1')
+    except UnicodeEncodeError as error:
+        print(error.encoding, error.object, error.start, error.end, error.reason)
+        raise UnicodeEncodeError(
+            error.encoding, error.object, error.start, error.end,
+            'invalid value: ' + text[error.start:error.end]) from None
+
+
+try:
+    encode('text €')
+except UnicodeError as error:
+    print(str(error))
+
+
+for value in [12, None]:
+    try:
+        UnicodeEncodeError('latin-1', value, 0, 1, 'invalid value')
+    except TypeError as error:
+        print(str(error))
+
+
+class CustomText(str):
+    pass
+
+
+original = CustomText('x')
+wrapper = UnicodeEncodeError('ascii', original, 0, 1, 'invalid value')
+print(wrapper.object is original)
+
+
+class CombinedError(ValueError, IndexError):
+    pass
+
+
+try:
+    encode('one €')
+except UnicodeEncodeError as raised:
+    print(raised.encoding, raised.start, raised.end, raised.reason)

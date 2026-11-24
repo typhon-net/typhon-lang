@@ -1,0 +1,8 @@
+import inherited_class_default_fixture
+
+listener = inherited_class_default_fixture.Server()
+other = inherited_class_default_fixture.Server()
+listener.timeout = 2.0
+print(listener.timeout, other.timeout, inherited_class_default_fixture.BaseService.timeout)
+del listener.timeout
+print(listener.timeout)

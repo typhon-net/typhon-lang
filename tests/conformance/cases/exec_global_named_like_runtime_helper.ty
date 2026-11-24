@@ -1,0 +1,9 @@
+def install():
+    exec('def lt(value):\n    return value + 1\n', globals())
+
+
+install()
+print(lt(8))
+callable_value = lt
+print(callable_value(4))
+print(len(['a', 'b']))

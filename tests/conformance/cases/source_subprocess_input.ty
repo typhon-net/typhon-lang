@@ -1,0 +1,15 @@
+#:pylib-source subprocess
+import os
+import subprocess
+import sys
+
+env = {"TYPHON_CAPTURE_VALUE": "child"}
+if sys.platform == "win32":
+    env["SystemRoot"] = os.environ["SystemRoot"]
+    executable = os.environ.get("ComSpec", "cmd.exe")
+    args = [executable, "/d", "/v:on", "/c", "set /p data= & echo !data!-%TYPHON_CAPTURE_VALUE% & echo child-error 1>&2 & exit /b 4"]
+else:
+    args = ["/bin/sh", "-c", 'read data; printf "%s-%s" "$data" "$TYPHON_CAPTURE_VALUE"; printf child-error >&2; exit 4']
+
+completed = subprocess.run(args, input=b"parent\n", capture_output=True, env=env)
+print(completed.stdout.strip(), completed.stderr.strip(), completed.returncode)

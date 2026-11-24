@@ -1,0 +1,16 @@
+('Leaf', 'Parent', 'Root', 'object')
+True
+_inherited method Root function
+cached method Root cached_property
+identify class method Root classmethod
+late data Parent str
+render method Leaf function
+shared data Leaf NoneType
+title property Root property
+transform static method Root staticmethod
+function
+notify method Visible method
+title property Root property
+('Joined', 'Left', 'Right', 'object')
+inherited class method Right
+selected static method Left

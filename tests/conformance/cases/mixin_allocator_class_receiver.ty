@@ -1,0 +1,34 @@
+class AllocatorMixin:
+    def __new__(target, value):
+        return target.__name__, target.__qualname__, value
+
+class Storage:
+    pass
+
+class DerivedStorage(Storage):
+    pass
+
+class Prepared(AllocatorMixin, DerivedStorage):
+    def __new__(cls, value):
+        return super().__new__(cls, value + 1)
+
+class Inherited(AllocatorMixin, DerivedStorage):
+    pass
+
+print(Prepared(4))
+print(Inherited(4))
+print(AllocatorMixin.__new__(Prepared, 8))
+
+class Indexing(type):
+    def __getitem__(cls, key):
+        return cls.__name__ + '/' + key
+
+class IndexAllocatorMixin:
+    def __new__(target, key):
+        return target[key]
+
+class Indexed(IndexAllocatorMixin, DerivedStorage, metaclass=Indexing):
+    def __new__(cls, key):
+        return IndexAllocatorMixin.__new__(cls, key)
+
+print(Indexed('value'))

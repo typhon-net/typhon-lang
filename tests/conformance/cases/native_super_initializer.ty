@@ -1,0 +1,14 @@
+import socket
+
+
+class SecondSocket(socket.socket):
+    @classmethod
+    def make(cls):
+        arguments = {'family': socket.AF_INET, 'type': socket.SOCK_STREAM, 'proto': 0, 'fileno': None}
+        instance = cls.__new__(cls)
+        super(SecondSocket, instance).__init__(**arguments)
+        return instance
+
+
+with SecondSocket.make() as endpoint:
+    print(endpoint.family == socket.AF_INET, endpoint.type == socket.SOCK_STREAM)

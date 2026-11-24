@@ -1,0 +1,18 @@
+import compileall
+import os
+import tempfile
+
+
+def main() -> None:
+    for workers in (1, 2):
+        with tempfile.TemporaryDirectory() as folder:
+            for name in ('first', 'second'):
+                with open(os.path.join(folder, name + '.py'), 'wb') as source:
+                    source.write(b'answer = 42\n')
+            print(compileall.compile_dir(folder, force=True, quiet=2, workers=workers, optimize=1))
+            names = sorted(os.listdir(os.path.join(folder, '__pycache__')))
+            print(len(names), all(name.endswith('.opt-1.pyc') for name in names))
+
+
+if __name__ == '__main__':
+    main()

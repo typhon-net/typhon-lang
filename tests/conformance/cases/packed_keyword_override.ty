@@ -1,0 +1,18 @@
+class Writer:
+    def collect(self, *rows, marker=None, **options):
+        return rows, marker, options
+
+
+class Wrapped(Writer):
+    def collect(self, *rows, **options):
+        print(sorted(options))
+        return super().collect(*rows, **options)
+
+
+def via_base(writer: Writer):
+    print(writer.collect("first", "second", flag=True))
+    print(writer.collect("third", marker=None))
+    print(writer.collect("fourth", marker=7, flag=False))
+
+
+via_base(Wrapped())

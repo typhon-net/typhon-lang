@@ -1,0 +1,24 @@
+observed = []
+
+class Meta(type):
+    def __new__(mcls, name, bases, namespace):
+        observed.append([key for key in namespace if not key.startswith("__")])
+        return super().__new__(mcls, name, bases, namespace)
+
+class Left:
+    def left(self):
+        return "left"
+
+class Right:
+    token = "inherited"
+
+    def inherited(self):
+        return self.token
+
+class Child(Left, Right, metaclass=Meta):
+    own = "child"
+
+print(observed)
+print("inherited" in vars(Child), "token" in vars(Child))
+print(getattr(Child, "token"), Child().inherited())
+print(Child().left(), getattr(Child, "own"))

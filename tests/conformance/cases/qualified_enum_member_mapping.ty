@@ -1,0 +1,7 @@
+#:pylib-source http
+import http
+
+globals().update(http.HTTPStatus.__members__)
+responses = {member: member.phrase for member in http.HTTPStatus.__members__.values()}
+print(OK, responses[OK])
+print(http.HTTPStatus.NOT_FOUND.name, responses[404])

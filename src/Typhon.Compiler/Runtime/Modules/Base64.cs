@@ -182,10 +182,12 @@ namespace Typhon.Stdlib
             return c;
         }).ToArray();
 
-        public static long crc32(object data, long value = 0)
+        public static long crc32(object data, long value = 0) => Crc32(Data(data), unchecked((uint)value));
+
+        internal static uint Crc32(ReadOnlySpan<byte> data, uint value = 0)
         {
-            uint crc = ~(uint)value;
-            foreach (byte b in Data(data)) crc = CrcTable[(crc ^ b) & 0xff] ^ (crc >> 8);
+            uint crc = ~value;
+            foreach (byte b in data) crc = CrcTable[(crc ^ b) & 0xff] ^ (crc >> 8);
             return ~crc;
         }
     }
@@ -214,10 +216,13 @@ namespace Typhon.Stdlib
             return Encoding.Latin1.GetString(a);
         }
 
-        public static PyBytes b64encode(object s, object? altchars = null)
+        public static PyBytes b64encode(object s, object? altchars = null, bool padded = true, long wrapcol = 0)
         {
-            var encoded = Ascii(Convert.ToBase64String(binascii.Data(s)));
-            return B(altchars == null ? encoded : Translate(encoded, "+/", Alt(altchars)));
+            if (altchars == null) return binascii.b2a_base64(s, newline: false, padded, wrapcol, Missing.Value);
+            if (Builtins.len(altchars) != 2) throw new ArgumentException($"invalid altchars: {Builtins.repr(altchars)}");
+            if (altchars is string) throw new InvalidCastException("can't concat str to bytes");
+            var alphabet = new PyBytes([.. binascii.BASE64_ALPHABET.Data.AsSpan(0, 62), .. ByteOps.Buffer(altchars)]);
+            return binascii.b2a_base64(s, newline: false, padded, wrapcol, alphabet);
         }
 
         public static PyBytes b64decode(object s, object? altchars = null, bool validate = false)
@@ -229,16 +234,16 @@ namespace Typhon.Stdlib
 
         public static PyBytes standard_b64encode(object s) => b64encode(s);
         public static PyBytes standard_b64decode(object s) => b64decode(s);
-        public static PyBytes urlsafe_b64encode(object s) => B(Translate(b64encode(s).Data, "+/", "-_"));
+        public static PyBytes urlsafe_b64encode(object s, bool padded = true) =>
+            binascii.b2a_base64(s, newline: false, padded, wrapcol: 0, binascii.URLSAFE_BASE64_ALPHABET);
         public static PyBytes urlsafe_b64decode(object s) => b64decode(B(Translate(binascii.DecodeData(s), "-_", "+/")));
 
         /// <summary>encodebytes: Base64 in lines of at most 76 characters, each ending in a newline.</summary>
         public static PyBytes encodebytes(object s)
         {
             var data = binascii.Data(s);
-            var sb = new StringBuilder();
-            for (int i = 0; i < data.Length; i += 57) sb.Append(Convert.ToBase64String(data, i, Math.Min(57, data.Length - i))).Append('\n');
-            return B(Ascii(sb.ToString()));
+            return data.Length == 0 ? PyBytes.Empty :
+                binascii.b2a_base64(data, newline: true, padded: true, wrapcol: 76, Missing.Value);
         }
 
         public static PyBytes decodebytes(object s) => B(binascii.A2bBase64(binascii.Data(s), false));

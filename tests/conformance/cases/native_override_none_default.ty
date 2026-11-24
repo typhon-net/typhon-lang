@@ -1,0 +1,18 @@
+from io import BufferedIOBase
+
+
+class Response(BufferedIOBase):
+    def read(self, amount=None):
+        if amount is None:
+            return b'all'
+        if amount < 0:
+            return b'negative'
+        return b'part'[:amount]
+
+    def take(self, amount: int) -> bytes:
+        return self.read(amount)
+
+
+response = Response()
+print(response.read(), response.read(None))
+print(response.read(-1), response.read(amount=2), response.take(3))

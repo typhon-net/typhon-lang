@@ -1,0 +1,43 @@
+class Worker:
+    def process(self, *args, **options):
+        return args[0], options.get('kind', 'base')
+
+
+class DefaultPolicy:
+    pass
+
+
+class ContentPolicy(DefaultPolicy):
+    worker = Worker()
+
+
+default_policy = DefaultPolicy()
+content_policy = ContentPolicy()
+
+
+class Document:
+    def __init__(self, policy=default_policy):
+        self.policy = policy
+
+
+class Part(Document):
+    def __init__(self, policy=None):
+        if policy is None:
+            policy = content_policy
+        super().__init__(policy)
+
+    def process(self, *args, worker=None, **kw):
+        if worker is None:
+            worker = self.policy.worker
+        return worker.process(*args, **kw)
+
+
+class Message(Part):
+    def process(self, *args, **kw):
+        return super().process(*args, **kw)
+
+
+print(Message().process('contents', kind='message'))
+override = ContentPolicy()
+override.worker = Worker()
+print(Message(override).process('override'))

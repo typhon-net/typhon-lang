@@ -171,10 +171,10 @@ namespace Typhon.Compiler.Emit
         /// A Python int (C# long) argument passed to .NET: when no overload takes a long at that position but some take an
         /// int (or another narrower integer), the argument needs a checked narrowing conversion. Returns its type, or null.
         /// </summary>
-        string NarrowingFor(IReadOnlyList<Semantics.MemberSig> overloads, List<Arg> args, Arg a, int argPos)
+        string NarrowingFor(IReadOnlyList<Semantics.MemberSig> overloads, List<Arg> args, Arg a, int argPos, bool dynamicCall)
         {
             if (_m.IsGdScript && GdFloatNarrowing(overloads, args, a, argPos) is string gdFloat) return gdFloat;
-            if (_big) return BigNarrowingFor(overloads, args, a, argPos);
+            if (_big) return BigNarrowingFor(overloads, args, a, argPos, dynamicCall);
             if (IsIntLiteral(a.Value) || InferType(a.Value) != "long") return null;
             int positional = args.Count(x => x.Name == null && !x.Star && !x.DoubleStar);
             var named = args.Where(x => x.Name != null).Select(x => x.Name).ToList();
@@ -195,9 +195,10 @@ namespace Typhon.Compiler.Emit
         /// No conversion when an overload takes a BigInteger (or object, a type parameter, ...); else an explicit, checked
         /// conversion to the numeric type the parameter has (long before int before the rest).
         /// </summary>
-        string BigNarrowingFor(IReadOnlyList<Semantics.MemberSig> overloads, List<Arg> args, Arg a, int argPos)
+        string BigNarrowingFor(IReadOnlyList<Semantics.MemberSig> overloads, List<Arg> args, Arg a, int argPos, bool dynamicCall)
         {
-            if (IsIntLiteral(a.Value)) return null;
+            // Static calls use C# literal conversions. Late calls otherwise box the literal as a Python int.
+            if (!dynamicCall && IsIntLiteral(a.Value)) return null;
             string at = InferType(a.Value);
             if (at != TypeInference.BigInt && at != "long") return null;
             int positional = args.Count(x => x.Name == null && !x.Star && !x.DoubleStar);

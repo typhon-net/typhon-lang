@@ -247,7 +247,7 @@ namespace Typhon.Compiler.Emit
                 if (s is ImportStmt || s is ImportFromStmt)
                 {
                     bool HasLateBinding(string name) => _lateModuleFields.Contains(name) || _m.ConditionalGlobals.Contains(name);
-                    if (ProjectImports(s).Any() || PlatformModules(s).Any() ||
+                    if (ProjectImports(s).Any() || RuntimeCheckedModules(s).Any() ||
                         NativeNamespaceImports(s).Any(binding => _nativeImportsInNamespace || _m.ConditionalImportBindings.Contains(binding.Binding)) ||
                         s is ImportStmt import && import.Names.Any(alias => HasLateBinding(alias.AsName ?? alias.Name.Split('.')[0])) ||
                         s is ImportFromStmt from && from.Names.Any(alias => HasLateBinding(alias.AsName ?? alias.Name)))

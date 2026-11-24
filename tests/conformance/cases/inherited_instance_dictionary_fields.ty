@@ -1,0 +1,26 @@
+#:pylib .
+from instance_dictionary_base_fields import Message
+
+
+class CopyMessage(Message):
+    _type_specific_attributes = ['_mtime']
+
+    def __init__(self, message=None):
+        if message is None:
+            Message.__init__(self)
+        else:
+            for name in message.__dict__:
+                if name not in self._type_specific_attributes:
+                    self.__dict__[name] = message.__dict__[name]
+
+
+class DirectoryMessage(CopyMessage):
+    def __init__(self, message=None):
+        self._mtime = 0.0
+        CopyMessage.__init__(self, message)
+
+
+original = Message()
+original._headers.append(('Subject', 'example'))
+cloned = DirectoryMessage(original)
+print(cloned.__dict__['_headers'], cloned['Subject'], cloned._mtime)

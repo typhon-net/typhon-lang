@@ -1,0 +1,27 @@
+class Base:
+    def dispatch(self, **options):
+        return options.get('kind', 'base')
+
+
+class WithoutOptions(Base):
+    def dispatch(self):
+        return 'without'
+
+
+class NamedOption(Base):
+    def dispatch(self, kind='named'):
+        return kind
+
+
+def call(value: Base):
+    print(value.dispatch())
+    try:
+        print(value.dispatch(kind='provided'))
+    except TypeError:
+        print('rejected keyword')
+
+
+call(Base())
+call(NamedOption())
+call(WithoutOptions())
+print(NamedOption().dispatch('positional'))

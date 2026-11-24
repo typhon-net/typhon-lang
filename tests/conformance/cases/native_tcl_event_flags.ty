@@ -1,0 +1,7 @@
+# Tcl event masks have fixed values. Some CPython builds omit the Tcl extension.
+try:
+    import _tkinter
+except ImportError:
+    print(2, 4, 8)
+else:
+    print(_tkinter.READABLE, _tkinter.WRITABLE, _tkinter.EXCEPTION)

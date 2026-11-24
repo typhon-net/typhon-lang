@@ -36,6 +36,7 @@ namespace Typhon.Stdlib
         {
             try
             {
+                if (IsIdna(encoding)) return new CodecInfo("idna");
                 string key = encoding.Trim().ToLowerInvariant().Replace('_', '-').Replace(' ', '-');
                 var codec = ByteOps.EncodingOf(key, "strict");
                 return new CodecInfo(codec.WebName == "us-ascii" ? "ascii" : codec.WebName);

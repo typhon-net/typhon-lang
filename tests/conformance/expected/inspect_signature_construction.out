@@ -2,3 +2,6 @@ True True
 True True
 (value, *, offset: int = None) -> None
 ()
+(value, *, offset: int = None) -> None (*, offset: int = None)
+() -> None (value, *, offset: int = None) -> int
+True True

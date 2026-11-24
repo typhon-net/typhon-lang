@@ -1,0 +1,5 @@
+('value', None, 'long', True, ())
+('text', 'name', 'short')
+a:b:c:d
+('doc', 'name', 'fmt', False, ('tail',))
+excess arguments rejected

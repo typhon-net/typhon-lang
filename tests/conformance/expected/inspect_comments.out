@@ -1,0 +1,9 @@
+'# Module heading\n# With a tab    next.\n'
+'# Function heading\n# More detail\n'
+'# Class heading\n'
+'# Method heading\n'
+True
+True
+'# Decorated function heading.\n'
+None
+'# Static method heading.\n'

@@ -1,0 +1,12 @@
+def month_number(value):
+    names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    return tuple(names).index(value)
+
+
+print(month_number("Mar"))
+try:
+    print(month_number(5))
+except ValueError as error:
+    print(type(error).__name__)
+print(("a", 1, "a").index("a", 1))
+print((False, 2).index(0))

@@ -41,7 +41,15 @@ namespace Typhon.Compiler.Emit
             var resolver = baseOwner == null ? this : ClassDeclarationResolver(baseOwner);
             foreach (var b in bases)
             {
-                if (depth > 20 || !resolver.ResolveBase(b, out var py, out var meta)) continue;
+                if (depth > 20) continue;
+                if (resolver.BuiltinListBase(b))
+                {
+                    string name = Esc(ctx.Name);
+                    _w.Line($"public {name}() {{ }}");
+                    _w.Line($"public {name}([global::Typhon.Runtime.PyPositionalOnly] object? iterable) {{ {Rt("__list_initialize")}(this, [iterable], null); }}");
+                    return;
+                }
+                if (!resolver.ResolveBase(b, out var py, out var meta)) continue;
                 if (py != null)
                 {
                     if (IsProtocol(py)) continue;
@@ -319,8 +327,19 @@ namespace Typhon.Compiler.Emit
                 foreach (var c in AllClasses())
                 {
                     var init = c.Body.OfType<FunctionDef>().FirstOrDefault(f => f.Name == "__init__");
-                    if (UsesCustomAllocation(c))
+                    if (UsesCustomAllocation(c) || HasListBase(c))
                         for (var owner = CustomInitializerOwner(c); owner != null && set.Add(owner); owner = NearestInitAncestor(owner)) { }
+                    bool explicitBaseInitializer = c.Body.OfType<FunctionDef>().Any(method =>
+                        AstWalker.ContainsOutsideNestedScopes(method.Body, node =>
+                            node is CallExpr
+                            {
+                                Func: AttributeExpr
+                                {
+                                    Name: "__init__", Target: CallExpr { Func: NameExpr { Id: "super" }, Args.Count: 2 } proxy
+                                }
+                            } && proxy.Args[0].Value is NameExpr owner && owner.Id == c.Name));
+                    if (explicitBaseInitializer)
+                        for (var owner = NearestInitAncestor(c); owner != null && set.Add(owner); owner = NearestInitAncestor(owner)) { }
                     // (an __init__ that never calls its base's: Python allows it, the base is then only allocated)
                     if (init == null || !(DefersBaseInit(init) || ForwardsBaseInit(c, init) ||
                         NeverCallsBaseInit(init) && NearestInitAncestor(c) != null)) continue;
@@ -331,6 +350,9 @@ namespace Typhon.Compiler.Emit
         }
 
         Dictionary<string, string> _baseInitializerArguments;
+
+        bool IsBuiltinExceptionName(Expr expression) =>
+            expression is NameExpr name && ExceptionMetaMap.ContainsKey(name.Id) && !IsShadowed(name.Id);
 
         bool HasNativeExceptionBase(ClassDef definition) => definition.Bases.Any(basis =>
             ResolveBase(basis, out var source, out var metadata) && source == null &&
@@ -374,7 +396,14 @@ namespace Typhon.Compiler.Emit
             List<Arg> superArgs = null;
             if (body.Count > first && body[first] is ExprStmt es && es.Value is CallExpr call && call.Func is AttributeExpr at && at.Name == "__init__")
             {
-                if (at.Target is CallExpr sc && sc.Func is NameExpr sn && sn.Id == "super") superArgs = call.Args;
+                if (at.Target is CallExpr sc && sc.Func is NameExpr sn && sn.Id == "super")
+                {
+                    bool packedList = !_m.IsGdScript && !IsShadowed("list") &&
+                        bases.FirstOrDefault() is Expr firstBase &&
+                        DottedName(firstBase is SubscriptExpr generic ? generic.Target : firstBase) == "list" &&
+                        call.Args.Any(argument => argument.Star || argument.DoubleStar || argument.Name != null);
+                    if (!packedList) superArgs = call.Args;
+                }
                 else if (DottedName(at.Target) is string bname && bases.Any(b => DottedName(b is SubscriptExpr bs ? bs.Target : b) == bname) &&
                          call.Args.Count >= 1 && call.Args[0].Value is NameExpr selfArg && selfArg.Id == f.Params[0].Name && call.Args[0].Name == null)
                     superArgs = call.Args.Skip(1).ToList();
@@ -387,6 +416,10 @@ namespace Typhon.Compiler.Emit
                 sig.Locals = LocalsAnalyzer.Analyze(body, f.Params.Select(p => p.Name), null);
                 superArgs = null;
             }
+            if (!_m.IsGdScript && superArgs != null && bases.Count > 0 && HasNativeExceptionBase(ctx.Def) &&
+                IsBuiltinExceptionName(bases[0]) && superArgs.All(argument => argument.Name == null && !argument.DoubleStar))
+                superArgs = null; // Python's exception arguments are assigned in the initializer body.
+
             if (superArgs != null)
             {
                 bool copyDictionary = bases[0] is NameExpr { Id: "dict" } && !IsShadowed("dict") &&
@@ -395,7 +428,7 @@ namespace Typhon.Compiler.Emit
                 var savedBaseArguments = _baseInitializerArguments;
                 _baseInitializerArguments = sig.DefaultArguments;
                 var baseInit = NearestInitAncestor(ctx.Def)?.Body.OfType<FunctionDef>().FirstOrDefault(fd => fd.Name == "__init__");
-                string kwBase = superArgs.Any(x => x.Name != null || x.DoubleStar) ? KwargsCallArgs(baseInit, 1, superArgs, constructorInitializer: true) : null;
+                string kwBase = KwargsCallArgs(baseInit, 1, superArgs, constructorInitializer: true);
                 if (copyDictionary) kwBase = $"{Rt("dict")}((object?){Paren(EmitValue(superArgs[0].Value))})";
                 // CLR constructor initializers require static binding even when a Python argument is dynamic.
                 bool NeedsStaticBinding(Arg arg) => IsDynamicallyDispatched(arg.Value) ||

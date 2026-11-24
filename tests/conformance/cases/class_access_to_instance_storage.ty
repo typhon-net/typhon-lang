@@ -1,0 +1,21 @@
+class Item:
+    def __init__(self, value):
+        self.value = value
+
+class Child(Item):
+    pass
+
+class WithDefault(Item):
+    value = 100
+
+try:
+    print(Item.value)
+except AttributeError:
+    print('instance value absent on class')
+try:
+    print(Child.value)
+except AttributeError:
+    print('instance value absent on subclass')
+setattr(Child, 'value', 27)
+print(Child.value, Child(19).value)
+print(WithDefault.value)

@@ -128,6 +128,11 @@ each of CPython's modules alone (`docs/conformance.md`); a module that does not 
 environment variable, else the standard library of the `python3` (`python` on Windows) on the PATH.
 The [roadmap](roadmap.md) covers managed and pinned CPython implementations of these modules.
 
+The bundled `compileall` and `py_compile` write CPython-compatible `.pyc`
+files when a matching CPython interpreter is available. Set
+`TYPHON_CPYTHON` to that executable, or let Typhon find it on `PATH`.
+Ordinary Typhon compilation still emits .NET assemblies.
+
 ## Frameworks the typhon command can use
 
 `typhon run`, `typhon check` and `typhon build` compile against the .NET runtime the CLI runs on

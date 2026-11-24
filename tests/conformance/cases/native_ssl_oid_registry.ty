@@ -1,0 +1,27 @@
+import _ssl
+
+server = '1.3.6.1.5.5.7.3.1'
+client = '1.3.6.1.5.5.7.3.2'
+print(_ssl.txt2obj(server), _ssl.nid2obj(130))
+print(_ssl.txt2obj('serverAuth', True) == _ssl.txt2obj(server))
+print(_ssl.txt2obj(txt='TLS Web Client Authentication', name=1) == _ssl.txt2obj(client))
+print(_ssl.txt2obj('1 03.6.1.5.5.7.3.01.') == _ssl.txt2obj(server))
+print(_ssl.nid2obj(True), _ssl.nid2obj(13))
+print(_ssl.txt2obj('1.3'), _ssl.nid2obj(676))
+
+for invalid in ('serverAuth', '1.2.3.4', '3.1', '1.3\0.6'):
+    try:
+        _ssl.txt2obj(invalid)
+    except ValueError as error:
+        print(str(error))
+
+for number in (0, -1, 4096, 2147483648):
+    try:
+        _ssl.nid2obj(number)
+    except (ValueError, OverflowError) as error:
+        print(type(error).__name__, str(error))
+
+try:
+    _ssl.txt2obj(b'serverAuth', True)
+except TypeError as error:
+    print(str(error))

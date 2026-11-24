@@ -1,0 +1,26 @@
+import _ssl
+import sys
+
+
+if sys.platform == 'win32':
+    certificates = _ssl.enum_certificates(store_name='ROOT')
+    revocations = _ssl.enum_crls('CA')
+    assert type(certificates) is list and type(revocations) is list
+    for data, encoding, trust in certificates:
+        assert type(data) is bytes and len(data) > 0
+        assert type(encoding) is str or type(encoding) is int
+        assert trust is True or type(trust) is frozenset
+    for data, encoding in revocations:
+        assert type(data) is bytes and len(data) > 0
+        assert type(encoding) is str or type(encoding) is int
+    try:
+        _ssl.enum_certificates('ROOT\0ignored')
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('store name accepted an embedded null')
+else:
+    assert not hasattr(_ssl, 'enum_certificates')
+    assert not hasattr(_ssl, 'enum_crls')
+
+print('system certificate store interface')

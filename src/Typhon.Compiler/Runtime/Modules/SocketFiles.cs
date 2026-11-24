@@ -16,7 +16,8 @@ namespace Typhon.Stdlib
     {
         internal partial class socket
         {
-            readonly object _fileLifetime = new object();
+            object? _fileLifetime;
+            object FileLifetime => System.Threading.LazyInitializer.EnsureInitialized(ref _fileLifetime);
             int _openFiles;
             bool _closeRequested;
 
@@ -51,7 +52,7 @@ namespace Typhon.Stdlib
             io.FileIO OpenFile(bool reading, bool writing, int capacity)
             {
                 long handle;
-                lock (_fileLifetime)
+                lock (FileLifetime)
                 {
                     handle = fileno();
                     if (handle == -1) throw new PyOSError(errno.EBADF, "Bad file descriptor");
@@ -69,10 +70,10 @@ namespace Typhon.Stdlib
 
             void ReleaseFile()
             {
-                lock (_fileLifetime)
+                lock (FileLifetime)
                 {
                     _openFiles--;
-                    if (_openFiles == 0 && _closeRequested) _handle.Dispose();
+                    if (_openFiles == 0 && _closeRequested) CloseAttachedDescriptor();
                 }
             }
 

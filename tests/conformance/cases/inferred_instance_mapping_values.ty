@@ -1,0 +1,20 @@
+class Index:
+    def __init__(self):
+        self.times = {'updated': 0, 'untouched': 0}
+        self.flags = {'untouched': 'original'}
+
+    def mark(self, value: float) -> None:
+        self.times['updated'] = value
+
+
+class Derived(Index):
+    def record(self, value: int) -> None:
+        self.flags['added'] = value
+
+
+index = Derived()
+index.mark(1.25)
+index.record(3)
+print(index.times)
+print(type(index.times['updated']).__name__, type(index.times['untouched']).__name__)
+print(index.flags)

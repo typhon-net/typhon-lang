@@ -1,0 +1,43 @@
+from types import DynamicClassAttribute
+
+
+class Describes:
+    def __get__(self, instance: object, owner: type) -> str:
+        return owner.__name__
+
+
+class DerivedDescriptor(Describes):
+    pass
+
+
+class StaticDescriptor:
+    @staticmethod
+    def __get__(descriptor: object, instance: object, owner: type) -> str:
+        return owner.__name__ + " static"
+
+
+class Hidden:
+    def __get__(self, instance: object, owner: type) -> str:
+        raise AttributeError("deliberate")
+
+
+descriptor_instance = DerivedDescriptor()
+setattr(descriptor_instance, "__get__", lambda instance, owner: "instance")
+
+
+class Base:
+    descriptor = descriptor_instance
+    static = StaticDescriptor()
+    hidden = Hidden()
+    dynamic = DynamicClassAttribute(lambda instance: "instance only")
+
+
+class Child(Base):
+    pass
+
+
+result = getattr(Child, "descriptor")
+print(isinstance(result, str), result == "Child")
+print(getattr(Child, "hidden", None) is None)
+print(getattr(Child, "static"))
+print(getattr(Child, "dynamic", None) is None)

@@ -1,0 +1,69 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import gzip
+import struct
+import time
+import zlib
+
+plain = b"Typhon gzip\nsecond line\n"
+sample = b"\x1f\x8b\x08\0\0\0\0\0\0\xffK\x04\0C\xbe\xb7\xe8\x01\0\0\0"
+first = gzip.compress(plain)
+print(first[:10].hex(), gzip.decompress(first) == plain, gzip.decompress(sample))
+for level in [0, 1, 6, 9, -1]:
+    compressed = gzip.compress(bytearray(plain), level, mtime=0x12345678)
+    print(level, compressed[:10].hex(), gzip.decompress(memoryview(compressed)) == plain)
+
+print(gzip.compress(b"", mtime=2.75)[4:8].hex())
+print(gzip.compress(b"", mtime=-1)[4:8].hex())
+print(gzip.compress(b"", mtime=4294967296)[4:8].hex())
+before = int(time.time())
+wall_clock = struct.unpack("<I", gzip.compress(b"", mtime=None)[4:8])[0]
+print(before <= wall_clock <= int(time.time()))
+print(gzip.decompress(b""), gzip.decompress(None), gzip.decompress(gzip.compress(b"")))
+large = plain * 3000
+print(gzip.decompress(gzip.compress(large)) == large)
+
+# FEXTRA, FNAME, FCOMMENT, FHCRC, padding and an additional member.
+header = sample[:3] + b"\x1e" + sample[4:10] + b"\x02\x00OKentry\x00comment\x00"
+checksum = struct.pack("<H", zlib.crc32(header) & 0xffff)
+optional_header = header + checksum + sample[10:]
+print(gzip.decompress(optional_header + b"\0\0" + first + b"\0") == b"a" + plain)
+
+
+def read_invalid(data):
+    try:
+        gzip.decompress(data)
+    except gzip.BadGzipFile as error:
+        print(isinstance(error, OSError), str(error))
+    except EOFError as error:
+        print("EOFError", str(error))
+    except zlib.error:
+        print("zlib.error")
+    except TypeError:
+        print("TypeError")
+
+
+read_invalid(b"x")
+read_invalid(b"\x1f\x8b")
+read_invalid(sample[:2] + b"\x07" + sample[3:])
+read_invalid(header + b"\x00\x00" + sample[10:])
+read_invalid(sample[:10] + b"\x07" + sample[11:])
+read_invalid(sample[:-1])
+read_invalid(sample[:-8] + b"\x00" + sample[-7:])
+read_invalid(sample[:-4] + b"\x02\0\0\0")
+read_invalid(sample + b"\0z")
+read_invalid("text")
+
+try:
+    gzip.compress(b"x", compresslevel=10)
+except zlib.error as error:
+    print("zlib.error", str(error))
+try:
+    gzip.compress(b"x", compresslevel=1.5)
+except TypeError:
+    print("TypeError")
+try:
+    gzip.compress(b"x", compresslevel=4294967296)
+except OverflowError:
+    print("OverflowError")

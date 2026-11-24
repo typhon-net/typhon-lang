@@ -1,0 +1,25 @@
+from types import DynamicClassAttribute
+
+class Descriptor(DynamicClassAttribute):
+    pass
+
+descriptor = Descriptor()
+not_assigned = Descriptor()
+print(hasattr(descriptor, 'last_get'))
+descriptor.last_get = 21
+def get_description(owner):
+    return 'descriptor'
+
+descriptor.fget = get_description
+print(descriptor.last_get, descriptor.__get__(object()))
+print(hasattr(not_assigned, 'last_get'))
+
+class Names(dict):
+    pass
+
+names = Names()
+def capitalize(key):
+    return key.upper()
+
+names.handler = capitalize
+print(names.handler('ready'))

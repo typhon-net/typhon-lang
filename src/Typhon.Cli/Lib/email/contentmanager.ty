@@ -1,0 +1,524 @@
+# Source: CPython 3.15.2, Lib/email/contentmanager.py
+# https://github.com/python/cpython/blob/v3.15.2/Lib/email/contentmanager.py
+# The original source follows the license below without changes.
+#
+# A. HISTORY OF THE SOFTWARE
+# ==========================
+#
+# Python was created in the early 1990s by Guido van Rossum at Stichting
+# Mathematisch Centrum (CWI, see https://www.cwi.nl) in the Netherlands
+# as a successor of a language called ABC.  Guido remains Python's
+# principal author, although it includes many contributions from others.
+#
+# In 1995, Guido continued his work on Python at the Corporation for
+# National Research Initiatives (CNRI, see https://www.cnri.reston.va.us)
+# in Reston, Virginia where he released several versions of the
+# software.
+#
+# In May 2000, Guido and the Python core development team moved to
+# BeOpen.com to form the BeOpen PythonLabs team.  In October of the same
+# year, the PythonLabs team moved to Digital Creations, which became
+# Zope Corporation.  In 2001, the Python Software Foundation (PSF, see
+# https://www.python.org/psf/) was formed, a non-profit organization
+# created specifically to own Python-related Intellectual Property.
+# Zope Corporation was a sponsoring member of the PSF.
+#
+# All Python releases are Open Source (see https://opensource.org for
+# the Open Source Definition).  Historically, most, but not all, Python
+# releases have also been GPL-compatible; the table below summarizes
+# the various releases.
+#
+#     Release         Derived     Year        Owner       GPL-
+#                     from                                compatible? (1)
+#
+#     0.9.0 thru 1.2              1991-1995   CWI         yes
+#     1.3 thru 1.5.2  1.2         1995-1999   CNRI        yes
+#     1.6             1.5.2       2000        CNRI        no
+#     2.0             1.6         2000        BeOpen.com  no
+#     1.6.1           1.6         2001        CNRI        yes (2)
+#     2.1             2.0+1.6.1   2001        PSF         no
+#     2.0.1           2.0+1.6.1   2001        PSF         yes
+#     2.1.1           2.1+2.0.1   2001        PSF         yes
+#     2.1.2           2.1.1       2002        PSF         yes
+#     2.1.3           2.1.2       2002        PSF         yes
+#     2.2 and above   2.1.1       2001-now    PSF         yes
+#
+# Footnotes:
+#
+# (1) GPL-compatible doesn't mean that we're distributing Python under
+#     the GPL.  All Python licenses, unlike the GPL, let you distribute
+#     a modified version without making your changes open source.  The
+#     GPL-compatible licenses make it possible to combine Python with
+#     other software that is released under the GPL; the others don't.
+#
+# (2) According to Richard Stallman, 1.6.1 is not GPL-compatible,
+#     because its license has a choice of law clause.  According to
+#     CNRI, however, Stallman's lawyer has told CNRI's lawyer that 1.6.1
+#     is "not incompatible" with the GPL.
+#
+# Thanks to the many outside volunteers who have worked under Guido's
+# direction to make these releases possible.
+#
+#
+# B. TERMS AND CONDITIONS FOR ACCESSING OR OTHERWISE USING PYTHON
+# ===============================================================
+#
+# Python software and documentation are licensed under the
+# Python Software Foundation License Version 2.
+#
+# Starting with Python 3.8.6, examples, recipes, and other code in
+# the documentation are dual licensed under the PSF License Version 2
+# and the Zero-Clause BSD license.
+#
+# Some software incorporated into Python is under different licenses.
+# The licenses are listed with code falling under that license.
+#
+#
+# PYTHON SOFTWARE FOUNDATION LICENSE VERSION 2
+# --------------------------------------------
+#
+# 1. This LICENSE AGREEMENT is between the Python Software Foundation
+# ("PSF"), and the Individual or Organization ("Licensee") accessing and
+# otherwise using this software ("Python") in source or binary form and
+# its associated documentation.
+#
+# 2. Subject to the terms and conditions of this License Agreement, PSF hereby
+# grants Licensee a nonexclusive, royalty-free, world-wide license to reproduce,
+# analyze, test, perform and/or display publicly, prepare derivative works,
+# distribute, and otherwise use Python alone or in any derivative version,
+# provided, however, that PSF's License Agreement and PSF's notice of copyright,
+# i.e., "Copyright (c) 2001 Python Software Foundation; All Rights Reserved"
+# are retained in Python alone or in any derivative version prepared by Licensee.
+#
+# 3. In the event Licensee prepares a derivative work that is based on
+# or incorporates Python or any part thereof, and wants to make
+# the derivative work available to others as provided herein, then
+# Licensee hereby agrees to include in any such work a brief summary of
+# the changes made to Python.
+#
+# 4. PSF is making Python available to Licensee on an "AS IS"
+# basis.  PSF MAKES NO REPRESENTATIONS OR WARRANTIES, EXPRESS OR
+# IMPLIED.  BY WAY OF EXAMPLE, BUT NOT LIMITATION, PSF MAKES NO AND
+# DISCLAIMS ANY REPRESENTATION OR WARRANTY OF MERCHANTABILITY OR FITNESS
+# FOR ANY PARTICULAR PURPOSE OR THAT THE USE OF PYTHON WILL NOT
+# INFRINGE ANY THIRD PARTY RIGHTS.
+#
+# 5. PSF SHALL NOT BE LIABLE TO LICENSEE OR ANY OTHER USERS OF PYTHON
+# FOR ANY INCIDENTAL, SPECIAL, OR CONSEQUENTIAL DAMAGES OR LOSS AS
+# A RESULT OF MODIFYING, DISTRIBUTING, OR OTHERWISE USING PYTHON,
+# OR ANY DERIVATIVE THEREOF, EVEN IF ADVISED OF THE POSSIBILITY THEREOF.
+#
+# 6. This License Agreement will automatically terminate upon a material
+# breach of its terms and conditions.
+#
+# 7. Nothing in this License Agreement shall be deemed to create any
+# relationship of agency, partnership, or joint venture between PSF and
+# Licensee.  This License Agreement does not grant permission to use PSF
+# trademarks or trade name in a trademark sense to endorse or promote
+# products or services of Licensee, or any third party.
+#
+# 8. By copying, installing or otherwise using Python, Licensee
+# agrees to be bound by the terms and conditions of this License
+# Agreement.
+#
+#
+# BEOPEN.COM LICENSE AGREEMENT FOR PYTHON 2.0
+# -------------------------------------------
+#
+# BEOPEN PYTHON OPEN SOURCE LICENSE AGREEMENT VERSION 1
+#
+# 1. This LICENSE AGREEMENT is between BeOpen.com ("BeOpen"), having an
+# office at 160 Saratoga Avenue, Santa Clara, CA 95051, and the
+# Individual or Organization ("Licensee") accessing and otherwise using
+# this software in source or binary form and its associated
+# documentation ("the Software").
+#
+# 2. Subject to the terms and conditions of this BeOpen Python License
+# Agreement, BeOpen hereby grants Licensee a non-exclusive,
+# royalty-free, world-wide license to reproduce, analyze, test, perform
+# and/or display publicly, prepare derivative works, distribute, and
+# otherwise use the Software alone or in any derivative version,
+# provided, however, that the BeOpen Python License is retained in the
+# Software, alone or in any derivative version prepared by Licensee.
+#
+# 3. BeOpen is making the Software available to Licensee on an "AS IS"
+# basis.  BEOPEN MAKES NO REPRESENTATIONS OR WARRANTIES, EXPRESS OR
+# IMPLIED.  BY WAY OF EXAMPLE, BUT NOT LIMITATION, BEOPEN MAKES NO AND
+# DISCLAIMS ANY REPRESENTATION OR WARRANTY OF MERCHANTABILITY OR FITNESS
+# FOR ANY PARTICULAR PURPOSE OR THAT THE USE OF THE SOFTWARE WILL NOT
+# INFRINGE ANY THIRD PARTY RIGHTS.
+#
+# 4. BEOPEN SHALL NOT BE LIABLE TO LICENSEE OR ANY OTHER USERS OF THE
+# SOFTWARE FOR ANY INCIDENTAL, SPECIAL, OR CONSEQUENTIAL DAMAGES OR LOSS
+# AS A RESULT OF USING, MODIFYING OR DISTRIBUTING THE SOFTWARE, OR ANY
+# DERIVATIVE THEREOF, EVEN IF ADVISED OF THE POSSIBILITY THEREOF.
+#
+# 5. This License Agreement will automatically terminate upon a material
+# breach of its terms and conditions.
+#
+# 6. This License Agreement shall be governed by and interpreted in all
+# respects by the law of the State of California, excluding conflict of
+# law provisions.  Nothing in this License Agreement shall be deemed to
+# create any relationship of agency, partnership, or joint venture
+# between BeOpen and Licensee.  This License Agreement does not grant
+# permission to use BeOpen trademarks or trade names in a trademark
+# sense to endorse or promote products or services of Licensee, or any
+# third party.  As an exception, the "BeOpen Python" logos available at
+# http://www.pythonlabs.com/logos.html may be used according to the
+# permissions granted on that web page.
+#
+# 7. By copying, installing or otherwise using the software, Licensee
+# agrees to be bound by the terms and conditions of this License
+# Agreement.
+#
+#
+# CNRI LICENSE AGREEMENT FOR PYTHON 1.6.1
+# ---------------------------------------
+#
+# 1. This LICENSE AGREEMENT is between the Corporation for National
+# Research Initiatives, having an office at 1895 Preston White Drive,
+# Reston, VA 20191 ("CNRI"), and the Individual or Organization
+# ("Licensee") accessing and otherwise using Python 1.6.1 software in
+# source or binary form and its associated documentation.
+#
+# 2. Subject to the terms and conditions of this License Agreement, CNRI
+# hereby grants Licensee a nonexclusive, royalty-free, world-wide
+# license to reproduce, analyze, test, perform and/or display publicly,
+# prepare derivative works, distribute, and otherwise use Python 1.6.1
+# alone or in any derivative version, provided, however, that CNRI's
+# License Agreement and CNRI's notice of copyright, i.e., "Copyright (c)
+# 1995-2001 Corporation for National Research Initiatives; All Rights
+# Reserved" are retained in Python 1.6.1 alone or in any derivative
+# version prepared by Licensee.  Alternately, in lieu of CNRI's License
+# Agreement, Licensee may substitute the following text (omitting the
+# quotes): "Python 1.6.1 is made available subject to the terms and
+# conditions in CNRI's License Agreement.  This Agreement together with
+# Python 1.6.1 may be located on the internet using the following
+# unique, persistent identifier (known as a handle): 1895.22/1013.  This
+# Agreement may also be obtained from a proxy server on the internet
+# using the following URL: http://hdl.handle.net/1895.22/1013".
+#
+# 3. In the event Licensee prepares a derivative work that is based on
+# or incorporates Python 1.6.1 or any part thereof, and wants to make
+# the derivative work available to others as provided herein, then
+# Licensee hereby agrees to include in any such work a brief summary of
+# the changes made to Python 1.6.1.
+#
+# 4. CNRI is making Python 1.6.1 available to Licensee on an "AS IS"
+# basis.  CNRI MAKES NO REPRESENTATIONS OR WARRANTIES, EXPRESS OR
+# IMPLIED.  BY WAY OF EXAMPLE, BUT NOT LIMITATION, CNRI MAKES NO AND
+# DISCLAIMS ANY REPRESENTATION OR WARRANTY OF MERCHANTABILITY OR FITNESS
+# FOR ANY PARTICULAR PURPOSE OR THAT THE USE OF PYTHON 1.6.1 WILL NOT
+# INFRINGE ANY THIRD PARTY RIGHTS.
+#
+# 5. CNRI SHALL NOT BE LIABLE TO LICENSEE OR ANY OTHER USERS OF PYTHON
+# 1.6.1 FOR ANY INCIDENTAL, SPECIAL, OR CONSEQUENTIAL DAMAGES OR LOSS AS
+# A RESULT OF MODIFYING, DISTRIBUTING, OR OTHERWISE USING PYTHON 1.6.1,
+# OR ANY DERIVATIVE THEREOF, EVEN IF ADVISED OF THE POSSIBILITY THEREOF.
+#
+# 6. This License Agreement will automatically terminate upon a material
+# breach of its terms and conditions.
+#
+# 7. This License Agreement shall be governed by the federal
+# intellectual property law of the United States, including without
+# limitation the federal copyright law, and, to the extent such
+# U.S. federal law does not apply, by the law of the Commonwealth of
+# Virginia, excluding Virginia's conflict of law provisions.
+# Notwithstanding the foregoing, with regard to derivative works based
+# on Python 1.6.1 that incorporate non-separable material that was
+# previously distributed under the GNU General Public License (GPL), the
+# law of the Commonwealth of Virginia shall govern this License
+# Agreement only as to issues arising under or with respect to
+# Paragraphs 4, 5, and 7 of this License Agreement.  Nothing in this
+# License Agreement shall be deemed to create any relationship of
+# agency, partnership, or joint venture between CNRI and Licensee.  This
+# License Agreement does not grant permission to use CNRI trademarks or
+# trade name in a trademark sense to endorse or promote products or
+# services of Licensee, or any third party.
+#
+# 8. By clicking on the "ACCEPT" button where indicated, or by copying,
+# installing or otherwise using Python 1.6.1, Licensee agrees to be
+# bound by the terms and conditions of this License Agreement.
+#
+#         ACCEPT
+#
+#
+# CWI LICENSE AGREEMENT FOR PYTHON 0.9.0 THROUGH 1.2
+# --------------------------------------------------
+#
+# Copyright (c) 1991 - 1995, Stichting Mathematisch Centrum Amsterdam,
+# The Netherlands.  All rights reserved.
+#
+# Permission to use, copy, modify, and distribute this software and its
+# documentation for any purpose and without fee is hereby granted,
+# provided that the above copyright notice appear in all copies and that
+# both that copyright notice and this permission notice appear in
+# supporting documentation, and that the name of Stichting Mathematisch
+# Centrum or CWI not be used in advertising or publicity pertaining to
+# distribution of the software without specific, written prior
+# permission.
+#
+# STICHTING MATHEMATISCH CENTRUM DISCLAIMS ALL WARRANTIES WITH REGARD TO
+# THIS SOFTWARE, INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+# FITNESS, IN NO EVENT SHALL STICHTING MATHEMATISCH CENTRUM BE LIABLE
+# FOR ANY SPECIAL, INDIRECT OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+# ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT
+# OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+#
+# ZERO-CLAUSE BSD LICENSE FOR CODE IN THE PYTHON DOCUMENTATION
+# ----------------------------------------------------------------------
+#
+# Permission to use, copy, modify, and/or distribute this software for any
+# purpose with or without fee is hereby granted.
+#
+# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+# REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY
+# AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+# INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM
+# LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR
+# OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+# PERFORMANCE OF THIS SOFTWARE.
+
+import binascii
+import email.charset
+import email.message
+import email.errors
+import sys
+from email import quoprimime
+
+class ContentManager:
+
+    def __init__(self):
+        self.get_handlers = {}
+        self.set_handlers = {}
+
+    def add_get_handler(self, key, handler):
+        self.get_handlers[key] = handler
+
+    def get_content(self, msg, *args, **kw):
+        content_type = msg.get_content_type()
+        if content_type in self.get_handlers:
+            return self.get_handlers[content_type](msg, *args, **kw)
+        maintype = msg.get_content_maintype()
+        if maintype in self.get_handlers:
+            return self.get_handlers[maintype](msg, *args, **kw)
+        if '' in self.get_handlers:
+            return self.get_handlers[''](msg, *args, **kw)
+        raise KeyError(content_type)
+
+    def add_set_handler(self, typekey, handler):
+        self.set_handlers[typekey] = handler
+
+    def set_content(self, msg, obj, *args, **kw):
+        if msg.get_content_maintype() == 'multipart':
+            # XXX: is this error a good idea or not?  We can remove it later,
+            # but we can't add it later, so do it for now.
+            raise TypeError("set_content not valid on multipart")
+        handler = self._find_set_handler(msg, obj)
+        msg.clear_content()
+        handler(msg, obj, *args, **kw)
+
+    def _find_set_handler(self, msg, obj):
+        full_path_for_error = None
+        for typ in type(obj).__mro__:
+            if typ in self.set_handlers:
+                return self.set_handlers[typ]
+            qname = typ.__qualname__
+            modname = getattr(typ, '__module__', '')
+            full_path = '.'.join((modname, qname)) if modname else qname
+            if full_path_for_error is None:
+                full_path_for_error = full_path
+            if full_path in self.set_handlers:
+                return self.set_handlers[full_path]
+            if qname in self.set_handlers:
+                return self.set_handlers[qname]
+            name = typ.__name__
+            if name in self.set_handlers:
+                return self.set_handlers[name]
+        if None in self.set_handlers:
+            return self.set_handlers[None]
+        raise KeyError(full_path_for_error)
+
+
+raw_data_manager = ContentManager()
+
+
+def get_text_content(msg, errors='replace'):
+    content = msg.get_payload(decode=True)
+    charset = msg.get_param('charset', 'ASCII')
+    return content.decode(charset, errors=errors)
+raw_data_manager.add_get_handler('text', get_text_content)
+
+
+def get_non_text_content(msg):
+    return msg.get_payload(decode=True)
+for maintype in 'audio image video application'.split():
+    raw_data_manager.add_get_handler(maintype, get_non_text_content)
+del maintype
+
+
+def get_message_content(msg):
+    return msg.get_payload(0)
+for subtype in 'rfc822 external-body'.split():
+    raw_data_manager.add_get_handler('message/'+subtype, get_message_content)
+del subtype
+
+
+def get_and_fixup_unknown_message_content(msg):
+    # If we don't understand a message subtype, we are supposed to treat it as
+    # if it were application/octet-stream, per
+    # tools.ietf.org/html/rfc2046#section-5.2.4.  Feedparser doesn't do that,
+    # so do our best to fix things up.  Note that it is *not* appropriate to
+    # model message/partial content as Message objects, so they are handled
+    # here as well.  (How to reassemble them is out of scope for this comment :)
+    return bytes(msg.get_payload(0))
+raw_data_manager.add_get_handler('message',
+                                 get_and_fixup_unknown_message_content)
+
+
+def _prepare_set(msg, maintype, subtype, headers):
+    msg['Content-Type'] = '/'.join((maintype, subtype))
+    if headers:
+        if not hasattr(headers[0], 'name'):
+            mp = msg.policy
+            headers = [mp.header_factory(*mp.header_source_parse([header]))
+                       for header in headers]
+        try:
+            for header in headers:
+                if header.defects:
+                    raise header.defects[0]
+                msg[header.name] = header
+        except email.errors.HeaderDefect as exc:
+            raise ValueError("Invalid header: {}".format(
+                                header.fold(policy=msg.policy))) from exc
+
+
+def _finalize_set(msg, disposition, filename, cid, params):
+    if disposition is None and filename is not None:
+        disposition = 'attachment'
+    if disposition is not None:
+        msg['Content-Disposition'] = disposition
+    if filename is not None:
+        msg.set_param('filename',
+                      filename,
+                      header='Content-Disposition',
+                      replace=True)
+    if cid is not None:
+        msg['Content-ID'] = cid
+    if params is not None:
+        for key, value in params.items():
+            msg.set_param(key, value)
+
+
+def _encode_text(string, charset, cte, policy):
+    # If max_line_length is 0 or None, there is no limit.
+    maxlen = policy.max_line_length or sys.maxsize
+    lines = string.encode(charset).splitlines()
+    linesep = policy.linesep.encode('ascii')
+    def embedded_body(lines): return linesep.join(lines) + linesep
+    def normal_body(lines): return b'\n'.join(lines) + b'\n'
+    if cte is None:
+        # Use heuristics to decide on the "best" encoding.
+        if max(map(len, lines), default=0) <= maxlen:
+            try:
+                return '7bit', normal_body(lines).decode('ascii')
+            except UnicodeDecodeError:
+                pass
+            if policy.cte_type == '8bit':
+                return '8bit', normal_body(lines).decode('ascii', 'surrogateescape')
+        sniff = embedded_body(lines[:10])
+        sniff_qp = quoprimime.body_encode(sniff.decode('latin-1'), maxlen)
+        sniff_base64 = binascii.b2a_base64(sniff)
+        # This is a little unfair to qp; it includes lineseps, base64 doesn't.
+        if len(sniff_qp) > len(sniff_base64):
+            cte = 'base64'
+        else:
+            cte = 'quoted-printable'
+            if len(lines) <= 10:
+                return cte, sniff_qp
+    if cte == '7bit':
+        data = normal_body(lines).decode('ascii')
+    elif cte == '8bit':
+        data = normal_body(lines).decode('ascii', 'surrogateescape')
+    elif cte == 'quoted-printable':
+        data = quoprimime.body_encode(normal_body(lines).decode('latin-1'),
+                                      maxlen)
+    elif cte == 'base64':
+        data = binascii.b2a_base64(embedded_body(lines), wrapcol=maxlen).decode('ascii')
+    else:
+        raise ValueError("Unknown content transfer encoding {}".format(cte))
+    return cte, data
+
+
+def set_text_content(msg, string, subtype="plain", charset='utf-8', cte=None,
+                     disposition=None, filename=None, cid=None,
+                     params=None, headers=None):
+    _prepare_set(msg, 'text', subtype, headers)
+
+    cs = email.charset.Charset(charset)
+    charset = cs.output_charset
+    cte, payload = _encode_text(string, charset, cte, msg.policy)
+    msg.set_payload(payload)
+    msg.set_param('charset', charset, replace=True)
+    msg['Content-Transfer-Encoding'] = cte
+    _finalize_set(msg, disposition, filename, cid, params)
+raw_data_manager.add_set_handler(str, set_text_content)
+
+
+def set_message_content(msg, message, subtype="rfc822", cte=None,
+                       disposition=None, filename=None, cid=None,
+                       params=None, headers=None):
+    if subtype == 'partial':
+        raise ValueError("message/partial is not supported for Message objects")
+    if subtype == 'rfc822':
+        if cte not in (None, '7bit', '8bit', 'binary'):
+            # http://tools.ietf.org/html/rfc2046#section-5.2.1 mandate.
+            raise ValueError(
+                "message/rfc822 parts do not support cte={}".format(cte))
+        # 8bit will get coerced on serialization if policy.cte_type='7bit'.  We
+        # may end up claiming 8bit when it isn't needed, but the only negative
+        # result of that should be a gateway that needs to coerce to 7bit
+        # having to look through the whole embedded message to discover whether
+        # or not it actually has to do anything.
+        cte = '8bit' if cte is None else cte
+    elif subtype == 'external-body':
+        if cte not in (None, '7bit'):
+            # http://tools.ietf.org/html/rfc2046#section-5.2.3 mandate.
+            raise ValueError(
+                "message/external-body parts do not support cte={}".format(cte))
+        cte = '7bit'
+    elif cte is None:
+        # http://tools.ietf.org/html/rfc2046#section-5.2.4 says all future
+        # subtypes should be restricted to 7bit, so assume that.
+        cte = '7bit'
+    _prepare_set(msg, 'message', subtype, headers)
+    msg.set_payload([message])
+    msg['Content-Transfer-Encoding'] = cte
+    _finalize_set(msg, disposition, filename, cid, params)
+raw_data_manager.add_set_handler(email.message.Message, set_message_content)
+
+
+def set_bytes_content(msg, data, maintype, subtype, cte='base64',
+                     disposition=None, filename=None, cid=None,
+                     params=None, headers=None):
+    _prepare_set(msg, maintype, subtype, headers)
+    if cte == 'base64':
+        data = binascii.b2a_base64(data, wrapcol=msg.policy.max_line_length)
+        data = data.decode('ascii')
+    elif cte == 'quoted-printable':
+        # XXX: quoprimime.body_encode won't encode newline characters in data,
+        # so we can't use it.  This means max_line_length is ignored.  Another
+        # bug to fix later.  (Note: encoders.quopri is broken on line ends.)
+        data = binascii.b2a_qp(data, istext=False, header=False, quotetabs=True)
+        data = data.decode('ascii')
+    elif cte == '7bit':
+        data = data.decode('ascii')
+    elif cte in ('8bit', 'binary'):
+        data = data.decode('ascii', 'surrogateescape')
+    msg.set_payload(data)
+    msg['Content-Transfer-Encoding'] = cte
+    _finalize_set(msg, disposition, filename, cid, params)
+for typ in (bytes, bytearray, memoryview):
+    raw_data_manager.add_set_handler(typ, set_bytes_content)
+del typ

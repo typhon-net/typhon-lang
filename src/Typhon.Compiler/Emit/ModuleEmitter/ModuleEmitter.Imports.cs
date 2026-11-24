@@ -114,6 +114,27 @@ namespace Typhon.Compiler.Emit
             return module.IsPackage ? (_p.FindModule(module.Name + "." + name), null) : default;
         }
 
+        bool TryResolveImportedReboundClass(string dotted, out ModuleInfo owner, out ClassDef definition)
+        {
+            owner = null;
+            definition = null;
+            int dot = dotted.LastIndexOf('.');
+            string member;
+            if (dot < 0)
+            {
+                if (IsLocal(dotted) || _m.Globals.Contains(dotted) || _m.Classes.ContainsKey(dotted) ||
+                    _m.Functions.Contains(dotted) || _runtimeProjectBindings.ContainsKey(dotted) ||
+                    !_importedFromModules.TryGetValue(dotted, out var imported)) return false;
+                (owner, member) = (imported.Key, imported.Value);
+            }
+            else
+            {
+                if (ModuleRef(dotted.Substring(0, dot)) is not ModuleInfo module || module.MayReplaceModule) return false;
+                (owner, member) = ProjectExport(module, dotted.Substring(dot + 1));
+            }
+            return owner != null && member != null && owner.TryGetFinalReboundClass(member, out definition);
+        }
+
         string ProjectModuleMember(string dotted)
         {
             int dot = dotted.LastIndexOf('.');
@@ -215,14 +236,15 @@ namespace Typhon.Compiler.Emit
             return Enumerable.Empty<ModuleInfo>();
         }
 
-        static bool IsPlatformModule(string name) => name is "termios" or "msvcrt" or "posix" or "nt" or "_winapi" or "_posixsubprocess";
+        static bool IsRuntimeCheckedModule(string name) =>
+            name is "termios" or "msvcrt" or "posix" or "nt" or "_winapi" or "_posixsubprocess" or "_lzma";
 
-        IEnumerable<string> PlatformModules(Stmt statement)
+        IEnumerable<string> RuntimeCheckedModules(Stmt statement)
         {
             if (statement is ImportStmt direct)
-                return direct.Names.Select(alias => alias.Name).Where(name => IsPlatformModule(name) && ResolvePsModule(name) == null);
+                return direct.Names.Select(alias => alias.Name).Where(name => IsRuntimeCheckedModule(name) && ResolvePsModule(name) == null);
             if (statement is ImportFromStmt from && _m.ResolveImport(from.Module, from.Level) is string module &&
-                IsPlatformModule(module) && ResolvePsModule(module) == null) return new[] { module };
+                IsRuntimeCheckedModule(module) && ResolvePsModule(module) == null) return new[] { module };
             return Enumerable.Empty<string>();
         }
 
@@ -247,7 +269,7 @@ namespace Typhon.Compiler.Emit
 
         void EmitProjectImports(Stmt stmt)
         {
-            foreach (var module in PlatformModules(stmt))
+            foreach (var module in RuntimeCheckedModules(stmt))
                 _w.Line($"global::Typhon.Runtime.Builtins.__import_platform_module({CsString(module)});");
             foreach (var module in ProjectImports(stmt))
                 _w.Line($"{ImportModule(module)};");
@@ -277,30 +299,38 @@ namespace Typhon.Compiler.Emit
                 foreach (var alias in from.Names)
                 {
                     string name = alias.AsName ?? alias.Name;
-                    if (importedSource != null && _runtimeProjectBindings.TryGetValue(name, out var binding) &&
+                    if (LateClassSlot(name) != null)
+                        BindRuntimeImport(name, ImportAttribute(absolute, importedSource, alias.Name), from);
+                    else if (importedSource != null && _runtimeProjectBindings.TryGetValue(name, out var binding) &&
                         binding.Owner == importedSource && binding.Name == alias.Name)
                         _w.Line($"{binding.Storage} = {ImportProjectAttribute(importedSource, alias.Name)};");
                     else if (moduleScope && _lateModuleFields.Contains(name) ||
                              _scope?.Locals.Globals.Contains(name) == true && _m.Globals.Contains(name))
-                    {
-                        string value = importedSource != null ? ImportProjectAttribute(importedSource, alias.Name) :
-                            StdlibType(absolute) is string runtime ?
-                                $"global::Typhon.Runtime.PyModule.Of(typeof({CsTypeName(runtime)}), {CsString(absolute)}).ImportAttribute({CsString(alias.Name)})" : null;
-                        if (value != null)
-                            EmitAssignToName(new NameExpr { Id = name, Line = from.Line, Col = from.Col }, null, from, value);
-                    }
+                        BindRuntimeImport(name, ImportAttribute(absolute, importedSource, alias.Name), from);
                 }
             }
             if (stmt is not ImportStmt imported) return;
             foreach (var alias in imported.Names)
             {
                 string binding = alias.AsName ?? alias.Name.Split('.')[0];
-                if (!_lateModuleFields.Contains(binding)) continue;
+                if (LateClassSlot(binding) == null && !_lateModuleFields.Contains(binding)) continue;
                 string moduleName = alias.AsName == null ? binding : alias.Name;
-                if (ResolvePsModule(moduleName) is ModuleInfo source)
-                    _w.Line($"{Esc(binding)} = {ImportModule(source)};");
-                else if (StdlibType(moduleName) is string runtime)
-                    _w.Line($"{Esc(binding)} = global::Typhon.Runtime.PyModule.Of(typeof({CsTypeName(runtime)}), {CsString(moduleName)});");
+                string value = ResolvePsModule(moduleName) is ModuleInfo source ? ImportModule(source) : NativeModule(moduleName);
+                if (LateClassSlot(binding) != null) BindRuntimeImport(binding, value, imported);
+                else if (value != null) _w.Line($"{Esc(binding)} = {value};");
+            }
+
+            string NativeModule(string name) => StdlibType(name) is string runtime
+                ? $"global::Typhon.Runtime.PyModule.Of(typeof({CsTypeName(runtime)}), {CsString(name)})" : null;
+
+            string ImportAttribute(string module, ModuleInfo source, string name) => source != null
+                ? ImportProjectAttribute(source, name) : NativeModule(module) is string owner
+                    ? $"{owner}.ImportAttribute({CsString(name)})" : null;
+
+            void BindRuntimeImport(string name, string value, Stmt statement)
+            {
+                if (value != null)
+                    EmitAssignToName(new NameExpr { Id = name, Line = statement.Line, Col = statement.Col }, null, statement, value);
             }
         }
 
@@ -389,6 +419,13 @@ namespace Typhon.Compiler.Emit
                   name is not ("NodeVisitor" or "NodeTransformer") && AnyArity(metadata + "+" + name, out _)
                 : _r.GetMembers(metadata, name).Count > 0 || AnyArity(metadata + "+" + name, out _) ||
                   StdlibType(module + "." + name) != null;
+
+        bool IsOptionalNativeMember(string metadata, string name) =>
+            _r.GetMembers(metadata, name).Any(member => member.IsOptionalModuleMember);
+
+        bool IsOptionalNativeImport(ImportFromStmt statement, string name) =>
+            _m.ResolveImport(statement.Module, statement.Level) is string module && ResolvePsModule(module) == null &&
+            StdlibType(module) is string metadata && IsOptionalNativeMember(metadata, name);
 
         ModuleInfo RuntimePackageChild(string package, string metadata, string name) =>
             name != "*" && !RuntimeExport(package, metadata, name) ? _p.FindModule(package + "." + name) : null;
@@ -585,6 +622,9 @@ namespace Typhon.Compiler.Emit
             var parts = dotted.Split('.');
             if (parts[0] == "_collections_abc") return "collections.abc";
             if (parts[0] == "_functools" && _p.FindModule("functools") != null) return dotted;
+            // The public runtime bisect exports aliases that the private accelerator does not.
+            // Let the source module's optional import keep its own functions and define those aliases.
+            if (parts[0] == "_bisect" && _m.Name == "bisect") return dotted;
             return PrivateModuleAliases.TryGetValue(parts[0], out var pub) ? pub + dotted.Substring(parts[0].Length) : dotted;
         }
 
@@ -643,13 +683,11 @@ namespace Typhon.Compiler.Emit
             statement.Body.Count > 0 && statement.Body.All(s => s switch
             {
                 ImportStmt import => import.Names.All(alias => ModuleExists(alias.Name)),
-                ImportFromStmt from => ImportFromResolves(from),
+                ImportFromStmt from => ImportFromResolves(from) && !from.Names.Any(alias => IsOptionalNativeImport(from, alias.Name)),
                 PassStmt => true,
                 _ => false,
             }) &&
-            !statement.Body.Any(s => PlatformModules(s).Any()) &&
-            !statement.Body.OfType<ImportFromStmt>().Any(from => _m.ResolveImport(from.Module, from.Level) is string absolute &&
-                ResolvePsModule(absolute) is ModuleInfo source && from.Names.Any(a => a.Name != "*" && UsesRuntimeProjectMember(source, a.Name)));
+            !statement.Body.Any(s => RuntimeCheckedModules(s).Any() || ProjectImports(s).Any());
 
         bool IsNativeImport(Stmt statement)
         {

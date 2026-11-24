@@ -1,0 +1,15 @@
+from _random import Random
+
+
+class State(Random):
+    def getstate(self):
+        return len(super().getstate())
+
+
+class Packet:
+    def getstate(self, *args, **kwargs):
+        return len(args) + len(kwargs)
+
+
+print(State(5).getstate())
+print(Packet().getstate(1, enabled=True))

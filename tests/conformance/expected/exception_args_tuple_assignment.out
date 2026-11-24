@@ -1,0 +1,8 @@
+('missing status',)
+missing status
+missing status
+True ('replacement', 5) StatusError('replacement', 5)
+noniterable args rejected ('replacement', 5)
+updated ValueError('updated')
+'updated' KeyError('updated')
+original SyntaxError('updated')

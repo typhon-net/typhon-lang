@@ -1,0 +1,11 @@
+def module_constant(name: str):
+    module = __import__(name)
+    return round(module.pi, 5)
+
+
+def module_function(name: str):
+    return __import__(name).sqrt(9)
+
+
+print(module_constant('math'))
+print(module_function('math'))

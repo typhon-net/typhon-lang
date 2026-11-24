@@ -1,0 +1,20 @@
+#:pylib-source enum
+from enum import Enum, IntEnum, StrEnum, auto
+
+class Direction(Enum):
+    LEFT = 1
+    RIGHT = 2
+    ALIAS = 2
+
+class Rate(IntEnum):
+    SLOW = 10
+    FAST = 20
+
+class Shade(StrEnum):
+    LIGHT = auto()
+    DARK = auto()
+
+print([member.name for member in Direction])
+print(Direction(2) is Direction.ALIAS, Direction['RIGHT'] is Direction.RIGHT)
+print(Rate.FAST + 1, Shade.DARK.value)
+print(Direction.__signature__)

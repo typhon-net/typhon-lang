@@ -1,0 +1,5 @@
+Direct:source Qualified:source
+19 23
+True True
+['Direct'] ['Qualified']
+('Direct', 'answer') ('Qualified', 'label') ('Enum', 'base') ('Enum', 'base')

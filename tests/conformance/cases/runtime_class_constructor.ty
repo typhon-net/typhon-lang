@@ -1,0 +1,12 @@
+class Record:
+    def __init__(self, value: int, *, suffix: str = 'x'):
+        self.value = value
+        self.suffix = suffix
+
+    def show(self) -> str:
+        return str(self.value) + self.suffix
+
+
+Extended = type('Extended', (Record,), {'tag': 'source'})
+print(Extended(4).show(), Extended(5, suffix='y').show())
+print(Extended.__name__, Extended.__module__, Extended.tag, issubclass(Extended, Record))

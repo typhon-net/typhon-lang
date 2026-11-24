@@ -1,0 +1,27 @@
+#:pylib-source secrets
+import secrets
+from random import SystemRandom, choice
+
+
+class Singleton:
+    def __len__(self):
+        return 1
+
+    def __getitem__(self, index: int) -> str:
+        if index != 0:
+            raise IndexError
+        return "indexed"
+
+
+rng = SystemRandom()
+bound_choice = getattr(rng, "choice")
+print(bound_choice(("bound",)), bound_choice(["list"]))
+print(bound_choice(seq=("keyword",)))
+print(rng.choice(("direct",)), choice(("module",)))
+print(bound_choice(Singleton()), choice(Singleton()))
+try:
+    bound_choice(())
+except IndexError as error:
+    print(type(error).__name__)
+
+print(secrets.choice(("source",)))

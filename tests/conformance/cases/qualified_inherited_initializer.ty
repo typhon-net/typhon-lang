@@ -1,0 +1,17 @@
+class Storage:
+    def __init__(self, value: str, /, *, suffix: str = "!"):
+        self.value = value + suffix
+
+class Forward(Storage):
+    pass
+
+class Parent(Forward):
+    def __init__(self):
+        self.value = "ignored"
+
+class Leaf(Parent):
+    def __init__(self, value: str):
+        print("before", value)
+        Forward.__init__(self, value, suffix="?")
+
+print(Leaf("initialized").value)

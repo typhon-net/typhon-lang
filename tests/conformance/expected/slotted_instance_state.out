@@ -1,0 +1,10 @@
+{'label': 'ordinary'} True
+None False
+no instance dictionary
+(None, {'extra': 7, 'value': 5, 'nothing': None})
+(None, {'nothing': None}) False
+({'label': 'before'}, {'value': 13, 'nothing': None}) True
+({'label': 'after', 'value': 99}, {'value': 13, 'nothing': None}) 13 ({'label': 'after', 'value': 99}, {'value': 13, 'nothing': None})
+({'label': 'dict'}, {'number': 19})
+(None, {'_Private__value': 17})
+True False

@@ -1,0 +1,31 @@
+class Reporter:
+    @staticmethod
+    def note(text: str) -> None:
+        print(text)
+
+    @classmethod
+    def title(cls, text: str) -> None:
+        print(cls.__name__, text)
+
+    def log(self, text: str) -> None:
+        print('base', type(self).__name__, text)
+
+
+class Child(Reporter):
+    def log(self, text: str) -> None:
+        print('child', text)
+
+    def record(self):
+        print(super().log('super'))
+
+
+class Grandchild(Child):
+    pass
+
+
+reporter = Grandchild()
+print(Reporter.note('static class'))
+print(reporter.note('static instance'))
+print(Child.title('class receiver'))
+print(reporter.title('instance receiver'))
+reporter.record()

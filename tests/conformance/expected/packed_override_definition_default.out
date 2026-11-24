@@ -1,0 +1,6 @@
+({}, {})
+(None, {})
+('value', {'test': True})
+((), {})
+((), {'settings': None})
+(('value',), {'test': True})

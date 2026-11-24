@@ -1,0 +1,19 @@
+from io import BytesIO
+
+
+class Buffer(BytesIO):
+    def read_part(self, options):
+        limit = getattr(options, 'limit')
+        return super().read(limit)
+
+
+class Settings:
+    def __init__(self, limit):
+        self.limit = limit
+
+
+print(Buffer(b'abcd').read_part(Settings(2)))
+try:
+    Buffer(b'abc').read_part(Settings('two'))
+except TypeError:
+    print('invalid limit')

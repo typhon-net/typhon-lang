@@ -1,0 +1,29 @@
+True True
+b'localhost' localhost
+b'EXAMPLE.COM.' EXAMPLE.COM.
+b'_service.example' _service.example
+b'xn--bcher-kva.example' bücher.example
+b'fass.de' fass.de
+b'ab.example' ab.example
+b'xn--4xa.gr' σ.gr
+b'xn--n3h.net' ☃.net
+b'xn--e28h.example' 😀.example
+b'xn--f_bar-juaa.example' föö_bar.example
+b'xn--kz9a.example' ꭰ.example
+idna b'xn--bcher-kva' bücher
+BüCHER.
+.a..b.
+idna 0 1 label empty
+idna 2 3 label empty
+idna 0 64 label too long
+idna 65 66 label empty
+idna 1 2 Invalid character '\ue000'
+idna 2 3 Violation of BIDI requirement 2
+idna 0 1 Violation of BIDI requirement 3
+idna 0 4 Label starts with ACE prefix
+idna 0 1 label empty
+idna 0 1 label empty
+idna 0 8 IDNA does not round-trip, 'b'xn--abc-'' != 'b'abc''
+idna 0 1 Invalid character '\x80'
+idna 5 6 ordinal not in range(128)
+Unsupported error handling: ignore

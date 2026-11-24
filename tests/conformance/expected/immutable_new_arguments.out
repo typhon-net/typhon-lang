@@ -1,0 +1,17 @@
+int.__getnewargs__ method_descriptor builtin_function_or_method (1,) True
+int.__getnewargs__ method_descriptor builtin_function_or_method (31,) True
+float.__getnewargs__ method_descriptor builtin_function_or_method (2.5,) True
+complex.__getnewargs__ method_descriptor builtin_function_or_method (1.0, 3.0) True
+str.__getnewargs__ method_descriptor builtin_function_or_method ('text',) True
+bytes.__getnewargs__ method_descriptor builtin_function_or_method (b'bytes',) True
+tuple.__getnewargs__ method_descriptor builtin_function_or_method ((7, 9),) True
+int.__getnewargs__ method_descriptor builtin_function_or_method (11,) True
+str.__getnewargs__ method_descriptor builtin_function_or_method ('inherited',) True
+tuple.__getnewargs__ method_descriptor builtin_function_or_method ((13, 15),) True
+True True
+(23,) ('plain',)
+True True
+False False
+invalid descriptor receiver
+keyword rejected
+('custom',)

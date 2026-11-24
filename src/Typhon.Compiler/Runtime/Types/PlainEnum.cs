@@ -12,7 +12,12 @@ namespace Typhon.Runtime
     using System.Reflection;
     using System.Runtime.CompilerServices;
 
-    internal abstract class PyPlainEnum : IPyRepr
+    internal interface IPyPlainEnum
+    {
+        object? value { get; }
+    }
+
+    internal abstract class PyPlainEnum : IPyPlainEnum, IPyRepr
     {
         public object? _value_;
         public string _name_ = "";
@@ -26,12 +31,12 @@ namespace Typhon.Runtime
             return member;
         }
 
-        internal static IEnumerable<PyPlainEnum> Members(Type type) =>
-            (IEnumerable<PyPlainEnum>?)type.GetField("__unique_members", BindingFlags.Static | BindingFlags.NonPublic)?.GetValue(null) ?? [];
+        internal static IEnumerable<IPyPlainEnum> Members(Type type) =>
+            (IEnumerable<IPyPlainEnum>?)type.GetField("__unique_members", BindingFlags.Static | BindingFlags.NonPublic)?.GetValue(null) ?? [];
 
-        internal static PyPlainEnum Lookup(Type type, object? value)
+        internal static IPyPlainEnum Lookup(Type type, object? value)
         {
-            if (value is PyPlainEnum member && type.IsInstanceOfType(member)) return member;
+            if (value is IPyPlainEnum member && type.IsInstanceOfType(member)) return member;
             foreach (var candidate in Members(type))
                 if (Builtins.eq(candidate.value, value)) return candidate;
             throw new ArgumentException($"{Builtins.repr(value)} is not a valid {type.Name}");
@@ -39,7 +44,8 @@ namespace Typhon.Runtime
 
         internal virtual string EnumName => GetType().Name;
         public override string ToString() => $"{EnumName}.{name}";
-        public string __repr__() => $"<{this}: {Builtins.repr(value)}>";
+        public string __repr__() => Representation(ToString(), value);
+        internal static string Representation(string qualifiedName, object? value) => $"<{qualifiedName}: {Builtins.repr(value)}>";
         public override int GetHashCode() => StringComparer.Ordinal.GetHashCode(name);
     }
 
@@ -70,6 +76,7 @@ namespace Typhon.Runtime
             }
         }
 
+        internal IEnumerable<KeyValuePair<string, object?>> Members => _members;
         internal string PythonModule => _module;
         internal string PythonQualification => _qualification;
         public override string Name => _name;

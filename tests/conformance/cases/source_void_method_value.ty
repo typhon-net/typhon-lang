@@ -1,0 +1,37 @@
+class Counter:
+    def __init__(self):
+        self.total = 0
+
+    def add(self, delta: int):
+        self.total += delta
+
+    def multiply(self, factor: int) -> None:
+        self.total *= factor
+
+
+counter = Counter()
+
+
+def receiver() -> Counter:
+    print('receiver')
+    return counter
+
+
+def delta() -> int:
+    print('argument')
+    return 2
+
+
+counter.add(1)
+print(receiver().add(delta()), counter.total)
+result = counter.add(4)
+print(result is None, counter.total)
+
+
+class InheritedCounter(Counter):
+    pass
+
+
+inherited = InheritedCounter()
+inherited.add(5)
+print(inherited.multiply(factor=3) is None, inherited.total)

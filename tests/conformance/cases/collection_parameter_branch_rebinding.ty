@@ -1,0 +1,16 @@
+class Payload:
+    pass
+
+
+class Box:
+    def __init__(self, clear, value=None):
+        if clear:
+            value = []
+        self.value = value
+
+
+payload = Payload()
+print(Box(False, payload).value is payload)
+print(Box(True, payload).value)
+print(Box(False, ((1, 2), (3, 4))).value)
+print(Box(True, ((1, 2), (3, 4))).value)

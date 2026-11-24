@@ -1,0 +1,73 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+class Child(list):
+    def __init__(self, items):
+        self.initialized = True
+        super().__init__(items)
+
+
+class Grandchild(Child):
+    pass
+
+
+class PlainChild(list):
+    pass
+
+
+class Custom(list):
+    def __new__(cls, *args):
+        return super().__new__(cls, *args)
+
+
+allocate = list.__new__
+initialize = list.__init__
+print(allocate is getattr(list, '__new__'), initialize is getattr(list, '__init__'))
+print(allocate is getattr(Grandchild, '__new__'), initialize is getattr(PlainChild, '__init__'))
+print(allocate(list, 42, ignored=True))
+child = allocate(Grandchild, [1, 2], ignored=True)
+print(type(child).__name__, child, hasattr(child, 'initialized'))
+print(initialize(child, [3, 4]), child, hasattr(child, 'initialized'))
+print(PlainChild([7, 8]), Child([9]), Custom([10, 11]))
+explicit = list.__new__(list, 'ignored')
+list.__init__(explicit, [1])
+print(explicit)
+try:
+    PlainChild(42)
+except TypeError:
+    print('invalid constructor argument')
+print(PlainChild(*([2, 3],)))
+try:
+    PlainChild(iterable=[4])
+except TypeError:
+    print('constructor keyword rejected')
+try:
+    PlainChild([4], [5])
+except TypeError:
+    print('constructor arity rejected')
+typed = [12, 13]
+initialize(typed, (14, 15))
+print(typed)
+try:
+    initialize(typed, 16, 17)
+except TypeError:
+    print('too many', typed)
+try:
+    initialize(typed, iterable=[18])
+except TypeError:
+    print('keyword', typed)
+try:
+    initialize(typed, None)
+except TypeError:
+    print('not iterable', typed)
+initialize(typed, [19, 20])
+getattr(typed, '__init__')(typed)
+print('self', typed)
+try:
+    allocate(dict)
+except TypeError:
+    print('invalid subtype')
+try:
+    allocate(cls=list)
+except TypeError:
+    print('missing positional type')

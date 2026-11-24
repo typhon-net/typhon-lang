@@ -1,0 +1,29 @@
+class TokenList(list):
+    token_type = None
+
+
+class Token(TokenList):
+    token_type = 'literal'
+    parameters = 'from token'
+
+
+class HeaderValues(TokenList):
+    @property
+    def parameter(self):
+        for token in reversed(self):
+            if token.token_type == 'literal':
+                return token.parameters
+        return 'missing'
+
+
+def selected(token):
+    header = HeaderValues()
+    header.append(token)
+    return header.parameter
+
+
+print(selected(Token()))
+print(selected(TokenList()))
+shadowed = Token()
+shadowed.parameters = 'overridden'
+print(selected(shadowed))

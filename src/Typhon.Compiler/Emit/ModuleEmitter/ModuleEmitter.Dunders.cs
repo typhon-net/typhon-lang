@@ -172,7 +172,8 @@ namespace Typhon.Compiler.Emit
                     case "__repr__":
                         if (ctx.Def.NamedTupleFields == null)
                             _w.Line("string global::Typhon.Runtime.IPyRepr.__repr__() => __repr__();");
-                        if (!DefinesInHierarchy(ctx.Def, "__str__")) _w.Line("public override string ToString() => __repr__();");
+                        if (!DefinesInHierarchy(ctx.Def, "__str__") && !HasStringBase(ctx.Def))
+                            _w.Line("public override string ToString() => __repr__();");
                         break;
                     case "__hash__": _w.Line("public override int GetHashCode() => __hash32(__hash__());"); break;
                     case "__eq__":

@@ -57,6 +57,21 @@ namespace Typhon.Runtime
         bool RemoveAttribute(string name);
     }
 
+    internal static partial class Builtins
+    {
+        internal static void NotifyClassDescriptors(Type owner, IEnumerable<KeyValuePair<string, object?>> members)
+        {
+            // A hook may change the class namespace while the original declarations are being named.
+            foreach (var (name, value) in members.ToArray())
+            {
+                var hook = LookupSourceSpecialMethod(value, "__set_name__");
+                if (hook.Owner != null) __invoke(hook.Value, [owner, name]);
+                else if (value is builtins.property property) property.__set_name__(owner, name);
+                else if (value is functools.cached_property cached) cached.__set_name__(owner, name);
+            }
+        }
+    }
+
     /// <summary>A compiled class's declared Python members and their stable descriptor objects.</summary>
     internal static class PyClassDescriptors
     {
@@ -144,8 +159,8 @@ namespace Typhon.Runtime
         internal static bool TryGetDeclaredDescriptor(Type type, string name, out object? value) =>
             Namespace(type).Descriptors.TryGetValue(name, out value);
 
-        internal static bool HasWritableNamespace(Type type) => !type.IsValueType &&
-            (type.IsDefined(typeof(PySourceAttribute), false) || type.IsDefined(typeof(PyMutableClassAttribute), true));
+        internal static bool HasWritableNamespace(Type type) => type is PyIntEnumType or PyPlainEnumType ||
+            !type.IsValueType && (type.IsDefined(typeof(PySourceAttribute), false) || type.IsDefined(typeof(PyMutableClassAttribute), true));
 
         internal static bool SetAddedAttribute(Type type, string name, object? value) =>
             HasWritableNamespace(type) && Namespace(type).SetAdded(name, value);
@@ -161,7 +176,12 @@ namespace Typhon.Runtime
 
         internal static bool TryGetAddedInstanceAttribute(object instance, string name, out object? value)
         {
-            Type type = instance.GetType();
+            Type type = instance switch
+            {
+                PyIntegerEnum { DynamicEnumType: { } owner } => owner,
+                PyPlainEnumMember member => member.Owner,
+                _ => instance.GetType(),
+            };
             for (Type? declaration = type; declaration != null; declaration = declaration.BaseType)
             {
                 if (!HasWritableNamespace(declaration)) continue;
@@ -179,9 +199,26 @@ namespace Typhon.Runtime
 
         internal static bool TryGetAttribute(Type type, string name, out object? value, object? instance = null)
         {
-            for (Type? declaration = type; declaration != null; declaration = declaration.BaseType)
+            IEnumerable<Type> declarations = (instance == null && PyMetaclasses.Namespace(type) != null) ||
+                PyMetaclasses.HasRuntimeSubclassStorage(type) ?
+                PyMetaclasses.MethodOrder(type) : ClrBases(type);
+            foreach (Type declaration in declarations)
             {
-                if (!HasWritableNamespace(declaration)) continue;
+                if (instance == null && PyMetaclasses.TryOwnValue(declaration, name, out value))
+                {
+                    value = PyMetaclasses.Bind(value, null, type);
+                    return true;
+                }
+                if (instance == null && PyMetaclasses.Namespace(declaration) != null) continue;
+                if (!HasWritableNamespace(declaration))
+                {
+                    if (instance == null && TryGetDeclaredDescriptor(declaration, name, out var nativeDescriptor))
+                    {
+                        value = PyMetaclasses.Bind(nativeDescriptor, null, type);
+                        return true;
+                    }
+                    continue;
+                }
                 var ns = Namespace(declaration);
                 if (!ns.TryRead(name, out var binding)) continue;
                 if (ns.Descriptors.TryGetValue(name, out value))
@@ -209,6 +246,11 @@ namespace Typhon.Runtime
             }
             value = null;
             return false;
+        }
+
+        internal static IEnumerable<Type> ClrBases(Type type)
+        {
+            for (Type? basis = type; basis != null; basis = basis.BaseType) yield return basis;
         }
 
         internal static functools.cached_property CachedProperty(Type type, string name) =>
@@ -297,6 +339,17 @@ namespace Typhon.Runtime
                 var source = type.GetCustomAttribute<PySourceAttribute>();
                 _bindings["__module__"] = () => Builtins.__module_of(type);
                 _bindings["__doc__"] = () => source?.DocString;
+                var enumMembers = type switch
+                {
+                    PyIntEnumType integer => integer.Members,
+                    PyPlainEnumType plain => plain.Members,
+                    _ => null,
+                };
+                if (enumMembers != null)
+                    foreach (var (name, member) in enumMembers)
+                        _bindings[name] = () => member;
+                if (Builtins.BuiltinAllocator(type) is object allocator)
+                    _bindings["__new__"] = Bind(allocator);
                 if (type == typeof(Type))
                 {
                     AddDescriptor("__annotations__", new TypeAnnotations());
@@ -357,7 +410,14 @@ namespace Typhon.Runtime
                     var metadata = method.GetCustomAttribute<PySourceAttribute>();
                     var spec = method.GetCustomAttribute<PyDescriptorAttribute>();
                     if (spec?.Kind == PyDescriptorKind.StaticMethod)
-                        AddDescriptor(method.Name, new builtins.staticmethod(Callable(type, method.Name, metadata, method, (a, kw) => Invoke(methods, method.Name, null, a, kw))));
+                    {
+                        var function = Callable(type, method.Name, metadata, method, (a, kw) => Invoke(methods, method.Name, null, a, kw));
+                        // The CLR bridge for a metaclass instance method has an explicit receiver.
+                        if (method.IsDefined(typeof(PyMetaclassMethodAttribute), false))
+                            _bindings[method.Name] = Bind(function);
+                        else
+                            AddDescriptor(method.Name, new builtins.staticmethod(function));
+                    }
                     else if (spec?.Kind == PyDescriptorKind.ClassMethod)
                     {
                         var implementations = type.GetMethods(Declared).Where(m => m.Name == spec.Getter).ToArray();

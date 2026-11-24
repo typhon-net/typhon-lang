@@ -10,6 +10,8 @@ namespace Typhon.Compiler.Emit
 {
     internal sealed partial class ModuleEmitter
     {
+        const string RuntimeImportStarIntrinsic = "import *";
+
         HashSet<string> _conditionedImportAliases;
         readonly HashSet<ImportFromStmt> _conditionalNativeStars = new HashSet<ImportFromStmt>();
 
@@ -74,15 +76,32 @@ namespace Typhon.Compiler.Emit
                 List<Stmt> replacements = null;
                 switch (original)
                 {
-                    case ImportFromStmt from when from.Names.All(alias => alias.Name != "*") &&
-                        (allowImports && (_m.RuntimeCodeMode != null && from.Level > 0 || !ImportFromResolves(from)) ||
-                         moduleScope && from.Names.Any(alias => _conditionedImportAliases?.Contains(alias.AsName ?? alias.Name) == true)):
+                    case ImportFromStmt star when _m.RuntimeCodeMode != null && moduleScope &&
+                        star.Names.Count == 1 && star.Names[0].Name == "*":
+                        replacements = new List<Stmt>
+                        {
+                            new ExprStmt
+                            {
+                                Line = star.Line, Col = star.Col,
+                                Value = new CallExpr
+                                {
+                                    Line = star.Line, Col = star.Col, Func = new NameExpr { Id = RuntimeImportStarIntrinsic },
+                                    Args = { new Arg { Value = RuntimeImportCall(star, star.Module, star.Level, null, false) } },
+                                },
+                            },
+                        };
+                        break;
+                    case ImportFromStmt from when from.Names.All(alias => alias.Name != "*"):
+                    {
                         bool unresolved = allowImports && (_m.RuntimeCodeMode != null && from.Level > 0 || !ImportFromResolves(from));
-                        replacements = from.Names.Select(alias => unresolved ||
-                            _conditionedImportAliases?.Contains(alias.AsName ?? alias.Name) == true
+                        bool NeedsRuntimeBinding(ImportAlias alias) => unresolved || IsOptionalNativeImport(from, alias.Name) ||
+                            moduleScope && _conditionedImportAliases?.Contains(alias.AsName ?? alias.Name) == true;
+                        if (!from.Names.Any(NeedsRuntimeBinding)) break;
+                        replacements = from.Names.Select(alias => NeedsRuntimeBinding(alias)
                             ? (Stmt)RuntimeImportBinding(from, from.Module, from.Level, alias.Name, alias.AsName ?? alias.Name, false)
                             : new ImportFromStmt { Module = from.Module, Level = from.Level, Line = from.Line, Col = from.Col, Names = { alias } }).ToList();
                         break;
+                    }
                     case ImportStmt import when import.Names.Any(alias =>
                         IsConditionalImportAlias(alias, moduleScope) || allowImports && !ModuleExists(alias.Name)):
                         replacements = import.Names.Select(alias => ModuleExists(alias.Name) && !IsConditionalImportAlias(alias, moduleScope)
@@ -116,23 +135,26 @@ namespace Typhon.Compiler.Emit
             }
         }
 
-        static AssignStmt RuntimeImportBinding(Stmt from, string module, int level, string member, string binding, bool bindRoot)
-        {
-            ConstExpr Text(string value) => new ConstExpr { Kind = value == null ? ConstKind.None : ConstKind.Str, Str = value };
-            return new AssignStmt
+        static AssignStmt RuntimeImportBinding(Stmt from, string module, int level, string member, string binding, bool bindRoot) =>
+            new AssignStmt
             {
                 Line = from.Line, Col = from.Col,
                 Targets = { new NameExpr { Id = binding, Line = from.Line, Col = from.Col } },
-                Value = new CallExpr
+                Value = RuntimeImportCall(from, module, level, member, bindRoot),
+            };
+
+        static CallExpr RuntimeImportCall(Stmt from, string module, int level, string member, bool bindRoot)
+        {
+            ConstExpr Text(string value) => new ConstExpr { Kind = value == null ? ConstKind.None : ConstKind.Str, Str = value };
+            return new CallExpr
+            {
+                Line = from.Line, Col = from.Col, Func = new NameExpr { Id = "__typhon_source_import" },
+                Args =
                 {
-                    Line = from.Line, Col = from.Col, Func = new NameExpr { Id = "__typhon_source_import" },
-                    Args =
-                    {
-                        new Arg { Value = Text(module) },
-                        new Arg { Value = new ConstExpr { Kind = ConstKind.Int, Raw = level.ToString(CultureInfo.InvariantCulture) } },
-                        new Arg { Value = Text(member) },
-                        new Arg { Value = new ConstExpr { Kind = ConstKind.Bool, Raw = bindRoot ? "True" : "False" } },
-                    },
+                    new Arg { Value = Text(module) },
+                    new Arg { Value = new ConstExpr { Kind = ConstKind.Int, Raw = level.ToString(CultureInfo.InvariantCulture) } },
+                    new Arg { Value = Text(member) },
+                    new Arg { Value = new ConstExpr { Kind = ConstKind.Bool, Raw = bindRoot ? "True" : "False" } },
                 },
             };
         }

@@ -7,12 +7,107 @@
 namespace Typhon.Stdlib
 {
     using System;
+    using System.Buffers;
+    using System.Buffers.Binary;
     using System.IO;
     using System.IO.Compression;
+    using System.Runtime.InteropServices;
     using Typhon.Runtime;
 
     internal static class gzip
     {
+        public sealed class BadGzipFile : PyOSError { public BadGzipFile(string message) : base(message) { } }
+
+        public static PyBytes compress(object data, [Optional, DefaultParameterValue(6L)] object? compresslevel,
+            [PyKeywordOnly, Optional, DefaultParameterValue(0L)] object? mtime)
+        {
+            PyBytes result = zlib.compress(data, compresslevel, wbits: 31);
+            if (mtime == null) mtime = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            uint timestamp = Builtins.truthy((object?)Builtins.le((object)0L, mtime)) &&
+                Builtins.truthy((object?)Builtins.lt(mtime, (object)(1L << 32)))
+                ? (uint)Builtins.@int(mtime) : 0;
+            BinaryPrimitives.WriteUInt32LittleEndian(result.Data.AsSpan(4, 4), timestamp);
+            result.Data[9] = 255;
+            return result;
+        }
+
+        public static PyBytes decompress(object? data)
+        {
+            if (data == null) return PyBytes.Empty;
+            ReadOnlySpan<byte> input = ByteOps.Buffer(data);
+            if (input.IsEmpty) return PyBytes.Empty;
+            using var output = new MemoryStream();
+            Span<byte> buffer = stackalloc byte[8192];
+            while (!input.IsEmpty)
+            {
+                input = ReadHeader(input);
+                int start = (int)output.Length;
+                using var decoder = new DeflateDecoder();
+                OperationStatus status;
+                do
+                {
+                    status = decoder.Decompress(input, buffer, out int consumed, out int written);
+                    if (status == OperationStatus.InvalidData) throw new zlib.error("Error -3 while decompressing data");
+                    if (status == OperationStatus.NeedMoreData) throw Truncated();
+                    input = input[consumed..];
+                    output.Write(buffer[..written]);
+                } while (status == OperationStatus.DestinationTooSmall);
+
+                Require(input, 8);
+                var member = output.GetBuffer().AsSpan(start, (int)output.Length - start);
+                if (BinaryPrimitives.ReadUInt32LittleEndian(input) != binascii.Crc32(member))
+                    throw new BadGzipFile("CRC check failed");
+                if (BinaryPrimitives.ReadUInt32LittleEndian(input[4..]) != (uint)member.Length)
+                    throw new BadGzipFile("Incorrect length of data produced");
+                input = input[8..].TrimStart((byte)0);
+            }
+            return new PyBytes(output.ToArray());
+        }
+
+        static ReadOnlySpan<byte> ReadHeader(ReadOnlySpan<byte> input)
+        {
+            if (input.Length < 2 || input[0] != 0x1f || input[1] != 0x8b)
+                throw new BadGzipFile($"Not a gzipped file ({ByteOps.Repr(input[..Math.Min(2, input.Length)])})");
+            Require(input, 10);
+            if (input[2] != 8) throw new BadGzipFile("Unknown compression method");
+            const int HeaderCrc = 2, Extra = 4, Name = 8, Comment = 16;
+            byte flags = input[3];
+            var body = input[10..];
+            if ((flags & Extra) != 0)
+            {
+                Require(body, 2);
+                int size = BinaryPrimitives.ReadUInt16LittleEndian(body) + 2;
+                Require(body, size);
+                body = body[size..];
+            }
+            if ((flags & Name) != 0) body = SkipTerminatedString(body);
+            if ((flags & Comment) != 0) body = SkipTerminatedString(body);
+            if ((flags & HeaderCrc) != 0)
+            {
+                Require(body, 2);
+                uint actual = binascii.Crc32(input[..(input.Length - body.Length)]) & 0xffff;
+                uint expected = BinaryPrimitives.ReadUInt16LittleEndian(body);
+                if (actual != expected)
+                    throw new BadGzipFile($"Corrupted gzip header. Checksums do not match: {actual:x4} != {expected:x4}");
+                body = body[2..];
+            }
+            return body;
+        }
+
+        static ReadOnlySpan<byte> SkipTerminatedString(ReadOnlySpan<byte> input)
+        {
+            int end = input.IndexOf((byte)0);
+            return end < 0 ? ReadOnlySpan<byte>.Empty : input[(end + 1)..];
+        }
+
+        static void Require(ReadOnlySpan<byte> input, int count)
+        {
+            if (input.Length < count) throw Truncated();
+        }
+
+        static EndOfStreamException Truncated() =>
+            new("Compressed file ended before the end-of-stream marker was reached");
+
         public static dynamic open(object filename, string mode = "rb", long compresslevel = 9,
             string? encoding = null, string? errors = null, string? newline = null)
         {

@@ -1,0 +1,51 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+class Integer(int):
+    pass
+
+
+class CustomInteger(Integer):
+    def __getnewargs__(self):
+        return ('custom',)
+
+
+class Text(str):
+    pass
+
+
+class TupleFields(tuple):
+    pass
+
+
+def show(value):
+    slot = getattr(type(value), '__getnewargs__')
+    bound = getattr(value, '__getnewargs__')
+    print(slot.__qualname__, type(slot).__name__, type(bound).__name__, bound(), bound.__self__ == value)
+
+
+show(True)
+show(31)
+show(2.5)
+show(1 + 3j)
+show('text')
+show(b'bytes')
+show((7, 9))
+show(Integer(11))
+show(Text('inherited'))
+show(TupleFields((13, 15)))
+print(int.__getnewargs__ is Integer.__getnewargs__, str.__getnewargs__ is Text.__getnewargs__)
+print((23).__getnewargs__(), str.__getnewargs__('plain'))
+value = (2, 4)
+print(value.__getnewargs__()[0] == value, type(Integer(5).__getnewargs__()[0]) is int)
+print(hasattr([], '__getnewargs__'), hasattr(bytearray(), '__getnewargs__'))
+try:
+    int.__getnewargs__('not an int')
+except TypeError:
+    print('invalid descriptor receiver')
+try:
+    int.__getnewargs__(self=3)
+except TypeError:
+    print('keyword rejected')
+
+print(CustomInteger(41).__getnewargs__())

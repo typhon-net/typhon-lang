@@ -1,0 +1,10 @@
+class Finder:
+    def __init__(self, path, debug=0, exclusions=None, replacements=None):
+        self.path = path
+        self.debug = debug
+        self.exclusions = exclusions
+        self.replacements = replacements
+
+
+finder = Finder('/example', 2, ['ignored'])
+print(finder.path, finder.debug, finder.exclusions, finder.replacements)

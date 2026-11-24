@@ -1,0 +1,70 @@
+class ReplyReader:
+    def __init__(self):
+        self.calls = 0
+
+    def reply(self):
+        self.calls += 1
+        return (250, b'hello')
+
+
+def accepted(reader: ReplyReader) -> bool:
+    return 200 <= reader.reply()[0] <= 299
+
+
+reader = ReplyReader()
+print(accepted(reader), reader.calls)
+
+
+def step(label: str, value: int) -> int:
+    print(label)
+    return value
+
+
+print(step('left', 2) <= step('middle', 1) <= step('skipped', 3))
+print(step('first', 0) < step('second', 1) < step('third', 2) < step('fourth', 3))
+print(1 in (1, 2) == (1, 2) is not None)
+print(None is None is not reader)
+
+
+class Values:
+    def __init__(self, items: list[int]):
+        self.items = items
+
+    def __getitem__(self, index: int) -> int:
+        print(index)
+        return self.items[index]
+
+
+def equal_subscripts(values: object, enabled: bool) -> bool:
+    return enabled and values[0] == values[1] == values[2] == values[3]
+
+
+def ordered_subscripts(values: object) -> bool:
+    if values[0] < values[1] < values[2] < values[3]:
+        return True
+    return False
+
+
+print(equal_subscripts(Values([1, 1, 1, 1]), False))
+print(equal_subscripts(Values([1, 2, 1, 1]), True))
+print(equal_subscripts(Values([1, 1, 2, 1]), True))
+print(equal_subscripts(Values([1, 1, 1, 1]), True))
+print(ordered_subscripts(Values([1, 2, 2, 4])))
+print(ordered_subscripts(Values([1, 2, 3, 4])))
+
+
+class Rank:
+    def __init__(self, value: int):
+        self.value = value
+
+    def __lt__(self, other: object) -> list[int]:
+        print('compare', self.value)
+        return [self.value] if self.value < other.value else []
+
+
+def compare_ranks(a: object, b: object, c: object, d: object):
+    return a < b < c < d
+
+
+print(compare_ranks(Rank(1), Rank(2), Rank(3), Rank(4)))
+print(compare_ranks(Rank(1), Rank(2), Rank(0), Rank(4)))

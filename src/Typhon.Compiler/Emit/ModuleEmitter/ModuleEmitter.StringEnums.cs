@@ -28,12 +28,27 @@ namespace Typhon.Compiler.Emit
         bool IsObjectIntegerEnum(ClassDef cls) => IsIntegerFlag(cls) ||
             cls.ExportsIntegerEnumMembers || cls.Decorators.Any(Decorators.IsIntegerEnumDecorator) || IsIntEnum(cls) && cls.Body.Any(statement => statement is FunctionDef);
 
-        static bool IsPlainObjectEnum(ClassDef cls) => cls.Decorators.Any(Decorators.IsPlainEnumDecorator);
+        bool IsPlainObjectEnum(ClassDef cls) => cls.Decorators.Any(Decorators.IsPlainEnumDecorator) || TupleEnumBasis(cls) != null;
+
+        Expr TupleEnumBasis(ClassDef definition)
+        {
+            var bases = definition.BasesBeforeFlattening ?? definition.Bases;
+            if (bases.Count != 2) return null;
+            var resolver = ClassDeclarationResolver(definition);
+            if (!resolver.ResolveBase(bases[0], out var tuple, out _) || tuple == null ||
+                resolver.NamedTupleDeclaration(tuple) == null) return null;
+            return IsManagedEnumBase(definition, bases[1], "Enum") ||
+                resolver.ResolveBase(bases[1], out var source, out string metadata) && source == null && metadata == "Typhon.Stdlib.enum+Enum"
+                ? bases[0] : null;
+        }
 
         void EmitObjectEnum(ClassDef cls, bool integer)
         {
             string name = Esc(cls.Name);
             bool plain = IsPlainObjectEnum(cls);
+            var tupleBasis = plain ? TupleEnumBasis(cls) : null;
+            string tupleType = tupleBasis != null ? MapType(tupleBasis, cls, preserveClrType: true) : null;
+            var body = tupleBasis != null ? cls.Body.Where(statement => !statement.IsFlattenedClassMember).ToList() : cls.Body;
             string runtimeClass = integer ? "PyIntegerEnum" : plain ? "PyPlainEnum" : "PyStrEnum";
             bool flags = IsIntegerFlag(cls);
             string keyType = integer ? "global::System.Numerics.BigInteger" : "string";
@@ -42,15 +57,31 @@ namespace Typhon.Compiler.Emit
             _cls = context;
             EmitDocComment(cls.Body);
             LineDirective(cls);
-            EmitClassSource(cls.Body, cls.Line);
+            EmitClassSource(cls.Body, cls.FirstSourceLine);
             EmitConditionalModuleClassAttribute(cls);
             EmitAttributes(cls.Decorators, decorator => decorator is "_simple_enum" or "enum._simple_enum");
-            string repr = !cls.ExportsIntegerEnumMembers && cls.Body.OfType<FunctionDef>().Any(method => method.Name == "__repr__")
+            bool customRepr = body.OfType<FunctionDef>().Any(method => method.Name == "__repr__");
+            bool customString = body.OfType<FunctionDef>().Any(method => method.Name == "__str__");
+            string repr = (tupleType != null || !cls.ExportsIntegerEnumMembers && customRepr)
                 ? ", global::Typhon.Runtime.IPyRepr" : "";
-            string baseType = flags ? "global::Typhon.Stdlib.@enum.IntFlag" : plain ? "global::Typhon.Stdlib.@enum.Enum" : $"global::Typhon.Runtime.{runtimeClass}";
+            string baseType = tupleType != null ? $"{tupleType}, global::Typhon.Runtime.IPyPlainEnum" :
+                flags ? "global::Typhon.Stdlib.@enum.IntFlag" : plain ? "global::Typhon.Stdlib.@enum.Enum" : $"global::Typhon.Runtime.{runtimeClass}";
             _w.Line($"internal partial class {name} : {baseType}{repr}");
             _w.Open();
-            _w.Line($"private {name}() {{ }}");
+            var bases = tupleBasis == null ? new List<Expr>() : new List<Expr> { tupleBasis };
+            if (tupleBasis == null) _w.Line($"private {name}() {{ }}");
+            else
+            {
+                EmitInheritedConstructors(context, bases);
+                _w.Line("public object? _value_;");
+                _w.Line("public string _name_ = \"\";");
+                _w.Line("public dynamic? value => _value_;");
+                _w.Line("public string name => _name_;");
+                string qualifiedName = $"{CsString(cls.Name + ".")} + name";
+                if (!customString) _w.Line($"public override string ToString() => {qualifiedName};");
+                if (!customRepr)
+                    _w.Line($"public new string __repr__() => global::Typhon.Runtime.PyPlainEnum.Representation({qualifiedName}, value);");
+            }
             if (cls.ExportsIntegerEnumMembers)
                 _w.Line($"protected override string EnumReprModule => {CsString(PythonModuleName.Split('.').Last())};");
             if (plain) _w.Line($"internal static readonly List<{name}> __unique_members = new();");
@@ -62,22 +93,26 @@ namespace Typhon.Compiler.Emit
             foreach (var field in CollectImplicitFields(cls))
             {
                 string member = field.Key;
-                if (_r.HasMember(runtimeBase, member)) continue;
+                if (_r.HasMember(runtimeBase, member) || tupleType != null && IsNamedTupleField(cls, member)) continue;
                 string type = field.Value.Key == null ? "dynamic" : MapType(field.Value.Key, field.Value.Value.Key);
                 context.Members.Add(member);
                 context.FieldTypes[member] = type;
                 _w.Line($"{SurfaceVisibility(Visibility(member, false), type)} {type} {Esc(member)};");
             }
 
-            var methods = cls.Body.OfType<FunctionDef>().ToList();
+            var methods = body.OfType<FunctionDef>().ToList();
             RecordPropertyTypes(methods, context);
             var propertyDone = new HashSet<string>();
-            var bases = new List<Expr>();
             var allocator = methods.FirstOrDefault(method => method.Name == "__new__");
             if (allocator != null) EmitFunction(allocator, isModuleLevel: false);
             _w.Line($"private static {name} __enum_member(string name, object?[] args)");
             _w.Open();
-            if (allocator == null)
+            if (allocator == null && tupleType != null)
+            {
+                _w.Line($"var member = ({name}){Rt("ConstructClr")}(typeof({name}), args)!;");
+                _w.Line($"member._value_ = {Rt("__invoke")}(typeof({tupleType}), args);");
+            }
+            else if (allocator == null)
             {
                 string value = integer || plain ? "args[0]" : "(string)args[0]!";
                 _w.Line($"var member = ({name})global::Typhon.Runtime.{runtimeClass}.Allocate(typeof({name}), {value});");
@@ -98,13 +133,13 @@ namespace Typhon.Compiler.Emit
             _w.Close();
 
             var reads = new HashSet<string>();
-            foreach (var assignment in cls.Body.OfType<AssignStmt>())
+            foreach (var assignment in body.OfType<AssignStmt>())
                 AstWalker.VisitAll(assignment.Value, node =>
                 {
                     if (node is NameExpr read) reads.Add(read.Id);
                 }, includeNestedScopes: false);
             var originalArguments = new Dictionary<string, string>();
-            foreach (var statement in cls.Body)
+            foreach (var statement in body)
             {
                 if (statement is AssignStmt { Targets.Count: 1 } assignment && assignment.Targets[0] is NameExpr field)
                 {
@@ -121,7 +156,7 @@ namespace Typhon.Compiler.Emit
                     }
                     else
                     {
-                        var tuple = (!plain || allocator != null) ? assignment.Value as TupleExpr : null;
+                        var tuple = (!plain || allocator != null || tupleBasis != null) ? assignment.Value as TupleExpr : null;
                         IEnumerable<Expr> values = tuple != null ? tuple.Elts : new[] { assignment.Value };
                         bool previousInitializer = _classFieldInitializer;
                         _classFieldInitializer = true;
@@ -162,7 +197,7 @@ namespace Typhon.Compiler.Emit
                     Unsupported(statement, $"this statement in a simple {(integer ? "IntEnum" : plain ? "Enum" : "StrEnum")}");
             }
             if (flags) _w.Line("internal static readonly bool __enum_complete = true;");
-            EmitDunderBridges(cls.Body.OfType<FunctionDef>().Where(method => method != allocator).ToList(), context);
+            EmitDunderBridges(methods.Where(method => method != allocator).ToList(), context);
             if (Obs != null) Obs.Fields[TypeInference.ClassKey(_m, cls.Name)] = context.FieldTypes;
             _w.Close();
             _cls = previous;

@@ -64,7 +64,9 @@ namespace Typhon.Stdlib
             public dynamic? @default { get; } = ReferenceEquals(@default, Type.Missing) ? empty : @default;
             public dynamic? annotation { get; } = ReferenceEquals(annotation, Type.Missing) ? empty : annotation;
 
-            public override string ToString()
+            public override string ToString() => Format(quoteAnnotationStrings: true);
+
+            internal string Format(bool quoteAnnotationStrings)
             {
                 string text = kind switch
                 {
@@ -72,7 +74,8 @@ namespace Typhon.Stdlib
                     _ParameterKind.VAR_KEYWORD => "**" + name,
                     _ => name,
                 };
-                if (!ReferenceEquals((object?)annotation, empty)) text += ": " + FormatAnnotation((object?)annotation);
+                if (!ReferenceEquals((object?)annotation, empty))
+                    text += ": " + FormatAnnotation((object?)annotation, quoteAnnotationStrings);
                 if (!ReferenceEquals((object?)@default, empty))
                     text += (ReferenceEquals((object?)annotation, empty) ? "=" : " = ") + Builtins.repr((object?)@default);
                 return text;
@@ -103,8 +106,21 @@ namespace Typhon.Stdlib
                 _parameters[0].kind is _ParameterKind.POSITIONAL_ONLY or _ParameterKind.POSITIONAL_OR_KEYWORD
                     ? new(_parameters[1..], (object?)return_annotation) : this;
 
-            public override string ToString()
+            public Signature replace([PyKeywordOnly, Optional] object? parameters,
+                [PyKeywordOnly, Optional] object? return_annotation)
             {
+                IEnumerable<Parameter>? selected = ReferenceEquals(parameters, Type.Missing) ? _parameters :
+                    parameters == null ? null : Builtins.__iter_dyn(parameters).Cast<Parameter>();
+                object? annotation = ReferenceEquals(return_annotation, Type.Missing) ? (object?)this.return_annotation : return_annotation;
+                return new Signature(selected, annotation);
+            }
+
+            public override string ToString() => format(null, true);
+
+            public string format([PyKeywordOnly, Optional, DefaultParameterValue(null)] object? max_width,
+                [PyKeywordOnly, Optional, DefaultParameterValue(true)] object? quote_annotation_strings)
+            {
+                bool quote = Builtins.truthy(quote_annotation_strings);
                 var parts = new List<string>();
                 bool star = false;
                 for (int i = 0; i < _parameters.Length; i++)
@@ -116,19 +132,24 @@ namespace Typhon.Stdlib
                         parts.Add("*");
                         star = true;
                     }
-                    parts.Add(parameter.ToString());
+                    parts.Add(parameter.Format(quote));
                     if (parameter.kind == _ParameterKind.POSITIONAL_ONLY &&
                         (i + 1 == _parameters.Length || _parameters[i + 1].kind != _ParameterKind.POSITIONAL_ONLY)) parts.Add("/");
                 }
-                return $"({string.Join(", ", parts)})" +
-                    (ReferenceEquals((object?)return_annotation, empty) ? "" : " -> " + FormatAnnotation((object?)return_annotation));
+                string rendered = $"({string.Join(", ", parts)})";
+                if (max_width != null && Builtins.truthy((object?)Builtins.gt(Builtins.len(rendered), max_width)))
+                    rendered = "(\n    " + string.Join(",\n    ", parts) + "\n)";
+                if (!ReferenceEquals((object?)return_annotation, empty))
+                    rendered += " -> " + FormatAnnotation((object?)return_annotation, quote);
+                return rendered;
             }
 
             public string __repr__() => $"<Signature {this}>";
         }
 
-        internal static string FormatAnnotation(object? annotation) => annotation switch
+        internal static string FormatAnnotation(object? annotation, bool quoteAnnotationStrings = true) => annotation switch
         {
+            string value when !quoteAnnotationStrings => value,
             Type type when type == typeof(object) => "object",
             Type type when type == typeof(Type) => "type",
             Type type when type == typeof(System.Runtime.CompilerServices.ITuple) => "tuple",

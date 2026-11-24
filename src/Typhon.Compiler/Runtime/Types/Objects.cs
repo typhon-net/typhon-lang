@@ -17,6 +17,7 @@ namespace Typhon.Runtime
     using System.Globalization;
     using System.Linq;
     using System.Numerics;
+    using System.Reflection;
     using System.Runtime.CompilerServices;
     using System.Text;
     using System.Threading.Tasks;
@@ -67,7 +68,73 @@ namespace Typhon.Runtime
         public int GetHashCode(object? o) => Builtins.KeyHash(o);
     }
 
-    internal sealed class PyLateAttributeAttribute : Attribute { }
+    internal class PyLateAttributeAttribute : Attribute { }
+
+    [AttributeUsage(AttributeTargets.Property, Inherited = false)]
+    internal sealed class PyInstanceSlotAttribute(string storage, int order) : PyLateAttributeAttribute
+    {
+        internal int Order { get; } = order;
+
+        FieldInfo Storage(PropertyInfo property) => property.DeclaringType!.GetField(storage,
+            BindingFlags.DeclaredOnly | BindingFlags.Instance | BindingFlags.NonPublic)!;
+
+        internal bool TryRead(PropertyInfo property, object instance, out object? value)
+        {
+            var (assigned, stored) = ((bool Assigned, object? Value))Storage(property).GetValue(instance)!;
+            value = stored;
+            return assigned;
+        }
+
+        internal bool TryDelete(PropertyInfo property, object instance)
+        {
+            if (!TryRead(property, instance, out _)) return false;
+            Storage(property).SetValue(instance, default((bool, object?)));
+            return true;
+        }
+    }
+
+    internal static class PyInstanceSlots
+    {
+        internal static bool HasNoInstanceDict(Type type) =>
+            type.IsDefined(typeof(PySourceAttribute), false) && !AllowsInstanceDict(type);
+
+        internal static IEnumerable<PropertyInfo> InStateOrder(Type type)
+        {
+            for (Type? owner = type; owner != null; owner = owner.BaseType)
+                foreach (var property in owner.GetProperties(BindingFlags.DeclaredOnly | BindingFlags.Instance |
+                    BindingFlags.Public | BindingFlags.NonPublic)
+                    .Select(property => (Property: property, Slot: property.GetCustomAttribute<PyInstanceSlotAttribute>()))
+                    .Where(entry => entry.Slot != null).OrderBy(entry => entry.Slot!.Order))
+                    yield return property.Property;
+        }
+
+        internal static string StateName(PropertyInfo property)
+        {
+            string name = property.Name;
+            if (name.StartsWith("__", StringComparison.Ordinal) && !name.EndsWith("__", StringComparison.Ordinal))
+            {
+                string owner = Builtins.PyTypeName(property.DeclaringType!).TrimStart('_');
+                if (owner.Length != 0) return "_" + owner + name;
+            }
+            return name;
+        }
+
+        internal static bool AllowsInstanceDict(Type type)
+        {
+            // A subclass with no __slots__ declaration acquires its own dictionary. A slotted
+            // subclass keeps the dictionary if a base has one or if its slots include __dict__.
+            for (Type? current = type; current != null; current = current.BaseType)
+            {
+                if (current.Assembly == typeof(object).Assembly || current.Namespace?.StartsWith("System.", StringComparison.Ordinal) == true ||
+                    current == typeof(PyBytes) || current == typeof(PyByteArray)) return false;
+                var slots = current.GetField("__slots__", BindingFlags.DeclaredOnly | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+                if (slots == null) return true;
+                var values = slots.GetValue(null);
+                if (values is string name ? name == "__dict__" : Builtins.__iter_dyn(values).Any(slot => slot is string key && key == "__dict__")) return true;
+            }
+            return false;
+        }
+    }
 
     /// <summary>
     /// obj.__dict__ / vars(obj): a live dict view of an object's attributes (its properties and fields), so
@@ -75,6 +142,10 @@ namespace Typhon.Runtime
     /// </summary>
     internal sealed class PyAttrDict : IDictionary<string, object?>, IDictionary, IPyRepr
     {
+        static readonly ConditionalWeakTable<object, PyAttrDict> Views = new();
+
+        internal static PyAttrDict Of(object instance) => Views.GetValue(instance, value => new PyAttrDict(value));
+
         static readonly ConditionalWeakTable<object, OrderedDictionary<string, object?>> Extra = new ConditionalWeakTable<object, OrderedDictionary<string, object?>>();
         readonly object _o;
         readonly PyModule? _module;
@@ -91,8 +162,16 @@ namespace Typhon.Runtime
             for (var t = o.GetType(); t != null && t != typeof(object) && !(t.Namespace?.StartsWith("System") ?? false); t = t.BaseType) chain.Add(t);
             chain.Reverse();
             foreach (var t in chain)
-                foreach (var p in t.GetProperties(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.DeclaredOnly))
-                    if (p.GetIndexParameters().Length == 0 && p.CanRead && p.CanWrite && !p.IsDefined(typeof(PyLateAttributeAttribute), false) && !p.IsDefined(typeof(PyDescriptorAttribute), false) && seen.Add(p.Name)) _props.Add(p);
+            {
+                var flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly;
+                // Python instance attributes remain in its dictionary when their CLR access is restricted.
+                if (t.IsDefined(typeof(PySourceAttribute), false)) flags |= BindingFlags.NonPublic;
+                foreach (var p in t.GetProperties(flags))
+                    if (p.GetIndexParameters().Length == 0 && p.CanRead && p.CanWrite &&
+                        !p.IsDefined(typeof(PyLateAttributeAttribute), false) &&
+                        !p.IsDefined(typeof(PyDescriptorAttribute), false) && seen.Add(p.Name))
+                        _props.Add(p);
+            }
         }
         OrderedDictionary<string, object?> Extras => Extra.GetValue(_o, _ => new OrderedDictionary<string, object?>());
         /// <summary>An attribute set on the object that its class does not declare (setattr, __dict__[k] = v).</summary>
@@ -103,6 +182,14 @@ namespace Typhon.Runtime
         }
         public static void SetExtra(object o, string name, object? value) =>
             Extra.GetValue(o, _ => new OrderedDictionary<string, object?>())[name] = value;
+        internal static void CopyExtras(object source, object target, Func<object?, object?>? copyValue = null)
+        {
+            if (!Extra.TryGetValue(source, out var attributes)) return;
+            var copy = Extra.GetValue(target, _ => new OrderedDictionary<string, object?>());
+            foreach (var attribute in attributes)
+                copy[attribute.Key] = copyValue == null ? attribute.Value : copyValue(attribute.Value);
+        }
+
         internal static bool RemoveExtra(object o, string name) => Extra.TryGetValue(o, out var d) && d.Remove(name);
         System.Reflection.PropertyInfo? Prop(string k) => _props.Find(p => p.Name == k);
 

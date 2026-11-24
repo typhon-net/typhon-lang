@@ -1,0 +1,12 @@
+class Rows(list):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+
+def join(left: Rows, right: Rows):
+    parts = list(left)
+    newparts = list(right)
+    return newparts + parts
+
+
+print(join(Rows([1, 'two']), Rows([3, 'four'])))

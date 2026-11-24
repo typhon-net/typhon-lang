@@ -1,0 +1,32 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+class First:
+    pass
+
+
+class Second:
+    pass
+
+
+class Joined(First, Second):
+    pass
+
+
+print(tuple(base.__name__ for base in Joined.__bases__))
+
+
+class Leaf(Joined):
+    pass
+
+
+class GenericRoot[T]:
+    pass
+
+
+class GenericJoined(GenericRoot[int], Second):
+    pass
+
+
+print([cls.__name__ for cls in Leaf.__mro__])
+print(GenericJoined.__bases__[0] is GenericRoot, GenericJoined.__bases__[1] is Second)

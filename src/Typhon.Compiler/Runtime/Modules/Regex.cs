@@ -391,6 +391,12 @@ namespace Typhon.Stdlib
             internal BytesMatch(Match match, BytesPattern re, PyBytes text) { _match = match; this.re = re; @string = text; }
             public PyBytes group() => PyBytes.Latin1(_match.group());
             public PyBytes? group(object? index) => RegexBytes(_match.group(index));
+
+            public PyTuple<PyBytes?> groups(PyBytes? @default = null) =>
+                _match.CollectGroups(value => RegexBytes(value) ?? @default);
+            public PyTuple<dynamic?> groups(object? @default) =>
+                _match.CollectGroups<object?>(value => RegexBytes(value) ?? @default);
+
             public OrderedDictionary<string, dynamic?> groupdict(object? @default = null) =>
                 FromNamedGroups(re.groupindex.Keys, group, @default);
             public PyBytes? this[object? index] => group(index);
@@ -441,8 +447,13 @@ namespace Typhon.Stdlib
                 new PyTuple<string?>(new[] { g1, g2 }.Concat(more).Select(group).ToArray());
             public string? this[object? g] => group(g);
 
+            internal PyTuple<T> CollectGroups<T>(Func<string?, T> convert) =>
+                new PyTuple<T>(Enumerable.Range(1, (int)re.groups).Select(i => convert(group(i))));
+
             public PyTuple<string?> groups(string? @default = null) =>
-                new PyTuple<string?>(Enumerable.Range(1, (int)re.groups).Select(i => _m.Groups[i].Success ? _m.Groups[i].Value : @default).ToArray());
+                CollectGroups(value => value ?? @default);
+            public PyTuple<dynamic?> groups(object? @default) =>
+                CollectGroups<object?>(value => value ?? @default);
             public OrderedDictionary<string, dynamic?> groupdict(object? @default = null) =>
                 FromNamedGroups(re.groupindex.Keys, name => group(name), @default);
 

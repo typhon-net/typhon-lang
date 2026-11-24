@@ -215,15 +215,20 @@ namespace Typhon.Compiler.Emit
                     string call = StripParens(EmitExpr(e.Value));
                     // A translated call can be a C# test expression, which still runs for side effects.
                     if (call.StartsWith("(") && InferType(e.Value) == "bool")
-                        call = $"var {NewTmp("ignored")} = {call}";
-                    _w.Line(call + ";");
+                        EmitDiscardedValue(call);
+                    else
+                        _w.Line(call + ";");
                     _statementCall = null;
                     return;
                 default:
-                    _w.Line($"_ = {EmitExpr(e.Value)};");
+                    EmitDiscardedValue(EmitExpr(e.Value));
                     return;
             }
         }
+
+        // A generated local keeps the evaluation independent of any Python binding named "_".
+        void EmitDiscardedValue(string value) =>
+            _w.Line($"{(value == "null" ? "object?" : "var")} {NewTmp("ignored")} = {value};");
 
         static string StripParens(string code)
         {
@@ -441,13 +446,16 @@ namespace Typhon.Compiler.Emit
 
         void EmitIf(IfStmt i, bool isElif)
         {
-            // A runtime class tuple can select a representation other than the inferred parameter type.
+            // A type test can guard reads of another representation before the parameter is reassigned.
             if (Obs != null && !_m.IsGdScript &&
                 i.Test is CallExpr { Func: NameExpr { Id: "isinstance" }, Args.Count: 2 } check &&
-                !IsShadowed("isinstance") && !IsTypeish(check.Args[1].Value) &&
+                !IsShadowed("isinstance") &&
                 check.Args.All(arg => arg.Name == null && !arg.Star && !arg.DoubleStar) &&
                 check.Args[0].Value is NameExpr parameter && _scope?.Params.Contains(parameter.Id) == true &&
-                !IsUnknownType(KnownType(parameter.Id)) && AssignsName(i.Body, parameter.Id))
+                KnownType(parameter.Id) is string currentType && !IsUnknownType(currentType) &&
+                (!IsTypeish(check.Args[1].Value) || _scope.InferredParameters?.Contains(parameter.Id) == true &&
+                    IncompatibleScalarAndClass(currentType, MapType(check.Args[1].Value, i.Test))) &&
+                AssignsName(i.Body, parameter.Id))
                 Obs.AddConflict(_scopeKey + "|" + parameter.Id, "dynamic");
             // A failing type test short-circuits the remaining operands of an and expression.
             Expr evaluatedTest = i.Test;
@@ -464,7 +472,7 @@ namespace Typhon.Compiler.Emit
                     _w.Line("else");
                     _w.Open();
                 }
-                _w.Line($"_ = {Cond(evaluatedTest)};");
+                EmitDiscardedValue(Cond(evaluatedTest));
                 EmitBlock(matches ? i.Body : i.OrElse);
                 if (isElif) _w.Close();
                 return;
@@ -560,7 +568,8 @@ namespace Typhon.Compiler.Emit
             if (MayHaveVirtualSubclasses(clsMeta, pyClass)) return false;
             string current = KnownType(n.Id);
             type = MapType(cls, test);
-            if (type == null || type == "dynamic" || current == type) return false;
+            if (type == null || type == "dynamic" || current == type ||
+                !_m.IsGdScript && pyClass != null && (IsUnknownType(current) || current is "object" or "object?")) return false;
             name = n;
             return true;
         }
@@ -607,7 +616,7 @@ namespace Typhon.Compiler.Emit
                 else if (t is NameExpr name && (_m.ReboundFunctions.Contains(name.Id) || _m.ReboundClasses.Contains(name.Id)) && !IsLocal(name.Id))
                 {
                     string binding = EmitName(name);
-                    _w.Line($"_ = {binding};");
+                    EmitDiscardedValue(binding);
                     _w.Line($"{binding} = global::Typhon.Runtime.PyModule.Unbound;");
                 }
                 else if (t is NameExpr className && LateClassSlot(className.Id) is string storage)
@@ -705,10 +714,9 @@ namespace Typhon.Compiler.Emit
             {
                 LineDirective(h);
                 string name = h.Name;
-                string csName = name ?? NewTmp("e");
-                bool renamed = false;
+                string csName = NewTmp("e");
+                bool renamed = name != null;
                 bool mayCatchAdditionalBase = false;
-                if (name != null && (IsLocal(name) || _renames.ContainsKey(name))) { csName = NewTmp("e"); renamed = true; }
                 if (h.Type == null) _w.Line($"catch (Exception {Esc(csName)})");
                 else
                 {

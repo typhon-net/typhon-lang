@@ -1,0 +1,19 @@
+import re
+
+match = re.match(r"(\w+)(?::(\d+))?", "smtp")
+print(match.groups())
+print(match.groups("-"))
+print(match.groups(0))
+print(match.groups(default=False))
+print(re.match(r"(\w+)(?::(\d+))?", "smtp:25").groups(0))
+
+print("auth " + match.groups(0)[0])
+marker = []
+print(match.groups(marker)[1] is marker)
+
+binary = re.fullmatch(rb"(\w+)(?::(\d+))?", b"smtp")
+print(binary.groups())
+print(binary.groups(b"-"))
+print(binary.groups(0))
+print(binary.groups(default=False))
+print(binary.groups(marker)[1] is marker)

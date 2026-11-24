@@ -1,0 +1,66 @@
+#!/usr/bin/env python3
+
+#
+# Module heading
+# With a tab	next.
+
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import inspect
+import sys
+
+
+#
+# Function heading
+# More detail
+#
+def example():
+    return None
+
+
+# Class heading
+class Sample:
+    # Method heading
+    def action(self):
+        return None
+
+
+# A blank line separates this comment.
+
+def separated():
+    return None
+
+
+print(repr(inspect.getcomments(sys.modules[__name__])))
+print(repr(inspect.getcomments(example)))
+print(repr(inspect.getcomments(Sample)))
+print(repr(inspect.getcomments(Sample().action)))
+print(inspect.getcomments(separated) is None)
+print(inspect.getcomments(len) is None)
+
+
+def identity(fn):
+    return fn
+
+
+# Decorated function heading.
+@identity
+def observed():
+    return 7
+
+
+# Decorated class heading.
+@(
+    identity
+)
+class Observed:
+    # Static method heading.
+    @staticmethod
+    def value() -> int:
+        return 2
+
+
+print(repr(inspect.getcomments(observed)))
+print(repr(inspect.getcomments(Observed)))
+print(repr(inspect.getcomments(Observed.value)))

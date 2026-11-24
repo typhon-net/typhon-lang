@@ -1,0 +1,47 @@
+class Parent:
+    def option(self, key):
+        return str(key)
+
+    def configure(self, value=None, **options):
+        return value, options
+
+    config = configure
+
+    def binding(self, event=None, callback=None):
+        return event, callback
+
+
+class Panel(Parent):
+    pass
+
+
+class Recorder:
+    def gather(self, *args, **kwargs):
+        return args, kwargs
+
+
+class Wrapper(Panel):
+    def __init__(self):
+        self.recorder = Recorder()
+
+    def option(self, *args, **kwargs):
+        return self.recorder.gather(*args, **kwargs)
+
+    def config(self, *args, **kwargs):
+        return self.recorder.gather(*args, **kwargs)
+
+    def binding(self, *args, **kwargs):
+        return self.recorder.gather(*args, **kwargs)
+
+
+def through_parent(view: Parent) -> None:
+    print(view.option('item'))
+    print(view.option(key='item'))
+    print(view.config())
+    print(view.config(7, open=True))
+    print(view.binding())
+    print(view.binding(event=None, callback='run'))
+
+
+widget = Wrapper()
+through_parent(widget)

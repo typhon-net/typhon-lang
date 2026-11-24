@@ -1,0 +1,35 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+from io import BytesIO
+import sys
+
+
+sys.modules.pop("lzma", None)
+sys.modules["_lzma"] = None
+try:
+    import _lzma
+except ModuleNotFoundError as error:
+    print(error.name)
+
+try:
+    from lzma import LZMAFile
+except ImportError as error:
+    print(error.name, "unavailable")
+
+import tarfile
+
+stream = BytesIO()
+with tarfile.open(fileobj=stream, mode="w") as archive:
+    member = tarfile.TarInfo("data.txt")
+    member.size = 4
+    archive.addfile(member, BytesIO(b"data"))
+stream.seek(0)
+with tarfile.open(fileobj=stream, mode="r") as archive:
+    print(archive.getnames(), archive.extractfile("data.txt").read())
+print(stream.closed)
+stream.seek(0)
+try:
+    tarfile.open(fileobj=stream, mode="r:xz")
+except tarfile.CompressionError as error:
+    print(str(error))

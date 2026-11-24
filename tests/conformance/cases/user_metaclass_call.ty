@@ -1,0 +1,15 @@
+from typing import Any
+
+class Callback(type):
+    def __call__(cls, value, *, prefix="default"):
+        return cls.__name__, prefix, value
+
+class Marker(metaclass=Callback):
+    pass
+
+def invoke(target: Any):
+    return target(7, prefix="late")
+
+print(Marker(8))
+print(Marker(9, prefix="early"))
+print(invoke(Marker))

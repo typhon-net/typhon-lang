@@ -1,0 +1,30 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+from collections import Counter
+from typing import Any
+from urllib.parse import urlparse, urlsplit
+
+
+def copy_value(value: Any):
+    return value.copy()
+
+
+def convert(value: Any):
+    return value.encode(encoding="ascii").decode()
+
+
+def append_count(value: Any):
+    value.update(["apple"])
+
+
+print(urlparse("https://example.test/p;q?x#y").encode().decode().path)
+print(convert(urlsplit("https://example.test/p?q#f")).geturl())
+urlsplit("https://example.test/p").encode(encoding="ascii")
+print(urlparse("https://example.test/p").count(""))
+print(convert("plain text"))
+
+counts = Counter(["apple"])
+append_count(counts)
+print(counts["apple"])
+print(type(copy_value(counts)).__name__, type(copy_value({"apple": 1})).__name__)

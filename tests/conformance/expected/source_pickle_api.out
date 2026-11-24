@@ -3,3 +3,19 @@
 4 True
 5 True
 1 b'buffer'
+0 Record 17 True Data b'data' b'data'
+1 Record 17 True Data b'data' b'data'
+2 Record 17 True Data b'data' b'data'
+Slotted slot False
+3 Record 17 True Data b'data' b'data'
+Slotted slot False
+4 Record 17 True Data b'data' b'data'
+Slotted slot False
+5 Record 17 True Data b'data' b'data'
+Slotted slot False
+0 KeywordRecord value 12
+1 KeywordRecord value 12
+2 KeywordRecord value 12
+3 KeywordRecord value 12
+4 KeywordRecord value 12
+5 KeywordRecord value 12

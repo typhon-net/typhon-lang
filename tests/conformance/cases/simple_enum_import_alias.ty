@@ -1,0 +1,32 @@
+from enum import IntEnum as Integer, _simple_enum as decorate_integer
+import enum as choices
+
+
+@decorate_integer(Integer)
+class Mode:
+    first = 1
+    second = 2
+
+
+@choices._simple_enum(choices.IntEnum)
+class Level:
+    default = 5
+
+
+print(Mode.first.name, int(Mode.second), Mode(2) is Mode.second)
+print([member.name for member in Mode])
+print(Level.default.name, int(Level.default))
+
+
+def unchanged(description):
+    def decorator(cls):
+        return cls
+    return decorator
+
+
+@unchanged('ordinary decorator')
+class Ordinary:
+    pass
+
+
+print(Ordinary.__name__)

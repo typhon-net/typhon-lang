@@ -216,10 +216,13 @@ namespace Typhon.Compiler.Syntax
                 decorators.Add(ParseTest());
                 ExpectNewline();
             }
-            if (IsKw("def")) return ParseFuncDef(decorators, false);
-            if (IsKw("async")) { _i++; return ParseFuncDef(decorators, true); }
-            if (IsKw("class")) return ParseClassDef(decorators);
-            throw Err("expected 'def' or 'class' after decorator", needsMoreInput: AtEndOfInput);
+            Stmt decorated;
+            bool isAsync = AcceptKw("async");
+            if (isAsync || IsKw("def")) decorated = ParseFuncDef(decorators, isAsync);
+            else if (IsKw("class")) decorated = ParseClassDef(decorators);
+            else throw Err("expected 'def' or 'class' after decorator", needsMoreInput: AtEndOfInput);
+            decorated.DecoratorLine = decorators[0].Line;
+            return decorated;
         }
 
         List<TypeParam> ParseTypeParams()

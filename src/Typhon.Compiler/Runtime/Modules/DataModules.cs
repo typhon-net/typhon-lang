@@ -419,7 +419,9 @@ namespace Typhon.Stdlib
                 while (en.MoveNext()) n[en.Key] = en.Value;
                 return n;
             }
-            return Clone.Invoke(o, null); // a Typhon object: a new object with the same attribute values
+            var copy = Clone.Invoke(o, null)!;
+            PyAttrDict.CopyExtras(o, copy);
+            return copy;
         }
 
         static object? Deep(object? o, IDictionary<object, object?> memo)
@@ -478,6 +480,7 @@ namespace Typhon.Stdlib
             for (var k = t; k != null && k != typeof(object); k = k.BaseType)
                 foreach (var f in k.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
                     f.SetValue(copy, Deep(f.GetValue(o), memo));
+            PyAttrDict.CopyExtras(o, copy, value => Deep(value, memo));
             return copy;
         }
     }

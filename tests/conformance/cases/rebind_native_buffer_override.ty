@@ -1,0 +1,15 @@
+import io
+
+
+class Adapter(io.BufferedIOBase):
+    def readinto(self, buffer):
+        if len(buffer) > 2:
+            buffer = memoryview(buffer)[:2]
+        buffer[0] = ord('X')
+        buffer[1] = ord('Y')
+        return len(buffer)
+
+
+data = bytearray(b'abcd')
+print(Adapter().readinto(data))
+print(data)

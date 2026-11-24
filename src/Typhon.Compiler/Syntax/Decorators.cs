@@ -63,6 +63,35 @@ namespace Typhon.Compiler.Syntax
             Name(decorator.Func) is "_simple_enum" or "enum._simple_enum"
                 ? Name(decorator.Args[0].Value) : null;
 
+        static void ResolveSimpleEnumAliases(ClassDef definition, ModuleAst module)
+        {
+            foreach (var expression in definition.Decorators)
+            {
+                if (expression is not CallExpr { Args.Count: 1 } call) continue;
+                if (OriginalName(call.Func) is not ("_simple_enum" or "enum._simple_enum")) continue;
+                string enumBase = OriginalName(call.Args[0].Value);
+                if (enumBase is not ("Enum" or "enum.Enum" or "IntEnum" or "enum.IntEnum" or "StrEnum" or "enum.StrEnum"))
+                    continue;
+                call.Func = new NameExpr { Id = "_simple_enum", Line = call.Func.Line, Col = call.Func.Col };
+                Expr argument = call.Args[0].Value;
+                call.Args[0].Value = new NameExpr { Id = enumBase.Split('.').Last(), Line = argument.Line, Col = argument.Col };
+            }
+
+            string OriginalName(Expr expression)
+            {
+                if (expression is NameExpr name)
+                    return module.Body.OfType<ImportFromStmt>()
+                        .Where(import => import.Level == 0 && import.Module == "enum")
+                        .SelectMany(import => import.Names)
+                        .FirstOrDefault(binding => (binding.AsName ?? binding.Name) == name.Id)?.Name ?? name.Id;
+                if (expression is AttributeExpr { Target: NameExpr owner } member &&
+                    module.Body.OfType<ImportStmt>().Any(import => import.Names.Any(binding =>
+                        binding.Name == "enum" && (binding.AsName ?? binding.Name) == owner.Id)))
+                    return "enum." + member.Name;
+                return Name(expression);
+            }
+        }
+
         public static bool IsCachedProperty(Expr decorator, ModuleAst module)
         {
             if (decorator is NameExpr name)
@@ -121,6 +150,7 @@ namespace Typhon.Compiler.Syntax
                         break;
                     case ClassDef c:
                     {
+                        ResolveSimpleEnumAliases(c, module);
                         DescriptorAssignments(c, module);
                         if (c.Bases.Any(basis => Name(basis) is "IntEnum" or "enum.IntEnum") &&
                             c.Decorators.RemoveAll(decorator => IsGlobalEnumDecorator(decorator, module)) != 0)

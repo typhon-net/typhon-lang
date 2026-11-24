@@ -1,0 +1,775 @@
+# Source: CPython 3.15.2, Lib/email/utils.py
+# https://github.com/python/cpython/blob/v3.15.2/Lib/email/utils.py
+# The original source follows the license below without changes.
+#
+# A. HISTORY OF THE SOFTWARE
+# ==========================
+#
+# Python was created in the early 1990s by Guido van Rossum at Stichting
+# Mathematisch Centrum (CWI, see https://www.cwi.nl) in the Netherlands
+# as a successor of a language called ABC.  Guido remains Python's
+# principal author, although it includes many contributions from others.
+#
+# In 1995, Guido continued his work on Python at the Corporation for
+# National Research Initiatives (CNRI, see https://www.cnri.reston.va.us)
+# in Reston, Virginia where he released several versions of the
+# software.
+#
+# In May 2000, Guido and the Python core development team moved to
+# BeOpen.com to form the BeOpen PythonLabs team.  In October of the same
+# year, the PythonLabs team moved to Digital Creations, which became
+# Zope Corporation.  In 2001, the Python Software Foundation (PSF, see
+# https://www.python.org/psf/) was formed, a non-profit organization
+# created specifically to own Python-related Intellectual Property.
+# Zope Corporation was a sponsoring member of the PSF.
+#
+# All Python releases are Open Source (see https://opensource.org for
+# the Open Source Definition).  Historically, most, but not all, Python
+# releases have also been GPL-compatible; the table below summarizes
+# the various releases.
+#
+#     Release         Derived     Year        Owner       GPL-
+#                     from                                compatible? (1)
+#
+#     0.9.0 thru 1.2              1991-1995   CWI         yes
+#     1.3 thru 1.5.2  1.2         1995-1999   CNRI        yes
+#     1.6             1.5.2       2000        CNRI        no
+#     2.0             1.6         2000        BeOpen.com  no
+#     1.6.1           1.6         2001        CNRI        yes (2)
+#     2.1             2.0+1.6.1   2001        PSF         no
+#     2.0.1           2.0+1.6.1   2001        PSF         yes
+#     2.1.1           2.1+2.0.1   2001        PSF         yes
+#     2.1.2           2.1.1       2002        PSF         yes
+#     2.1.3           2.1.2       2002        PSF         yes
+#     2.2 and above   2.1.1       2001-now    PSF         yes
+#
+# Footnotes:
+#
+# (1) GPL-compatible doesn't mean that we're distributing Python under
+#     the GPL.  All Python licenses, unlike the GPL, let you distribute
+#     a modified version without making your changes open source.  The
+#     GPL-compatible licenses make it possible to combine Python with
+#     other software that is released under the GPL; the others don't.
+#
+# (2) According to Richard Stallman, 1.6.1 is not GPL-compatible,
+#     because its license has a choice of law clause.  According to
+#     CNRI, however, Stallman's lawyer has told CNRI's lawyer that 1.6.1
+#     is "not incompatible" with the GPL.
+#
+# Thanks to the many outside volunteers who have worked under Guido's
+# direction to make these releases possible.
+#
+#
+# B. TERMS AND CONDITIONS FOR ACCESSING OR OTHERWISE USING PYTHON
+# ===============================================================
+#
+# Python software and documentation are licensed under the
+# Python Software Foundation License Version 2.
+#
+# Starting with Python 3.8.6, examples, recipes, and other code in
+# the documentation are dual licensed under the PSF License Version 2
+# and the Zero-Clause BSD license.
+#
+# Some software incorporated into Python is under different licenses.
+# The licenses are listed with code falling under that license.
+#
+#
+# PYTHON SOFTWARE FOUNDATION LICENSE VERSION 2
+# --------------------------------------------
+#
+# 1. This LICENSE AGREEMENT is between the Python Software Foundation
+# ("PSF"), and the Individual or Organization ("Licensee") accessing and
+# otherwise using this software ("Python") in source or binary form and
+# its associated documentation.
+#
+# 2. Subject to the terms and conditions of this License Agreement, PSF hereby
+# grants Licensee a nonexclusive, royalty-free, world-wide license to reproduce,
+# analyze, test, perform and/or display publicly, prepare derivative works,
+# distribute, and otherwise use Python alone or in any derivative version,
+# provided, however, that PSF's License Agreement and PSF's notice of copyright,
+# i.e., "Copyright (c) 2001 Python Software Foundation; All Rights Reserved"
+# are retained in Python alone or in any derivative version prepared by Licensee.
+#
+# 3. In the event Licensee prepares a derivative work that is based on
+# or incorporates Python or any part thereof, and wants to make
+# the derivative work available to others as provided herein, then
+# Licensee hereby agrees to include in any such work a brief summary of
+# the changes made to Python.
+#
+# 4. PSF is making Python available to Licensee on an "AS IS"
+# basis.  PSF MAKES NO REPRESENTATIONS OR WARRANTIES, EXPRESS OR
+# IMPLIED.  BY WAY OF EXAMPLE, BUT NOT LIMITATION, PSF MAKES NO AND
+# DISCLAIMS ANY REPRESENTATION OR WARRANTY OF MERCHANTABILITY OR FITNESS
+# FOR ANY PARTICULAR PURPOSE OR THAT THE USE OF PYTHON WILL NOT
+# INFRINGE ANY THIRD PARTY RIGHTS.
+#
+# 5. PSF SHALL NOT BE LIABLE TO LICENSEE OR ANY OTHER USERS OF PYTHON
+# FOR ANY INCIDENTAL, SPECIAL, OR CONSEQUENTIAL DAMAGES OR LOSS AS
+# A RESULT OF MODIFYING, DISTRIBUTING, OR OTHERWISE USING PYTHON,
+# OR ANY DERIVATIVE THEREOF, EVEN IF ADVISED OF THE POSSIBILITY THEREOF.
+#
+# 6. This License Agreement will automatically terminate upon a material
+# breach of its terms and conditions.
+#
+# 7. Nothing in this License Agreement shall be deemed to create any
+# relationship of agency, partnership, or joint venture between PSF and
+# Licensee.  This License Agreement does not grant permission to use PSF
+# trademarks or trade name in a trademark sense to endorse or promote
+# products or services of Licensee, or any third party.
+#
+# 8. By copying, installing or otherwise using Python, Licensee
+# agrees to be bound by the terms and conditions of this License
+# Agreement.
+#
+#
+# BEOPEN.COM LICENSE AGREEMENT FOR PYTHON 2.0
+# -------------------------------------------
+#
+# BEOPEN PYTHON OPEN SOURCE LICENSE AGREEMENT VERSION 1
+#
+# 1. This LICENSE AGREEMENT is between BeOpen.com ("BeOpen"), having an
+# office at 160 Saratoga Avenue, Santa Clara, CA 95051, and the
+# Individual or Organization ("Licensee") accessing and otherwise using
+# this software in source or binary form and its associated
+# documentation ("the Software").
+#
+# 2. Subject to the terms and conditions of this BeOpen Python License
+# Agreement, BeOpen hereby grants Licensee a non-exclusive,
+# royalty-free, world-wide license to reproduce, analyze, test, perform
+# and/or display publicly, prepare derivative works, distribute, and
+# otherwise use the Software alone or in any derivative version,
+# provided, however, that the BeOpen Python License is retained in the
+# Software, alone or in any derivative version prepared by Licensee.
+#
+# 3. BeOpen is making the Software available to Licensee on an "AS IS"
+# basis.  BEOPEN MAKES NO REPRESENTATIONS OR WARRANTIES, EXPRESS OR
+# IMPLIED.  BY WAY OF EXAMPLE, BUT NOT LIMITATION, BEOPEN MAKES NO AND
+# DISCLAIMS ANY REPRESENTATION OR WARRANTY OF MERCHANTABILITY OR FITNESS
+# FOR ANY PARTICULAR PURPOSE OR THAT THE USE OF THE SOFTWARE WILL NOT
+# INFRINGE ANY THIRD PARTY RIGHTS.
+#
+# 4. BEOPEN SHALL NOT BE LIABLE TO LICENSEE OR ANY OTHER USERS OF THE
+# SOFTWARE FOR ANY INCIDENTAL, SPECIAL, OR CONSEQUENTIAL DAMAGES OR LOSS
+# AS A RESULT OF USING, MODIFYING OR DISTRIBUTING THE SOFTWARE, OR ANY
+# DERIVATIVE THEREOF, EVEN IF ADVISED OF THE POSSIBILITY THEREOF.
+#
+# 5. This License Agreement will automatically terminate upon a material
+# breach of its terms and conditions.
+#
+# 6. This License Agreement shall be governed by and interpreted in all
+# respects by the law of the State of California, excluding conflict of
+# law provisions.  Nothing in this License Agreement shall be deemed to
+# create any relationship of agency, partnership, or joint venture
+# between BeOpen and Licensee.  This License Agreement does not grant
+# permission to use BeOpen trademarks or trade names in a trademark
+# sense to endorse or promote products or services of Licensee, or any
+# third party.  As an exception, the "BeOpen Python" logos available at
+# http://www.pythonlabs.com/logos.html may be used according to the
+# permissions granted on that web page.
+#
+# 7. By copying, installing or otherwise using the software, Licensee
+# agrees to be bound by the terms and conditions of this License
+# Agreement.
+#
+#
+# CNRI LICENSE AGREEMENT FOR PYTHON 1.6.1
+# ---------------------------------------
+#
+# 1. This LICENSE AGREEMENT is between the Corporation for National
+# Research Initiatives, having an office at 1895 Preston White Drive,
+# Reston, VA 20191 ("CNRI"), and the Individual or Organization
+# ("Licensee") accessing and otherwise using Python 1.6.1 software in
+# source or binary form and its associated documentation.
+#
+# 2. Subject to the terms and conditions of this License Agreement, CNRI
+# hereby grants Licensee a nonexclusive, royalty-free, world-wide
+# license to reproduce, analyze, test, perform and/or display publicly,
+# prepare derivative works, distribute, and otherwise use Python 1.6.1
+# alone or in any derivative version, provided, however, that CNRI's
+# License Agreement and CNRI's notice of copyright, i.e., "Copyright (c)
+# 1995-2001 Corporation for National Research Initiatives; All Rights
+# Reserved" are retained in Python 1.6.1 alone or in any derivative
+# version prepared by Licensee.  Alternately, in lieu of CNRI's License
+# Agreement, Licensee may substitute the following text (omitting the
+# quotes): "Python 1.6.1 is made available subject to the terms and
+# conditions in CNRI's License Agreement.  This Agreement together with
+# Python 1.6.1 may be located on the internet using the following
+# unique, persistent identifier (known as a handle): 1895.22/1013.  This
+# Agreement may also be obtained from a proxy server on the internet
+# using the following URL: http://hdl.handle.net/1895.22/1013".
+#
+# 3. In the event Licensee prepares a derivative work that is based on
+# or incorporates Python 1.6.1 or any part thereof, and wants to make
+# the derivative work available to others as provided herein, then
+# Licensee hereby agrees to include in any such work a brief summary of
+# the changes made to Python 1.6.1.
+#
+# 4. CNRI is making Python 1.6.1 available to Licensee on an "AS IS"
+# basis.  CNRI MAKES NO REPRESENTATIONS OR WARRANTIES, EXPRESS OR
+# IMPLIED.  BY WAY OF EXAMPLE, BUT NOT LIMITATION, CNRI MAKES NO AND
+# DISCLAIMS ANY REPRESENTATION OR WARRANTY OF MERCHANTABILITY OR FITNESS
+# FOR ANY PARTICULAR PURPOSE OR THAT THE USE OF PYTHON 1.6.1 WILL NOT
+# INFRINGE ANY THIRD PARTY RIGHTS.
+#
+# 5. CNRI SHALL NOT BE LIABLE TO LICENSEE OR ANY OTHER USERS OF PYTHON
+# 1.6.1 FOR ANY INCIDENTAL, SPECIAL, OR CONSEQUENTIAL DAMAGES OR LOSS AS
+# A RESULT OF MODIFYING, DISTRIBUTING, OR OTHERWISE USING PYTHON 1.6.1,
+# OR ANY DERIVATIVE THEREOF, EVEN IF ADVISED OF THE POSSIBILITY THEREOF.
+#
+# 6. This License Agreement will automatically terminate upon a material
+# breach of its terms and conditions.
+#
+# 7. This License Agreement shall be governed by the federal
+# intellectual property law of the United States, including without
+# limitation the federal copyright law, and, to the extent such
+# U.S. federal law does not apply, by the law of the Commonwealth of
+# Virginia, excluding Virginia's conflict of law provisions.
+# Notwithstanding the foregoing, with regard to derivative works based
+# on Python 1.6.1 that incorporate non-separable material that was
+# previously distributed under the GNU General Public License (GPL), the
+# law of the Commonwealth of Virginia shall govern this License
+# Agreement only as to issues arising under or with respect to
+# Paragraphs 4, 5, and 7 of this License Agreement.  Nothing in this
+# License Agreement shall be deemed to create any relationship of
+# agency, partnership, or joint venture between CNRI and Licensee.  This
+# License Agreement does not grant permission to use CNRI trademarks or
+# trade name in a trademark sense to endorse or promote products or
+# services of Licensee, or any third party.
+#
+# 8. By clicking on the "ACCEPT" button where indicated, or by copying,
+# installing or otherwise using Python 1.6.1, Licensee agrees to be
+# bound by the terms and conditions of this License Agreement.
+#
+#         ACCEPT
+#
+#
+# CWI LICENSE AGREEMENT FOR PYTHON 0.9.0 THROUGH 1.2
+# --------------------------------------------------
+#
+# Copyright (c) 1991 - 1995, Stichting Mathematisch Centrum Amsterdam,
+# The Netherlands.  All rights reserved.
+#
+# Permission to use, copy, modify, and distribute this software and its
+# documentation for any purpose and without fee is hereby granted,
+# provided that the above copyright notice appear in all copies and that
+# both that copyright notice and this permission notice appear in
+# supporting documentation, and that the name of Stichting Mathematisch
+# Centrum or CWI not be used in advertising or publicity pertaining to
+# distribution of the software without specific, written prior
+# permission.
+#
+# STICHTING MATHEMATISCH CENTRUM DISCLAIMS ALL WARRANTIES WITH REGARD TO
+# THIS SOFTWARE, INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+# FITNESS, IN NO EVENT SHALL STICHTING MATHEMATISCH CENTRUM BE LIABLE
+# FOR ANY SPECIAL, INDIRECT OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+# ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT
+# OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+#
+# ZERO-CLAUSE BSD LICENSE FOR CODE IN THE PYTHON DOCUMENTATION
+# ----------------------------------------------------------------------
+#
+# Permission to use, copy, modify, and/or distribute this software for any
+# purpose with or without fee is hereby granted.
+#
+# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+# REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY
+# AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+# INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM
+# LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR
+# OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+# PERFORMANCE OF THIS SOFTWARE.
+
+# Copyright (C) 2001 Python Software Foundation
+# Author: Barry Warsaw
+# Contact: email-sig@python.org
+
+"""Miscellaneous utilities."""
+
+__all__ = [
+    'collapse_rfc2231_value',
+    'decode_params',
+    'decode_rfc2231',
+    'encode_rfc2231',
+    'formataddr',
+    'formatdate',
+    'format_datetime',
+    'getaddresses',
+    'make_msgid',
+    'mktime_tz',
+    'parseaddr',
+    'parsedate',
+    'parsedate_tz',
+    'parsedate_to_datetime',
+    'unquote',
+    ]
+
+import os
+import re
+import time
+import datetime
+import urllib.parse
+
+from email._parseaddr import quote
+from email._parseaddr import AddressList as _AddressList
+from email._parseaddr import mktime_tz
+
+from email._parseaddr import parsedate, parsedate_tz, _parsedate_tz
+
+COMMASPACE = ', '
+EMPTYSTRING = ''
+UEMPTYSTRING = ''
+CRLF = '\r\n'
+TICK = "'"
+
+specialsre = re.compile(r'[][\\()<>@,:;".]')
+escapesre = re.compile(r'[\\"]')
+
+
+def _has_surrogates(s):
+    """Return True if s may contain surrogate-escaped binary data."""
+    # This check is based on the fact that unless there are surrogates, utf8
+    # (Python's default encoding) can encode any string.  This is the fastest
+    # way to check for surrogates, see bpo-11454 (moved to gh-55663) for timings.
+    try:
+        s.encode()
+        return False
+    except UnicodeEncodeError:
+        return True
+
+# How to deal with a string containing bytes before handing it to the
+# application through the 'normal' interface.
+def _sanitize(string):
+    # Turn any escaped bytes into the Unicode 'unknown' char.  If the escaped
+    # bytes happen to be utf-8 they will instead get decoded, even if they
+    # were invalid in the charset the source was supposed to be in.  This
+    # seems like it is not a bad thing; a defect was still registered.
+    original_bytes = string.encode('utf-8', 'surrogateescape')
+    return original_bytes.decode('utf-8', 'replace')
+
+
+
+# Helpers
+
+def formataddr(pair, charset='utf-8'):
+    """The inverse of parseaddr(), this takes a 2-tuple of the form
+    (realname, email_address) and returns the string value suitable
+    for an RFC 2822 From, To or Cc header.
+
+    If the first element of pair is false, then the second element is
+    returned unmodified.
+
+    The optional charset is the character set that is used to encode
+    realname in case realname is not ASCII safe.  Can be an instance of str or
+    a Charset-like object which has a header_encode method.  Default is
+    'utf-8'.
+    """
+    name, address = pair
+    # The address MUST (per RFC) be ascii, so raise a UnicodeError if it isn't.
+    address.encode('ascii')
+    if name:
+        try:
+            name.encode('ascii')
+        except UnicodeEncodeError:
+            if isinstance(charset, str):
+                # lazy import to improve module import time
+                from email.charset import Charset
+                charset = Charset(charset)
+            encoded_name = charset.header_encode(name)
+            return "%s <%s>" % (encoded_name, address)
+        else:
+            quotes = ''
+            if specialsre.search(name):
+                quotes = '"'
+            name = escapesre.sub(r'\\\g<0>', name)
+            return '%s%s%s <%s>' % (quotes, name, quotes, address)
+    return address
+
+
+def _iter_escaped_chars(addr):
+    pos = 0
+    escape = False
+    for pos, ch in enumerate(addr):
+        if escape:
+            yield (pos, '\\' + ch)
+            escape = False
+        elif ch == '\\':
+            escape = True
+        else:
+            yield (pos, ch)
+    if escape:
+        yield (pos, '\\')
+
+
+def _strip_quoted_realnames(addr):
+    """Strip real names between quotes."""
+    if '"' not in addr:
+        # Fast path
+        return addr
+
+    start = 0
+    open_pos = None
+    result = []
+    for pos, ch in _iter_escaped_chars(addr):
+        if ch == '"':
+            if open_pos is None:
+                open_pos = pos
+            else:
+                if start != open_pos:
+                    result.append(addr[start:open_pos])
+                start = pos + 1
+                open_pos = None
+
+    if start < len(addr):
+        result.append(addr[start:])
+
+    return ''.join(result)
+
+
+supports_strict_parsing = True
+
+def getaddresses(fieldvalues, *, strict=True):
+    """Return a list of (REALNAME, EMAIL) or ('','') for each fieldvalue.
+
+    When parsing fails for a fieldvalue, a 2-tuple of ('', '') is returned in
+    its place.
+
+    If strict is true, use a strict parser which rejects malformed inputs.
+    """
+
+    # If strict is true, if the resulting list of parsed addresses is greater
+    # than the number of fieldvalues in the input list, a parsing error has
+    # occurred and consequently a list containing a single empty 2-tuple [('',
+    # '')] is returned in its place. This is done to avoid invalid output.
+    #
+    # Malformed input: getaddresses(['alice@example.com <bob@example.com>'])
+    # Invalid output: [('', 'alice@example.com'), ('', 'bob@example.com')]
+    # Safe output: [('', '')]
+
+    if not strict:
+        all = COMMASPACE.join(str(v) for v in fieldvalues)
+        a = _AddressList(all)
+        return a.addresslist
+
+    fieldvalues = [str(v) for v in fieldvalues]
+    fieldvalues = _pre_parse_validation(fieldvalues)
+    addr = COMMASPACE.join(fieldvalues)
+    a = _AddressList(addr)
+    result = _post_parse_validation(a.addresslist)
+
+    # Treat output as invalid if the number of addresses is not equal to the
+    # expected number of addresses.
+    n = 0
+    for v in fieldvalues:
+        # When a comma is used in the Real Name part it is not a deliminator.
+        # So strip those out before counting the commas.
+        v = _strip_quoted_realnames(v)
+        # Expected number of addresses: 1 + number of commas
+        n += 1 + v.count(',')
+    if len(result) != n:
+        return [('', '')]
+
+    return result
+
+
+def _check_parenthesis(addr):
+    # Ignore parenthesis in quoted real names.
+    addr = _strip_quoted_realnames(addr)
+
+    opens = 0
+    for pos, ch in _iter_escaped_chars(addr):
+        if ch == '(':
+            opens += 1
+        elif ch == ')':
+            opens -= 1
+            if opens < 0:
+                return False
+    return (opens == 0)
+
+
+def _pre_parse_validation(email_header_fields):
+    accepted_values = []
+    for v in email_header_fields:
+        if not _check_parenthesis(v):
+            v = "('', '')"
+        accepted_values.append(v)
+
+    return accepted_values
+
+
+def _post_parse_validation(parsed_email_header_tuples):
+    accepted_values = []
+    # The parser would have parsed a correctly formatted domain-literal
+    # The existence of an [ after parsing indicates a parsing failure
+    for v in parsed_email_header_tuples:
+        if '[' in v[1]:
+            v = ('', '')
+        accepted_values.append(v)
+
+    return accepted_values
+
+
+def _format_timetuple_and_zone(timetuple, zone):
+    return '%s, %02d %s %04d %02d:%02d:%02d %s' % (
+        ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][timetuple[6]],
+        timetuple[2],
+        ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+         'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][timetuple[1] - 1],
+        timetuple[0], timetuple[3], timetuple[4], timetuple[5],
+        zone)
+
+def formatdate(timeval=None, localtime=False, usegmt=False):
+    """Returns a date string as specified by RFC 2822, e.g.:
+
+    Fri, 09 Nov 2001 01:08:47 -0000
+
+    Optional timeval if given is a floating-point time value as accepted by
+    gmtime() and localtime(), otherwise the current time is used.
+
+    Optional localtime is a flag that when True, interprets timeval, and
+    returns a date relative to the local timezone instead of UTC, properly
+    taking daylight savings time into account.
+
+    Optional argument usegmt means that the timezone is written out as
+    an ascii string, not numeric one (so "GMT" instead of "+0000"). This
+    is needed for HTTP, and is only used when localtime==False.
+    """
+    # Note: we cannot use strftime() because that honors the locale and RFC
+    # 2822 requires that day and month names be the English abbreviations.
+    if timeval is None:
+        timeval = time.time()
+    dt = datetime.datetime.fromtimestamp(timeval, datetime.timezone.utc)
+
+    if localtime:
+        dt = dt.astimezone()
+        usegmt = False
+    elif not usegmt:
+        dt = dt.replace(tzinfo=None)
+    return format_datetime(dt, usegmt)
+
+def format_datetime(dt, usegmt=False):
+    """Turn a datetime into a date string as specified in RFC 2822.
+
+    If usegmt is True, dt must be an aware datetime with an offset of zero.  In
+    this case 'GMT' will be rendered instead of the normal +0000 required by
+    RFC2822.  This is to support HTTP headers involving date stamps.
+    """
+    now = dt.timetuple()
+    if usegmt:
+        if dt.tzinfo is None or dt.tzinfo != datetime.timezone.utc:
+            raise ValueError("usegmt option requires a UTC datetime")
+        zone = 'GMT'
+    elif dt.tzinfo is None:
+        zone = '-0000'
+    else:
+        zone = dt.strftime("%z")
+    return _format_timetuple_and_zone(now, zone)
+
+
+def make_msgid(idstring=None, domain=None):
+    """Returns a string suitable for RFC 2822 compliant Message-ID, e.g:
+
+    <142480216486.20800.16526388040877946887@nightshade.la.mastaler.com>
+
+    Optional idstring if given is a string used to strengthen the
+    uniqueness of the message id.  Optional domain if given provides the
+    portion of the message id after the '@'.  It defaults to the locally
+    defined hostname.
+    """
+    # Lazy imports to speedup module import time
+    # (no other functions in email.utils need these modules)
+    import random
+    import socket
+
+    timeval = int(time.time()*100)
+    pid = os.getpid()
+    randint = random.getrandbits(64)
+    if idstring is None:
+        idstring = ''
+    else:
+        idstring = '.' + idstring
+    if domain is None:
+        domain = socket.getfqdn()
+    msgid = '<%d.%d.%d%s@%s>' % (timeval, pid, randint, idstring, domain)
+    return msgid
+
+
+def parsedate_to_datetime(data):
+    parsed_date_tz = _parsedate_tz(data)
+    if parsed_date_tz is None:
+        raise ValueError('Invalid date value or format "%s"' % str(data))
+    *dtuple, tz = parsed_date_tz
+    try:
+        if tz is None:
+            return datetime.datetime(*dtuple[:6])
+        return datetime.datetime(*dtuple[:6],
+                tzinfo=datetime.timezone(datetime.timedelta(seconds=tz)))
+    except OverflowError as exc:
+        raise ValueError('Invalid date value or format "%s"' % str(data)) from exc
+
+
+def parseaddr(addr, *, strict=True):
+    """
+    Parse addr into its constituent realname and email address parts.
+
+    Return a tuple of realname and email address, unless the parse fails, in
+    which case return a 2-tuple of ('', '').
+
+    If strict is True, use a strict parser which rejects malformed inputs.
+    """
+    if not strict:
+        addrs = _AddressList(addr).addresslist
+        if not addrs:
+            return ('', '')
+        return addrs[0]
+
+    if isinstance(addr, list):
+        addr = addr[0]
+
+    if not isinstance(addr, str):
+        return ('', '')
+
+    addr = _pre_parse_validation([addr])[0]
+    addrs = _post_parse_validation(_AddressList(addr).addresslist)
+
+    if not addrs or len(addrs) > 1:
+        return ('', '')
+
+    return addrs[0]
+
+
+# rfc822.unquote() doesn't properly de-backslash-ify in Python pre-2.3.
+def unquote(str):
+    """Remove quotes from a string."""
+    if len(str) > 1:
+        if str.startswith('"') and str.endswith('"'):
+            return str[1:-1].replace('\\\\', '\\').replace('\\"', '"')
+        if str.startswith('<') and str.endswith('>'):
+            return str[1:-1]
+    return str
+
+
+
+# RFC2231-related functions - parameter encoding and decoding
+def decode_rfc2231(s):
+    """Decode string according to RFC 2231"""
+    parts = s.split(TICK, 2)
+    if len(parts) <= 2:
+        return None, None, s
+    return parts
+
+
+def encode_rfc2231(s, charset=None, language=None):
+    """Encode string according to RFC 2231.
+
+    If neither charset nor language is given, then s is returned as-is.  If
+    charset is given but not language, the string is encoded using the empty
+    string for language.
+    """
+    s = urllib.parse.quote(s, safe='', encoding=charset or 'ascii')
+    if charset is None and language is None:
+        return s
+    if language is None:
+        language = ''
+    return "%s'%s'%s" % (charset, language, s)
+
+
+rfc2231_continuation = re.compile(r'^(?P<name>\w+)\*((?P<num>[0-9]+)\*?)?$',
+    re.ASCII)
+
+def decode_params(params):
+    """Decode parameters list according to RFC 2231.
+
+    params is a sequence of 2-tuples containing (param name, string value).
+    """
+    new_params = [params[0]]
+    # Map parameter's name to a list of continuations.  The values are a
+    # 3-tuple of the continuation number, the string value, and a flag
+    # specifying whether a particular segment is %-encoded.
+    rfc2231_params = {}
+    for name, value in params[1:]:
+        encoded = name.endswith('*')
+        value = unquote(value)
+        mo = rfc2231_continuation.match(name)
+        if mo:
+            name, num = mo.group('name', 'num')
+            if num is not None:
+                num = int(num)
+            rfc2231_params.setdefault(name, []).append((num, value, encoded))
+        else:
+            new_params.append((name, '"%s"' % quote(value)))
+    if rfc2231_params:
+        for name, continuations in rfc2231_params.items():
+            value = []
+            extended = False
+            # Sort by number, treating None as 0 if there is no 0,
+            # and ignore it if there is already a 0.
+            has_zero = any(x[0] == 0 for x in continuations)
+            if has_zero:
+                continuations = [x for x in continuations if x[0] is not None]
+            else:
+                continuations = [(x[0] or 0, x[1], x[2]) for x in continuations]
+            continuations.sort(key=lambda x: x[0])
+            # And now append all values in numerical order, converting
+            # %-encodings for the encoded segments.  If any of the
+            # continuation names ends in a *, then the entire string, after
+            # decoding segments and concatenating, must have the charset and
+            # language specifiers at the beginning of the string.
+            for num, s, encoded in continuations:
+                if encoded:
+                    # Decode as "latin-1", so the characters in s directly
+                    # represent the percent-encoded octet values.
+                    # collapse_rfc2231_value treats this as an octet sequence.
+                    s = urllib.parse.unquote(s, encoding="latin-1")
+                    extended = True
+                value.append(s)
+            value = quote(EMPTYSTRING.join(value))
+            if extended:
+                charset, language, value = decode_rfc2231(value)
+                new_params.append((name, (charset, language, '"%s"' % value)))
+            else:
+                new_params.append((name, '"%s"' % value))
+    return new_params
+
+def collapse_rfc2231_value(value, errors='replace',
+                           fallback_charset='us-ascii'):
+    if not isinstance(value, tuple) or len(value) != 3:
+        return unquote(value)
+    # While value comes to us as a string, we need it to be a bytes
+    # object.  We do not want bytes() normal utf-8 decoder, we want a straight
+    # interpretation of the string as character bytes.
+    charset, language, text = value
+    if charset is None:
+        # Issue 17369: if charset/lang is None, decode_rfc2231 couldn't parse
+        # the value, so use the fallback_charset.
+        charset = fallback_charset
+    rawbytes = bytes(text, 'raw-unicode-escape')
+    try:
+        # Explicitly look up the codec for warning generation, see gh-140030
+        # Can be removed in 3.17
+        import codecs
+        codecs.lookup(charset)
+        return str(rawbytes, charset, errors)
+    except LookupError:
+        # charset is not a known codec.
+        return unquote(text)
+
+
+#
+# datetime doesn't provide a localtime function yet, so provide one.  Code
+# adapted from the patch in issue 9527.  This may not be perfect, but it is
+# better than not having it.
+#
+
+def localtime(dt=None):
+    """Return local time as an aware datetime object.
+
+    If called without arguments, return current time.  Otherwise *dt*
+    argument should be a datetime instance, and it is converted to the
+    local time zone according to the system time zone database.  If *dt* is
+    naive (that is, dt.tzinfo is None), it is assumed to be in local time.
+
+    """
+    if dt is None:
+        dt = datetime.datetime.now()
+    return dt.astimezone()

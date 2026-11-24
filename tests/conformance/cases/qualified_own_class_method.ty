@@ -1,0 +1,22 @@
+defaults = {'size': 7}
+
+
+class Navigator:
+    def __init__(self, mode=defaults['size']):
+        self.mode = mode
+        Navigator.reset(self)
+
+    def reset(self, offset=defaults['size']):
+        self.value = offset
+
+
+class Cursor(Navigator):
+    def reset(self, offset=0):
+        self.value = offset - 1
+
+
+nav = Navigator()
+cursor = Cursor()
+print(nav.value, cursor.value)
+cursor.reset()
+print(cursor.value)

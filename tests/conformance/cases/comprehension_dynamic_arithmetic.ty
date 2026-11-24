@@ -1,0 +1,39 @@
+class Color:
+    _colormode = 1.0
+
+    def components(self, cstr):
+        if not cstr.startswith('#'):
+            return cstr
+        if len(cstr) == 7:
+            cl = [int(cstr[i:i + 2], 16) for i in (1, 3, 5)]
+        elif len(cstr) == 4:
+            cl = [16 * int(cstr[h], 16) for h in cstr[1:]]
+        else:
+            raise ValueError(cstr)
+        return tuple(c * self._colormode / 255 for c in cl)
+
+
+colors = Color()
+print(colors.components('#3a4b5c'))
+try:
+    colors.components('#357')
+except TypeError:
+    print('invalid str index')
+print(colors.components('red'))
+
+
+class Last:
+    def __index__(self):
+        return -1
+
+
+def read_char(text: str, index):
+    return text[index]
+
+
+print(read_char('abc', Last()), read_char('abc', True))
+for invalid in ('1', 1.5):
+    try:
+        print(read_char('abc', invalid))
+    except TypeError as error:
+        print(error)

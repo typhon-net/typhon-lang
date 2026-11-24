@@ -1,0 +1,2 @@
+('example.invalid', 20, 'loopback')
+('/local', 1, None)

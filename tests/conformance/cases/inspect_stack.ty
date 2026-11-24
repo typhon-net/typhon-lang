@@ -1,0 +1,20 @@
+import inspect
+
+
+class Help:
+    def __repr__(self) -> str:
+        return inspect.stack()[1][3]
+
+
+def inspect_here() -> None:
+    print(repr(Help()))
+    frames = inspect.stack(0)
+    top = frames[0]
+    print(top.function, top[3], frames[1].function)
+    print(top.code_context is None, top.index is None, top.frame.f_back.f_code.co_name)
+    print(top.lineno == top.positions.lineno, top.filename.endswith("inspect_stack.ty"))
+    site = inspect.stack(3)[0]
+    print(site.index, len(site.code_context), site.code_context[site.index].strip())
+
+
+inspect_here()

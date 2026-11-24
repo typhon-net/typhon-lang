@@ -75,7 +75,13 @@ namespace Typhon.Stdlib
                         UnicodeTranslateError e => (e.@object, e.start, e.end),
                         _ => throw new InvalidOperationException(),
                     };
-                    if (input is not string text) throw new InvalidCastException("exception object must be a string");
+                    string text = input switch
+                    {
+                        string source => source,
+                        PyString source => source.Text,
+                        PyStrEnum member => member.value,
+                        _ => throw new InvalidCastException("exception object must be a string"),
+                    };
                     var points = TextPoints(text).ToArray();
                     int start = (int)Math.Clamp(first, 0, points.LongLength);
                     int end = (int)Math.Clamp(last, 0, points.LongLength);

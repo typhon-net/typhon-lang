@@ -1,0 +1,3 @@
+scope = {1: 3}
+exec("label = 'ready'", scope)
+print(scope[1], scope['label'])

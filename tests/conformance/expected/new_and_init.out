@@ -9,3 +9,5 @@ allocate Record -1
 substitute
 allocate Record 7
 True False
+allocate Child 8
+True False

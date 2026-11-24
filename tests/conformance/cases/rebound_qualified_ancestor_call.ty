@@ -1,0 +1,18 @@
+class Base:
+    def destroy(self, *, reason="requested"):
+        print(self.label, reason)
+
+class Widget(Base):
+    def __init__(self, label: str):
+        self.label = label
+
+    def destroy(self, *, reason="requested"):
+        Base.destroy(self, reason=reason)
+
+class Record:
+    def __init__(self, label: str):
+        self.label = label
+
+unbound = Widget.destroy
+unbound(Record("unrelated"), reason="explicit")
+Widget("instance").destroy()

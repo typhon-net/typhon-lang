@@ -1,0 +1,20 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+
+class Label:
+    def __repr__(self) -> str:
+        return 'from repr'
+
+    def __str__(self) -> str:
+        return 'from str'
+
+
+render = getattr(object, '__str__')
+format_label = getattr(object, '__format__')
+print(render is object.__str__, format_label is object.__format__)
+print(render(Label()), format_label(Label(), ''))
+try:
+    format_label(Label(), 'unsupported')
+except TypeError:
+    print('invalid format')

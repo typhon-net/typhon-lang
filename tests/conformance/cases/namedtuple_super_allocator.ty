@@ -1,0 +1,50 @@
+from collections import namedtuple
+
+
+events: list[str] = []
+
+
+def default_label() -> str:
+    events.append('default evaluated')
+    return 'default'
+
+
+class Item(namedtuple('Item', 'code label', defaults=[default_label()])):
+    __slots__ = ()
+
+    def __new__(cls, label):
+        return super().__new__(cls, 1, label)
+
+    @classmethod
+    def from_fields(cls, *fields, **keywords):
+        return super().__new__(cls, *fields, **keywords)
+
+
+class Child(Item):
+    pass
+
+
+print(events)
+normal = Item('normal')
+factory = Item.from_fields(2, label='factory')
+child = Child.from_fields(3)
+print(type(normal) is Item, tuple(normal))
+print(type(factory) is Item, tuple(factory))
+print(type(child) is Child, tuple(child))
+
+Base = namedtuple('Base', 'x y', defaults=[None])
+
+
+class SeparateBase(Base):
+    @classmethod
+    def from_fields(cls, *fields, **keywords):
+        return super().__new__(cls, *fields, **keywords)
+
+
+separate = SeparateBase.from_fields(x=4)
+print(type(separate) is SeparateBase, tuple(separate))
+for arguments in ((), (1, 2, 3)):
+    try:
+        SeparateBase.from_fields(*arguments)
+    except TypeError:
+        print('bad field count')

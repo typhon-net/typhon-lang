@@ -1,0 +1,22 @@
+class Allocated(str):
+    def __new__(cls, value):
+        return str.__new__(cls, value)
+
+class Plain:
+    pass
+
+class Initialized:
+    def __init__(self, value):
+        self.value = value
+
+allocated = Allocated("stored")
+print(getattr(Allocated, "__init__") is getattr(object, "__init__"))
+print(getattr(allocated, "__init__")("ignored"))
+print(object.__init__(allocated, value="ignored"), allocated)
+print(object.__init__(17, "ignored"))
+print(object.__init__(Plain()))
+for instance in (Plain(), Initialized(17)):
+    try:
+        object.__init__(instance, "extra")
+    except TypeError:
+        print("rejected", type(instance).__name__)

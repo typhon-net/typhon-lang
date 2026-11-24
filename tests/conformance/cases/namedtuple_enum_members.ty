@@ -1,0 +1,34 @@
+from collections import namedtuple
+from enum import Enum as _Enum
+
+
+class Oid(namedtuple('Oid', 'nid oid')):
+    __slots__ = ()
+
+    def __new__(cls, oid):
+        return super().__new__(cls, 1, oid)
+
+
+class Purpose(Oid, _Enum):
+    SERVER_AUTH = '1.2'
+    CLIENT_AUTH = '1.3'
+    SERVER_ALIAS = SERVER_AUTH
+
+
+member: object = Purpose.SERVER_AUTH
+print(issubclass(Purpose, Oid), isinstance(member, Oid), isinstance(member, _Enum))
+print(Purpose.__bases__ == (Oid, _Enum), type(member) is Purpose)
+print(getattr(member, 'nid'), getattr(member, 'oid'), getattr(member, 'value'))
+print(member, repr(member), getattr(member, 'name'))
+print(Purpose.SERVER_AUTH is Purpose.SERVER_ALIAS, Purpose(Oid('1.2')) is member)
+print([item.name for item in Purpose], list(Purpose.__members__))
+
+Point = namedtuple('Point', 'x y')
+
+
+class Direction(Point, _Enum):
+    LEFT = (-1, 0)
+    RIGHT = (1, 0)
+
+
+print(tuple(Direction.LEFT), Direction.LEFT.value, Direction(Point(1, 0)) is Direction.RIGHT)

@@ -1,0 +1,18 @@
+class Detail:
+    def __str__(self) -> str:
+        return 'context purpose'
+
+
+def check(value: Detail):
+    try:
+        raise TypeError(value)
+    except TypeError as error:
+        print(error.args[0] is value, str(error))
+
+    try:
+        raise ValueError(value)
+    except ValueError as error:
+        print(error.args[0] is value, str(error))
+
+
+check(Detail())

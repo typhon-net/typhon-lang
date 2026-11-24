@@ -1,0 +1,25 @@
+class Recorder:
+    def __init__(self):
+        self.handlers = {}
+
+    def register(self, key, callback):
+        self.handlers[key] = callback
+
+    def call(self, key, arg):
+        return self.handlers[key](arg)
+
+
+def first(value: str, *, prefix="one: ") -> str:
+    return prefix + value
+
+
+def second(value: str, *unused) -> str:
+    return 'two: ' + value
+
+
+recorder = Recorder()
+recorder.register(str, first)
+for key in (bytes, bytearray, memoryview):
+    recorder.register(key, second)
+print(recorder.call(str, 'alpha'))
+print(recorder.call(bytes, 'beta'))

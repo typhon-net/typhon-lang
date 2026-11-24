@@ -1,0 +1,37 @@
+from typing import Any
+
+class Point(tuple):
+    def __new__(cls, horizontal, vertical):
+        return tuple.__new__(cls, (horizontal, vertical))
+
+    def __add__(self, other):
+        return Point(self[0] + other[0], self[1] + other[1])
+
+    def __mul__(self, other):
+        if isinstance(other, Point):
+            return self[0] * other[0] + self[1] * other[1]
+        return Point(self[0] * other, self[1] * other)
+
+    def __rmul__(self, other):
+        return self * other
+
+
+def combine(first: Any, second: Any):
+    added = first + second
+    print(type(added).__name__, added)
+    print(first * second, first * 2, 2 * first)
+
+
+combine(Point(3, 4), Point(1, 2))
+
+
+class ReflectedOnly(tuple):
+    def __radd__(self, other):
+        return NotImplemented
+
+
+def add_values(first: Any, second: Any):
+    return first + second
+
+
+print(add_values((9,), ReflectedOnly((10,))))

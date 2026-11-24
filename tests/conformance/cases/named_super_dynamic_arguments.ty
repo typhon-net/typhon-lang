@@ -1,0 +1,15 @@
+class Client:
+    def connect(self, host, port=0, source=None):
+        return host, port, source
+
+
+class LocalClient(Client):
+    def connect(self, host, port=0, source=None):
+        if host[0] != "/":
+            return super().connect(host, port, source=source)
+        return host, port + 1, source
+
+
+client = LocalClient()
+print(client.connect("example.invalid", 20, source="loopback"))
+print(client.connect("/local"))

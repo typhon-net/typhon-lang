@@ -1,0 +1,25 @@
+class Terminal(str):
+    def __new__(cls, value):
+        return str.__new__(cls, value)
+
+    def __repr__(self):
+        return f'Terminal({super().__repr__()})'
+
+
+class Child(Terminal):
+    pass
+
+
+class Custom(Child):
+    def __str__(self):
+        return '<custom>'
+
+
+value = Child('label')
+print(value, str(value), repr(value))
+custom = Custom('label')
+print(custom, str(custom), repr(custom))
+
+RuntimeChild = type('RuntimeChild', (Child,), {'__repr__': lambda self: '<repr>'})
+runtime = RuntimeChild('label')
+print(runtime, str(runtime), repr(runtime))

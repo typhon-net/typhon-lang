@@ -1,0 +1,54 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+#:pylib-source ssl
+
+import os
+import socket
+import ssl
+import tempfile
+from threading import Thread
+
+
+def server_exchange(listener, context, completed):
+    for _ in range(2):
+        connection, _ = listener.accept()
+        with connection:
+            connection.settimeout(5)
+            try:
+                with context.wrap_socket(connection, server_side=True) as secure:
+                    if secure.recv(4) == b'ping':
+                        secure.sendall(b'pong')
+            except ssl.SSLError:
+                pass
+        completed.append(True)
+
+
+# This key belongs only to the loopback certificate used by this case.
+certificate = os.path.join(os.path.dirname(__file__), 'data', 'source_ssl_loopback.pem')
+server = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+server.load_cert_chain(certificate)
+server.minimum_version = ssl.TLSVersion.TLSv1_2
+server.maximum_version = ssl.TLSVersion.TLSv1_2
+
+with tempfile.TemporaryDirectory() as directory, socket.socket() as listener:
+    listener.settimeout(10)
+    listener.bind(('127.0.0.1', 0))
+    listener.listen()
+    completed: list[bool] = []
+    worker = Thread(target=server_exchange, args=(listener, server, completed), daemon=True)
+    worker.start()
+    os.environ['SSL_CERT_DIR'] = directory
+    try:
+        for cafile in (certificate, os.path.join(directory, 'missing.pem')):
+            os.environ['SSL_CERT_FILE'] = cafile
+            context = ssl.create_default_context()
+            with socket.create_connection(listener.getsockname(), timeout=5) as connection:
+                try:
+                    with context.wrap_socket(connection, server_hostname='localhost') as secure:
+                        secure.sendall(b'ping')
+                        print(secure.recv(4))
+                except ssl.SSLCertVerificationError:
+                    print('certificate refused')
+    finally:
+        worker.join(10)
+    assert completed == [True, True]

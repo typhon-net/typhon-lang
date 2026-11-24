@@ -1,0 +1,10 @@
+for cls in (object, type, type(None), int, str, tuple, list, dict):
+    namespace = vars(cls)
+    print(cls.__name__, '__new__' in namespace, namespace.get('__new__') is getattr(cls, '__new__'))
+
+
+class Inherited(list):
+    pass
+
+
+print('__new__' in vars(Inherited), callable(Inherited.__new__))

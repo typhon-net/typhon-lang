@@ -1,0 +1,23 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+
+class ClassNamespace(dict):
+    def __setitem__(self, name, value):
+        if name == 'answer':
+            print('write', name, value)
+            value = value * 2
+        super().__setitem__(name, value)
+
+
+class NamespaceMeta(type):
+    @classmethod
+    def __prepare__(mcls, name, bases):
+        return ClassNamespace()
+
+
+class Question(metaclass=NamespaceMeta):
+    answer = 21
+
+
+print(Question.answer, Question.__dict__['answer'])

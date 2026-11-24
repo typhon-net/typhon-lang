@@ -1,0 +1,11 @@
+False original.py ('before',)
+rewritten.py ('before',)
+rewritten.py ('after',)
+True True
+rewritten.py ('after',)
+True
+replace() argument 'co_filename' must be str, not None
+replace() argument 'co_consts' must be tuple, not list
+positional tuple rejected
+positional None rejected
+original.py ('before',) before

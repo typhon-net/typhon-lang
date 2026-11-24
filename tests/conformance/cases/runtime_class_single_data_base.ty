@@ -1,0 +1,8 @@
+def contents(self):
+    return self.token
+
+
+Packet = type('Packet', (), {'contents': contents, 'token': 7})
+Stamped = type('Stamped', (Packet,), {'token': 9})
+print(Packet().contents(), Stamped().contents())
+print(Stamped.__bases__[0] is Packet, isinstance(Stamped(), Packet))

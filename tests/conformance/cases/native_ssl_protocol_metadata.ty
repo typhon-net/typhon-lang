@@ -1,0 +1,11 @@
+import _ssl
+
+print(_ssl.PROTO_MINIMUM_SUPPORTED, _ssl.PROTO_MAXIMUM_SUPPORTED)
+print(_ssl.PROTO_SSLv3, _ssl.PROTO_TLSv1, _ssl.PROTO_TLSv1_1, _ssl.PROTO_TLSv1_2, _ssl.PROTO_TLSv1_3)
+print(_ssl.PROTOCOL_SSLv23 == _ssl.PROTOCOL_TLS, _ssl.PROTOCOL_TLS_CLIENT, _ssl.PROTOCOL_TLS_SERVER)
+print(_ssl.SSL_ERROR_SSL, _ssl.SSL_ERROR_WANT_READ, _ssl.SSL_ERROR_WANT_WRITE, _ssl.SSL_ERROR_WANT_X509_LOOKUP)
+print(_ssl.SSL_ERROR_SYSCALL, _ssl.SSL_ERROR_ZERO_RETURN, _ssl.SSL_ERROR_WANT_CONNECT, _ssl.SSL_ERROR_EOF, _ssl.SSL_ERROR_INVALID_ERROR_CODE)
+print(issubclass(_ssl.SSLError, OSError), issubclass(_ssl.SSLCertVerificationError, _ssl.SSLError))
+print(type(_ssl.SSLError('tls error')) is _ssl.SSLError)
+print(type(_ssl.SSLCertVerificationError('certificate error')) is _ssl.SSLCertVerificationError)
+print(_ssl.HAS_SSLv3, _ssl.HAS_SSLv2, _ssl.HAS_NPN, _ssl.HAS_TLSv1_2)

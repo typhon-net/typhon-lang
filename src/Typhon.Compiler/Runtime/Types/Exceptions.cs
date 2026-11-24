@@ -22,13 +22,7 @@ namespace Typhon.Runtime
     /// <summary>An exception with Python's args tuple (str(e) and repr(e) follow from it).</summary>
     internal interface IPyExceptionArgs
     {
-        PyTuple<object?> args { get; }
-    }
-
-    [AttributeUsage(AttributeTargets.Class, Inherited = false)]
-    internal sealed class PyExceptionBasesAttribute(params Type[] bases) : Attribute
-    {
-        internal readonly Type[] Bases = bases;
+        PyTuple<object?> args { get; set; }
     }
 
     /// <summary>Python's rules for an exception's args: str(e) and repr(e).</summary>
@@ -48,9 +42,17 @@ namespace Typhon.Runtime
         /// exception keeps), else the message as the one argument (none when it is empty).
         /// </summary>
         public static PyTuple<object?> Args(Exception e) =>
-            e is IPyExceptionArgs pa ? pa.args
-            : e.Data.Contains("__args__") && e.Data["__args__"] is object?[] kept ? new PyTuple<object?>(kept)
+            e.Data["__args__"] is PyTuple<object?> assigned ? assigned
+            : e is IPyExceptionArgs pa ? pa.args
+            : e.Data["__args__"] is object?[] kept ? new PyTuple<object?>(kept)
             : new PyTuple<object?>(e.Message.Length == 0 ? Array.Empty<object?>() : new object?[] { e.Message });
+
+        internal static void SetArgs(Exception error, object? items)
+        {
+            var args = items as PyTuple<object?> ?? new PyTuple<object?>(Builtins.__iter_dyn(items).ToArray());
+            if (error is IPyExceptionArgs pythonError) pythonError.args = args;
+            error.Data["__args__"] = args;
+        }
 
         public static object? Initialize(Exception error, object?[] args)
         {
@@ -76,6 +78,7 @@ namespace Typhon.Runtime
             if (o is MissingMemberException error) return Repr(error, Args(error));
             if (o is Exception e && o is not IPyRepr)
             {
+                if (e.Data["__args__"] is PyTuple<object?> assigned) return Repr(e, assigned);
                 string text = Builtins.str(e);
                 return Name(e) + "(" + (text.Length > 0 ? Builtins.repr(e is KeyNotFoundException && text.Length > 1 && text[0] == '\'' ? text.Substring(1, text.Length - 2) : text) : "") + ")";
             }
@@ -103,13 +106,10 @@ namespace Typhon.Runtime
         /// <summary>The Python name of a class: KeyError for .NET's KeyNotFoundException, int for long, a Typhon class's own name.</summary>
         public static string TypeName(Type t) => Builtins.PyTypeName(t);
 
-        internal static Type[]? DeclaredBases(Type type) =>
-            (Attribute.GetCustomAttribute(type, typeof(PyExceptionBasesAttribute), inherit: false) as PyExceptionBasesAttribute)?.Bases;
-
         internal static bool HasDeclaredBase(Type type, Type candidate)
         {
             for (Type? current = type; current != null; current = current.BaseType)
-                if (DeclaredBases(current) is Type[] bases &&
+                if (PyMetaclasses.DeclaredBases(current) is Type[] bases &&
                     bases.Any(parent => Builtins.DirectSubclass(parent, candidate))) return true;
             return false;
         }
@@ -537,6 +537,15 @@ namespace Typhon.Runtime
         public override string Message => base.Message; // (ArgumentException would append a parameter name)
         public string __repr__() => PyExc.Repr(this, args);
 
+        protected static string RequireText(object? value, int argument) => value switch
+        {
+            string text => text,
+            PyString text => text.Text,
+            PyStrEnum member => member.value,
+            _ => throw new InvalidCastException(
+                $"argument {argument} must be str, not {(value == null ? "None" : Builtins.PyTypeName(value.GetType()))}"),
+        };
+
         /// <summary>A character as the codec messages show it: '\xe9', '€', '\U0001f600'.</summary>
         protected static string CharRepr(string s, long i)
         {
@@ -568,8 +577,8 @@ namespace Typhon.Runtime
         public long start { get; set; }
         public long end { get; set; }
         public string reason { get; set; }
-        public UnicodeEncodeError(string encoding, string @object, long start, long end, string reason)
-            : base(Text(encoding, @object, start, end, reason), new object?[] { encoding, @object, start, end, reason })
+        public UnicodeEncodeError(string encoding, object? @object, long start, long end, string reason)
+            : base(Text(encoding, RequireText(@object, 2), start, end, reason), new object?[] { encoding, @object, start, end, reason })
         { this.encoding = encoding; this.@object = @object; this.start = start; this.end = end; this.reason = reason; }
         static string Text(string encoding, string s, long start, long end, string reason) =>
             end == start + 1 && start >= 0 && start < s.Length
@@ -582,8 +591,8 @@ namespace Typhon.Runtime
         public long start { get; set; }
         public long end { get; set; }
         public string reason { get; set; }
-        public UnicodeTranslateError(string @object, long start, long end, string reason)
-            : base(Text(@object, start, end, reason), new object?[] { @object, start, end, reason })
+        public UnicodeTranslateError(object? @object, long start, long end, string reason)
+            : base(Text(RequireText(@object, 1), start, end, reason), new object?[] { @object, start, end, reason })
         { this.@object = @object; this.start = start; this.end = end; this.reason = reason; }
         static string Text(string s, long start, long end, string reason) =>
             end == start + 1 && start >= 0 && start < s.Length

@@ -1,0 +1,17 @@
+#:pylib-source secrets
+import random
+import secrets
+
+emoji = "\U0001f600"
+rng = random.SystemRandom()
+choose = getattr(rng, "choice")
+print(rng.choice(emoji) == emoji, random.choice(emoji) == emoji)
+print(choose(emoji) == emoji, choose(seq=emoji) == emoji, type(choose("x")).__name__)
+print(secrets.choice(emoji) == emoji, secrets.choice(seq=emoji) == emoji)
+
+random.seed(1729)
+print([ord(random.choice("x\U0001f600\u00e9")) for _ in range(8)])
+try:
+    choose("")
+except IndexError as error:
+    print(type(error).__name__)

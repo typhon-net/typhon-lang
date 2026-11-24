@@ -1,0 +1,20 @@
+def documented_members(cls):
+    names = []
+    for name, member in cls.__dict__.items():
+        if member.__doc__ and member.__doc__.startswith('+'):
+            names.append(name)
+    return names
+
+
+class Settings:
+    label = 'printed'
+    limit = 2
+    enabled = True
+    optional = None
+
+    def perform(self):
+        """+extra details"""
+        return self.label
+
+
+print(documented_members(Settings))

@@ -1,0 +1,25 @@
+#:pylib-source bisect
+import bisect as subject
+from bisect import bisect, bisect_left, bisect_right, insort, insort_left
+from _bisect import bisect_right as accelerator_right
+
+values = [1, 3, 3, 3, 5]
+print(subject.__name__)
+print(subject.bisect is subject.bisect_right, subject.insort is subject.insort_right)
+print(bisect_left(values, 3), bisect_right(values, 3), bisect(values, 3))
+print(subject.bisect_left(values, 3, lo=2, hi=4), accelerator_right(values, 3))
+
+
+def by_rank(record):
+    return record[1]
+
+
+records = [("first", 1), ("one", 3), ("two", 3), ("last", 5)]
+print(bisect_left(records, 3, key=by_rank), bisect_right(records, 3, key=by_rank), bisect(records, 3, key=by_rank))
+insort(records, ("right", 3), key=by_rank)
+insort_left(records, ("left", 3), key=by_rank)
+print(records)
+try:
+    subject.bisect_right(values, 3, lo=-1)
+except ValueError as error:
+    print(type(error).__name__)

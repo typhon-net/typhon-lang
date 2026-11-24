@@ -1,0 +1,87 @@
+import inspect
+from functools import cached_property
+
+
+class Root:
+    shared = "root"
+
+    def _inherited(self) -> str:
+        return "protected"
+
+    @property
+    def title(self) -> str:
+        return "title"
+
+    @cached_property
+    def cached(self) -> str:
+        return "cached"
+
+    @staticmethod
+    def transform(value: int) -> int:
+        return -value
+
+    @classmethod
+    def identify(cls) -> str:
+        return cls.__name__
+
+
+class Parent(Root):
+    unrelated = 1
+
+
+class Leaf(Parent):
+    shared = None
+
+    def render(self) -> str:
+        return self.title
+
+
+Parent.late = "late"
+
+print(tuple(base.__name__ for base in inspect.getmro(Leaf)))
+print(inspect.getmro(Leaf) == Leaf.__mro__)
+selected = {"_inherited", "cached", "identify", "late", "render", "shared", "title", "transform"}
+for member in inspect.classify_class_attrs(Leaf):
+    if member.name in selected:
+        name, kind, owner, value = member
+        print(name, kind, owner.__name__, type(value).__name__)
+
+
+class Visible(type):
+    def __dir__(cls) -> list[str]:
+        return ["title", "notify", "absent"]
+
+    def notify(cls) -> str:
+        return cls.__name__
+
+
+class Choice(Root, metaclass=Visible):
+    pass
+
+
+print(type(Visible.__dict__["notify"]).__name__)
+for name, kind, owner, value in inspect.classify_class_attrs(Choice):
+    print(name, kind, owner.__name__, type(value).__name__)
+
+
+class Left:
+    @staticmethod
+    def selected() -> str:
+        return "left"
+
+
+class Right:
+    @property
+    def selected(self) -> str:
+        return "right"
+
+    @classmethod
+    def inherited(cls) -> str:
+        return cls.__name__
+
+
+joined = type("Joined", (Left, Right), {})
+print(tuple(owner.__name__ for owner in inspect.getmro(joined)))
+for attribute in inspect.classify_class_attrs(joined):
+    if attribute.name in ("selected", "inherited"):
+        print(attribute.name, attribute.kind, attribute.defining_class.__name__)

@@ -1,0 +1,17 @@
+#:pylib-source ssl
+import os
+import ssl
+import tempfile
+
+
+with tempfile.TemporaryDirectory() as folder:
+    cert_file = os.path.join(folder, 'empty.pem')
+    with open(cert_file, 'w'):
+        pass
+    os.environ['SSL_CERT_FILE'] = cert_file
+    os.environ['SSL_CERT_DIR'] = folder
+    paths = ssl.get_default_verify_paths()
+    print(paths.openssl_cafile_env, paths.openssl_capath_env)
+    print(paths.cafile == cert_file, paths.capath == folder)
+    context = ssl.create_default_context()
+    print(context.check_hostname, context.verify_mode == ssl.CERT_REQUIRED)

@@ -1,0 +1,15 @@
+class Label:
+    def __init__(self, value: int):
+        self.value = value
+
+def display(rows: object, strings: bool):
+    label = 'start'
+    if strings:
+        for label in ['inherited']:
+            print(label.upper())
+    else:
+        for name, label in rows:
+            print(name, label.value)
+
+display([], True)
+display([('mixin', Label(17))], False)

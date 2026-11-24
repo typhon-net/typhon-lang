@@ -1,0 +1,81 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+from copy import copy, deepcopy
+
+
+class Plain:
+    def __init__(self, label: str):
+        self.label = label
+
+
+class Base:
+    __slots__ = ('value', 'unset', 'nothing')
+
+    def __init__(self, value: int):
+        self.value = value
+        self.nothing = None
+
+
+class Derived(Base):
+    __slots__ = ('extra',)
+
+    def __init__(self, value: int):
+        super().__init__(value)
+        self.extra = 7
+
+
+class Mixed(Base):
+    def __init__(self, value: int):
+        super().__init__(value)
+        self.label = 'before'
+
+
+class Empty:
+    __slots__ = ('unset',)
+
+
+class ExplicitDictionary:
+    __slots__ = ('number', '__dict__', '__weakref__')
+
+    def __init__(self, number: int):
+        self.number = number
+        self.label = 'dict'
+
+
+class Private:
+    __slots__ = ('__value',)
+
+    def __init__(self):
+        self.__value = 17
+
+
+plain = Plain('ordinary')
+print(object.__getstate__(plain), object.__getstate__(plain) is vars(plain))
+print(object.__getstate__(Empty()), hasattr(Empty(), '__dict__'))
+try:
+    vars(Empty())
+except TypeError:
+    print('no instance dictionary')
+print(object.__getstate__(Derived(5)))
+slotted = Base(11)
+delattr(slotted, 'value')
+print(object.__getstate__(slotted), hasattr(slotted, 'value'))
+mixed = Mixed(13)
+state = object.__getstate__(mixed)
+print(state, state[0] is vars(mixed))
+vars(mixed)['label'] = 'after'
+vars(mixed)['value'] = 99
+print(state, mixed.value, object.__getstate__(mixed))
+print(object.__getstate__(ExplicitDictionary(19)))
+print(object.__getstate__(Private()))
+
+class SlottedItems:
+    __slots__ = ('items',)
+
+    def __init__(self, items: list[str]):
+        self.items = items
+
+
+item = SlottedItems(['member'])
+print(copy(item).items is item.items, deepcopy(item).items is item.items)

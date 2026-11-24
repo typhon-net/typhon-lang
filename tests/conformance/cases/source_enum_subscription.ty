@@ -1,0 +1,11 @@
+from enum import Enum
+
+class Mode(Enum):
+    FIRST = 1
+    SECOND = 2
+
+for key in ('SECOND', 'missing'):
+    try:
+        print(Mode[key].name, Mode[key].value)
+    except KeyError:
+        print('missing')

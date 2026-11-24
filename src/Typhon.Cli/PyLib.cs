@@ -108,5 +108,8 @@ internal static class PyLib
         string path = Path.Combine(root, module.Replace('.', Path.DirectorySeparatorChar));
         yield return (Path.GetFullPath(Path.Combine(path, "__init__" + extension)), true);
         yield return (Path.GetFullPath(path + extension), false);
+        // CPython exposes this package member from a separate bootstrap module.
+        if (module == "collections.abc" && extension == ".py")
+            yield return (Path.GetFullPath(Path.Combine(root, "_collections_abc.py")), false);
     }
 }

@@ -1,0 +1,29 @@
+from io import StringIO
+
+
+class Reader:
+    def __init__(self, source=None):
+        if isinstance(source, str):
+            source = StringIO(source)
+        self.source = source
+
+    def read(self):
+        return self.source.read()
+
+
+print(Reader('converted').read())
+print(Reader(StringIO('original')).read())
+
+
+class Number:
+    def __init__(self, value: int):
+        self.value = value
+
+
+def wrap(flag: bool, value):
+    if flag:
+        value = Number(value)
+    return value
+
+
+print(wrap(False, 3), wrap(True, 4).value)

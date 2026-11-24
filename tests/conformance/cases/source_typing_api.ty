@@ -1,0 +1,9 @@
+# typhon: int=bigint
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+#:pylib-source typing
+import typing as subject
+
+print(subject.__name__)
+print(subject.get_origin(subject.List[int]).__name__)
+print(subject.get_args(subject.Optional[int])[-1] is type(None))

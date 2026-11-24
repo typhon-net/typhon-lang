@@ -8,6 +8,8 @@ namespace Typhon.Runtime
 {
     using System;
     using System.Collections;
+    using System.Collections.Generic;
+    using System.Linq;
     using System.Reflection;
     using System.Runtime.CompilerServices;
 
@@ -31,11 +33,14 @@ namespace Typhon.Runtime
         {
             if (value is PyStrEnum member && cls.IsInstanceOfType(member)) return member;
             if (value is PyStrEnum text) value = text.value;
-            const BindingFlags flags = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
-            var map = (IDictionary?)cls.GetField("_value2member_map_", flags)?.GetValue(null);
-            if (value is string key && map?[key] is PyStrEnum result) return result;
+            if (value is string key && ValueMap(cls)?[key] is PyStrEnum result) return result;
             throw new ArgumentException($"{Builtins.repr(value)} is not a valid {cls.Name}");
         }
+
+        static IDictionary? ValueMap(Type type) =>
+            (IDictionary?)type.GetField("_value2member_map_", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(null);
+
+        internal static IEnumerable<PyStrEnum> Members(Type type) => ValueMap(type)?.Values.Cast<PyStrEnum>() ?? [];
 
         public override string ToString() => value;
         public string __repr__() => $"<{GetType().Name}.{name}: {Builtins.repr(value)}>";

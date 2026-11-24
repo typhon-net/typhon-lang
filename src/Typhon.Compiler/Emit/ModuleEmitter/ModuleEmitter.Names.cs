@@ -149,6 +149,8 @@ namespace Typhon.Compiler.Emit
 
         bool HasSelfInScope()
         {
+            // A lambda parameter can shadow the enclosing method's Python receiver.
+            if (_lambdaParams.Any(parameters => parameters.ContainsKey("self"))) return false;
             for (var s = _scope; s != null; s = s.Parent) if (s.HasSelf) return true;
             return false;
         }
@@ -225,7 +227,7 @@ namespace Typhon.Compiler.Emit
             return !_m.IsGdScript && !IsShadowed(name) &&
             !_dotnetAliases.ContainsKey(name) && !_moduleAliases.ContainsKey(name) && !_typingOnlyNames.Contains(name) &&
             !_runtimeProjectBindings.ContainsKey(name) && !ExceptionMap.ContainsKey(name) &&
-            StdlibOwner(name) == null && _r.GetMembers("Typhon.Runtime.Builtins", name).Count == 0 &&
+            StdlibOwner(name) == null && !BuiltinTypeValues.ContainsKey(name) &&
             _r.GetMembers("Typhon.Stdlib.builtins", name).Count == 0 &&
             !TryResolveType(name, 0, out _, out _) &&
             !(_classFieldInitializer && _cls?.Members.Contains(name) == true) &&
@@ -254,7 +256,7 @@ namespace Typhon.Compiler.Emit
             if (IsLocal(id)) return Esc(id);
             if (_m.RuntimeCodeMode != null && _m.RuntimeBindings.Contains(id))
                 return $"__typhon_execution.{(AtRuntimeModuleScope ? "Local" : "Global")}[{CsString(id)}]";
-            if (ConditionalStarBinding(n)) return $"{ModuleObject(_m)}.ReadStarGlobal({CsString(id)})";
+            if (ConditionalStarBinding(n)) return $"{ModuleObject(_m)}.ReadGlobal({CsString(id)})";
             if (ImportAlias(n) is Expr imported) return EmitExpr(imported);
             if (id == "self" && HasSelfInScope()) return "this";
             if (id == "__debug__") return "true";
@@ -541,6 +543,8 @@ namespace Typhon.Compiler.Emit
                     if (TypeAlias(n.Id) is Expr aliased) return MapType(aliased, at, isReturn);
                     if (!preserveClrType && TryResolveType(n.Id, 0, out var runtimeType, out _) &&
                         runtimeType == RuntimeTypingAnyType) return "dynamic";
+                    if (TryResolveImportedReboundClass(n.Id, out var reboundOwner, out var rebound))
+                        return ModuleClassName(reboundOwner) + "." + Esc(rebound.Name);
                     if (StdlibClassType(n.Id) is string stdlibType) return stdlibType;
                     if (n.Id == "NDArray" && !IsShadowed("NDArray") && _staticTypes.Contains("Typhon.Stdlib.numpy+typing")) return "global::Typhon.Stdlib.numpy.ndarray";
                     if (_big && n.Id == "int" && !IsShadowed("int")) return IntT;
@@ -564,6 +568,8 @@ namespace Typhon.Compiler.Emit
                         return "dynamic";
                     string dotted = DottedName(a);
                     if (dotted == null) { Error(at, "invalid type annotation"); return "dynamic"; }
+                    if (TryResolveImportedReboundClass(dotted, out var reboundOwner, out var rebound))
+                        return ModuleClassName(reboundOwner) + "." + Esc(rebound.Name);
                     string stripped = StripTypingPrefix(dotted);
                     if (stripped != dotted)
                     {

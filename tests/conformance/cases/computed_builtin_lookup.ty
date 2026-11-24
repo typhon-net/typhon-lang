@@ -1,0 +1,15 @@
+import builtins
+
+def publish():
+    globals()["generated_value"] = 19
+
+publish()
+print(generated_value)
+direct = sentinel("marker", repr="<marker>")
+exported = getattr(builtins, "sentinel")("other")
+print(repr(direct), direct.__name__, type(direct).__name__)
+print(type(exported) is getattr(builtins, "sentinel"), exported is not sentinel("other"))
+try:
+    missing_name
+except NameError:
+    print("missing")

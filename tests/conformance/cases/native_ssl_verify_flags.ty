@@ -1,0 +1,9 @@
+import _ssl
+
+context = _ssl._SSLContext(_ssl.PROTOCOL_TLS_CLIENT)
+print(context.verify_flags & _ssl.VERIFY_X509_TRUSTED_FIRST != 0)
+context.verify_flags |= _ssl.VERIFY_X509_STRICT | _ssl.VERIFY_X509_PARTIAL_CHAIN
+print(context.verify_flags & _ssl.VERIFY_X509_STRICT != 0)
+print(context.verify_flags & _ssl.VERIFY_X509_PARTIAL_CHAIN != 0)
+context.verify_flags = _ssl.VERIFY_DEFAULT
+print(context.verify_flags)

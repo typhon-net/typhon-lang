@@ -45,18 +45,21 @@ jobs:
         shell: bash
         run: echo "TYPHON_CPYTHON=$(python -c 'import sys; print(sys.executable)')" >> "$GITHUB_ENV"
 
-      - name: Point the Windows tests at liblzma
+      - name: Discover an existing Windows liblzma DLL
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $library = Get-Command git -CommandType Application | ForEach-Object {
-            $gitRoot = Split-Path -Parent (Split-Path -Parent $_.Source)
+          $library = Get-Command git -CommandType Application -ErrorAction SilentlyContinue | ForEach-Object {
+            $gitBin = Split-Path -Parent $_.Source
+            $gitRoot = Split-Path -Parent $gitBin
+            Join-Path $gitBin 'liblzma-5.dll'
             Join-Path $gitRoot 'mingw64\bin\liblzma-5.dll'
           } | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
-          if (-not $library) {
-            throw "Git for Windows does not supply liblzma"
+          if ($library) {
+            "TYPHON_LIBLZMA=$library" >> $env:GITHUB_ENV
+          } else {
+            Write-Output "No existing liblzma DLL found in the Git installations."
           }
-          "TYPHON_LIBLZMA=$library" >> $env:GITHUB_ENV
 
       - name: Build
         run: dotnet build Typhon.slnx -c Release

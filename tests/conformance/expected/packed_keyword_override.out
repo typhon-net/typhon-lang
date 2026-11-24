@@ -1,0 +1,6 @@
+['flag']
+(('first', 'second'), None, {'flag': True})
+['marker']
+(('third',), None, {})
+['flag', 'marker']
+(('fourth',), 7, {'flag': False})

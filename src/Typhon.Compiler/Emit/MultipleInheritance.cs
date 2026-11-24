@@ -28,11 +28,17 @@ namespace Typhon.Compiler.Emit
         /// <summary>A base-chain class's method called past the classes that override it (its body, under another name).</summary>
         public static string Direct(ClassDef k, string name) => "_direct_" + k.Name + "_" + name;
         public static bool IsGenerated(string name) => name.StartsWith("__mro_") || name.StartsWith("_super_") || name.StartsWith("_direct_");
+        public static bool IsCopiedAllocator(FunctionDef method) => method.PyName == "__new__" && IsGenerated(method.Name);
 
         sealed class Context
         {
             public ProjectContext Project;
             public readonly Dictionary<ClassDef, ModuleInfo> Owner = new Dictionary<ClassDef, ModuleInfo>();
+            public readonly Dictionary<(ModuleInfo Consumer, ModuleInfo Producer), ImportFromStmt> LexicalImports =
+                new Dictionary<(ModuleInfo, ModuleInfo), ImportFromStmt>();
+            public readonly Dictionary<(ModuleInfo Consumer, ModuleInfo Producer, string Name), string> ImportedAliases =
+                new Dictionary<(ModuleInfo, ModuleInfo, string), string>();
+            public int LexicalNames;
             public readonly Dictionary<ClassDef, List<object>> Mro = new Dictionary<ClassDef, List<object>>();
             public readonly Dictionary<ClassDef, List<(Expr Expr, object Node)>> RealBases = new Dictionary<ClassDef, List<(Expr Expr, object Node)>>();
         }
@@ -121,12 +127,25 @@ namespace Typhon.Compiler.Emit
             k.Body.Any(s => s is FunctionDef f && f.Name == name || s is AnnAssignStmt a && a.Target is NameExpr an && an.Id == name ||
                             s is AssignStmt asg && asg.Targets.Any(t => t is NameExpr tn && tn.Id == name));
 
+        static bool ImportsEnum(ModuleInfo module, Expr basis) => basis switch
+        {
+            NameExpr name => module.Ast.Body.OfType<ImportFromStmt>().Any(import => import.Level == 0 && import.Module == "enum" &&
+                import.Names.Any(binding => binding.Name == "Enum" && (binding.AsName ?? binding.Name) == name.Id)),
+            AttributeExpr { Target: NameExpr target, Name: "Enum" } => module.Ast.Body.OfType<ImportStmt>().Any(import =>
+                import.Names.Any(binding => binding.Name == "enum" && (binding.AsName ?? binding.Name) == target.Id)),
+            _ => false,
+        };
+
         static void Flatten(Context cx, ClassDef c)
         {
             var m = cx.Owner[c];
             var mro = cx.Mro.TryGetValue(c, out var l) ? l : null;
             if (mro == null) return; // (Python's TypeError: Cannot create a consistent method resolution order; C# then reports the bases)
             var bases = cx.RealBases[c];
+            // The enum emitter keeps the tuple's actual layout and represents Enum as a logical base.
+            if (bases.Count == 2 && bases[0].Node is ClassDef tuple && bases[1].Node is string &&
+                cx.Mro.TryGetValue(tuple, out var tupleBases) && tupleBases?.OfType<ClassDef>().Any(basis => basis.NamedTupleFields != null) == true &&
+                ImportsEnum(m, bases[1].Expr)) return;
             var opaque = bases.Where(b => !(b.Node is ClassDef)).ToList();
             if (opaque.Count > 1) return; // two .NET base classes: nothing to copy them from
             // Keep the tuple layout when a fixed-field tuple also inherits mixin methods.
@@ -142,30 +161,6 @@ namespace Typhon.Compiler.Emit
             var primaryMro = primary.Node is ClassDef pcd && cx.Mro.TryGetValue(pcd, out var pml) ? pml : new List<object> { primary.Node };
             var flattened = mro.Skip(1).OfType<ClassDef>().Where(k => !primaryMro.Contains(k)).ToList();
 
-            // names a copied method uses from its own module must exist where it is copied to
-            foreach (var k in flattened.Where(k => cx.Owner[k] != m))
-            {
-                var km = cx.Owner[k];
-                var missing = new SortedSet<string>();
-                foreach (var f in k.Body.OfType<FunctionDef>())
-                    AstWalker.VisitAll(f.Body, node =>
-                    {
-                        if (node is NameExpr n && (km.Functions.Contains(n.Id) || km.Classes.ContainsKey(n.Id) || km.Globals.Contains(n.Id)) &&
-                            !(m.Functions.Contains(n.Id) || m.Classes.ContainsKey(n.Id) || m.Globals.Contains(n.Id) || ImportsName(m, n.Id)))
-                            missing.Add(n.Id);
-                    });
-                if (missing.Count > 0)
-                {
-                    m.ParseDiagnostics.Add(new TyDiagnostic
-                    {
-                        Id = "TY0003", Severity = Severity.Error, Path = m.Path, Line = c.Line, Col = c.Col,
-                        Message = $"class '{c.Name}' inherits from '{k.Name}' (module {km.Name}), whose methods use {string.Join(", ", missing.Select(x => "'" + x + "'"))} " +
-                                  $"of its module: import {(missing.Count == 1 ? "it" : "them")} here as well (multiple inheritance copies those methods into '{c.Name}')",
-                    });
-                    return;
-                }
-            }
-
             var added = new List<Stmt>();
             object Winner(string name) => mro.FirstOrDefault(k => Defines(k, name));
             foreach (var k in flattened)
@@ -176,11 +171,11 @@ namespace Typhon.Compiler.Emit
                     string name = group.Key;
                     var defs = group.ToList();
                     if (Equals(Winner(name), k) && !Defines(c, name) && name != "__init__")
-                        foreach (var d in defs) added.Add(CopyMethod(d, d.Name, k, c));
+                        foreach (var d in defs) added.Add(CopyMethod(d, d.Name, k, c, cx));
                     // every plain method also under its hidden name: what super() / Class.method(self) calls reach
                     if (defs.Count == 1 && defs[0].Decorators.Count == 0)
                     {
-                        var hidden = CopyMethod(defs[0], Hidden(k, name), k, c);
+                        var hidden = CopyMethod(defs[0], Hidden(k, name), k, c, cx);
                         if (name == "__init__" && !PrepareInit(m, c, k, hidden, mro, flattened)) return;
                         added.Add(hidden);
                     }
@@ -188,31 +183,45 @@ namespace Typhon.Compiler.Emit
                 // class-level fields and class variables the class does not define itself
                 foreach (var s in k.Body)
                 {
-                    string target = s is AnnAssignStmt a && a.Target is NameExpr an ? an.Id : s is AssignStmt asg && asg.Targets.Count == 1 && asg.Targets[0] is NameExpr tn ? tn.Id : null;
-                    if (target == null || DefinesAttribute(c, target) || added.Any(x => x is AnnAssignStmt xa && xa.Target is NameExpr xn && xn.Id == target ||
-                                                                                        x is AssignStmt xs && xs.Targets[0] is NameExpr xt && xt.Id == target))
-                        continue;
-                    if (mro.TakeWhile(x => !Equals(x, k)).OfType<ClassDef>().Any(x => DefinesAttribute(x, target))) continue;
-                    if (primaryMro.OfType<ClassDef>().Any(x => DefinesAttribute(x, target))) continue;
-                    Stmt copy = AstClone.Clone(s);
-                    if (cx.Owner[k] != m && !target.StartsWith("__"))
+                    var targets = s switch
                     {
-                        // Inherit the initialized value so its expression runs in the defining module.
-                        var source = bases.FirstOrDefault(basis => Equals(basis.Node, k) ||
-                            basis.Node is ClassDef owner && cx.Mro.TryGetValue(owner, out var ancestors) && ancestors.Contains(k));
-                        if (source.Expr != null)
+                        AnnAssignStmt a when a.Target is NameExpr name => new[] { name },
+                        AssignStmt assignment when assignment.Targets.All(target => target is NameExpr) => assignment.Targets.Cast<NameExpr>(),
+                        _ => Enumerable.Empty<NameExpr>(),
+                    };
+                    foreach (var name in targets)
+                    {
+                        string target = name.Id;
+                        if (DefinesAttribute(c, target) || added.Any(x => x is AnnAssignStmt xa && xa.Target is NameExpr xn && xn.Id == target ||
+                            x is AssignStmt xs && xs.Targets[0] is NameExpr xt && xt.Id == target))
+                            continue;
+                        if (mro.TakeWhile(x => !Equals(x, k)).OfType<ClassDef>().Any(x => DefinesAttribute(x, target))) continue;
+                        if (primaryMro.OfType<ClassDef>().Any(x => DefinesAttribute(x, target))) continue;
+                        bool chained = s is AssignStmt { Targets.Count: > 1 };
+                        Stmt copy = chained
+                            ? new AssignStmt { Targets = { AstClone.Clone(name) }, Line = s.Line, Col = s.Col }
+                            : AstClone.Clone(s);
+                        if (chained || cx.Owner[k] != m && !target.StartsWith("__"))
                         {
-                            var value = new AttributeExpr { Target = AstClone.Clone(source.Expr), Name = target, Line = s.Line, Col = s.Col };
-                            if (copy is AssignStmt assignment) assignment.Value = value;
-                            if (copy is AnnAssignStmt { Value: not null } annotation) annotation.Value = value;
+                            // Read the initialized binding instead of evaluating its class-body expression again.
+                            var source = bases.FirstOrDefault(basis => Equals(basis.Node, k) ||
+                                basis.Node is ClassDef owner && cx.Mro.TryGetValue(owner, out var ancestors) && ancestors.Contains(k));
+                            if (source.Expr == null && chained) continue;
+                            if (source.Expr != null)
+                            {
+                                var value = new AttributeExpr { Target = AstClone.Clone(source.Expr), Name = target, Line = s.Line, Col = s.Col };
+                                if (copy is AssignStmt assignment) assignment.Value = value;
+                                if (copy is AnnAssignStmt { Value: not null } annotation) annotation.Value = value;
+                            }
                         }
+                        added.Add(copy);
                     }
-                    added.Add(copy);
                 }
                 if (!cx.Project.MixedInto.TryGetValue(k, out var list)) cx.Project.MixedInto[k] = list = new List<(ClassDef, ModuleInfo)>();
                 list.Add((c, m));
             }
 
+            foreach (var member in added) member.IsFlattenedClassMember = true;
             c.Body.AddRange(added);
             // super() and Class.method(self, ...) in the class's own methods and in the copies, in MRO order
             foreach (var f in c.Body.OfType<FunctionDef>())
@@ -223,6 +232,7 @@ namespace Typhon.Compiler.Emit
             }
             RunMixinInits(c, flattened, mro, cx, primary.Node);
             CooperativeHooks(c, flattened, mro, primaryMro, cx);
+            c.BasesBeforeFlattening = c.Bases;
             c.Bases = c.Bases.Where(b => b == primary.Expr || MarkerBases.Contains(DottedName(b is SubscriptExpr s ? s.Target : b) ?? "")).ToList();
         }
 
@@ -248,7 +258,8 @@ namespace Typhon.Compiler.Emit
                     foreach (var call in calls)
                     {
                         var a = (AttributeExpr)call.Func;
-                        if (a.Name == "__init__") continue;
+                        // Allocation calls already carry an explicit class receiver.
+                        if (a.Name == "__init__" || a.Name == "__new__" && !cx.Owner[c].IsGdScript) continue;
                         if (!(ProviderAfter(mro, x, a.Name) is ClassDef next) || !flattened.Contains(next)) continue;
                         var target = cx.Mro.TryGetValue(x, out var xm) ? ProviderAfter(xm, x, a.Name) as ClassDef : null;
                         var signature = (target ?? next).Body.OfType<FunctionDef>().First(m => m.Name == a.Name);
@@ -322,17 +333,128 @@ namespace Typhon.Compiler.Emit
         static bool HasRealInit(ClassDef k) =>
             k.Body.OfType<FunctionDef>().Any(f => f.Name == "__init__" && f.Params.Skip(1).Any(p => p.Kind == ParamKind.Normal));
 
-        static bool ImportsName(ModuleInfo m, string name) =>
-            m.Ast.Body.OfType<ImportFromStmt>().Any(i => i.Names.Any(a => (a.AsName ?? a.Name) == name || a.Name == "*")) ||
-            m.Ast.Body.OfType<ImportStmt>().Any(i => i.Names.Any(a => (a.AsName ?? a.Name.Split('.')[0]) == name));
+        static void PreserveLexicalBindings(FunctionDef method, ModuleInfo producer, ModuleInfo consumer, Context context)
+        {
+            if (producer == consumer) return;
+
+            var importedNames = new Dictionary<string, (string Module, string Member)>();
+            foreach (var statement in producer.Ast.Body)
+            {
+                if (statement is ImportStmt direct)
+                    foreach (var alias in direct.Names)
+                    {
+                        string binding = alias.AsName ?? alias.Name.Split('.')[0];
+                        importedNames[binding] = (alias.AsName == null ? binding : alias.Name, null);
+                    }
+                else if (statement is ImportFromStmt from && producer.ResolveImport(from.Module, from.Level) is string absolute)
+                    foreach (var alias in from.Names.Where(alias => alias.Name != "*"))
+                        importedNames[alias.AsName ?? alias.Name] = (absolute, alias.Name);
+            }
+
+            bool IsModuleName(string name) =>
+                producer.Functions.Contains(name) || producer.Globals.Contains(name) || producer.Classes.ContainsKey(name);
+
+            void AddImport(Stmt statement)
+            {
+                int position = consumer.Ast.Body.FindLastIndex(item => item is ImportStmt or ImportFromStmt);
+                consumer.Ast.Body.Insert(position + 1, statement);
+            }
+
+            string Import(string name)
+            {
+                if (!IsModuleName(name) && importedNames.TryGetValue(name, out var imported))
+                {
+                    var importedKey = (consumer, producer, name);
+                    if (context.ImportedAliases.TryGetValue(importedKey, out string existingAlias)) return existingAlias;
+                    string aliasId = $"__typhon_inherited_global_{context.LexicalNames++}";
+                    var alias = new ImportAlias { Name = imported.Member ?? imported.Module,
+                        AsName = aliasId, Line = method.Line, Col = method.Col };
+                    AddImport(imported.Member == null
+                        ? (Stmt)new ImportStmt { Names = { alias }, Line = method.Line, Col = method.Col }
+                        : new ImportFromStmt { Module = imported.Module, Names = { alias }, Line = method.Line, Col = method.Col });
+                    context.ImportedAliases.Add(importedKey, aliasId);
+                    return aliasId;
+                }
+                var key = (consumer, producer);
+                if (!context.LexicalImports.TryGetValue(key, out var declaration))
+                {
+                    declaration = new ImportFromStmt { Module = producer.Name, Line = method.Line, Col = method.Col };
+                    AddImport(declaration);
+                    context.LexicalImports.Add(key, declaration);
+                }
+                if (declaration.Names.FirstOrDefault(alias => alias.Name == name) is ImportAlias existing)
+                    return existing.AsName;
+                string aliasName = $"__typhon_inherited_global_{context.LexicalNames++}";
+                declaration.Names.Add(new ImportAlias { Name = name, AsName = aliasName, Line = method.Line, Col = method.Col });
+                return aliasName;
+            }
+
+            HashSet<string> Locals(FunctionDef definition, IEnumerable<string> outer)
+            {
+                var parameters = definition.Params.Select(parameter => parameter.Name).ToArray();
+                var result = LocalsAnalyzer.Analyze(definition.Body, parameters, null);
+                return new HashSet<string>(outer.Concat(parameters).Concat(result.AllLocals));
+            }
+
+            void Visit(object current, HashSet<string> bound)
+            {
+                if (current is IEnumerable<object> sequence)
+                {
+                    foreach (object item in sequence) Visit(item, bound);
+                }
+                else if (current is NameExpr name && !bound.Contains(name.Id) && (IsModuleName(name.Id) || importedNames.ContainsKey(name.Id)))
+                    name.Id = Import(name.Id);
+                else if (current is FunctionDef local)
+                {
+                    foreach (Param parameter in local.Params) Visit(parameter.Default, bound);
+                    Visit(local.Body, Locals(local, bound));
+                }
+                else if (current is LambdaExpr lambda)
+                {
+                    foreach (var value in lambda.Defaults) Visit(value, bound);
+                    Visit(lambda.Body, new HashSet<string>(bound.Concat(lambda.Params)));
+                }
+                else if (current is ComprehensionExpr comprehension)
+                {
+                    var locals = new HashSet<string>(bound);
+                    foreach (var generator in comprehension.Generators)
+                    {
+                        Visit(generator.Iter, locals);
+                        AstWalker.VisitAll(generator.Target, node =>
+                        {
+                            if (node is NameExpr target) locals.Add(target.Id);
+                        });
+                        Visit(generator.Ifs, locals);
+                    }
+                    Visit(comprehension.Elt, locals);
+                    Visit(comprehension.ValueElt, locals);
+                }
+                else if (current is ExceptHandler handler && handler.Name != null)
+                {
+                    Visit(handler.Type, bound);
+                    Visit(handler.Body, new HashSet<string>(bound) { handler.Name });
+                }
+                else if (current is Node node && node is not ClassDef)
+                    foreach (var child in AstWalker.Children(node)) Visit(child, bound);
+            }
+
+            var outer = new HashSet<string>();
+            foreach (var parameter in method.Params) Visit(parameter.Default, outer);
+            Visit(method.Body, Locals(method, outer));
+        }
 
         /// <summary>A method of <paramref name="from"/> copied into <paramref name="into"/>: its annotations naming the class name the new one.</summary>
-        static FunctionDef CopyMethod(FunctionDef d, string name, ClassDef from, ClassDef into)
+        static FunctionDef CopyMethod(FunctionDef d, string name, ClassDef from, ClassDef into, Context context)
         {
             var copy = AstClone.Clone(d);
             copy.Name = name;
+            copy.IsFlattenedClassMember = true;
+            if (!context.Owner[into].IsGdScript && d.Name == "__new__" && name != d.Name && !d.IsAsync &&
+                d.TypeParams.Count == 0 && d.Params.Count > 0 && d.Params[0].Kind == ParamKind.Normal)
+                copy.PyName = d.Name;
             foreach (var p in copy.Params) p.Annotation = Retarget(p.Annotation, from, into);
             copy.Returns = Retarget(copy.Returns, from, into);
+            PreserveLexicalBindings(copy, context.Owner[from], context.Owner[into], context);
             return copy;
         }
 
@@ -367,7 +489,8 @@ namespace Typhon.Compiler.Emit
                     var next = ProviderAfter(mro, context, a.Name) as ClassDef;
                     if (next != null && flattened.Contains(next))
                     {
-                        a.Target = new NameExpr { Id = self, Line = a.Line, Col = a.Col };
+                        bool allocator = a.Name == "__new__" && !module.IsGdScript;
+                        a.Target = new NameExpr { Id = allocator ? into.Name : self, Line = a.Line, Col = a.Col };
                         a.Name = Hidden(next, a.Name);
                     }
                     // a base-chain class, but another one before it overrides m (C#'s base.m would reach that one): its body,
@@ -378,9 +501,7 @@ namespace Typhon.Compiler.Emit
                         string direct = Direct(next, a.Name);
                         if (!next.Body.OfType<FunctionDef>().Any(m => m.Name == direct))
                         {
-                            var copy = AstClone.Clone(next.Body.OfType<FunctionDef>().First(m => m.Name == a.Name));
-                            copy.Name = direct;
-                            next.Body.Add(copy);
+                            next.Body.Add(CopyMethod(next.Body.OfType<FunctionDef>().First(m => m.Name == a.Name), direct, next, next, cx));
                         }
                         a.Target = new NameExpr { Id = self, Line = a.Line, Col = a.Col };
                         a.Name = direct;
@@ -391,9 +512,10 @@ namespace Typhon.Compiler.Emit
                 if (call.Args.Count >= 1 && call.Args[0].Name == null && call.Args[0].Value is NameExpr a0 && a0.Id == self &&
                     ResolveClass(cx, module, a.Target) is ClassDef named && flattened.Contains(named) && Defines(named, a.Name))
                 {
-                    a.Target = new NameExpr { Id = self, Line = a.Line, Col = a.Col };
+                    bool allocator = a.Name == "__new__" && !module.IsGdScript;
+                    a.Target = new NameExpr { Id = allocator ? into.Name : self, Line = a.Line, Col = a.Col };
                     a.Name = Hidden(named, a.Name);
-                    call.Args.RemoveAt(0);
+                    if (!allocator) call.Args.RemoveAt(0);
                 }
             });
         }

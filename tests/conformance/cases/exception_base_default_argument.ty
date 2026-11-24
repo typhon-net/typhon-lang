@@ -1,0 +1,22 @@
+class Invalid(ValueError):
+    def __init__(self, message='invalid file'):
+        ValueError.__init__(self, message)
+
+
+default = Invalid()
+print(str(default), default.args)
+number = Invalid(17)
+print(str(number), number.args)
+try:
+    raise Invalid('another message')
+except ValueError as error:
+    print(str(error), error.args)
+
+
+class Forwarded(ValueError):
+    def __init__(self, *items):
+        super().__init__(*items)
+
+
+error = Forwarded('x', 2)
+print(str(error), error.args)

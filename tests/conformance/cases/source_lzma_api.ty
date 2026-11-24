@@ -1,12 +1,28 @@
 #:pylib-source lzma
 import io
-import lzma
 import sys
 
-print(lzma.FORMAT_AUTO, lzma.FORMAT_XZ, lzma.FORMAT_ALONE, lzma.FORMAT_RAW)
-print(lzma.CHECK_NONE, lzma.CHECK_CRC32, lzma.CHECK_CRC64, lzma.CHECK_SHA256)
-print(lzma.FILTER_LZMA1, lzma.FILTER_LZMA2, lzma.PRESET_DEFAULT)
+try:
+    import lzma
+except ModuleNotFoundError as error:
+    if error.name != "_lzma":
+        raise
+    assert "lzma" not in sys.modules
+    try:
+        import _lzma
+    except ModuleNotFoundError as missing:
+        assert missing.name == "_lzma"
+    else:
+        raise AssertionError("lzma cannot import an available _lzma provider")
+    if len(sys.argv) > 1:
+        print("native liblzma unavailable")
+        sys.exit(0)
+else:
+    assert (lzma.FORMAT_AUTO, lzma.FORMAT_XZ, lzma.FORMAT_ALONE, lzma.FORMAT_RAW) == (0, 1, 2, 3)
+    assert (lzma.CHECK_NONE, lzma.CHECK_CRC32, lzma.CHECK_CRC64, lzma.CHECK_SHA256) == (0, 1, 4, 10)
+    assert (lzma.FILTER_LZMA1, lzma.FILTER_LZMA2, lzma.PRESET_DEFAULT) == (0x4000000000000001, 0x21, 6)
 
+print("optional lzma import checked")
 
 if len(sys.argv) > 1:
     data = b"Typhon xz\n" * 253

@@ -1,0 +1,16 @@
+import packed_override_default_fixture as source
+
+
+class Adapter(source.Parent):
+    def configure(self, *args, **kwargs):
+        return args, kwargs
+
+
+def exercise(view: source.Parent) -> None:
+    print(view.configure())
+    print(view.configure(settings=None))
+    print(view.configure('value', test=True))
+
+
+exercise(source.Parent())
+exercise(Adapter())

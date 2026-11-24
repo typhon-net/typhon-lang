@@ -1,0 +1,40 @@
+from types import DynamicClassAttribute
+
+
+def get_original(obj):
+    """Original docs."""
+    return obj
+
+
+def get_updated(obj):
+    """Updated docs."""
+    return obj + 1
+
+
+def set_value(obj, value):
+    return value * 2
+
+
+def delete_value(obj):
+    return str(obj)
+
+
+class Descriptor(DynamicClassAttribute):
+    def __set__(self, obj, value):
+        return self.fset(obj, value)
+
+    def __delete__(self, obj):
+        return self.fdel(obj)
+
+
+base = DynamicClassAttribute(get_original, set_value, delete_value)
+print(base.__set__(1, 4), base.__delete__(1))
+print(base.getter(get_updated).__doc__, base.overwrite_doc)
+
+desc = Descriptor(get_original)
+desc.fset = set_value
+desc.fdel = delete_value
+print(desc.__set__(1, 8), desc.__delete__(3))
+copy = desc.getter(get_updated)
+print(type(copy).__name__, copy.__get__(5), copy.__doc__)
+print(copy.__set__(1, 10), copy.__delete__(11))

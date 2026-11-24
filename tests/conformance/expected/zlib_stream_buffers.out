@@ -14,3 +14,8 @@ True
 True True b'tail' b''
 True
 invalid compressed data
+True True
+True
+TypeError 'float' object cannot be interpreted as an integer
+error Bad compression level
+OverflowError Python int too large to convert to C int

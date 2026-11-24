@@ -19,6 +19,7 @@ class Factory:
 
 print(Table.selected, Table.value(4), Table.saved(4, right=5), Table.saved is Table.value)
 print(Factory.first(2, 3), Factory.first(5, 3), Factory.second(7, 3), Factory.second(9, 3))
+print(Factory.first(left=5, right=3), Factory.second(*(9, 3)))
 
 class Example:
     amount: int = 9

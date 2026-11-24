@@ -1,0 +1,16 @@
+import io
+import os
+import sys
+
+if sys.platform == "win32":
+    import _winapi
+    import msvcrt
+    read_handle, write_handle = _winapi.CreatePipe(None, 0)
+    reader = msvcrt.open_osfhandle(read_handle, 0)
+    writer = msvcrt.open_osfhandle(write_handle, 0)
+else:
+    reader, writer = os.pipe()
+with io.open(writer, "wb") as output:
+    output.write(b"parent")
+with io.open(reader, "rb") as incoming:
+    print(incoming.read())

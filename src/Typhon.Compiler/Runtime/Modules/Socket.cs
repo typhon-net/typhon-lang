@@ -8,7 +8,6 @@ namespace Typhon.Stdlib
 {
     using System;
     using System.Collections.Generic;
-    using System.Collections.Concurrent;
     using System.Globalization;
     using System.Linq;
     using System.Net;
@@ -60,8 +59,7 @@ namespace Typhon.Stdlib
 
         internal partial class socket : IDisposable
         {
-            static readonly ConcurrentDictionary<long, Socket> AcceptedSockets = new();
-            Socket _handle = null!;
+            internal System.IO.Stream OpenConnectedTransport() => new NetworkStream(RequireHandle(), ownsSocket: false);
             double? _timeout;
             public long family { get; private set; }
             public long type { get; private set; }
@@ -73,47 +71,46 @@ namespace Typhon.Stdlib
             public socket(long family = -1, long type = -1, long proto = -1, object? fileno = null) =>
                 __init__(family, type, proto, fileno);
 
+            public static socket __new__(Type cls, [PyPackedArguments] object?[]? args = null,
+                [PyKeywordArguments] OrderedDictionary<string, object?>? keywords = null)
+            {
+                if (!typeof(socket).IsAssignableFrom(cls)) throw new InvalidCastException("socket.__new__ requires a socket subtype");
+                return (socket)RuntimeHelpers.GetUninitializedObject(cls);
+            }
+
             public void __init__(object family, object type, object proto, object? fileno)
             {
                 long familyNumber = Integer(family), typeNumber = Integer(type), protocolNumber = Integer(proto);
-                Socket selected;
-                if (fileno == null)
+                lock (FileLifetime)
                 {
-                    familyNumber = familyNumber == -1 ? AF_INET : familyNumber;
-                    typeNumber = typeNumber == -1 ? SOCK_STREAM : typeNumber;
-                    protocolNumber = protocolNumber == -1 ? 0 : protocolNumber;
-                    try { selected = new Socket(NetFamily(familyNumber), NetType(typeNumber), (ProtocolType)protocolNumber); }
-                    catch (SocketException e) { throw SocketFailure(e); }
+                    Descriptor selected;
+                    if (fileno == null)
+                    {
+                        familyNumber = familyNumber == -1 ? AF_INET : familyNumber;
+                        typeNumber = typeNumber == -1 ? SOCK_STREAM : typeNumber;
+                        protocolNumber = protocolNumber == -1 ? 0 : protocolNumber;
+                        try { selected = new Descriptor(new Socket(NetFamily(familyNumber), NetType(typeNumber), (ProtocolType)protocolNumber)); }
+                        catch (SocketException e) { throw SocketFailure(e); }
+                    }
+                    else
+                    {
+                        selected = FindDescriptor(Integer(fileno));
+                        familyNumber = familyNumber == -1 ? PythonFamily(selected.Handle.AddressFamily) : familyNumber;
+                        typeNumber = typeNumber == -1 ? (long)selected.Handle.SocketType : typeNumber;
+                        protocolNumber = protocolNumber == -1 ? (long)selected.Handle.ProtocolType : protocolNumber;
+                    }
+                    AttachDescriptor(selected);
+                    this.family = familyNumber;
+                    this.type = typeNumber;
+                    this.proto = protocolNumber;
+                    _closeRequested = false;
+                    ConfigureNewSocket();
                 }
-                else
-                {
-                    long descriptor = Integer(fileno);
-                    if (!AcceptedSockets.TryRemove(descriptor, out var accepted))
-                        throw new PyOSError(errno.EBADF, "Bad file descriptor");
-                    selected = accepted;
-                    familyNumber = familyNumber == -1 ? PythonFamily(selected.AddressFamily) : familyNumber;
-                    typeNumber = typeNumber == -1 ? (long)selected.SocketType : typeNumber;
-                    protocolNumber = protocolNumber == -1 ? (long)selected.ProtocolType : protocolNumber;
-                }
-                _handle?.Dispose();
-                _handle = selected;
-                this.family = familyNumber;
-                this.type = typeNumber;
-                this.proto = protocolNumber;
-                _closeRequested = false;
-                ConfigureNewSocket();
-            }
-
-            internal static void CloseDetached(long descriptor)
-            {
-                if (!AcceptedSockets.TryRemove(descriptor, out var handle))
-                    throw new PyOSError(errno.EBADF, "Bad file descriptor");
-                handle.Dispose();
             }
 
             socket(Socket handle, socket listener)
             {
-                _handle = handle;
+                AttachDescriptor(new Descriptor(handle));
                 family = listener.family;
                 type = listener.type;
                 proto = listener.proto;
@@ -123,12 +120,12 @@ namespace Typhon.Stdlib
             void ConfigureNewSocket()
             {
                 try { settimeout(getdefaulttimeout()); }
-                catch { _handle.Dispose(); throw; }
+                catch { CloseAttachedDescriptor(); throw; }
             }
 
             T Run<T>(Func<Socket, T> operation)
             {
-                try { return operation(_handle); }
+                try { return operation(RequireHandle()); }
                 catch (SocketException e) { throw SocketFailure(e, _timeout > 0); }
                 catch (OperationCanceledException) { throw new TimeoutException("timed out"); }
                 catch (ObjectDisposedException) { throw new PyOSError(errno.EBADF, "Bad file descriptor"); }
@@ -144,19 +141,15 @@ namespace Typhon.Stdlib
             }
             public void close()
             {
-                lock (_fileLifetime)
+                lock (FileLifetime)
                 {
                     if (_closeRequested) return;
                     _closeRequested = true;
-                    if (_openFiles == 0) _handle.Dispose();
+                    if (_openFiles == 0) CloseAttachedDescriptor();
                 }
             }
             public void Dispose() => close();
-            public long fileno()
-            {
-                try { return _handle.SafeHandle.IsClosed ? -1 : _handle.Handle.ToInt64(); }
-                catch (ObjectDisposedException) { return -1; }
-            }
+            public long fileno() => Volatile.Read(ref _descriptor)?.Number ?? -1;
 
             public void settimeout(double? value)
             {
@@ -194,10 +187,7 @@ namespace Typhon.Stdlib
                 try
                 {
                     object address = PythonAddress(connected.RemoteEndPoint!);
-                    long descriptor = connected.Handle.ToInt64();
-                    if (!AcceptedSockets.TryAdd(descriptor, connected))
-                        throw new InvalidOperationException("socket handle is already registered");
-                    return (descriptor, address);
+                    return (AdoptableDescriptor(connected), address);
                 }
                 catch { connected.Dispose(); throw; }
             }

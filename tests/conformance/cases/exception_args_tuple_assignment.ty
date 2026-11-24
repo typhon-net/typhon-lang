@@ -1,0 +1,26 @@
+class StatusError(Exception):
+    def __init__(self, text):
+        self.args = text,
+        self.text = text
+
+error = StatusError('missing status')
+print(error.args)
+print(str(error))
+print(error.text)
+
+error.args = ['replacement', 5]
+print(error.args is error.args, str(error), repr(error))
+try:
+    error.args = None
+except TypeError:
+    print('noniterable args rejected', error.args)
+
+ordinary = ValueError('original')
+ordinary.args = ('updated',)
+print(str(ordinary), repr(ordinary))
+missing = KeyError('original')
+missing.args = ('updated',)
+print(str(missing), repr(missing))
+syntax = SyntaxError('original')
+setattr(syntax, 'args', ['updated'])
+print(str(syntax), repr(syntax))

@@ -19,12 +19,12 @@ namespace Typhon.Runtime
     using System.Reflection;
     using System.Runtime.CompilerServices;
 
-    /// <summary>A named singleton: NotImplemented, Ellipsis, and the objects sentinel(name) makes.</summary>
+    /// <summary>The identity-based marker created by Python's sentinel type.</summary>
     internal sealed class PySingleton : IPyRepr
     {
         readonly string _repr;
         public readonly string __name__;
-        public PySingleton(string name, string? repr = null) { __name__ = name; _repr = repr ?? name; }
+        public PySingleton([PyPositionalOnly] string name, [PyKeywordOnly] string? repr = null) { __name__ = name; _repr = repr ?? name; }
         public string __repr__() => _repr;
         public override string ToString() => _repr;
     }
@@ -50,7 +50,10 @@ namespace Typhon.Runtime
             if (value is PyPlainEnumMember plainEnum) return plainEnum.Owner;
             if (value is Type type) return PyMetaclasses.Of(type);
             if (value is PyModule) return typeof(Typhon.Stdlib.types.ModuleType);
+            if (value is PyAttrDict) return typeof(OrderedDictionary<object, object>);
             if (value is ReprDescriptor) return typeof(Typhon.Stdlib.types.WrapperDescriptorType);
+            if (value is ImmutableNewArgumentsDescriptor) return typeof(Typhon.Stdlib.types.MethodDescriptorType);
+            if (value is BoundImmutableNewArguments) return typeof(Typhon.Stdlib.types.BuiltinFunctionType);
             if (value is PyPartial) return typeof(PyPartial);
             if (value is PyFunction || value is Delegate && Typhon.Stdlib.inspect.isfunction(value)) return typeof(Typhon.Stdlib.types.FunctionType);
             if (value is PyBoundMethod { BuiltinOwner: not null } or PyBoundMethod { IsBuiltinModuleFunction: true })
@@ -338,7 +341,7 @@ namespace Typhon.Runtime
             if (o is PyFunction pf)
             {
                 foreach (var n in new[] { "__call__", "__doc__", "__module__", "__name__", "__qualname__", "__wrapped__" }) names.Add(n);
-                if (pf._attrs != null) foreach (var n in pf._attrs.Keys) names.Add(n);
+                if (pf._attrs != null) foreach (var n in pf._attrs.Keys.OfType<string>()) names.Add(n);
             }
             else
             {

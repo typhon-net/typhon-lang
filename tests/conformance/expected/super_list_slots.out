@@ -1,0 +1,3 @@
+Bucket(['a', 'b']) 12
+b Bucket(['a'])
+list() takes no keyword arguments

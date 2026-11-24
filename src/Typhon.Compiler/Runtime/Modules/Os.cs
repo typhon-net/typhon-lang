@@ -81,6 +81,7 @@ namespace Typhon.Runtime
             {
                 2 => new FileNotFoundException(msg, filename),
                 1 or 13 => new UnauthorizedAccessException(msg),
+                17 => new FileExistsError(msg),
                 _ => new IOException(msg, errno),
             };
             return WithMetadata(error, errno, StrError(errno), filename, filename2);
@@ -93,6 +94,7 @@ namespace Typhon.Runtime
             {
                 2 or 3 => new FileNotFoundException(msg, filename),
                 5 => new UnauthorizedAccessException(msg),
+                80 or 183 => new FileExistsError(msg),
                 _ => new IOException(msg, code),
             };
             error.Data["winerror"] = (long)code;
@@ -101,7 +103,7 @@ namespace Typhon.Runtime
                 2 or 3 => ENOENT,
                 5 => 13,
                 145 => ENOTEMPTY,
-                183 => EEXIST,
+                80 or 183 => EEXIST,
                 267 => ENOTDIR,
                 _ => EINVAL,
             };
@@ -115,6 +117,15 @@ namespace Typhon.Runtime
             error.Data["filename"] = first;
             error.Data["filename2"] = second;
             error.Data["__args__"] = new object?[] { (long)number, description };
+            if (error is PyOSError pyError)
+            {
+                pyError.errno = (long)number;
+                pyError.strerror = description;
+                pyError.filename = first;
+                pyError.filename2 = second;
+                pyError.winerror = error.Data["winerror"];
+                pyError.args = new PyTuple<object?>(new object?[] { (long)number, description });
+            }
             return error;
         }
 

@@ -1,0 +1,3 @@
+(204, 'ping explicit')
+(204, 'helo message', 206)
+204 quit message

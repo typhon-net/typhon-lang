@@ -37,7 +37,7 @@ namespace Typhon.Runtime
             return AsInt(value, out integer) && integer is >= -5 and <= 256;
         }
 
-        static object? IntegerValue(object? value) => value switch
+        internal static object? IntegerValue(object? value) => value switch
         {
             PyInteger integer => integer.PrimitiveValue,
             Enum member when Enum.GetUnderlyingType(member.GetType()) == typeof(long) => Convert.ToInt64(member, Inv),

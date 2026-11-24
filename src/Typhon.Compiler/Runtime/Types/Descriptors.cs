@@ -177,7 +177,7 @@ namespace Typhon.Stdlib
                 if (instance == null) return this;
                 if (attrname == null) throw new InvalidCastException("Cannot use cached_property instance without calling __set_name__ on it.");
                 var type = instance.GetType();
-                if (!AllowsInstanceDict(type))
+                if (!PyInstanceSlots.AllowsInstanceDict(type))
                     throw new InvalidCastException($"No '__dict__' attribute on '{Builtins.PyTypeName(type)}' instance to cache {Builtins.repr(attrname)} property.");
                 var cache = new PyAttrDict(instance);
                 if (!cache.TryGetValue(attrname, out var value))
@@ -186,22 +186,6 @@ namespace Typhon.Stdlib
                     cache[attrname] = value;
                 }
                 return value;
-            }
-
-            static bool AllowsInstanceDict(Type type)
-            {
-                // A subclass with no __slots__ declaration acquires its own dictionary. A slotted
-                // subclass keeps the dictionary if a base has one or if its slots include __dict__.
-                for (Type? current = type; current != null; current = current.BaseType)
-                {
-                    if (current.Assembly == typeof(object).Assembly || current.Namespace?.StartsWith("System.", StringComparison.Ordinal) == true ||
-                        current == typeof(PyBytes) || current == typeof(PyByteArray)) return false;
-                    var slots = current.GetField("__slots__", BindingFlags.DeclaredOnly | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
-                    if (slots == null) return true;
-                    var values = slots.GetValue(null);
-                    if (values is string name ? name == "__dict__" : Builtins.__iter_dyn(values).Any(slot => slot is string key && key == "__dict__")) return true;
-                }
-                return false;
             }
         }
     }

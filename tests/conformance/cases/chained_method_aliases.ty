@@ -1,0 +1,30 @@
+class Geometry:
+    def position(self, role='base', **options):
+        return role, options.get('side', 'left')
+
+    pack = configure = config = position
+
+
+class Anchor:
+    pass
+
+
+class Widget(Anchor, Geometry):
+    pass
+
+
+class Window(Widget):
+    def configure(self, role='window', **options):
+        return role, options.get('side', 'right')
+
+
+def outputs(value):
+    print(value.pack(side='top'))
+    print(value.configure())
+    print(value.config())
+    print(value.pack.__name__, value.config.__name__)
+
+
+outputs(Geometry())
+outputs(Window())
+print(Window().pack(side="typed"))

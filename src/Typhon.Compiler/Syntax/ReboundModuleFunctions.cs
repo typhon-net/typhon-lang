@@ -18,27 +18,16 @@ namespace Typhon.Compiler.Syntax
             if (definitions.Length == 0 && classes.Length == 0) return;
 
             var writes = new HashSet<string>();
-            foreach (var block in blocks)
-            {
-                foreach (var statement in block)
-                {
-                    switch (statement)
-                    {
-                        case AssignStmt assign: foreach (var target in assign.Targets) AddTarget(target); break;
-                        case AugAssignStmt assign: AddTarget(assign.Target); break;
-                        case AnnAssignStmt assign when assign.Value != null: AddTarget(assign.Target); break;
-                        case DelStmt delete: foreach (var target in delete.Targets) AddTarget(target); break;
-                        case ForStmt loop: AddTarget(loop.Target); break;
-                        case WithStmt with: foreach (var item in with.Items) AddTarget(item.Var); break;
-                    }
-                }
-            }
+            foreach (var statement in blocks.SelectMany(block => block))
+                foreach (var bound in WrittenNames(statement)) writes.Add(bound);
             foreach (var group in classes)
                 if (group.Count() > 1 || writes.Contains(group.Key)) module.ReboundClasses.Add(group.Key);
+            var globalBindings = new HashSet<string>();
             AstWalker.VisitAll(module.Ast.Body, node =>
             {
-                if (node is GlobalStmt { Nonlocal: false } global) writes.UnionWith(global.Names);
+                if (node is GlobalStmt { Nonlocal: false } global) globalBindings.UnionWith(global.Names);
             });
+            writes.UnionWith(globalBindings);
             foreach (var group in definitions)
             {
                 if ((group.Count() > 1 || writes.Contains(group.Key)) &&
@@ -55,10 +44,30 @@ namespace Typhon.Compiler.Syntax
                 else if (node is ClassDef type) used.Add(type.Name);
             });
             int suffix = 0;
+            var activeTypes = new Dictionary<string, ClassDef>();
             foreach (var block in blocks)
             {
                 for (int i = 0; i < block.Count; i++)
                 {
+                    if (block == module.Ast.Body)
+                    {
+                        if (block[i] is ClassDef declaration)
+                        {
+                            for (int basis = 0; basis < declaration.Bases.Count; basis++)
+                                declaration.Bases[basis] = ActiveBase(declaration.Bases[basis]);
+                            declaration.Metaclass = ActiveBase(declaration.Metaclass);
+                        }
+                        foreach (var statement in ModuleBlocks(new List<Stmt> { block[i] }).SelectMany(scope => scope))
+                        {
+                            foreach (string bound in WrittenNames(statement)) activeTypes.Remove(bound);
+                            if (statement is ImportStmt import)
+                                foreach (var alias in import.Names) activeTypes.Remove(alias.AsName ?? alias.Name.Split('.')[0]);
+                            if (statement is ImportFromStmt from)
+                                foreach (var alias in from.Names) activeTypes.Remove(alias.AsName ?? alias.Name);
+                            if (statement is FunctionDef method) activeTypes.Remove(method.Name);
+                            if (statement is ClassDef type) activeTypes.Remove(type.Name);
+                        }
+                    }
                     string name, prefix;
                     switch (block[i])
                     {
@@ -87,6 +96,7 @@ namespace Typhon.Compiler.Syntax
                         var type = (ClassDef)block[i];
                         type.PyName ??= name;
                         type.Name = implementation;
+                        if (type.Decorators.Count == 0) activeTypes[name] = type;
                     }
                     var definition = block[i];
                     block.Insert(++i, new AssignStmt
@@ -99,13 +109,54 @@ namespace Typhon.Compiler.Syntax
                 }
             }
 
-            void AddTarget(Expr target)
+            foreach (var active in activeTypes)
             {
-                if (target is NameExpr name) writes.Add(name.Id);
-                else if (target is TupleExpr tuple) foreach (var item in tuple.Elts) AddTarget(item);
-                else if (target is ListExpr list) foreach (var item in list.Elts) AddTarget(item);
-                else if (target is StarredExpr star) AddTarget(star.Value);
+                if (globalBindings.Contains(active.Key)) continue;
+                int definition = module.Ast.Body.IndexOf(active.Value);
+                var following = module.Ast.Body.Skip(definition + 1).ToList();
+                bool mayRebind = AstWalker.ContainsOutsideNestedScopes(following, node => node switch
+                {
+                    NamedExpr assignment => assignment.Target.Id == active.Key,
+                    ExceptHandler handler => handler.Name == active.Key,
+                    ImportFromStmt import => import.Names.Any(alias => alias.Name == "*"),
+                    MatchStmt match => match.Cases.Any(branch => LocalsAnalyzer.PatternCaptures(branch.Pattern, match.Subject)
+                        .Any(capture => capture.Key == active.Key)),
+                    _ => false,
+                });
+                if (!mayRebind) module.FinalReboundClasses.Add(active.Key, active.Value);
             }
+
+            Expr ActiveBase(Expr expression)
+            {
+                if (expression is NameExpr name && activeTypes.TryGetValue(name.Id, out var implementation))
+                    return new NameExpr { Id = implementation.Name, Line = name.Line, Col = name.Col };
+                if (expression is SubscriptExpr generic) generic.Target = ActiveBase(generic.Target);
+                return expression;
+            }
+        }
+
+        static IEnumerable<string> WrittenNames(Stmt statement)
+        {
+            var targets = statement switch
+            {
+                AssignStmt assign => assign.Targets,
+                AugAssignStmt assign => new List<Expr> { assign.Target },
+                AnnAssignStmt assign when assign.Value != null => new List<Expr> { assign.Target },
+                DelStmt delete => delete.Targets,
+                ForStmt loop => new List<Expr> { loop.Target },
+                WithStmt with => with.Items.Select(item => item.Var).ToList(),
+                _ => new List<Expr>(),
+            };
+            return targets.SelectMany(Names);
+
+            static IEnumerable<string> Names(Expr target) => target switch
+            {
+                NameExpr name => new[] { name.Id },
+                TupleExpr tuple => tuple.Elts.SelectMany(Names),
+                ListExpr list => list.Elts.SelectMany(Names),
+                StarredExpr star => Names(star.Value),
+                _ => Enumerable.Empty<string>(),
+            };
         }
 
         static IEnumerable<List<Stmt>> ModuleBlocks(List<Stmt> statements)

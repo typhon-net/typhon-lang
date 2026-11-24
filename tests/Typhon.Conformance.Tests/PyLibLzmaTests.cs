@@ -19,15 +19,16 @@ public sealed class PyLibLzmaTests
 
         string script = Suite.CasePath("source_lzma_api");
         var actual = Suite.Run("dotnet", [Suite.Cli, "run", script, "--", "native"], TimeSpan.FromMinutes(2));
-        if (actual.ExitCode != 0 && actual.StdErr.Contains("ImportError: liblzma is unavailable", StringComparison.Ordinal))
+        Assert.True(actual.ExitCode == 0, actual.StdErr);
+        string output = Suite.Normalize(actual.StdOut);
+        if (output == "native liblzma unavailable\n")
         {
-            Console.WriteLine("Native LZMA compression requires liblzma at runtime.");
+            Console.WriteLine("The fixture verified that lzma reports its missing _lzma dependency.");
             return;
         }
 
         var expected = Suite.Run(python, [script, "native"], TimeSpan.FromSeconds(30));
         Assert.True(expected.ExitCode == 0, expected.StdErr);
-        Assert.True(actual.ExitCode == 0, actual.StdErr);
-        Assert.Equal(Suite.Normalize(expected.StdOut), Suite.Normalize(actual.StdOut));
+        Assert.Equal(Suite.Normalize(expected.StdOut), output);
     }
 }

@@ -1,0 +1,33 @@
+class Docs:
+    def fail(self, value, name=None, *extra):
+        raise TypeError('unimplemented')
+
+    describe = render = extra = fail
+
+    def document(self, value, *args):
+        return self.describe(value, *args)
+
+
+class Text(Docs):
+    def describe(self, value, name=None, fmt=None, style={'bold': True}, *rest):
+        return value, name, fmt, style['bold'], rest
+
+    def render(self, value, name=None, fmt=None):
+        return value, name, fmt
+
+    def extra(self, value, name=None, parent=None, *rest, separator='-'):
+        return separator.join([value, name, parent, *rest])
+
+
+def through_base(docs: Docs):
+    print(docs.describe('value', fmt='long'))
+    print(docs.render('text', 'name', 'short'))
+    print(docs.extra('a', 'b', 'c', 'd', separator=':'))
+    print(docs.document('doc', 'name', 'fmt', {'bold': False}, 'tail'))
+    try:
+        docs.render('text', 'a', 'b', 'c')
+    except TypeError:
+        print('excess arguments rejected')
+
+
+through_base(Text())

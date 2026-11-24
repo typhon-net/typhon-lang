@@ -1,0 +1,19 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+class RecordType(type):
+    def __new__(mcls, name, bases, namespace):
+        print(name, [base.__name__ for base in bases])
+        return super().__new__(mcls, name, bases, namespace)
+
+
+class Marker(metaclass=RecordType):
+    pass
+
+
+class Count(int, Marker):
+    pass
+
+
+print(type(Count).__name__)
+print(Count.__bases__ == (int, Marker), issubclass(Count, Marker))

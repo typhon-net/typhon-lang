@@ -1,0 +1,15 @@
+#:pylib .
+from typing import Any
+from class_list_plain import Header
+import class_list_tokens as parser
+
+
+def create(value: Any):
+    header = parser.Header()
+    header.append(value)
+    return header
+
+
+print(create("label"))
+print(create(5))
+print(type(Header()).__name__)

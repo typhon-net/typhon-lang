@@ -1,0 +1,25 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+#:pylib .
+import rebound_enum_def as definitions
+from rebound_enum_def import Enum
+
+
+class Direct(Enum):
+    pass
+
+
+class Qualified(definitions.Enum):
+    pass
+
+
+def value(item: Enum) -> int:
+    return item.value
+
+
+print(Direct.marker, Qualified.marker)
+print(value(Direct(19)), value(Qualified(23)))
+print(Direct.__bases__ == (Enum,), Qualified.__bases__ == (definitions.Enum,))
+print([member for member in Direct], [member for member in Qualified])
+print(Direct['answer'], Qualified['label'], Enum['base'], definitions.Enum['base'])

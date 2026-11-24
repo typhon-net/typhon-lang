@@ -1,0 +1,79 @@
+# Copyright (c) 2026 The Typhon contributors.
+# Licensed under the MIT License. See LICENSE file in the project root for full license information.
+
+import warnings
+
+
+class ByIndex:
+    def __index__(self) -> int:
+        return 3
+
+
+class RealValue:
+    def __float__(self) -> float:
+        return 3.25
+
+
+class ComplexValue:
+    def __complex__(self) -> complex:
+        return 3 + 2j
+
+
+class ByteValue:
+    def __bytes__(self) -> bytes:
+        return b"value"
+
+
+print(bool.__new__(bool), bool.__new__(bool, None), bool.__new__(bool, [1]))
+print(float.__new__(float), float.__new__(float, "2.5"), float.__new__(float, b"-4.5"))
+print(float.__new__(float, ByIndex()), float.__new__(float, RealValue()))
+print(complex.__new__(complex), complex.__new__(complex, "1-2j"))
+print(complex.__new__(complex, 2, 3), complex.__new__(complex, imag=4))
+print(complex.__new__(complex, real=RealValue(), imag=ByIndex()), complex.__new__(complex, ComplexValue()))
+print(bytes.__new__(bytes), bytes.__new__(bytes, encoding="utf-8", source="café"))
+print(bytes.__new__(bytes, [0, 255]), bytes.__new__(bytes, ByIndex()), bytes.__new__(bytes, ByteValue()))
+
+new_float = float.__new__
+print(new_float.__name__, new_float.__qualname__, new_float.__self__ is float, new_float(float, 2))
+print(getattr(bytes, "__new__").__self__ is bytes, getattr(complex, "__new__").__name__)
+print(getattr(bool, "__new__")(bool, ""), getattr(complex, "__new__")(complex, *(1.5, -2.5)))
+print(bytes.__new__(bytes, **{"source": "é", "encoding": "latin-1"}))
+print(float.__new__(float, "１２.５"))
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore", DeprecationWarning)
+    print(complex.__new__(complex, 1 + 2j, 3 + 4j))
+    print(complex.__new__(complex, complex(1, 0.0), -0.0))
+
+for cls in (bool, float, complex, bytes):
+    allocate = getattr(cls, "__new__")
+    try:
+        allocate(object)
+    except TypeError:
+        print(cls.__name__, "requires a subtype")
+
+for cls in (float, complex, bytes):
+    try:
+        getattr(cls, "__new__")(cls, None)
+    except TypeError:
+        print(cls.__name__, "rejects None")
+
+try:
+    bool.__new__(bool, value=True)
+except TypeError:
+    print("bool rejects keywords")
+try:
+    complex.__new__(complex, 1, real=2)
+except TypeError:
+    print("complex rejects a duplicate")
+try:
+    bytes.__new__(bytes, b"x", encoding="utf-8")
+except TypeError:
+    print("bytes requires str with encoding")
+try:
+    bytes.__new__(bytes, [1.5])
+except TypeError:
+    print("bytes items require integers")
+try:
+    float.__new__(float, "2__5")
+except ValueError:
+    print("float requires a digit between underscores")

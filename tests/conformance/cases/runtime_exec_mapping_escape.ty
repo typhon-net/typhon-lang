@@ -1,0 +1,22 @@
+shared = {'base': 9}
+
+
+def module_result():
+    return shared['status']
+
+
+class Receiver:
+    def run(self) -> None:
+        global_names = {'self': self}
+        local_names = {'count': 3}
+        exec("label = 'ready'", globals=global_names, locals=local_names)
+        print(global_names['self'] is self, local_names['count'], local_names['label'])
+        value = eval("(extra := 'value')", local_names)
+        print(value, local_names['extra'])
+
+
+Receiver().run()
+exec("status = 'shared'", shared)
+print(module_result())
+exec("name = 'literal'", {'count': 2})
+print('literal accepted')

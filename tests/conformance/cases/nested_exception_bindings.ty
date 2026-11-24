@@ -1,0 +1,16 @@
+def trace(fail: bool):
+    try:
+        raise OSError('outer')
+    except OSError as error:
+        print(str(error))
+        try:
+            if fail:
+                raise OSError('inner')
+        except OSError as error:
+            print(str(error))
+        else:
+            print(str(error))
+
+
+trace(True)
+trace(False)

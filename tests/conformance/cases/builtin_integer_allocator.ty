@@ -1,0 +1,13 @@
+class Small(int):
+    def __init__(self, value):
+        raise RuntimeError("allocator should not run __init__")
+
+allocate = getattr(int, "__new__")
+value = allocate(Small, "20", 16)
+print(type(value) is Small, int(value))
+print(allocate(int), allocate(int, "ff", 16))
+print(allocate is vars(int)["__new__"])
+try:
+    allocate(bool, 1)
+except TypeError:
+    print("invalid subtype")

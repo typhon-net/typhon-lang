@@ -30,6 +30,7 @@ namespace Typhon.Runtime
         }
 
         public void Export(string name, object? value) => Locals[name] = value;
+        public void ImportStar(object source) => PyModule.CopyImportNamespace(source, Locals);
 
         internal sealed class Bindings
         {
@@ -51,13 +52,32 @@ namespace Typhon.Runtime
 
     internal sealed class RuntimeCode : types.CodeType
     {
+        readonly Lazy<byte[]> _cpythonBytecode;
+        readonly Lazy<marshal.MarshalledCode> _cpythonCode;
         public string Source { get; }
         public string Mode { get; }
-        public RuntimeCode(string source, string filename, string mode, long flags) : base("<module>", filename, 1, flags)
+        internal long Optimize { get; }
+        internal string? Module { get; }
+        internal byte[] CpythonBytecode => _cpythonBytecode.Value;
+        public PyBytes co_code => _cpythonCode.Value.co_code;
+        public PyTuple<object?> co_consts => _cpythonCode.Value.co_consts;
+        public PyTuple<object?> co_names => _cpythonCode.Value.co_names;
+
+        public RuntimeCode(string source, string filename, string mode, long flags, long optimize, string? module)
+            : base("<module>", filename, 1, flags)
         {
             Source = source;
             Mode = mode;
+            Optimize = optimize;
+            Module = module;
+            _cpythonBytecode = new(() => importlib._bootstrap_external.CompileCpythonCode(this));
+            _cpythonCode = new(() => (object?)marshal.loads(new PyBytes(CpythonBytecode)) as marshal.MarshalledCode
+                ?? throw new ImportError("the CPython bytecode compiler returned no code object"));
         }
+
+        // A metadata copy has no Typhon execution body for the replacement CPython constants.
+        internal override marshal.MarshalledCode ReplaceBytecodeMetadata(string filename, PyTuple<object?>? constants) =>
+            _cpythonCode.Value.ReplaceBytecodeMetadata(filename, constants);
     }
 
     internal sealed class RuntimeFunctionCode(string name, string filename, long line, string source, bool bigInts,
@@ -130,7 +150,7 @@ namespace Typhon.Runtime
             var result = validate(text, path, kind, flags);
             if (result.Error is string message)
                 throw RuntimeSyntaxError(text, path, message, result.Line, result.Column, result.Kind);
-            return new RuntimeCode(text, path, kind, result.Flags);
+            return new RuntimeCode(text, path, kind, result.Flags, optimize, (string?)module);
         }
 
         internal static SyntaxError RuntimeSyntaxError(string source, string path, string message, int line, int column, int kind)
@@ -171,6 +191,8 @@ namespace Typhon.Runtime
 
         static object? ExecuteCode(object? source, object? globals, object? locals, string defaultMode)
         {
+            if (source is marshal.MarshalledCode)
+                throw new NotImplementedException("CPython bytecode objects cannot be executed by Typhon");
             var code = source as RuntimeCode ?? (RuntimeCode)compile(source, "<string>", defaultMode);
             var globalNames = globals == null ? new OrderedDictionary<string, object?>() :
                 globals as IDictionary ?? throw new InvalidCastException("globals must be a dictionary");

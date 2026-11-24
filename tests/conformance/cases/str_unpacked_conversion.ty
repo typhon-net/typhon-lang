@@ -1,0 +1,26 @@
+def render(*parts):
+    return str(*parts)
+
+print(repr(render()))
+print(render(14))
+print(render(b'caf\xc3\xa9', 'utf-8'))
+print(render(b'unknown\xff', 'ascii', 'ignore'))
+try:
+    render(1, 2, 3, 4)
+except TypeError:
+    print('arity rejected')
+
+def convert(conversion: type, args, options):
+    return conversion(*args, **options)
+
+def decode(*args, **options):
+    return str(*args, **options)
+
+print(convert(str, (), {'object': None}))
+print(convert(str, (b'plain',), {'errors': 'ignore'}))
+print(repr(decode(encoding='ascii')))
+print(decode(b'ok\xff', encoding='ascii', errors='ignore'))
+try:
+    decode(b'ok', encoding=None)
+except TypeError:
+    print('invalid encoding rejected')

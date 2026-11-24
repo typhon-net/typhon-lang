@@ -1,0 +1,20 @@
+import inspect
+
+
+def target(value):
+    return value
+
+
+scope = {'target': target}
+exec(
+    'def forward(value=None) -> None:\n'
+    '    try:\n'
+    '        return target(value)\n'
+    '    except ValueError:\n'
+    '        raise\n'
+    'first = forward(7)',
+    scope,
+)
+forward = scope['forward']
+print(scope['first'], forward(2), forward() is None)
+print(inspect.signature(forward).return_annotation is None)

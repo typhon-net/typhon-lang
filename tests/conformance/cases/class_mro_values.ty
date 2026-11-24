@@ -1,0 +1,37 @@
+class Root:
+    pass
+
+
+class Branch(Root):
+    pass
+
+
+class Leaf(Branch):
+    pass
+
+
+class WithMethod:
+    def mro(self) -> str:
+        return 'ordinary method'
+
+
+def names(classes):
+    return [cls.__name__ for cls in classes]
+
+
+def inherited(cls):
+    return [names(base.mro()) for base in cls.__bases__]
+
+
+def method(value: object):
+    return value.mro()
+
+
+print(names(Leaf.mro()))
+print(names(type.mro(Leaf)))
+print(inherited(Leaf))
+bound = Leaf.mro
+order = bound()
+print(order is not bound())
+print(names(bound()))
+print(method(WithMethod()))

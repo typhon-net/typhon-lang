@@ -101,7 +101,8 @@ namespace Typhon.Stdlib
     {
         /// <summary>@contextmanager: the generator function becomes a function returning a context manager.</summary>
         public static dynamic contextmanager(object? func) =>
-            new PyClosure((func as PyFunction)?.__name__ ?? "contextmanager", (a, kw) => new GeneratorContextManager(Builtins.__invoke_kw(func, a, kw)));
+            functools.update_wrapper(new PyClosure("contextmanager",
+                (args, keywords) => new GeneratorContextManager(Builtins.__invoke_kw(func, args, keywords))), func);
         public static PySuppress suppress(params Type[] exceptions) => new PySuppress(exceptions);
         public static PyNullContext nullcontext(object? enter_result = null) => new PyNullContext(enter_result);
         public static PyClosing closing(object? thing) => new PyClosing(thing);

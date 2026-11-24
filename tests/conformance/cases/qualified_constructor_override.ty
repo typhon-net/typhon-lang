@@ -1,0 +1,6 @@
+import qualified_constructor_fixture as crew
+from qualified_constructor_fixture import Worker
+
+print(crew.Worker(name="outer").name)
+print(Worker("direct").name)
+print(crew.Specialized().name)

@@ -32,6 +32,8 @@ namespace Typhon.Compiler.Emit
         {
             public string Callee;
             public string[] Types;
+            /// <summary>An omitted argument needs the original default-aware signature.</summary>
+            public bool RequiresFallback;
             /// <summary>Key of the inference target whose dynamic fallback body contains the call (null: code that always runs).</summary>
             public string Context;
         }
@@ -178,7 +180,7 @@ namespace Typhon.Compiler.Emit
             ti.CollectTargets(p);
             // Cross-module fields still need observation when all parameters and return types are declared.
             if (p.Modules.Count <= 1 && ti.Targets.Count == 0 &&
-                !p.Modules.Values.Any(m => HasEmptyContainers(m) || HasRebinding(m) || HasLambdaLocals(m) || HasExternalAttributes(m))) { ti.Converged = true; return; }
+                !p.Modules.Values.Any(m => NeedsContainerInference(m) || HasRebinding(m) || HasLambdaLocals(m) || NeedsAttributeInference(m))) { ti.Converged = true; return; }
 #pragma warning disable RS1035 // a developer switch, read by the CLI process only
             bool debug = Environment.GetEnvironmentVariable("TYPHON_INFER_DEBUG") == "1";
 #pragma warning restore RS1035
@@ -288,14 +290,15 @@ namespace Typhon.Compiler.Emit
 
         /// <summary>Might a variable get values of different types (a name assigned twice, an assigned parameter, x /= y)? Then a dry run looks for conflicts.</summary>
         /// <summary>obj.attr = v / Cls.ATTR = v outside a method: the dry runs find the attributes such code creates.</summary>
-        static bool HasExternalAttributes(ModuleInfo m)
+        static bool NeedsAttributeInference(ModuleInfo m)
         {
             if (m.Ast == null) return false;
             bool found = false;
             AstWalker.VisitAll(m.Ast.Body, n =>
             {
                 if (found) return;
-                if (n is AssignStmt a && a.Targets.Any(t => t is AttributeExpr at && !(at.Target is NameExpr sn && sn.Id == "self"))) found = true;
+                if (n is AssignStmt a && a.Targets.Any(t => t is SubscriptExpr { Target: AttributeExpr } ||
+                    t is AttributeExpr at && !(at.Target is NameExpr sn && sn.Id == "self"))) found = true;
                 if (n is AugAssignStmt au && au.Target is AttributeExpr aat && !(aat.Target is NameExpr asn && asn.Id == "self")) found = true;
             });
             return found;
@@ -331,10 +334,17 @@ namespace Typhon.Compiler.Emit
             return found;
         }
 
-        static bool HasEmptyContainers(ModuleInfo m)
+        static bool NeedsContainerInference(ModuleInfo m)
         {
             bool found = false;
-            if (m.Ast != null) AstWalker.VisitAll(m.Ast.Body, n => { if (n is Expr e && (IsEmptyContainer(e) || NumericListSeed(e) != null)) found = true; });
+            if (m.Ast != null) AstWalker.VisitAll(m.Ast.Body, node =>
+            {
+                if (node is Expr expression && (IsEmptyContainer(expression) || NumericListSeed(expression) != null) ||
+                    node is CallExpr call && ModuleEmitter.RuntimeNamespaceCallCandidate(call) ||
+                    node is ImportFromStmt { Module: "builtins" } from &&
+                    from.Names.Any(alias => alias.AsName != null && alias.Name is ("exec" or "eval")))
+                    found = true;
+            });
             return found;
         }
 
@@ -524,6 +534,7 @@ namespace Typhon.Compiler.Emit
                 {
                     if (call.Context != null && !live.Contains(call.Context)) continue;
                     if (!Targets.TryGetValue(call.Callee, out var t) || !t.InferParams) continue;
+                    if (call.RequiresFallback) unknownCall.Add(call.Callee);
                     // a definitely late-bound argument (dynamic) makes only its own parameter dynamic; an argument whose type is not
                     // known yet (or a call with nothing typed) needs the function's dynamic version
                     if (call.Types == null || call.Types.Any(x => IsUnknown(x) && x != "dynamic") || call.Types.All(x => x == "dynamic" || x == Declared))

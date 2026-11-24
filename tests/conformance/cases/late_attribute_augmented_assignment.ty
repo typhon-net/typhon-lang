@@ -1,0 +1,40 @@
+from typing import Any
+
+class Counter:
+    pass
+
+def count(counter: Any):
+    counter.total = 4
+    counter.total -= 1
+    return counter.total
+
+print(count(Counter()))
+
+events: list[str] = []
+
+class Defaults:
+    def __getattr__(self, name):
+        events.append("get " + name)
+        if name == "limit":
+            return 8
+        raise AttributeError(name)
+
+def receiver(value: Any) -> Any:
+    events.append("receiver")
+    return value
+
+def offset() -> int:
+    events.append("offset")
+    return 2
+
+defaults = Defaults()
+receiver(defaults).limit -= offset()
+print(defaults.limit, events)
+
+def extend(target: Any):
+    target.items = [1]
+    alias = target.items
+    target.items += [2, 3]
+    print(target.items is alias, target.items)
+
+extend(Counter())
