@@ -25,6 +25,11 @@ namespace Typhon.Stdlib
                 : OperatingSystem.IsMacOS() ? ["liblzma.5.dylib", "liblzma.dylib"]
                 : ["liblzma.so.5", "liblzma.so"];
             Assembly assembly = typeof(LzmaNative).Assembly;
+            string? configured = Environment.GetEnvironmentVariable("TYPHON_LIBLZMA");
+            if (configured != null && System.IO.Path.IsPathFullyQualified(configured) &&
+                NativeLibrary.TryLoad(configured, assembly,
+                    DllImportSearchPath.UseDllDirectoryForDependencies | DllImportSearchPath.SafeDirectories, out IntPtr selected))
+                return selected;
             foreach (string name in names)
                 if (NativeLibrary.TryLoad(name, assembly, DllImportSearchPath.AssemblyDirectory | DllImportSearchPath.SafeDirectories, out IntPtr result))
                     return result;

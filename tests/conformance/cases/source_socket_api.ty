@@ -1,7 +1,7 @@
 #:pylib-source socket
 import socket
 
-addresses = socket.getaddrinfo("127.0.0.1", 12345, socket.AF_INET, socket.SOCK_STREAM)
+addresses = socket.getaddrinfo("127.0.0.1", 12345, socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP)
 family, kind, proto, canonical, endpoint = addresses[0]
 print(family is socket.AF_INET, kind is socket.SOCK_STREAM, proto, canonical == "", endpoint)
 

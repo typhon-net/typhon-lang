@@ -1,6 +1,7 @@
 b'' True
 b'' True
 b'root' True
-b'\xff' True
+b'\xc3\xbf' True
 b'root' True
 b'/' True
+b'\xff' True

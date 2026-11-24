@@ -92,6 +92,7 @@ namespace Typhon.Stdlib
         public static string _path_join([PyPackedArguments] object?[]? path_parts = null)
         {
             string[] parts = (path_parts ?? []).Select(part => (string)part!).ToArray();
+            if (parts.Length == 0) return "";
             if (OperatingSystem.IsWindows()) return os_.path.__join_paths(parts);
             return string.Join(path_sep, parts.Where(part => part.Length != 0).Select(part => part.TrimEnd('/')));
         }

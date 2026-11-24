@@ -1,5 +1,10 @@
 import os
+import posixpath
 
-for path in (b"", b"leaf", b"root/leaf", b"\xff/leaf", b"root//leaf", b"/leaf"):
+for path in (b"", b"leaf", b"root/leaf", b"\xc3\xbf/leaf", b"root//leaf", b"/leaf"):
     parent = os.path.dirname(path)
     print(parent, parent == os.path.split(path)[0])
+
+raw_path = b"\xff/leaf"
+parent = posixpath.dirname(raw_path)
+print(parent, parent == posixpath.split(raw_path)[0])

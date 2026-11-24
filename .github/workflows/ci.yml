@@ -45,6 +45,17 @@ jobs:
         shell: bash
         run: echo "TYPHON_CPYTHON=$(python -c 'import sys; print(sys.executable)')" >> "$GITHUB_ENV"
 
+      - name: Point the Windows tests at liblzma
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $gitRoot = Split-Path (Split-Path (Get-Command git -CommandType Application).Source)
+          $library = Join-Path $gitRoot 'mingw64\bin\liblzma-5.dll'
+          if (-not (Test-Path -LiteralPath $library -PathType Leaf)) {
+            throw "Git for Windows does not supply liblzma at $library"
+          }
+          "TYPHON_LIBLZMA=$library" >> $env:GITHUB_ENV
+
       - name: Build
         run: dotnet build Typhon.slnx -c Release
 

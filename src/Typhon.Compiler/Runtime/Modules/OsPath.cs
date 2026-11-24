@@ -48,6 +48,12 @@ namespace Typhon.Stdlib
             return (head, tail);
         }
 
+        public static (PyBytes, PyBytes) split(PyBytes p)
+        {
+            var (head, tail) = split(p.decode("latin-1"));
+            return (PyBytes.Latin1(head), PyBytes.Latin1(tail));
+        }
+
         public static (string, string, string) splitroot(string p)
         {
             if (!p.StartsWith('/')) return ("", "", p);
@@ -68,6 +74,8 @@ namespace Typhon.Stdlib
             if (head.Length > 0 && head != new string('/', head.Length)) head = head.TrimEnd('/');
             return head;
         }
+
+        public static PyBytes dirname(PyBytes p) => split(p).Item1;
 
         public static string normpath(string path)
         {
@@ -588,7 +596,8 @@ namespace Typhon.Stdlib
             public static (string, string) split(string p) => Win ? NtPath.split(p) : PosixPath.split(p);
             public static (PyBytes, PyBytes) split(PyBytes p)
             {
-                var (head, tail) = split(p.decode("latin-1"));
+                if (!Win) return PosixPath.split(p);
+                var (head, tail) = NtPath.split(p.decode("latin-1"));
                 return (PyBytes.Latin1(head), PyBytes.Latin1(tail));
             }
             public static (string, string) splitext(string p) => Win ? NtPath.splitext(p) : PosixPath.splitext(p);
