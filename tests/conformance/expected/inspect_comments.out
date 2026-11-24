@@ -7,3 +7,5 @@ True
 '# Decorated function heading.\n'
 None
 '# Static method heading.\n'
+'def example():\n'
+'\n'

@@ -401,7 +401,7 @@ namespace Typhon.Compiler.Emit
             }
             if (op == "<" || op == "<=" || op == ">" || op == ">=")
             {
-                if (lt == "string" && rt == "string") return $"(string.CompareOrdinal({l}, {r}) {op} 0)";
+                if (_m.IsGdScript && lt == "string" && rt == "string") return $"(string.CompareOrdinal({l}, {r}) {op} 0)";
                 if ((lt == "bool" || rt == "bool") && (lt == "bool" || IsNumeric(lt)) && (rt == "bool" || IsNumeric(rt)))
                 {
                     if (lt == "bool") l = $"({l} ? 1 : 0)";

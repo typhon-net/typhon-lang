@@ -1,0 +1,9 @@
+#:pylib-source netrc
+from pathlib import Path
+from tempfile import TemporaryDirectory
+import netrc
+
+with TemporaryDirectory() as directory:
+    path = Path(directory) / "credentials"
+    path.write_text("machine test.invalid login fixture password dummy\n", encoding="utf-8")
+    print(netrc.netrc(path).authenticators("test.invalid"))

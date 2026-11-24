@@ -899,7 +899,9 @@ namespace Typhon.Compiler.Emit
             if (scalarLeft == scalarRight) return false;
             string classType = scalarLeft ? right : left;
             return ClassKeyOfType(classType, out _) != null ||
-                DotNetMeta(classType) is string metadata && IsNativePythonClass(metadata);
+                DotNetMeta(classType) is string metadata && (IsNativePythonClass(metadata) ||
+                    metadata.StartsWith("Typhon.Runtime.", StringComparison.Ordinal) &&
+                    _r is RoslynTypeResolver resolver && resolver.IsInstanceType(metadata));
         }
 
         bool HasSourceItemSetter(Expr expression) =>

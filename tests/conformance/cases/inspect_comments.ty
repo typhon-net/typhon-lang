@@ -8,6 +8,7 @@
 # Licensed under the MIT License. See LICENSE file in the project root for full license information.
 
 import inspect
+import linecache
 import sys
 
 
@@ -64,3 +65,5 @@ class Observed:
 print(repr(inspect.getcomments(observed)))
 print(repr(inspect.getcomments(Observed)))
 print(repr(inspect.getcomments(Observed.value)))
+print(repr(linecache.getline(__file__, example.__code__.co_firstlineno)))
+print(repr(linecache.getline(__file__, 2)))

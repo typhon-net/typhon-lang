@@ -1,0 +1,7 @@
+#:pylib-source imaplib
+from datetime import datetime, timezone
+import imaplib
+
+
+stamp = datetime(2024, 2, 3, 4, 5, 6, tzinfo=timezone.utc)
+print(imaplib.Time2Internaldate(stamp))

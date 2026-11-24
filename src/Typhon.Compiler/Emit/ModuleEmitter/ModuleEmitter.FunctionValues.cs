@@ -23,14 +23,19 @@ namespace Typhon.Compiler.Emit
 
         const string FnPrefix = "__fn_";
 
-        HashSet<string> FunctionValueKeys => _p.FunctionValueKeys ??= ComputeFunctionValueKeys(_p);
+        (HashSet<string> ValueKeys, Dictionary<string, ModuleInfo> ReferencingModules) FunctionReferences =>
+            _p.FunctionReferences ??= ComputeFunctionReferences(_p);
+
+        HashSet<string> FunctionValueKeys => FunctionReferences.ValueKeys;
 
         internal static bool IsFunctionValueCandidate(FunctionDef f) =>
             f.TypeParams.Count == 0 && f.Decorators.Count == 0;
 
-        static HashSet<string> ComputeFunctionValueKeys(ProjectContext p)
+        static (HashSet<string> ValueKeys, Dictionary<string, ModuleInfo> ReferencingModules) ComputeFunctionReferences(ProjectContext p)
         {
             var names = new HashSet<string>();
+            // A null value means the name occurs in more than one module.
+            var referencingModules = new Dictionary<string, ModuleInfo>(StringComparer.Ordinal);
             foreach (var m in p.Modules.Values)
             {
                 if (m.Ast == null || m.ParseDiagnostics.Count > 0) continue;
@@ -40,19 +45,38 @@ namespace Typhon.Compiler.Emit
                 var roots = m.Ast.Body.Cast<Node>().Concat(m.Ast.MethodDecorators.Values.SelectMany(decorators => decorators));
                 AstWalker.VisitAll(roots, n =>
                 {
-                    if (n is CallExpr c) callees.Add(c.Func);
-                    if (n is ImportFromStmt imp) aliases.AddRange(imp.Names.Where(a => a.AsName != null));
+                    switch (n)
+                    {
+                        case CallExpr call: callees.Add(call.Func); break;
+                        case AttributeExpr member: RecordReference(member.Name); break;
+                        case NameExpr name: RecordReference(name.Id); break;
+                        case ImportFromStmt import:
+                            foreach (var alias in import.Names)
+                            {
+                                RecordReference(alias.Name);
+                                if (alias.AsName != null) aliases.Add(alias);
+                            }
+                            break;
+                    }
                 });
                 AstWalker.VisitAll(roots, n => { if (n is NameExpr ne && !callees.Contains(ne)) names.Add(ne.Id); });
                 if (m.RuntimeCodeMode != null) names.UnionWith(m.Functions);
                 foreach (var a in aliases) if (names.Contains(a.AsName)) names.Add(a.Name);
+
+                void RecordReference(string name)
+                {
+                    if (!referencingModules.TryGetValue(name, out var firstModule))
+                        referencingModules.Add(name, m);
+                    else if (firstModule != null && firstModule != m)
+                        referencingModules[name] = null;
+                }
             }
             var keys = new HashSet<string>();
             foreach (var m in p.Modules.Values)
                 if (m.Ast != null && m.ParseDiagnostics.Count == 0)
                     foreach (var f in m.Ast.Body.OfType<FunctionDef>().Concat(m.ReboundImplementations).Distinct())
                         if (names.Contains(f.Name) && IsFunctionValueCandidate(f)) keys.Add(TypeInference.FuncKey(m, null, f.Name));
-            return keys;
+            return (keys, referencingModules);
         }
 
         static string ModuleClassName(ModuleInfo m) => m.QualifiedClassName;
@@ -248,6 +272,8 @@ namespace Typhon.Compiler.Emit
         /// <summary>A call through a value of a function type: a direct call of the function (null if the callee is not one).</summary>
         string EmitFunctionValueCall(CallExpr c)
         {
+            if (ImportedFunctionValue(c.Func) is string imported)
+                return InvokePythonValue($"(object?){Paren(imported)}", c.Args);
             if (c.Func is NameExpr fn && !IsLocal(fn.Id) && !_moduleFieldTypes.ContainsKey(fn.Id)) return null; // a plain call by name
             if (c.Args.Any(a => a.Star || a.DoubleStar)) return null; // f(*args, **kwargs): made at run time (PythonCall)
             if (!FunctionOfType(InferType(c.Func), out var owner, out var def)) return null;
@@ -260,6 +286,39 @@ namespace Typhon.Compiler.Emit
             var target = TargetOf(owner, null, def.Name);
             if (Obs != null && target != null) RecordCall(target, c.Args);
             return $"{ModuleClassName(owner)}.{Esc(def.Name)}({EmitArgs(c.Args, typedFunctionArgs: target != null && TypedCall(target, c.Args), typhonCallee: true, paramTypeAt: (i, name) => AnnotatedParamType(def, i, name))})";
+        }
+
+        string ImportedFunctionValue(Expr expression)
+        {
+            if (Ti == null) return null;
+            (ModuleInfo owner, string binding) = expression switch
+            {
+                NameExpr name when !IsLocal(name.Id) && !_m.Globals.Contains(name.Id) &&
+                    !_m.Functions.Contains(name.Id) && !_m.Classes.ContainsKey(name.Id) => ImportedName(name.Id),
+                AttributeExpr member when DottedName(member.Target) is string prefix && !IsLocal(prefix.Split('.')[0]) &&
+                    ModuleRef(prefix) is ModuleInfo module => ProjectExport(module, member.Name),
+                _ => default,
+            };
+            // Read the same module field whose type we resolved. An unqualified C# name
+            // can otherwise select a method imported through a different using static.
+            return owner != null && binding != null &&
+                Ti.Fields.TryGetValue(TypeInference.ModuleFieldsKey(owner), out var fields) &&
+                fields.TryGetValue(binding, out var type) && FunctionOfType(type, out _, out _)
+                    ? $"{ModuleClassName(owner)}.{Esc(binding)}" : null;
+
+            (ModuleInfo Owner, string Member) ImportedName(string name)
+            {
+                if (_importedFromModules.TryGetValue(name, out var explicitImport))
+                    return (explicitImport.Key, explicitImport.Value);
+                for (int index = _wildcardModules.Count - 1; index >= 0; index--)
+                {
+                    var module = _wildcardModules[index];
+                    if (!SourceStarExports(module, name)) continue;
+                    var export = ProjectExport(module, name);
+                    if (export.Owner != null) return export;
+                }
+                return default;
+            }
         }
 
         string AnnotatedParamType(FunctionDef def, int pos, string name)
@@ -455,12 +514,17 @@ namespace Typhon.Compiler.Emit
             foreach (var s in body)
                 if (s is AssignStmt a && a.Targets.Count == 1 && a.Targets[0] is NameExpr n && !_m.Functions.Contains(n.Id) &&
                     !_m.Classes.ContainsKey(n.Id) && !_m.ReboundFunctions.Contains(n.Id) &&
-                    !_m.ConditionalGlobals.Contains(n.Id) && IsFunctionReference(a.Value) && OnlyCalled(body, n.Id, a))
+                    !_m.ConditionalGlobals.Contains(n.Id) && IsFunctionReference(a.Value) && OnlyCalled(body, n.Id, a) &&
+                    !FunctionAliasReferencedExternally(n.Id))
                 {
                     _functionAliases[n.Id] = a.Value;
                     _aliasTargetNodes.Add(a.Value);
                 }
         }
+
+        // Keep a binding that another module can read as an attribute or through an import.
+        bool FunctionAliasReferencedExternally(string name) =>
+            FunctionReferences.ReferencingModules.TryGetValue(name, out var module) && module != _m;
 
         readonly Dictionary<Param, bool> _paramAliases = new Dictionary<Param, bool>();
 

@@ -117,48 +117,6 @@ namespace Typhon.Stdlib
             return sb.ToString();
         }
 
-        /// <summary>A compiled pattern (re.Pattern).</summary>
-        // Python indexes code points. Store only surrogate pairs so matches over the same subject
-        // can share the translation between Python offsets and .NET's UTF-16 offsets.
-        internal readonly struct MatchOffsets
-        {
-            readonly List<int>? _pairs;
-            public int Length { get; }
-
-            public MatchOffsets(string text)
-            {
-                List<int>? pairs = null;
-                for (int i = 0; i < text.Length;)
-                {
-                    int next = text.AsSpan(i).IndexOfAnyInRange('\uD800', '\uDBFF');
-                    if (next < 0) break;
-                    i += next;
-                    if (char.IsSurrogatePair(text, i)) { (pairs ??= new List<int>()).Add(i); i++; }
-                    i++;
-                }
-                _pairs = pairs;
-                Length = text.Length - (pairs?.Count ?? 0);
-            }
-
-            public int ToCodeUnit(int index) => index + CountPairsBefore(index, codePoints: true);
-            public int ToCodePoint(int index) => index - CountPairsBefore(index, codePoints: false);
-            public bool IsBoundary(int index) => _pairs == null || _pairs.BinarySearch(index - 1) < 0;
-
-            int CountPairsBefore(int index, bool codePoints)
-            {
-                if (_pairs == null) return 0;
-                int start = 0, end = _pairs.Count;
-                while (start < end)
-                {
-                    int middle = start + (end - start) / 2;
-                    int pair = _pairs[middle] - (codePoints ? middle : 0);
-                    if (pair < index) start = middle + 1;
-                    else end = middle;
-                }
-                return start;
-            }
-        }
-
         internal sealed class Pattern : IPyRepr
         {
             public readonly string pattern;
@@ -202,13 +160,13 @@ namespace Typhon.Stdlib
             NetRegex Anchored => _anchored ??= new NetRegex(@"\G(?:" + _translated + ")", _options);
             NetRegex Full => _full ??= new NetRegex(@"\G(?:" + _translated + @")\z", _options);
 
-            static string Window(string s, MatchOffsets offsets, long? endpos) =>
+            static string Window(string s, StringOffsets offsets, long? endpos) =>
                 endpos is long end && end < offsets.Length ? s[..offsets.ToCodeUnit((int)Math.Max(0, end))] : s;
-            static int Start(MatchOffsets offsets, long pos) => offsets.ToCodeUnit((int)Math.Clamp(pos, 0, offsets.Length));
+            static int Start(StringOffsets offsets, long pos) => offsets.ToCodeUnit((int)Math.Clamp(pos, 0, offsets.Length));
 
             Match? Find(NetRegex regex, string s, long pos, long? endpos)
             {
-                var offsets = new MatchOffsets(s);
+                var offsets = new StringOffsets(s);
                 var window = Window(s, offsets, endpos);
                 int start = Start(offsets, pos);
                 if (start > window.Length) return null;
@@ -220,9 +178,9 @@ namespace Typhon.Stdlib
             public Match? match(string @string, long pos = 0, long? endpos = null) => Find(Anchored, @string, pos, endpos);
             public Match? fullmatch(string @string, long pos = 0, long? endpos = null) => Find(Full, @string, pos, endpos);
 
-            IEnumerable<NetMatch> All(string s, long pos, long? endpos) => All(s, pos, endpos, new MatchOffsets(s));
+            IEnumerable<NetMatch> All(string s, long pos, long? endpos) => All(s, pos, endpos, new StringOffsets(s));
 
-            IEnumerable<NetMatch> All(string s, long pos, long? endpos, MatchOffsets offsets)
+            IEnumerable<NetMatch> All(string s, long pos, long? endpos, StringOffsets offsets)
             {
                 var window = Window(s, offsets, endpos);
                 int start = Start(offsets, pos);
@@ -234,7 +192,7 @@ namespace Typhon.Stdlib
 
             public IEnumerable<Match> finditer(string @string, long pos = 0, long? endpos = null)
             {
-                var offsets = new MatchOffsets(@string);
+                var offsets = new StringOffsets(@string);
                 foreach (var m in All(@string, pos, endpos, offsets)) yield return new Match(m, this, @string, pos, endpos, offsets);
             }
 
@@ -272,7 +230,7 @@ namespace Typhon.Stdlib
                 if (count < 0) return (s, 0);
                 var sb = new StringBuilder();
                 int last = 0; long n = 0;
-                var offsets = new MatchOffsets(s);
+                var offsets = new StringOffsets(s);
                 foreach (var m in All(s, 0, null, offsets))
                 {
                     if (count > 0 && n >= count) break;
@@ -412,12 +370,12 @@ namespace Typhon.Stdlib
         internal sealed class Match : IPyRepr
         {
             readonly NetMatch _m;
-            readonly MatchOffsets _offsets;
+            readonly StringOffsets _offsets;
             public readonly Pattern re;
             public readonly string @string;
             public readonly long pos, endpos;
 
-            internal Match(NetMatch m, Pattern re, string s, long pos, long? endpos, MatchOffsets offsets)
+            internal Match(NetMatch m, Pattern re, string s, long pos, long? endpos, StringOffsets offsets)
             {
                 _m = m;
                 _offsets = offsets;
@@ -549,7 +507,132 @@ namespace Typhon.Stdlib
 
         // A dot consumes one code point. The atomic group cannot split a pair during backtracking.
         // Keep .NET's dot for other characters so it obeys global and inline single-line flags.
-        const string UnicodeDot = @"(?>[\uD800-\uDBFF][\uDC00-\uDFFF]|(?![\uD800-\uDBFF][\uDC00-\uDFFF]|(?<=[\uD800-\uDBFF])[\uDC00-\uDFFF]).)";
+        const string UnicodeDot = @"(?>[\uD800-\uDBFF][\uDC00-\uDFFF]|" + OutsideSurrogatePair + ".)";
+
+        // A UTF-16 code unit is one Python character only when it is outside a pair.
+        const string OutsideSurrogatePair = @"(?![\uD800-\uDBFF][\uDC00-\uDFFF]|(?<=[\uD800-\uDBFF])[\uDC00-\uDFFF])";
+
+        readonly record struct ClassLiteral(int Point, int Position, bool IsDash);
+
+        // Literal and range classes may consume either one code unit or a whole pair.
+        // Keep the existing engine translation for classes that use category escapes.
+        static bool TryTranslateLiteralClass(string pattern, ref int index, StringBuilder output)
+        {
+            int cursor = index + 1;
+            bool negated = cursor < pattern.Length && pattern[cursor] == '^';
+            if (negated) cursor++;
+            int first = cursor;
+            bool hasSpecialLiteral = false;
+            var literals = new List<ClassLiteral>();
+            while (cursor < pattern.Length && (pattern[cursor] != ']' || cursor == first))
+            {
+                int position = cursor;
+                int point = ReadClassCodePoint(pattern, ref cursor);
+                bool isDash = point == '-';
+                if (point == '\\')
+                {
+                    if (cursor >= pattern.Length || !TryReadClassEscape(pattern, ref cursor, out point))
+                        return false;
+                    hasSpecialLiteral = true;
+                }
+                hasSpecialLiteral |= point > char.MaxValue;
+                literals.Add(new ClassLiteral(point, position, isDash));
+            }
+            if (cursor == pattern.Length || (!negated && !hasSpecialLiteral)) return false;
+
+            var alternatives = new List<string>();
+            var singles = new StringBuilder();
+            bool mayMatchSurrogate = false;
+            for (int item = 0; item < literals.Count; item++)
+            {
+                ClassLiteral start = literals[item];
+                int end = start.Point;
+                if (item + 2 < literals.Count && literals[item + 1].IsDash)
+                {
+                    end = literals[item + 2].Point;
+                    if (end < start.Point)
+                        throw new PatternError("bad character range", pattern, new StringOffsets(pattern).ToCodePoint(start.Position));
+                    item += 2;
+                }
+                if (start.Point <= char.MaxValue)
+                {
+                    singles.Append(CodeUnitRange(start.Point, Math.Min(end, char.MaxValue)));
+                    mayMatchSurrogate |= start.Point <= 0xDFFF && end >= 0xD800;
+                }
+                if (end > char.MaxValue)
+                    AddSurrogateRange(alternatives, Math.Max(start.Point, char.MaxValue + 1), end);
+            }
+            if (singles.Length > 0)
+                alternatives.Add((mayMatchSurrogate ? OutsideSurrogatePair : "") + "[" + singles + "]");
+            output.Append("(?:");
+            if (negated) output.Append("(?!");
+            output.AppendJoin('|', alternatives);
+            if (negated) output.Append(")(?s:").Append(UnicodeDot).Append(')');
+            output.Append(')');
+            index = cursor;
+            return true;
+        }
+
+        static int ReadClassCodePoint(string pattern, ref int cursor)
+        {
+            int point = StringOffsets.At(pattern, cursor);
+            cursor += point > char.MaxValue ? 2 : 1;
+            return point;
+        }
+
+        static bool TryReadClassEscape(string pattern, ref int cursor, out int point)
+        {
+            point = ReadClassCodePoint(pattern, ref cursor);
+            if (point > char.MaxValue) return true;
+            char escape = (char)point;
+            point = escape switch
+            {
+                'a' => '\a', 'b' => '\b', 'f' => '\f', 'n' => '\n', 'r' => '\r', 't' => '\t', 'v' => '\v',
+                _ => escape,
+            };
+            int digits = escape switch { 'x' => 2, 'u' => 4, 'U' => 8, _ => 0 };
+            if (digits > 0)
+            {
+                if (pattern.Length - cursor < digits ||
+                    !int.TryParse(pattern.AsSpan(cursor, digits), System.Globalization.NumberStyles.AllowHexSpecifier, null, out point) ||
+                    point < 0 || point > 0x10FFFF)
+                    return false;
+                cursor += digits;
+                return true;
+            }
+            if (escape is >= '0' and <= '7')
+            {
+                point = escape - '0';
+                for (int digit = 1; digit < 3 && cursor < pattern.Length && pattern[cursor] is >= '0' and <= '7'; digit++)
+                    point = 8 * point + (pattern[cursor++] - '0');
+                return point <= byte.MaxValue;
+            }
+            return escape is 'a' or 'b' or 'f' or 'n' or 'r' or 't' or 'v' ||
+                (!char.IsAsciiLetter(escape) && !char.IsAsciiDigit(escape));
+        }
+
+        static string CodeUnitRange(int first, int last) =>
+            first == last ? $@"\u{first:X4}" : $@"\u{first:X4}-\u{last:X4}";
+
+        static string CodeUnitAtom(int first, int last) =>
+            first == last ? CodeUnitRange(first, last) : "[" + CodeUnitRange(first, last) + "]";
+
+        static void AddSurrogateRange(List<string> alternatives, int start, int end)
+        {
+            string first = char.ConvertFromUtf32(start);
+            string last = char.ConvertFromUtf32(end);
+            if (first[0] == last[0])
+            {
+                alternatives.Add(CodeUnitAtom(first[0], first[0]) + CodeUnitAtom(first[1], last[1]));
+                return;
+            }
+
+            // The end blocks can cover part of their low-surrogate range.
+            alternatives.Add(CodeUnitAtom(first[0], first[0]) + CodeUnitAtom(first[1], 0xDFFF));
+            if (first[0] + 1 < last[0])
+                alternatives.Add(CodeUnitAtom(first[0] + 1, last[0] - 1) + CodeUnitAtom(0xDC00, 0xDFFF));
+            alternatives.Add(CodeUnitAtom(last[0], last[0]) + CodeUnitAtom(0xDC00, last[1]));
+        }
 
         /// <summary>
         /// Python regex syntax → .NET's. Named groups become plain numbered groups (the names kept on the side), so every
@@ -570,6 +653,8 @@ namespace Typhon.Stdlib
                 p = p.Substring(lead.Length);
             }
             bool ascii = binary || (flags & ASCII) != 0, verbose = (flags & VERBOSE) != 0;
+            bool possibleSpecialClass = !binary && p.Contains('[') &&
+                (p.Contains('\\') || p.AsSpan().IndexOfAnyInRange('\uD800', '\uDBFF') >= 0);
             for (int i = 0; i < p.Length; i++)
             {
                 char c = p[i];
@@ -626,6 +711,8 @@ namespace Typhon.Stdlib
                         sb.Append(UnicodeDot);
                         break;
                     case '[':
+                        if (!binary && (possibleSpecialClass || (i + 1 < p.Length && p[i + 1] == '^')) &&
+                            TryTranslateLiteralClass(p, ref i, sb)) break;
                         inClass = true;
                         sb.Append('[');
                         if (i + 1 < p.Length && p[i + 1] == '^') { sb.Append('^'); i++; }

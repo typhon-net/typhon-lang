@@ -1,0 +1,49 @@
+def select(count: int = 7, *, label: str):
+    print(count, label)
+
+select(label="direct")
+select(0, label="given")
+
+def pick(count: int | None = None, *, label: str):
+    print(count, label)
+
+pick(label="omitted None")
+pick(None, label="explicit None")
+pick(0, label="explicit zero")
+
+class NullableSelection:
+    def __init__(self, count: int | None = None, *, label: str):
+        self.count = count
+        self.label = label
+
+class InheritedSelection(NullableSelection):
+    pass
+
+inherited_class = InheritedSelection
+inherited = inherited_class(label="inherited None")
+print(inherited.count, inherited.label)
+
+class Selection:
+    def __init__(self, count: int = 7, *, label: str):
+        self.count = count
+        self.label = label
+
+selected = Selection(label="direct constructor")
+print(selected.count, selected.label)
+select_class = Selection
+selected = select_class(label="runtime keyword")
+print(selected.count, selected.label)
+
+marker_default = "captured"
+
+class Record:
+    def __init__(self, count: int = 7, marker: object = marker_default):
+        self.count = count
+        self.marker = marker
+
+marker_default = "changed"
+record_class = Record
+record = record_class()
+print(record.count, record.marker)
+record = record_class(marker=None)
+print(record.count, record.marker)

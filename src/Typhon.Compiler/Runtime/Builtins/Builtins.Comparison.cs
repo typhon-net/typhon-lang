@@ -198,7 +198,7 @@ namespace Typhon.Runtime
             if (a is BigInteger ba && b is double db) return ((double)ba).CompareTo(db);
             if (a is double da && b is BigInteger bb) return da.CompareTo((double)bb);
             if (a != null && b != null && IsNumber(a) && IsNumber(b)) return ToDoubleAny(a).CompareTo(ToDoubleAny(b));
-            if (a is string sa && b is string sb) return string.CompareOrdinal(sa, sb);
+            if (a is string sa && b is string sb) return StringOffsets.Compare(sa, sb);
             var la = TupleItems(a) ?? (a is IList l1 && !(a is IDictionary) && !IsSet(a) ? l1.Cast<object?>().ToList() : null);
             var lb = TupleItems(b) ?? (b is IList l2 && !(b is IDictionary) && !IsSet(b) ? l2.Cast<object?>().ToList() : null);
             if (la != null && lb != null)
@@ -224,10 +224,10 @@ namespace Typhon.Runtime
         public static bool le(double a, double b) => a <= b;
         public static bool gt(double a, double b) => a > b;
         public static bool ge(double a, double b) => a >= b;
-        public static bool lt(string a, string b) => string.CompareOrdinal(a, b) < 0;
-        public static bool le(string a, string b) => string.CompareOrdinal(a, b) <= 0;
-        public static bool gt(string a, string b) => string.CompareOrdinal(a, b) > 0;
-        public static bool ge(string a, string b) => string.CompareOrdinal(a, b) >= 0;
+        public static bool lt(string a, string b) => StringOffsets.Compare(a, b) < 0;
+        public static bool le(string a, string b) => StringOffsets.Compare(a, b) <= 0;
+        public static bool gt(string a, string b) => StringOffsets.Compare(a, b) > 0;
+        public static bool ge(string a, string b) => StringOffsets.Compare(a, b) >= 0;
         public static dynamic lt(object? a, object? b) => CompareDictSetViews(a, b, "<") is bool view ? view :
             MixedNumbers(a, b, out int? __c) ? __c < 0 : PyOrdered(a) || PyOrdered(b) ?
                 (IsSet(a!) ? SetLe(a, b) && !eq(a, b) : compare(a, b) < 0) :

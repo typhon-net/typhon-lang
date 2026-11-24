@@ -1,0 +1,10 @@
+import source_function_alias_fixture as helpers
+from source_function_alias_fixture import alias as imported
+from source_function_alias_fixture import *
+
+
+print(helpers.call_inside())
+print(helpers.alias())
+print(imported('outside', suffix='keyword'))
+print(imported is helpers.alias)
+print(alias('wildcard'))

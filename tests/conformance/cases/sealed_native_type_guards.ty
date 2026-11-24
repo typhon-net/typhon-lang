@@ -1,0 +1,14 @@
+from datetime import datetime, timezone
+
+
+def describe(value):
+    if isinstance(value, (int, float)):
+        return datetime.fromtimestamp(value, timezone.utc).year
+    if isinstance(value, tuple):
+        return value[0]
+    if isinstance(value, str) and value[0] == "y":
+        return int(value[1:])
+    return value.year
+
+
+print(describe(datetime(2024, 2, 3, tzinfo=timezone.utc)))

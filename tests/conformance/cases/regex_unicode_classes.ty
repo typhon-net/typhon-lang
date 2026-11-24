@@ -1,0 +1,33 @@
+#:pylib-source fnmatch
+import fnmatch
+import re
+
+names = ["a", "b", "-", "]", "\n", "𝄞", "🌀", "🎀", "😀", "😆", "😇", "🙏"]
+for glob_pattern in ("[a😀]", "[😀-😆]", "[🌀-😀]", "[a-🎀]", "[a-🌀😀-😆]", "[!😀]", "[!a]", "[]😀-]"):
+    print(glob_pattern, fnmatch.filter(names, glob_pattern))
+
+print(fnmatch.fnmatchcase("😀", "[😀]"))
+print(fnmatch.fnmatchcase("𝄞", "[\ue000-😀]"))
+print(fnmatch.fnmatchcase("A", "[--^]"))
+print(fnmatch.fnmatchcase(b"\xff", b"[\xfe-\xff]"))
+print(fnmatch.fnmatchcase(b"\xff", b"[!a]"))
+print(re.findall(r"[\U0001f600-\U0001f606]", "a😀😃😇"))
+print(re.findall(r"[\U000000a0\041\x5b\u007d😀]", "x\xa0![]😀}"))
+print(re.findall(r"[\U0000fffe-\U00010001]", "a\ufffe\uffff𐀀𐀁𐀂"))
+print(re.findall(r"[\U00010003-\U0010fffd]", "a𐀃𝄞🎀\U0010fffd"))
+print(re.findall(r"(?x)[\# 😀]", "# 😀x"))
+print(re.findall(r"[\😀]", "a😀𝄞"))
+print(re.findall(r"[^😀\n]", "a😀b𝄞\n"))
+print(re.findall(r"[^x]", "x😀\n"))
+print(re.findall(r"[😀-🙏]{2}", "😀😃😀𝄞🙏😃"))
+print(re.fullmatch(r"[^😀]{2}", "𝄞") is None)
+print(re.fullmatch(r"[\uD800-\uDFFF😀]{2}", "😀") is None)
+
+compiled = re.compile(r"(?P<first>[😀😃])(?P<rest>[^😀😃]+)")
+match = compiled.search("a😀𝄞\nb😃", 1, 6)
+print(match.group(), match.span(), match.span("first"), match.span("rest"))
+print(re.sub(r"[^😀]", "-", "a😀𝄞\n"))
+try:
+    re.compile(r"[😃-😀]")
+except re.error:
+    print("reversed range")

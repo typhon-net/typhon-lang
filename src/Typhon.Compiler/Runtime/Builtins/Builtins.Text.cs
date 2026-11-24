@@ -906,10 +906,17 @@ namespace Typhon.Runtime
 
         public static string str_at(string s, long index)
         {
-            int position = __pos(index, s.Length);
-            if ((uint)position >= (uint)s.Length) throw new IndexOutOfRangeException("string index out of range");
-            return CharStr(s[position]);
+            if ((ulong)index < (ulong)s.Length && !s.AsSpan(0, (int)index).ContainsAnyInRange('\uD800', '\uDBFF'))
+                return StringCharacterAt(s, (int)index);
+
+            var offsets = new StringOffsets(s);
+            int position = __pos(index, offsets.Length);
+            if ((uint)position >= (uint)offsets.Length) throw new IndexOutOfRangeException("string index out of range");
+            return StringCharacterAt(s, offsets.ToCodeUnit(position));
         }
+
+        static string StringCharacterAt(string s, int offset) =>
+            char.IsSurrogatePair(s, offset) ? s.Substring(offset, 2) : CharStr(s[offset]);
 
         public static string str_at(string s, object? index)
         {
@@ -1006,18 +1013,10 @@ namespace Typhon.Runtime
 
         static bool StringHasAffix(string value, object choices, long start, long? end, bool suffix)
         {
-            int characters = (int)len(value);
-            var (first, last) = StringSearchBounds(characters, start, end);
-            if (first <= last && characters != value.Length)
-            {
-                int Offset(int index)
-                {
-                    int offset = 0;
-                    for (int i = 0; i < index; i++) offset += char.IsSurrogatePair(value, offset) ? 2 : 1;
-                    return offset;
-                }
-                (first, last) = (Offset(first), Offset(last));
-            }
+            var offsets = new StringOffsets(value);
+            var (first, last) = StringSearchBounds(offsets.Length, start, end);
+            if (first <= last)
+                (first, last) = (offsets.ToCodeUnit(first), offsets.ToCodeUnit(last));
 
             bool Matches(object? candidate)
             {
@@ -1026,7 +1025,7 @@ namespace Typhon.Runtime
                 if (text.Length > last - first) return false;
                 int offset = suffix ? last - text.Length : first;
                 int boundary = suffix ? offset : offset + text.Length;
-                return (boundary <= 0 || !char.IsSurrogatePair(value, boundary - 1)) &&
+                return offsets.IsBoundary(boundary) &&
                     value.AsSpan(offset, text.Length).SequenceEqual(text.AsSpan());
             }
 
@@ -1055,7 +1054,7 @@ namespace Typhon.Runtime
         public static object __ne__(this string value, object? other) => other is string text
             ? !string.Equals(value, text, StringComparison.Ordinal) : NotImplemented;
 
-        public static long find(this string s, string sub) => s.IndexOf(sub, StringComparison.Ordinal);
+        public static long find(this string s, string sub) => s.find(sub, 0L);
         static (int Start, int End) StringSearchBounds(int length, long start, long? end)
         {
             long adjustedStart = start < 0 ? start + length : start;
@@ -1066,8 +1065,20 @@ namespace Typhon.Runtime
 
         public static long find(this string s, string sub, long start, long? end = null)
         {
-            var (a, b) = StringSearchBounds(s.Length, start, end);
-            return b < a ? -1 : s.IndexOf(sub, a, b - a, StringComparison.Ordinal);
+            var offsets = new StringOffsets(s);
+            var (first, last) = StringSearchBounds(offsets.Length, start, end);
+            if (last < first) return -1;
+            int offset = offsets.ToCodeUnit(first);
+            int stop = offsets.ToCodeUnit(last);
+            while (offset <= stop)
+            {
+                int found = s.IndexOf(sub, offset, stop - offset, StringComparison.Ordinal);
+                if (found < 0) return -1;
+                if (offsets.IsBoundary(found) && offsets.IsBoundary(found + sub.Length))
+                    return offsets.ToCodePoint(found);
+                offset = found + 1;
+            }
+            return -1;
         }
         public static long find(this string s, string sub, object? start, object? end = null)
         {
@@ -1237,7 +1248,7 @@ namespace Typhon.Runtime
         }
         public static long rindex(this string s, string sub, long start, long? end = null) { long i = s.rfind(sub, start, end); return i >= 0 ? i : throw new ArgumentException("substring not found"); }
         public static long rindex(this string s, string sub, object? start, object? end = null) { long i = s.rfind(sub, start, end); return i >= 0 ? i : throw new ArgumentException("substring not found"); }
-        public static long index(this string s, string sub) { int i = s.IndexOf(sub, StringComparison.Ordinal); return i >= 0 ? i : throw new ArgumentException("substring not found"); }
+        public static long index(this string s, string sub) => s.index(sub, 0L);
         public static long count(this string s, string sub) => s.count(sub, 0);
         public static bool isdigit(this string s) => s.Length > 0 && s.All(char.IsDigit);
         public static bool isalpha(this string s) => s.Length > 0 && s.All(char.IsLetter);

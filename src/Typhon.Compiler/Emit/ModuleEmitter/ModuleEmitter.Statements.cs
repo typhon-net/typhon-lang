@@ -433,14 +433,33 @@ namespace Typhon.Compiler.Emit
                 {
                     if (builtin.Id == "tuple" && actual is ("System.Type" or "global::System.Type")) return true;
                     if (sealedTextOrBytes && builtin.Id is "int" or "float" or "bool" or "complex") return true;
-                    if (builtin.Id is "str" or "bytes" or "bytearray" or "tuple")
-                        return sealedTextOrBytes && actual != MapType(builtin, test);
+                    if (sealedTextOrBytes && builtin.Id is "str" or "bytes" or "bytearray" or "tuple")
+                        return actual != MapType(builtin, test);
+                    if (builtin.Id is "int" or "float" or "bool" or "complex" or "str" or "bytes" or "bytearray" or "tuple")
+                        return DisjointNativeBuiltin(builtin);
                 }
                 return sealedTextOrBytes && DotNetMeta(actual) is string actualMeta &&
                     DottedName(expectedType) is string expectedName &&
                     TryResolveType(expectedName, 0, out string expected, out var declared) &&
                     declared == null && expected != null && IsRuntimeClassMeta(expected) && !MayHaveVirtualSubclasses(expected, declared) &&
                     _r is RoslynTypeResolver resolver && resolver.RuntimeTypeMatches(actualMeta, expected, requireSealed: true) == false;
+            }
+
+            bool DisjointNativeBuiltin(NameExpr builtin)
+            {
+                if (_r is not RoslynTypeResolver resolver || DotNetMeta(actual) is not string nativeType ||
+                    !IsNativePythonClass(nativeType) || DotNetMeta(MapType(builtin, test)) is not string target ||
+                    resolver.RuntimeTypeMatches(nativeType, target, requireSealed: true) != false)
+                    return false;
+
+                // Python permits additional representations for these two builtins.
+                return builtin.Id switch
+                {
+                    "int" => resolver.RuntimeTypeMatches(nativeType, "Typhon.Runtime.PyInteger", requireSealed: false) == false,
+                    "str" => resolver.RuntimeTypeMatches(nativeType, "Typhon.Runtime.PyString", requireSealed: false) == false &&
+                             resolver.RuntimeTypeMatches(nativeType, "Typhon.Runtime.PyStrEnum", requireSealed: false) == false,
+                    _ => true,
+                };
             }
         }
 
@@ -462,7 +481,7 @@ namespace Typhon.Compiler.Emit
             if (i.Test is BoolOpExpr { Op: "and", Values.Count: > 1 } conjunction &&
                 DisjointSealedInstanceTest(conjunction.Values[0]) == false)
                 evaluatedTest = conjunction.Values[0];
-            // An exact text or bytes representation cannot match a disjoint sealed type or its literals.
+            // An exact representation cannot satisfy a disjoint type or literal test.
             // Evaluate the reachable part of the test before emitting the reachable suite.
             if (!_m.IsGdScript && _scope?.IsGenerator != true &&
                 (DisjointLiteralMembership(evaluatedTest) ?? DisjointSealedInstanceTest(evaluatedTest)) is bool matches)

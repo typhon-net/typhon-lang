@@ -119,7 +119,7 @@ namespace Typhon.Compiler
         /// <summary>Whole-program inference results, computed on the first Emit (all modules must be parsed by then).</summary>
         internal TypeInference Inference;
         /// <summary>Module functions referenced as values somewhere in the project ("module.func"); each gets a function type.</summary>
-        internal HashSet<string> FunctionValueKeys;
+        internal (HashSet<string> ValueKeys, Dictionary<string, ModuleInfo> ReferencingModules)? FunctionReferences;
         bool? _emitsProfileEvents;
         public bool ProfileRuntimeCode;
         internal bool EmitsProfileEvents => ProfileRuntimeCode || (_emitsProfileEvents ??= Modules.Values.Any(UsesProfiling));

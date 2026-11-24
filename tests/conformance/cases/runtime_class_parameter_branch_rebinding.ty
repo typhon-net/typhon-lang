@@ -1,0 +1,12 @@
+from pathlib import Path
+
+
+class Record:
+    def __init__(self, path=None):
+        if path is None:
+            path = "default"
+        self.name = str(path)
+
+
+print(Record(Path("fixture")).name)
+print(Record().name, Record("explicit").name)

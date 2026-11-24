@@ -97,7 +97,7 @@ namespace Typhon.Runtime
                 try
                 {
                     for (int i = 0; i < fixedCount; i++) call[i] = i < args.Length
-                        ? PyArgs.ConvertArgument(args[i], ps[i].ParameterType) : ps[i].DefaultValue;
+                        ? PyArgs.ConvertArgument(args[i], ps[i].ParameterType) : PyArgs.OptionalDefault(ps[i]);
                     if (hasParams)
                     {
                         var elem = ps[^1].ParameterType.GetElementType()!;
@@ -337,6 +337,11 @@ namespace Typhon.Runtime
         internal static bool IsKeywordOnly(System.Reflection.ParameterInfo parameter) =>
             parameter.IsDefined(typeof(PyKeywordOnlyAttribute), false);
 
+        // Reflection needs an explicit null for an omitted metadata-only nullable parameter.
+        internal static object? OptionalDefault(System.Reflection.ParameterInfo parameter) =>
+            parameter.HasDefaultValue ? parameter.DefaultValue :
+            Nullable.GetUnderlyingType(parameter.ParameterType) == null ? Type.Missing : null;
+
         internal static int PositionalLimit(System.Reflection.ParameterInfo[] parameters, int fixedCount)
         {
             int firstKeyword = Array.FindIndex(parameters, IsKeywordOnly);
@@ -373,7 +378,7 @@ namespace Typhon.Runtime
                 else if (p.Name == null || defaults == null || !defaults.TryGetValue(p.Name, out v))
                 {
                     if (!p.IsOptional) return -1;
-                    call[i] = p.HasDefaultValue ? p.DefaultValue : Type.Missing;
+                    call[i] = OptionalDefault(p);
                     continue;
                 }
                 int fit = Fit(v, p.ParameterType, out call[i]);
@@ -609,7 +614,7 @@ namespace Typhon.Runtime
             var call = new object?[bps.Length];
             for (int i = 0; i < bps.Length; i++)
             {
-                if (i >= args.Length) { call[i] = bps[i].HasDefaultValue ? bps[i].DefaultValue : Type.Missing; continue; }
+                if (i >= args.Length) { call[i] = PyArgs.OptionalDefault(bps[i]); continue; }
                 var pt = bps[i].ParameterType;
                 call[i] = args[i] == null || pt.IsInstanceOfType(args[i]) || pt == typeof(object) ? args[i]
                     : Convert.ChangeType(args[i], Nullable.GetUnderlyingType(pt) ?? pt, CultureInfo.InvariantCulture);

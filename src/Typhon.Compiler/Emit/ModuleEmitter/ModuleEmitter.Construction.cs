@@ -104,7 +104,7 @@ namespace Typhon.Compiler.Emit
                                     }
                                 }
                                 else if (InferType(p.Default) == pt || IsNone(p.Default) && pt.EndsWith("?"))
-                                    defaults[i] = EmitExpr(p.Default, targetTyped: true);
+                                    defaults[i] = TypedParameterDefault(pt, EmitExpr(p.Default, targetTyped: true));
                             }
                             ApplyParameterDefaults(tps, defaults);
                             // (a dynamic parameter goes as object: a constructor initializer cannot be dispatched dynamically)
@@ -152,7 +152,7 @@ namespace Typhon.Compiler.Emit
                         else
                         {
                             ps.Add($"{type} {Esc(p.Name)}");
-                            baseDefaults.Add(p.Default != null ? EmitExpr(p.Default, targetTyped: true) : null);
+                            baseDefaults.Add(p.Default != null ? TypedParameterDefault(type, EmitExpr(p.Default, targetTyped: true)) : null);
                         }
                         // a constructor initializer cannot be dispatched dynamically: late-bound values go as object
                         names.Add(type == "dynamic" ? $"(object?){Esc(p.Name)}" : Esc(p.Name));

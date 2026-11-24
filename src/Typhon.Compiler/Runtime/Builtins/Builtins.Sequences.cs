@@ -413,14 +413,20 @@ namespace Typhon.Runtime
 
         public static string slice(string s, long? start, long? stop, long step = 1)
         {
+            var offsets = new StringOffsets(s);
             if (step == 1)
             {
-                var (a, b) = SliceBounds(s.Length, start, stop);
-                return b > a ? s.Substring(a, b - a) : "";
+                var (first, last) = SliceBounds(offsets.Length, start, stop);
+                int offset = offsets.ToCodeUnit(first);
+                return s.Substring(offset, offsets.ToCodeUnit(last) - offset);
             }
-            var sb = new StringBuilder();
-            foreach (var i in SliceIndices(s.Length, start, stop, step)) sb.Append(s[i]);
-            return sb.ToString();
+            var result = new StringBuilder();
+            foreach (var index in SliceIndices(offsets.Length, start, stop, step))
+            {
+                int offset = offsets.ToCodeUnit(index);
+                result.Append(s, offset, char.IsSurrogatePair(s, offset) ? 2 : 1);
+            }
+            return result.ToString();
         }
         static (int, int) SliceBounds(int len, long? start, long? stop)
         {

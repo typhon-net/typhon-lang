@@ -274,7 +274,7 @@ namespace Typhon.Compiler.Emit
         string EmitArgs(List<Arg> args, System.Func<int, bool> iterableAt = null, IReadOnlyList<Semantics.MemberSig> overloads = null, System.Func<int, bool> targetTypedAt = null,
                         bool dynamicCall = false, System.Func<string, bool> typedKeywords = null, System.Func<int, string, string> paramTypeAt = null,
                         bool typedFunctionArgs = false, IReadOnlyList<Semantics.MemberSig> functionShapes = null, bool typhonCallee = false,
-                        bool runtimeCodeNamespaces = false)
+                        bool runtimeCodeNamespaces = false, bool staticMixedArguments = false)
         {
             functionShapes ??= overloads;
             bool lateIterableItems = iterableAt != null && args.Where((argument, index) =>
@@ -285,7 +285,7 @@ namespace Typhon.Compiler.Emit
             // a call to a Typhon function with some late-bound arguments: the overload inferred for exactly these argument types
             // (its parameters there are dynamic), bound statically by passing them as object; dispatched at run time instead,
             // it could be ambiguous with a typed overload ((object, object, long) and (double, double, double) for 1.0, 2.0, 3)
-            bool partlyDynamic = typhonCallee && UsesStaticCastsForMixedArguments(args);
+            bool partlyDynamic = staticMixedArguments || typhonCallee && UsesStaticCastsForMixedArguments(args);
             foreach (var a in args)
             {
                 if (a.DoubleStar) { Unsupported(a.Value, "**kwargs arguments"); continue; }
@@ -789,6 +789,19 @@ namespace Typhon.Compiler.Emit
             if (PythonCall(c, targetTyped) is string python) return python;
             if (c.Func is AttributeExpr overloaded && HasCrossedInferredMethodParameters(overloaded, c.Args))
                 return InvokeLogicalMethod(overloaded, "this", c.Args);
+            bool staticMixedArguments = false;
+            if (CrossedInferredFunction(c) is InferenceTarget function)
+            {
+                // Retain the inferred return type when the call matches an emitted signature.
+                staticMixedArguments = ArgTypes(function, c.Args) is string[] types &&
+                    Ti.Signatures[function.Key].Any(signature => signature.SequenceEqual(types));
+                if (!staticMixedArguments)
+                {
+                    // Bind the method group directly because its function value can call those overloads dynamically.
+                    string callable = $"new global::Typhon.Runtime.PyBoundMethod(typeof({ModuleClassName(function.Module)}), {CsString(function.Def.Name)}, includeNonPublic: true)";
+                    return InvokePythonValue(callable, c.Args);
+                }
+            }
             if (LatePythonMethodCall(c) is string logicalMethod) return logicalMethod;
             if (SourceVoidValueCall(c) is string voidValue) return voidValue;
             // a call that is none of those: a Typhon function or class, a .NET method or constructor, typed by its arguments
@@ -845,7 +858,7 @@ namespace Typhon.Compiler.Emit
                 _localFunctionSigs.TryGetValue(nestedName.Id, out var localSignature) ? localSignature.Def : null;
             string ArgumentType(int i, string name) => nestedDefinition == null
                 ? ParamTypeOf(c, i, name) : AnnotatedParamType(nestedDefinition, i, name);
-            return $"{func}({EmitArgs(c.Args, iterableAt: iterableAt, overloads: overloads, targetTypedAt: typedAt, dynamicCall: dynamicCall, typedKeywords: name => TypedKeyword(c, name), paramTypeAt: ArgumentType, typedFunctionArgs: typedFunctionArgs, functionShapes: shapes, typhonCallee: TyphonCallee(c, out _) != null || nestedDefinition != null, runtimeCodeNamespaces: runtimeCodeNamespaces)})";
+            return $"{func}({EmitArgs(c.Args, iterableAt: iterableAt, overloads: overloads, targetTypedAt: typedAt, dynamicCall: dynamicCall, typedKeywords: name => TypedKeyword(c, name), paramTypeAt: ArgumentType, typedFunctionArgs: typedFunctionArgs, functionShapes: shapes, typhonCallee: TyphonCallee(c, out _) != null || nestedDefinition != null, runtimeCodeNamespaces: runtimeCodeNamespaces, staticMixedArguments: staticMixedArguments)})";
         }
 
         string SourceVoidValueCall(CallExpr call)
@@ -2027,6 +2040,13 @@ namespace Typhon.Compiler.Emit
                 arguments.Count == target.Params.Count &&
                 arguments.All(arg => arg.Name == null && !arg.Star && !arg.DoubleStar && InferType(arg.Value) == "dynamic") &&
                 HasCrossedInferredParameters(target);
+
+        InferenceTarget CrossedInferredFunction(CallExpr call)
+            => !_m.IsGdScript && !call.Args.Any(arg => arg.Star || arg.DoubleStar) &&
+                CallTarget(call, out bool constructor) is { Class: null, InferParams: true } target && !constructor &&
+                target.Def.Decorators.Count == 0 && call.Args.Count == target.Params.Count &&
+                call.Args.Any(arg => InferType(arg.Value) == "dynamic") && !UsesStaticCastsForMixedArguments(call.Args) &&
+                HasCrossedInferredParameters(target) ? target : null;
 
         bool HasCrossedInferredConstructorParameters(CallExpr call)
             => !_m.IsGdScript && call.Args.Any(arg => arg.Name != null) &&

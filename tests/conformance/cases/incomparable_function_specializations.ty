@@ -1,0 +1,54 @@
+from typing import Any
+
+
+def collect(left, right, flag=False):
+    return left, right, flag
+
+
+def label(value: str) -> str:
+    print(value)
+    return value
+
+
+def trace_flag(value: Any) -> Any:
+    print('flag')
+    return value
+
+
+def named_late(flag: Any):
+    return collect(label('left'), label('right'), flag=trace_flag(flag))
+
+
+def positioned_late(left: Any, right: Any):
+    return collect(left, right, flag=False)
+
+
+def all_late(left: Any, right: Any, flag: Any):
+    return collect(left, right, flag=flag)
+
+
+def omitted(left: Any, right: Any):
+    return collect(left, right)
+
+
+print(named_late(True))
+print(positioned_late('x', 'y'))
+print(all_late('a', 'b', True))
+print(all_late(2, 3, 'truthy'))
+print(omitted('default', 4))
+
+
+def collect_list(left, right, flag=False):
+    return [left]
+
+
+def typed_result(right: Any, flag: Any) -> list[str]:
+    return collect_list('left', right=right, flag=flag)
+
+
+def other_result(left: Any):
+    return collect_list(left, 'right', flag=False)
+
+
+print(typed_result('right', True))
+print(other_result('other'))

@@ -1,0 +1,10 @@
+left
+right
+flag
+('left', 'right', True)
+('x', 'y', False)
+('a', 'b', True)
+(2, 3, 'truthy')
+('default', 4, False)
+['left']
+['other']

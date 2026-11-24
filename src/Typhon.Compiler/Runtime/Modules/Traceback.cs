@@ -105,21 +105,19 @@ namespace Typhon.Stdlib
             catch (Exception) { return new List<string>(); }
         }
 
-        /// <summary>Python's str.splitlines(keepends=True), with a newline added to a last line that lacks one.</summary>
+        /// <summary>Read physical source lines with universal newlines, adding LF to an unterminated last line.</summary>
         static List<string> SplitLines(string text)
         {
             var lines = new List<string>();
             int start = 0;
             for (int i = 0; i < text.Length; i++)
             {
-                if (text[i] == '\n' || text[i] == '\r')
-                {
-                    int end = text[i] == '\r' && i + 1 < text.Length && text[i + 1] == '\n' ? i + 2 : i + 1;
-                    lines.Add(text.Substring(start, end - start));
-                    start = end; i = end - 1;
-                }
+                if (text[i] is not ('\r' or '\n')) continue;
+                lines.Add(string.Concat(text.AsSpan(start, i - start), "\n"));
+                if (text[i] == '\r' && i + 1 < text.Length && text[i + 1] == '\n') i++;
+                start = i + 1;
             }
-            if (start < text.Length) lines.Add(text.Substring(start) + "\n");
+            if (start < text.Length) lines.Add(string.Concat(text.AsSpan(start), "\n"));
             return lines;
         }
 

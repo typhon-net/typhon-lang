@@ -49,8 +49,8 @@ namespace Typhon.Runtime
         public int CompareTo(object? other) => other switch
         {
             null => 1,
-            PyStrEnum member => string.CompareOrdinal(value, member.value),
-            string text => string.CompareOrdinal(value, text),
+            PyStrEnum member => StringOffsets.Compare(value, member.value),
+            string text => StringOffsets.Compare(value, text),
             _ => throw new InvalidCastException("StrEnum values can only be compared with strings"),
         };
     }

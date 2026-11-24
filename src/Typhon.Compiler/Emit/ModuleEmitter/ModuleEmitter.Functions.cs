@@ -275,9 +275,14 @@ namespace Typhon.Compiler.Emit
         string DefinitionDefaultParameter(string type, string name, out string defaultCode)
         {
             bool useMissing = UsesMissingDefinitionDefault(type);
-            defaultCode = useMissing ? "" : "null";
-            return useMissing ? $"[global::System.Runtime.InteropServices.Optional] {type} {name}"
-                : $"{Nullable(type)} {name}";
+            if (useMissing)
+            {
+                defaultCode = "";
+                return $"[global::System.Runtime.InteropServices.Optional] {type} {name}";
+            }
+            string nullableType = Nullable(type);
+            defaultCode = TypedParameterDefault(nullableType, "null");
+            return $"{nullableType} {name}";
         }
 
         /// <summary>Emits a function-like body with its signature's prologue and renames in effect.</summary>
@@ -383,8 +388,15 @@ namespace Typhon.Compiler.Emit
             }
         }
 
+        static string TypedParameterDefault(string type, string value) =>
+            value == "null" && type.EndsWith("?") && IsValueTypeName(type.TrimEnd('?'))
+                ? $"default({type})" : value;
+
         static string WithOptionalDefault(string parameter, string value) =>
-            $"[global::System.Runtime.InteropServices.Optional, global::System.Runtime.InteropServices.DefaultParameterValue({value})] {parameter}";
+            // CLR metadata has no DefaultParameterValue constant for a nullable value type.
+            value.StartsWith("default(", StringComparison.Ordinal) && value.EndsWith("?)", StringComparison.Ordinal)
+                ? $"[global::System.Runtime.InteropServices.Optional] {parameter}"
+                : $"[global::System.Runtime.InteropServices.Optional, global::System.Runtime.InteropServices.DefaultParameterValue({value})] {parameter}";
 
         // Overrides must agree on their CLR return type. A method that only raises may supply
         // an abstract-by-convention declaration whose return type is not known yet.
@@ -531,7 +543,7 @@ namespace Typhon.Compiler.Emit
                 {
                     if (keepDefault)
                     {
-                        defaultCode = EmitExpr(p.Default, targetTyped: true);
+                        defaultCode = TypedParameterDefault(type, EmitExpr(p.Default, targetTyped: true));
                         // C# allows only null for a dynamic or object parameter in source, but honors boxed metadata constants.
                         if (type is "dynamic" or "object" && !IsNone(p.Default))
                         {
